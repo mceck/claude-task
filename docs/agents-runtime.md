@@ -23,7 +23,9 @@ its logs are in **Builds**. The first build also builds the Base Image, includin
 pinned Claude CLI and the Go runner. Wait for **Idle** before assigning a task.
 
 The task view has a separate agent picker, session state, Stop/Retry, delivery badges
-and Notify agent. Project settings → Agents holds the setup script, instructions,
+and Notify agent. The expand button beside Activity opens a full-screen conversation
+with live output and a composer at the bottom; Escape returns to the task and keeps drafts and attachments.
+Project settings → Agents holds the setup script, instructions,
 environment variables and write-only secrets. Queue management is available to all
 members; agent configuration, container controls and credentials require an admin.
 
@@ -41,6 +43,32 @@ The production image includes the Base Image Dockerfile and runner sources, so t
 backend can build agent images without a source checkout. Updating
 `CLAUDE_CODE_VERSION` rebuilds images; busy agents wait until their job finishes before
 container recreation. Agent home volumes survive recreation.
+
+## Agent development environment
+
+The Base Image includes mise, PostgreSQL 16 and Redis. The entrypoint starts both
+services as the non-root `agent` user before starting the runner. They listen only
+on `127.0.0.1`, with no host ports published:
+
+- PostgreSQL: `postgresql://agent@127.0.0.1:5432/agent`, local trust authentication.
+  The `agent` role is a development superuser and can create project/test databases.
+- Redis: `redis://127.0.0.1:6379`, no password, append-only persistence enabled.
+
+Service data and logs live in `~/.local/share/claude-task/` in the persistent Agent
+Volume. Each agent has its own services; tasks assigned to that agent share them.
+Use separate database names and Redis key namespaces/databases for separate projects.
+
+For a newly cloned git worktree or a new conversation, the runner executes
+`mise install --yes` when it finds `.tool-versions` or a standard mise TOML config
+in the repository root. This happens before the project setup script and Claude.
+Installation output appears in the job setup logs; failure stops the job and can be
+retried. Resuming an existing conversation does not repeat installation unless its
+worktree had to be recreated. The command trusts the project's mise configuration.
+
+Mise installs the declared tools/runtimes, not application packages: keep commands
+such as `pnpm install` or `bundle install` in the project setup script. Tool installs
+persist in the Agent Volume, and mise shims are on `PATH` for the runner, Claude and
+login shells, including when reusing a pre-existing home volume.
 
 ## Automated checks
 
@@ -60,6 +88,13 @@ startup migrations, admin login, creating a credential and agent, real Base Imag
 agent image builds, persistent volume creation, and a real non-root Go runner
 connecting back and making the agent **Idle**. No model request was needed for this
 check. The temporary containers and agent volume were removed afterwards.
+
+On 2026-10-26, the updated Base Image also passed a Docker smoke check for
+non-root PostgreSQL/Redis startup, SQL writes and Redis reads, persistence across
+restart and container recreation with the same home volume, and a real
+`mise install --yes` from `.tool-versions` (Node 22.16.0), usable from both plain
+processes and `bash -lc`. The runner suite covers installation before project setup,
+skipping installation on resume, and retrying a failed installation and pending setup.
 
 ## Remaining real-CLI acceptance
 

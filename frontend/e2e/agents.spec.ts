@@ -99,6 +99,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await page.goto(`/t/${task.key}`);
   await assign(page, agent.name);
   await expect(page.getByLabel('Session: running')).toBeVisible();
+  await page.getByRole('button', { name: 'Expand activity' }).click();
   const job = await jobStart(page.request, agent.id, task.id);
   const s = new Stream(job.sessionId);
   await replay(page.request, agent.id, job.jobId, [s.delta('Checking the redirect now.')]);
@@ -128,7 +129,8 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await replay(page.request, agent.id, job.jobId, [s.text('Stopped after checking logout.'), s.result()]);
   await expect(page.getByLabel('Turn summary')).toContainText('Turn finished');
   await replay(page.request, agent.id, job.jobId, [], true);
-  await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
+  await expect(page.getByRole('dialog').getByLabel('Session: waiting for messages')).toBeVisible();
+  await page.getByRole('button', { name: 'Exit full screen' }).click();
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Include the logout flow.');

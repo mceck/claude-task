@@ -203,3 +203,54 @@ function e2eDatabaseUrl(): string {
   url.pathname = '/claude_task_e2e';
   return url.toString();
 }
+
+for (const view of ['page', 'board panel'] as const) {
+  test(`expands task activity from the ${view}, preserves drafts and receives live comments`, async ({ page }, testInfo) => {
+    await login(page.request);
+    const project = await createProject(page.request);
+    const task = await createTask(page.request, project, 'Discuss in full screen');
+    await page.request.post(`/api/v1/tasks/${task.id}/comments`, {
+      headers: { 'x-claude-task': '1' },
+      data: { body: 'The conversation so far.\n\n' + 'Earlier discussion.\n\n'.repeat(40) },
+    });
+    await page.goto(view === 'page' ? `/t/${task.key}` : `/p/${project.key}?task=${task.key}`);
+    await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Keep this draft.');
+    await page.getByRole('switch', { name: 'Internal note', exact: true }).click();
+    await page.getByLabel('Attach files', { exact: true }).setInputFiles({ name: 'draft.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment.') });
+    await page.getByRole('button', { name: 'Expand activity' }).click();
+    const chat = page.getByRole('dialog', { name: `${task.key} Activity` });
+    await expect(chat).toBeVisible();
+    await expect(chat.getByRole('textbox', { name: 'Comment', exact: true })).toHaveValue('Keep this draft.');
+    await expect(chat.getByRole('switch', { name: 'Internal note', exact: true })).toBeChecked();
+    await expect(chat.getByLabel('Files to attach')).toContainText('draft.txt');
+    await expect(page.getByRole('textbox', { name: 'Comment', exact: true })).toHaveCount(1);
+    const box = (await chat.boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(Math.abs(box.x)).toBeLessThan(1);
+    expect(Math.abs(box.y)).toBeLessThan(1);
+    expect(Math.abs(box.width - viewport.width)).toBeLessThan(1);
+    expect(Math.abs(box.height - viewport.height)).toBeLessThan(1);
+    await expect(chat.getByRole('button', { name: 'Add note' })).toBeInViewport();
+
+    await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers: { 'x-claude-task': '1' }, data: { body: 'A new comment while reading full screen.' } });
+    await expect(chat.getByRole('listitem', { name: 'Comment', exact: true }).last()).toContainText('A new comment while reading full screen.');
+    await expect(chat.getByRole('listitem', { name: 'Comment', exact: true }).last()).toBeInViewport();
+    await chat.getByRole('button', { name: 'Exit full screen' }).click();
+    await expect(chat).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: 'Comment', exact: true })).toHaveValue('Keep this draft.');
+    await expect(page.getByLabel('Files to attach')).toContainText('draft.txt');
+    await page.getByRole('button', { name: 'Expand activity' }).click();
+    await page.keyboard.press('Escape');
+    await expect(chat).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Expand activity' })).toBeFocused();
+
+    await page.getByRole('button', { name: 'Expand activity' }).click();
+    if (view === 'page') await page.setViewportSize({ width: 390, height: 844 });
+    await expect(chat.getByRole('button', { name: 'Add note' })).toBeInViewport();
+    await chat.getByRole('button', { name: 'Add note' }).click();
+    await expect(chat.getByRole('listitem', { name: 'Internal note' })).toContainText('Keep this draft.');
+    await expect(chat.getByRole('listitem', { name: 'Internal note' })).toContainText('draft.txt');
+    await expect(chat.getByRole('textbox', { name: 'Comment', exact: true })).toHaveValue('');
+    await page.screenshot({ path: testInfo.outputPath('task-activity-fullscreen.png') });
+  });
+}

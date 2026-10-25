@@ -13,12 +13,19 @@ import { putTimelineItem } from '../lib/cache';
 import { ErrorText, Kbd } from './common';
 import { MarkdownEditor } from './Markdown';
 
-export function Composer({ taskId }: { taskId: string }) {
+/** Kept by the conversation view so expanding it preserves text, notes and attachments. */
+export function useCommentDraft() {
   const [body, setBody] = useState('');
   const [internal, setInternal] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  return { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy };
+}
+
+export function Composer({ taskId, draft }: { taskId: string; draft?: ReturnType<typeof useCommentDraft> }) {
+  const localDraft = useCommentDraft();
+  const { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy } = draft ?? localDraft;
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();

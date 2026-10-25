@@ -235,3 +235,67 @@ func TestChangingARepositoryDoesNotReuseOldBranchCommits(t *testing.T) {
 		t.Fatal("old local task branch was reused for the new repository")
 	}
 }
+
+// Exercise the real runner/worktree flow with a local stand-in for the network
+// installer. The project setup must observe the files produced by mise.
+func TestMiseInstallBeforeProjectSetup(t *testing.T) {
+	for _, config := range []string{".tool-versions", "mise.toml"} {
+		t.Run(config, func(t *testing.T) {
+			o := newOrigin(t)
+			o.commit(config, "node 22\n", "tool configuration")
+			gitIn(t, o.home, o.seed, "push", "--quiet", "origin", "main")
+			bin := t.TempDir()
+			script := "#!/bin/sh\nset -eu\n[ \"$*\" = \"install --yes\" ]\nmkdir -p .claude-task\necho installed >> .claude-task/mise-calls\necho runtime-installed\n"
+			if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			b := newBackend(t)
+			home := startRunner(t, b, "PATH="+bin+":"+os.Getenv("PATH"))
+			runJob(t, b, "j1", "worktrees/proj/T-1", o.spec("task/t-1"), "test -f .claude-task/mise-calls && touch .claude-task/project-ready")
+			wt := filepath.Join(home, "worktrees/proj/T-1")
+			if _, err := os.Stat(filepath.Join(wt, ".claude-task/project-ready")); err != nil {
+				t.Fatal(err)
+			}
+			if out := b.setupOutput("j1"); !strings.Contains(out, "runtime-installed") {
+				t.Fatalf("missing mise output: %s", out)
+			}
+			b.send(jobStart(jobOpts{id: "j2", mode: "resume", worktree: "worktrees/proj/T-1", git: o.spec("task/t-1"), text: "go"}))
+			b.waitEvent("j2", "result", isResult)
+			b.send(msg{"type": "job.end", "jobId": "j2"})
+			b.waitType("j2", "job.exited")
+			calls, err := os.ReadFile(filepath.Join(wt, ".claude-task/mise-calls"))
+			if err != nil || string(calls) != "installed\n" {
+				t.Fatalf("mise repeated on resume: %q %v", calls, err)
+			}
+		})
+	}
+}
+
+func TestMiseFailureStopsClaudeAndCanBeRetried(t *testing.T) {
+	o := newOrigin(t)
+	o.commit(".tool-versions", "node 22\n", "tool configuration")
+	gitIn(t, o.home, o.seed, "push", "--quiet", "origin", "main")
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho installing-runtime\nif [ \"${INSTALL_FAIL:-}\" = yes ]; then exit 7; fi\nmkdir -p .claude-task\ntouch .claude-task/runtime-ready\n"
+	if err := os.WriteFile(filepath.Join(bin, "mise"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := newBackend(t)
+	home := startRunner(t, b, "PATH="+bin+":"+os.Getenv("PATH"))
+	rec := filepath.Join(t.TempDir(), "claude.json")
+	b.send(jobStart(jobOpts{id: "j1", git: o.spec("task/t-1"), setup: "touch .claude-task/project-ready", text: "go", env: map[string]string{"INSTALL_FAIL": "yes", "FAKE_CLAUDE_RECORD": rec}}))
+	failed := b.waitType("j1", "job.failed")
+	if failed.str("stage") != "setup" || !strings.Contains(failed.str("message"), "exit status 7") {
+		t.Fatalf("failure: %v", failed)
+	}
+	if _, err := os.Stat(rec); !os.IsNotExist(err) {
+		t.Fatalf("Claude started after failed install: %v", err)
+	}
+	runJob(t, b, "j2", "worktrees/proj/T-1", o.spec("task/t-1"), "test -f .claude-task/runtime-ready && touch .claude-task/project-ready")
+	if _, err := os.Stat(filepath.Join(home, "worktrees/proj/T-1/.claude-task/project-ready")); err != nil {
+		t.Fatalf("project setup not retried: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "worktrees/proj/T-1/.claude-task/runtime-ready")); err != nil {
+		t.Fatalf("install not retried: %v", err)
+	}
+}

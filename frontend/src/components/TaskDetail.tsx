@@ -17,10 +17,9 @@ import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '
 import { removeCard, setTask, toCard, upsertCard } from '../lib/cache';
 import { useTopic } from '../lib/realtime';
 import { LabelChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
-import { Composer } from './Composer';
 import { Markdown, MarkdownEditor } from './Markdown';
 import { MultiPick } from './MultiPick';
-import { Timeline } from './Timeline';
+import { TaskActivity } from './TaskActivity';
 import { AgentAvatar, SessionChip } from './agents';
 
 type Fields = Omit<UpdateTaskBody, 'version'>;
@@ -282,11 +281,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
 
           <Separator />
 
-          <section className="space-y-4">
-            <h3 className="text-sm font-semibold">Activity</h3>
-            <Timeline taskId={task.id} statuses={statuses} labels={labels} users={people} />
-            <Composer taskId={task.id} />
-          </section>
+          <TaskActivity task={task} statuses={statuses} labels={labels} users={people} session={session.data} onSessionAction={sessionAction} />
         </div>
       </div>
     </div>

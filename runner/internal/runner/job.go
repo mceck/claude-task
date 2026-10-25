@@ -3,6 +3,7 @@ package runner
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,10 +70,35 @@ func (j *job) run() {
 	if m.Git != nil {
 		j.emit("job.worktree_ready", map[string]any{"created": created, "remoteBranchMissing": j.remoteBranchMissing})
 	}
-	if created && m.SetupScript != "" {
+	// Remember setup still needs to run if mise fails on a fresh worktree.
+	pendingSetup := filepath.Join(worktree, ".claude-task", "setup-pending")
+	if created && m.Git != nil && m.SetupScript != "" {
+		if err := os.MkdirAll(filepath.Dir(pendingSetup), 0o755); err != nil {
+			j.fail("setup", err)
+			return
+		}
+		if err := os.WriteFile(pendingSetup, nil, 0o644); err != nil {
+			j.fail("setup", err)
+			return
+		}
+	}
+	if m.Git != nil && (created || m.Mode == "new") {
+		if err := j.installTools(worktree); err != nil {
+			j.fail("setup", err)
+			return
+		}
+	}
+	_, pendingErr := os.Stat(pendingSetup)
+	if (created || (m.Git != nil && pendingErr == nil)) && m.SetupScript != "" {
 		if err := j.runSetup(worktree); err != nil {
 			j.fail("setup", err)
 			return
+		}
+		if m.Git != nil {
+			if err := os.Remove(pendingSetup); err != nil && !os.IsNotExist(err) {
+				j.fail("setup", err)
+				return
+			}
 		}
 	}
 	j.fetchAttachments(worktree, m.AttachmentsToFetch)
@@ -371,6 +397,36 @@ func (j *job) runSetup(worktree string) error {
 			return fmt.Errorf("setup script exited with code %d", exit.ExitCode())
 		}
 		return fmt.Errorf("setup script: %w", err)
+	}
+	return nil
+}
+
+// Install before the project setup script, which may need these runtimes. Repeat
+// on a new-session retry, including when a failed install left a worktree behind.
+func (j *job) installTools(worktree string) error {
+	configured := false
+	for _, name := range []string{".tool-versions", "mise.toml", ".mise.toml", "mise.local.toml", ".mise.local.toml", "mise/config.toml", ".mise/config.toml", ".config/mise.toml", ".config/mise/config.toml"} {
+		if _, err := os.Stat(filepath.Join(worktree, name)); err == nil {
+			configured = true
+			break
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("mise config: %w", err)
+		}
+	}
+	if !configured {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "mise", "install", "--yes")
+	cmd.WaitDelay = 2 * time.Second
+	cmd.Dir = worktree
+	cmd.Env = j.env()
+	w := &chunkWriter{j: j}
+	cmd.Stdout, cmd.Stderr = w, w
+	j.setupOutput("$ mise install --yes\n")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("mise install: %w", err)
 	}
 	return nil
 }
