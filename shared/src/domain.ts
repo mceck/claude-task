@@ -1,3 +1,4 @@
+import type { ProjectRepository, PullRequest } from './git';
 // Entity shapes returned by the API. Terms follow CONTEXT.md.
 import type { AgentItemPayload, Delivery, SessionState } from './agents';
 
@@ -37,6 +38,7 @@ export interface User {
 export type CategoryCounts = Record<Category, number>;
 
 export interface Project {
+  repository: ProjectRepository | null;
   id: string;
   key: string;
   name: string;
@@ -68,6 +70,9 @@ export interface Label {
 
 /** How a Task looks on the Board. */
 export interface TaskCard {
+  branchName: string | null;
+  branchUrl: string | null;
+  pullRequest: PullRequest | null;
   id: string;
   projectId: string;
   key: string;
@@ -101,6 +106,7 @@ export const REVISION_FIELDS = [
   'labelIds',
   'assigneeIds',
   'agentId',
+  'pullRequest',
 ] as const;
 export type RevisionField = (typeof REVISION_FIELDS)[number];
 

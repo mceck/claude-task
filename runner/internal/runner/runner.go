@@ -26,6 +26,10 @@ const (
 )
 
 type Runner struct {
+	worktreeMu    sync.Mutex
+	tokenMu       sync.Mutex
+	tokenSeq      int64
+	tokenWaiters  map[string]chan *protocol.Incoming
 	cfg           Config
 	claudeVersion string
 
@@ -36,11 +40,14 @@ type Runner struct {
 }
 
 func New(cfg Config) *Runner {
-	return &Runner{cfg: cfg, claudeVersion: claudeVersion(cfg.ClaudePath)}
+	return &Runner{tokenWaiters: make(map[string]chan *protocol.Incoming), cfg: cfg, claudeVersion: claudeVersion(cfg.ClaudePath)}
 }
 
 // Run connects and reconnects until ctx is done.
 func (r *Runner) Run(ctx context.Context) {
+	if !r.startCredentialServer(ctx) {
+		return
+	}
 	backoff := time.Second
 	for ctx.Err() == nil {
 		connected, err := r.session(ctx)
@@ -200,6 +207,8 @@ func (r *Runner) emit(j *job, typ string, fields map[string]any) int64 {
 
 func (r *Runner) handle(m *protocol.Incoming) {
 	switch m.Type {
+	case "git.token":
+		r.receiveGitToken(m)
 	case "ping":
 		r.sendNow(map[string]string{"type": "pong"})
 	case "ack":
@@ -221,7 +230,7 @@ func (r *Runner) handle(m *protocol.Incoming) {
 		}
 		j.control(m)
 	case "worktree.remove":
-		go r.removeWorktree(m)
+		r.removeWorktree(m)
 	default:
 		log.Printf("ignoring unknown message type %q", m.Type)
 	}
@@ -253,6 +262,7 @@ func (r *Runner) finish(j *job) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	j.finished = true
+	j.gitToken = nil
 	if r.current == j {
 		r.current = nil
 	}

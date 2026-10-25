@@ -169,3 +169,17 @@ export function useAgentSettings(projectId: string) {
     queryFn: () => get<{ settings: ProjectAgentSettings }>(`/projects/${projectId}/agent-settings`).then((r) => r.settings),
   });
 }
+
+// Git Integration
+export function useRepositories() {
+  return useQuery({ queryKey: ['git-repositories'], queryFn: () => get<{ configured: boolean; repositories: import('@claude-task/shared').Repository[] }>('/git/repositories') });
+}
+export function useRepositorySettings(projectId: string) {
+  return useQuery({ queryKey: ['repository-settings', projectId], queryFn: () => get<import('@claude-task/shared').RepositorySettings>(`/projects/${projectId}/repository`) });
+}
+export function useGitHubSettings(enabled: boolean) {
+  return useQuery({ queryKey: ['github-settings'], queryFn: () => get<{ settings: import('@claude-task/shared').GitHubAppSettings }>('/git/github').then((r) => r.settings), enabled });
+}
+export function useGitInstallations(enabled: boolean) {
+  return useQuery({ queryKey: ['git-installations'], queryFn: () => get<{ installations: import('@claude-task/shared').GitInstallation[] }>('/git/installations').then((r) => r.installations), enabled });
+}

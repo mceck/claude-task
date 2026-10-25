@@ -1,3 +1,5 @@
+import { gitRoutes } from './git/routes';
+import { GitProviderError } from './git/provider';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import cookie from '@fastify/cookie';
@@ -41,7 +43,7 @@ export async function buildApp(
   await app.register(multipart, { limits: { fieldSize: 1024 * 1024, fields: 10 } });
 
   app.setErrorHandler((err, request, reply) => {
-    const known = err instanceof HttpError ? err : fromDatabaseError(err);
+    const known = err instanceof HttpError ? err : err instanceof GitProviderError ? new HttpError(err.status === 409 ? 409 : 502, 'git_provider', err.message) : fromDatabaseError(err);
     if (known) {
       return reply
         .status(known.statusCode)
@@ -70,6 +72,7 @@ export async function buildApp(
       taskRoutes(api, ctx);
       commentRoutes(api, ctx);
       credentialRoutes(api, ctx);
+      gitRoutes(api, ctx);
       agentRoutes(api, ctx);
       agentSettingsRoutes(api, ctx);
       realtimeRoutes(api, ctx);

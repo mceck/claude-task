@@ -1,8 +1,14 @@
 ---
-status: to-do
+status: done
 ---
 
 # Spec 03 — Git Integration: repositories, task branches, worktrees, pull requests
+
+Implemented across backend, runner/helper and frontend. See
+[configuration and verification](../git-integration.md). Local API, GitHub HTTP
+contract, runner/helper subprocess and browser checks pass. The live GitHub
+contract remains opt-in and requires a dedicated App installation and repository;
+it was not run without those credentials.
 
 ## ADRs
 

@@ -1,3 +1,4 @@
+import { gitSlug, taskBranch } from '../git/branches';
 // The dispatcher: turns the first Queue Entry of an idle Agent into a Job (one at a time).
 import { MCP_PATH, RUNNER_WS_PATH } from '@claude-task/shared';
 import type { JobStartMessage } from '@claude-task/shared';
@@ -41,6 +42,15 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     const [task] = await tx.select().from(tasks).where(eq(tasks.id, entry.taskId));
     const [project] = await tx.select().from(projects).where(eq(projects.id, task!.projectId));
     const snapshot = await taskSnapshot(tx, task!.id);
+    const repository = project!.repository;
+    const branch = repository ? (task!.branchName ?? taskBranch(snapshot.key, snapshot.title)) : null;
+    const branchExists = repository && branch ? await ctx.git.branchExists(repository, branch) : false;
+    if (repository && branch) {
+      await tx
+        .update(tasks)
+        .set({ branchName: branch, branchUrl: ctx.git.branchWebUrl(repository, branch) })
+        .where(eq(tasks.id, task!.id));
+    }
 
     // A Session `claude` never created starts from the whole Task, whatever the entry says.
     const fresh = !session!.started;
@@ -57,7 +67,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
         .select({ id: sessions.id })
         .from(sessions)
         .where(and(eq(sessions.taskId, task!.id), ne(sessions.agentId, agentId), eq(sessions.started, true)));
-      message = startMessage(snapshot, await renderComments(ctx, tx, included), { branch: null, previousAgent: previousAgent.length > 0 });
+      message = startMessage(snapshot, await renderComments(ctx, tx, included), { branch, previousAgent: previousAgent.length > 0 });
       // Notices made while the Session was pending are covered by the snapshot.
       included = [...included, ...attached.filter((c) => !included.some((i) => i.id === c.id))];
     } else {
@@ -74,10 +84,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     if (resumeInterrupted) env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = '1';
 
     const jobToken = newToken();
-    const [job] = await tx
-      .insert(jobs)
-      .values({ sessionId: session!.id, agentId, taskId: task!.id, kind: entry.kind, tokenHash: jobToken.hash })
-      .returning();
+    const [job] = await tx.insert(jobs).values({ sessionId: session!.id, agentId, taskId: task!.id, kind: entry.kind, tokenHash: jobToken.hash }).returning();
     await tx.delete(queueEntries).where(eq(queueEntries.id, entry.id));
     if (included.length > 0) {
       await tx
@@ -88,17 +95,15 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
           deliveryState: sql`case when ${comments.kind} = 'user' or ${comments.noticeMessage} is not null then 'delivered'::delivery_state else ${comments.deliveryState} end`,
           deliveryReason: null,
         })
-        .where(inArray(comments.id, included.map((c) => c.id)));
+        .where(
+          inArray(
+            comments.id,
+            included.map((c) => c.id),
+          ),
+        );
     }
-    const seen = Math.max(
-      session!.lastSeenTaskVersion,
-      fresh ? snapshot.version : 0,
-      ...included.map((c) => c.noticeTaskVersion ?? 0),
-    );
-    await tx
-      .update(sessions)
-      .set({ state: 'running', lastJobAt: new Date(), lastSeenTaskVersion: seen })
-      .where(eq(sessions.id, session!.id));
+    const seen = Math.max(session!.lastSeenTaskVersion, fresh ? snapshot.version : 0, ...included.map((c) => c.noticeTaskVersion ?? 0));
+    await tx.update(sessions).set({ state: 'running', lastJobAt: new Date(), lastSeenTaskVersion: seen }).where(eq(sessions.id, session!.id));
 
     const start: JobStartMessage = {
       type: 'job.start',
@@ -107,7 +112,18 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
       mode: fresh ? 'new' : 'resume',
       resumeInterrupted,
       worktreePath: session!.worktreePath,
-      git: null,
+      git:
+        repository && branch
+          ? {
+              cloneUrl: repository.cloneUrl,
+              baseBranch: repository.baseBranch,
+              taskBranch: branch,
+              branchExists,
+              repoPath: `repos/${project!.id}.git`,
+              commitName: `${agent.name} (claude-task)`,
+              commitEmail: `${gitSlug(agent.name, 64) || 'agent'}@${ctx.config.agents.commitEmailDomain}`,
+            }
+          : null,
       setupScript: project!.setupScript,
       env,
       claudeArgs: {
@@ -119,7 +135,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
           taskKey: snapshot.key,
           projectName: snapshot.projectName,
           worktreePath: session!.worktreePath,
-          branch: null,
+          branch,
           projectInstructions: project!.agentInstructions,
           agentPrompt: agent.systemPrompt,
         }),
@@ -165,12 +181,7 @@ async function conversation(db: Executor, taskId: string): Promise<CommentRow[]>
     .select()
     .from(comments)
     .where(
-      and(
-        eq(comments.taskId, taskId),
-        eq(comments.internal, false),
-        isNull(comments.deletedAt),
-        or(eq(comments.kind, 'user'), eq(comments.kind, 'agent')),
-      ),
+      and(eq(comments.taskId, taskId), eq(comments.internal, false), isNull(comments.deletedAt), or(eq(comments.kind, 'user'), eq(comments.kind, 'agent'))),
     )
     .orderBy(asc(comments.createdAt), asc(comments.id));
 }
@@ -178,7 +189,5 @@ async function conversation(db: Executor, taskId: string): Promise<CommentRow[]>
 /** Project env vars, secrets decrypted: only ever sent in this Project's Job payloads. */
 export async function projectEnv(ctx: AppContext, db: Executor, projectId: string): Promise<Record<string, string>> {
   const rows = await db.select().from(projectEnvVars).where(eq(projectEnvVars.projectId, projectId));
-  return Object.fromEntries(
-    rows.map((r) => [r.name, r.secret ? ctx.config.secrets.decrypt(r.valueCiphertext!) : (r.value ?? '')]),
-  );
+  return Object.fromEntries(rows.map((r) => [r.name, r.secret ? ctx.config.secrets.decrypt(r.valueCiphertext!) : (r.value ?? '')]));
 }

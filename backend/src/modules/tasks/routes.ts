@@ -39,6 +39,7 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/tasks/:id', async (request) => {
     const { id } = parse(params, request.params);
     const row = await getTaskRow(ctx.db, id);
+    await ctx.gitSync.refreshTask(row.id);
     return { task: await loadTask(ctx.db, row.id) };
   });
 

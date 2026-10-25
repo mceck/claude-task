@@ -28,6 +28,7 @@
     "fractional-indexing": "^4.0.0",
     "pg": "^8.23.1",
     "tar-stream": "^3.2.2",
+    "transliteration": "^2.7.0",
     "ws": "^8.22.0",
     "zod": "^4.6.7"
   },

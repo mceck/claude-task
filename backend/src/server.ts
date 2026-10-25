@@ -1,3 +1,7 @@
+import { GitHubProvider } from './git/github';
+import { readGitHubConfig } from './git/configuration';
+import { GitSync } from './git/sync';
+import type { GitProvider } from './git/provider';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app';
@@ -25,7 +29,7 @@ export interface Server {
 /** Migrates the database, bootstraps the first admin and builds the app (not listening yet). */
 export async function createServer(
   config: Config,
-  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean } = {},
+  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean; git?: GitProvider } = {},
 ): Promise<Server> {
   const { db, pool } = createDb(config.databaseUrl);
   try {
@@ -33,6 +37,7 @@ export async function createServer(
     const ctx = {
       config,
       db,
+      git: overrides.git ?? new GitHubProvider(() => readGitHubConfig(db, config)),
       hub: new RealtimeHub(),
       blobs: overrides.blobs ?? new FsBlobStore(path.join(config.dataDir, 'blobs')),
       runtime:
@@ -41,10 +46,14 @@ export async function createServer(
       runners: new RunnerHub(() => ctx.log),
     } as AppContext;
     ctx.scheduler = new Scheduler(ctx);
+    ctx.gitSync = new GitSync(ctx);
     const app = await buildApp(ctx, { logger: overrides.logger });
     ctx.log = app.log;
     await resetInterruptedBuilds(db);
-    if (overrides.startScheduler !== false) ctx.scheduler.start();
+    if (overrides.startScheduler !== false) {
+      ctx.scheduler.start();
+      ctx.gitSync.start();
+    }
     if (await bootstrapAdmin(db, config.bootstrapAdmin)) {
       app.log.info({ email: config.bootstrapAdmin!.email }, 'created the first admin from ADMIN_EMAIL');
     }
@@ -56,6 +65,8 @@ export async function createServer(
       async close() {
         clearInterval(purge);
         ctx.scheduler.stop();
+        ctx.gitSync.stop();
+        await ctx.gitSync.settle();
         await app.close();
         await ctx.scheduler.settle();
         await pool.end();

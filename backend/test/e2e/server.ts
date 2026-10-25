@@ -1,3 +1,7 @@
+import { openPullRequest } from '../../src/git/service';
+import { eq } from 'drizzle-orm';
+import { jobs, tasks } from '../../src/db/schema';
+import { FakeGitProvider } from '../../src/git/fake-provider';
 // Test-only server: real API/DB + fake containers and controllable Runner WebSockets.
 // This entry point is never included in the production bundle.
 import { API_PREFIX, RUNNER_PROTOCOL_VERSION, RUNNER_WS_PATH } from '@claude-task/shared';
@@ -10,7 +14,8 @@ import { createServer } from '../../src/server';
 const config = loadConfig();
 config.loginRateLimit.max = 1000;
 const runtime = new FakeRuntime();
-const server = await createServer(config, { runtime });
+const git = new FakeGitProvider();
+const server = await createServer(config, { runtime, git });
 const runners = new Map<string, { socket: WebSocket; received: BackendToRunner[]; seqs: Map<string, number> }>();
 runtime.onContainerCreated = (agentId, spec) => {
   const socket = new WebSocket(`ws://127.0.0.1:${config.port}${RUNNER_WS_PATH}`, { headers: { authorization: `Bearer ${spec.env.CLAUDE_TASK_RUNNER_TOKEN}` } });
@@ -62,6 +67,25 @@ server.app.post<{ Params: { id: string }; Body: { jobId: string; events?: Record
 );
 server.app.post<{ Body: { message: string } }>(`${API_PREFIX}/__test/build-failure`, async (request) => {
   runtime.scriptBuild({ fail: request.body.message });
+  return { ok: true };
+});
+server.app.post<{ Body: { protected: boolean } }>(`${API_PREFIX}/__test/git/protection`, async (request) => {
+  git.protection.set('1', request.body.protected);
+  return { ok: true };
+});
+server.app.post<{ Body: { taskId: string } }>(`${API_PREFIX}/__test/git/pull-request`, async (request) => {
+  const [task] = await server.ctx.db.select().from(tasks).where(eq(tasks.id, request.body.taskId));
+  const [job] = await server.ctx.db.select().from(jobs).where(eq(jobs.taskId, task!.id));
+  git.branches.get('1')!.add(task!.branchName!);
+  return openPullRequest(
+    server.ctx,
+    { taskId: task!.id, agentId: job!.agentId, jobId: job!.id, actor: { type: 'agent', id: job!.agentId, displayName: 'Git agent' } },
+    { title: 'Fix', body: 'Test body', draft: true },
+  );
+});
+server.app.post<{ Body: { taskId: string } }>(`${API_PREFIX}/__test/git/merge`, async (request) => {
+  git.pullRequests.get('1')![0]!.state = 'merged';
+  await server.ctx.gitSync.refreshTask(request.body.taskId, 0);
   return { ok: true };
 });
 await server.app.listen({ host: config.host, port: config.port });

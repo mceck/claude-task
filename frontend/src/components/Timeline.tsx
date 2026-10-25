@@ -240,6 +240,7 @@ const FIELD_ICON: Record<RevisionChange['field'], LucideIcon> = {
   labelIds: Tag,
   assigneeIds: UserRound,
   agentId: Bot,
+  pullRequest: ArrowRightLeft,
 };
 
 function RevisionItem({ revision, ...lookups }: { revision: Revision } & Lookups) {
@@ -298,6 +299,10 @@ export function describeChange(c: RevisionChange, { statuses, labels, users, age
       return [added.length && `assigned ${added.map(user).join(', ')}`, removed.length && `unassigned ${removed.map(user).join(', ')}`]
         .filter(Boolean)
         .join(' and ');
+    }
+    case 'pullRequest': {
+      const pr = c.after as { number: number; state: string; draft: boolean } | null;
+      return pr ? `updated pull request #${pr.number} (${pr.state === 'open' && pr.draft ? 'draft' : pr.state})` : 'removed the pull request link';
     }
     case 'agentId': {
       const agent = (id: unknown) => agents.find((a) => a.id === id)?.name ?? 'a deleted agent';

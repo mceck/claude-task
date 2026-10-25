@@ -19,6 +19,8 @@ const excludeEntry = ".claude-task/"
 
 // prepareWorktree makes the Task's Worktree ready (Spec 03) and reports whether it was just created.
 func (j *job) prepareWorktree() (string, bool, error) {
+	j.r.worktreeMu.Lock()
+	defer j.r.worktreeMu.Unlock()
 	home := j.r.cfg.Home
 	wt, err := within(home, j.start.WorktreePath)
 	if err != nil {
@@ -38,12 +40,20 @@ func (j *job) prepareWorktree() (string, bool, error) {
 	}
 	out := &chunkWriter{j: j}
 	created, err := prepareGitWorktree(out, repo, wt, g)
+	j.remoteBranchMissing = !refExists(repo, "refs/remotes/origin/"+g.TaskBranch)
 	return wt, created, err
 }
 
 func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) (bool, error) {
 	git := func(dir string, args ...string) error { return runGit(out, dir, args...) }
 
+	// A Project may change repository only with every Session closed. Discard the old
+	// bare clone rather than reusing its local branch tips with a different origin.
+	if old, err := exec.Command("git", "-C", repo, "config", "--get", "remote.origin.url").Output(); err == nil && strings.TrimSpace(string(old)) != g.CloneURL {
+		if err := os.RemoveAll(repo); err != nil {
+			return false, err
+		}
+	}
 	// 1. Bare clone (all branches as origin/*) on first use, otherwise fetch.
 	if _, err := os.Stat(repo); os.IsNotExist(err) {
 		if err := os.MkdirAll(filepath.Dir(repo), 0o755); err != nil {
@@ -97,27 +107,14 @@ func createWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) error {
 		return err
 	}
 	b := g.TaskBranch
-	local := refExists(repo, "refs/heads/"+b)
 	remote := refExists(repo, "refs/remotes/origin/"+b)
-	switch {
-	case local:
-		if err := git(repo, "worktree", "add", wt, b); err != nil {
-			return err
-		}
-		if remote {
-			// Pick up work pushed meanwhile (e.g. by another Agent); keep local commits otherwise.
-			if err := git(wt, "merge", "--ff-only", "origin/"+b); err != nil {
-				fmt.Fprintf(out, "note: %s has diverged from origin/%s; keeping the local branch\n", b, b)
-			}
-		}
-	case remote:
-		if err := git(repo, "worktree", "add", "--no-track", "-b", b, wt, "origin/"+b); err != nil {
-			return err
-		}
-	default:
-		if err := git(repo, "worktree", "add", "--no-track", "-b", b, wt, "origin/"+g.BaseBranch); err != nil {
-			return err
-		}
+	base := "origin/" + g.BaseBranch
+	if remote {
+		base = "origin/" + b
+	}
+	// An absent worktree is recreated from the remote, including when a stale local branch remains.
+	if err := git(repo, "worktree", "add", "--no-track", "-B", b, wt, base); err != nil {
+		return err
 	}
 	// 3. Upstream = origin/<task branch>, set by config so it works before the remote branch exists.
 	if err := git(repo, "config", "branch."+b+".remote", "origin"); err != nil {
@@ -184,6 +181,8 @@ func runGit(out io.Writer, dir string, args ...string) error {
 
 // removeWorktree deletes a Task's Worktree directory; branches are never deleted.
 func (r *Runner) removeWorktree(m *protocol.Incoming) {
+	r.worktreeMu.Lock()
+	defer r.worktreeMu.Unlock()
 	wt, err := within(r.cfg.Home, m.WorktreePath)
 	if err != nil {
 		log.Printf("worktree.remove: %v", err)

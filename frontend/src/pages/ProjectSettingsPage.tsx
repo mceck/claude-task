@@ -1,3 +1,4 @@
+import { RepositorySettings } from '../components/RepositorySettings';
 import { CATEGORIES, projectTopic } from '@claude-task/shared';
 import type { Category, Label as LabelT, Project, ProjectBundle, Status } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
@@ -44,6 +45,7 @@ export function ProjectSettingsPage() {
           <TabsTrigger value="statuses">Statuses</TabsTrigger>
           <TabsTrigger value="labels">Labels</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
+          <TabsTrigger value="repository">Repository</TabsTrigger>
         </TabsList>
         <TabsContent value="general">
           <General project={project} />
@@ -55,6 +57,7 @@ export function ProjectSettingsPage() {
           <Labels bundle={bundle.data} />
         </TabsContent>
         <TabsContent value="agents"><ProjectAgentSettings projectId={project.id} /></TabsContent>
+        <TabsContent value="repository"><RepositorySettings projectId={project.id} /></TabsContent>
       </Tabs>
     </div>
   );

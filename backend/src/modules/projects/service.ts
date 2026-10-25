@@ -20,6 +20,7 @@ export function serializeProject(p: ProjectRow): Project {
   return {
     id: p.id,
     key: p.key,
+    repository: p.repository,
     name: p.name,
     description: p.description,
     archivedAt: p.archivedAt?.toISOString() ?? null,

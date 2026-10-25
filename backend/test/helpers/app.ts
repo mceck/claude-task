@@ -1,3 +1,4 @@
+import { FakeGitProvider } from '../../src/git/fake-provider';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -41,6 +42,7 @@ export interface TestApp {
   admin(): Promise<ApiClient>;
   /** The in-memory Docker stand-in. */
   runtime: FakeRuntime;
+  git: FakeGitProvider;
   /** Waits until the backend's background work (dispatch, builds, publishing) is done. */
   settle(): Promise<void>;
 }
@@ -86,7 +88,8 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       ...options.config,
     };
     t.runtime = new FakeRuntime();
-    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false, runtime: t.runtime });
+    t.git = new FakeGitProvider();
+    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false, runtime: t.runtime, git: t.git });
     await server.app.listen({ host: '127.0.0.1', port: 0 });
     const address = server.app.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');
@@ -110,6 +113,9 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
     beforeEach(async () => {
       await t.server.ctx.runners.closeAll();
       await t.server.ctx.scheduler.settle();
+      await t.server.ctx.gitSync.settle();
+      t.git = new FakeGitProvider();
+      t.server.ctx.git = t.git;
       t.runtime.containers.clear();
       t.runtime.onContainerCreated = null;
       await truncateAll(t.server);

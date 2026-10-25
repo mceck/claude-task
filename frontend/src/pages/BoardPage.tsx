@@ -1,3 +1,4 @@
+import { ProtectionWarning, PullRequestBadge } from '../components/Git';
 import { AGENTS_TOPIC, emptyBoardFilter, isFilterActive, matchesBoardFilter, PRIORITIES, projectTopic } from '@claude-task/shared';
 import type { BoardFilter, Label, Priority, Status, Task, TaskCard, User } from '@claude-task/shared';
 import {
@@ -79,6 +80,7 @@ export function BoardPage() {
             {project!.key}
           </span>
           <h1 className="truncate font-semibold tracking-tight">{project!.name}</h1>
+          <ProtectionWarning repository={project!.repository} compact />
           {project!.archivedAt && (
             <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-500">
               Archived
@@ -393,6 +395,7 @@ function Card({ card, labels, users, onOpen, dragging, selected }: CardProps) {
           </div>
         )}
       </div>
+      {card.pullRequest && <div className="mb-2"><PullRequestBadge pr={card.pullRequest} /></div>}
       <p className="text-[13px] leading-snug font-medium text-foreground/90 group-hover:text-foreground">{card.title}</p>
       {(cardLabels.length > 0 || card.commentCount > 0) && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1">

@@ -180,10 +180,10 @@ func TestRemovingAWorktreeKeepsTheBranches(t *testing.T) {
 		t.Fatal("local task branch lost")
 	}
 
-	// Reopening recreates the worktree at the same path from the kept branch.
+	// With no remote task branch, reopening recreates from the latest base branch (Spec 03).
 	runJob(t, b, "j2", "worktrees/proj/T-1", o.spec("task/t-1"), "")
-	if _, err := os.Stat(filepath.Join(wt, "change.txt")); err != nil {
-		t.Fatal("recreated worktree lost the branch's commits")
+	if gitIn(t, home, wt, "rev-parse", "HEAD") != gitIn(t, home, o.bare, "rev-parse", "main") {
+		t.Fatal("missing remote branch was not recreated from the base")
 	}
 
 	b.send(msg{"type": "worktree.remove", "worktreePath": "worktrees/proj/T-3", "repoPath": nil})
@@ -193,4 +193,45 @@ func TestRemovingAWorktreeKeepsTheBranches(t *testing.T) {
 		_, err := os.Stat(filepath.Join(home, "worktrees/proj/T-3"))
 		return os.IsNotExist(err)
 	})
+}
+
+func TestDeletedRemoteTaskBranchIsRecreatedFromTheLatestBase(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	spec := o.spec("task/t-9-existing")
+	spec["branchExists"] = true
+	runJob(t, b, "j1", "worktrees/proj/T-9", spec, "")
+	wt := filepath.Join(home, "worktrees/proj/T-9")
+	b.send(msg{"type": "worktree.remove", "worktreePath": "worktrees/proj/T-9", "repoPath": "repos/proj.git"})
+	waitUntil(t, 10*time.Second, "worktree removed", func() bool { _, err := os.Stat(wt); return os.IsNotExist(err) })
+	gitIn(t, o.home, o.seed, "push", "--quiet", "origin", ":task/t-9-existing")
+	o.commit("README.md", "latest base", "base advanced")
+	gitIn(t, o.home, o.seed, "push", "--quiet", "origin", "main")
+	spec["branchExists"] = false
+	runJob(t, b, "j2", "worktrees/proj/T-9", spec, "")
+	if gitIn(t, home, wt, "rev-parse", "HEAD") != gitIn(t, o.home, o.bare, "rev-parse", "main") {
+		t.Fatal("reopened branch did not start at the latest base")
+	}
+	if ready := b.waitType("j2", "job.worktree_ready"); ready["remoteBranchMissing"] != true || ready["created"] != true {
+		t.Fatalf("missing-branch observation: %v", ready)
+	}
+}
+
+func TestChangingARepositoryDoesNotReuseOldBranchCommits(t *testing.T) {
+	first := newOrigin(t)
+	second := newOrigin(t)
+	second.commit("different.txt", "different repository", "new repository")
+	gitIn(t, second.home, second.seed, "push", "--quiet", "origin", "main")
+	b := newBackend(t)
+	home := startRunner(t, b)
+	runJob(t, b, "j1", "worktrees/proj/T-1", first.spec("task/t-1"), "")
+	runJob(t, b, "j2", "worktrees/proj/T-1", second.spec("task/t-1"), "")
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	if _, err := os.Stat(filepath.Join(wt, "different.txt")); err != nil {
+		t.Fatal("worktree still belongs to the previous repository")
+	}
+	if gitIn(t, home, wt, "rev-parse", "HEAD") != gitIn(t, second.home, second.bare, "rev-parse", "main") {
+		t.Fatal("old local task branch was reused for the new repository")
+	}
 }

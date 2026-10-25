@@ -6,7 +6,8 @@ COPY runner/go.mod runner/go.sum ./
 RUN go mod download
 COPY runner/ ./
 ARG RUNNER_VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${RUNNER_VERSION}" -o /out/claude-task-runner ./cmd/runner
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${RUNNER_VERSION}" -o /out/claude-task-runner ./cmd/runner \
+ && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/git-credential-claude-task ./cmd/git-credential-claude-task
 
 FROM debian:bookworm-slim
 ARG CLAUDE_CODE_VERSION
@@ -21,6 +22,9 @@ RUN curl -fsSL https://claude.ai/install.sh -o /tmp/install.sh \
  && rm /tmp/install.sh \
  && claude --version
 COPY --from=runner /out/claude-task-runner /usr/local/bin/claude-task-runner
+COPY --from=runner /out/git-credential-claude-task /usr/local/bin/git-credential-claude-task
+RUN git config --system credential.https://github.com.helper /usr/local/bin/git-credential-claude-task \
+ && git config --system credential.https://github.com.useHttpPath true
 # bypassPermissions refuses to run as root, hence a fixed non-root user.
 RUN useradd --create-home --uid 1000 --shell /bin/bash agent
 ENV DISABLE_AUTOUPDATER=1 \

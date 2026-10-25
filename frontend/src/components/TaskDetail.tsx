@@ -1,3 +1,4 @@
+import { BranchLink, PullRequestBadge } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
@@ -266,6 +267,10 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
             </span>
           </div>
 
+          {(task.branchName || task.pullRequest) && <section aria-label="Task code" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+            {task.branchName && task.branchUrl && <BranchLink name={task.branchName} url={task.branchUrl} />}
+            {task.pullRequest && <PullRequestBadge pr={task.pullRequest} />}
+          </section>}
           <Description description={task.description} onSave={(description) => save({ description })} />
 
           {session.data?.unseenChanges && (

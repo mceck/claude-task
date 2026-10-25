@@ -22,7 +22,7 @@ import (
 
 const token = "test-runner-token"
 
-var runnerBin, fakeClaudeBin string
+var runnerBin, fakeClaudeBin, credentialBin string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "runner-test-bin")
@@ -31,7 +31,8 @@ func TestMain(m *testing.M) {
 	}
 	runnerBin = filepath.Join(dir, "runner")
 	fakeClaudeBin = filepath.Join(dir, "fakeclaude")
-	for bin, pkg := range map[string]string{runnerBin: "../cmd/runner", fakeClaudeBin: "../cmd/fakeclaude"} {
+	credentialBin = filepath.Join(dir, "git-credential-claude-task")
+	for bin, pkg := range map[string]string{runnerBin: "../cmd/runner", fakeClaudeBin: "../cmd/fakeclaude", credentialBin: "../cmd/git-credential-claude-task"} {
 		args := []string{"build", "-o", bin}
 		if os.Getenv("RUNNER_TEST_RACE") == "1" {
 			args = append(args, "-race") // race-check the binaries themselves
@@ -139,7 +140,7 @@ func (b *backend) receive(c *websocket.Conn, m msg) {
 		return
 	}
 	jobID, seq := m.str("jobId"), m.num("seq")
-	if jobID == "" {
+	if jobID == "" || m.str("type") == "git.token_request" {
 		b.processed = append(b.processed, m)
 		return
 	}
@@ -289,12 +290,18 @@ func waitUntil(t *testing.T, timeout time.Duration, what string, cond func() boo
 func startRunner(t *testing.T, b *backend, env ...string) string {
 	t.Helper()
 	home := t.TempDir()
+	socketDir, err := os.MkdirTemp("", "ct-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
 	cmd := exec.Command(runnerBin)
 	cmd.Env = append(isolatedEnv(home),
 		"CLAUDE_TASK_BACKEND_URL="+b.wsURL(),
 		"CLAUDE_TASK_RUNNER_TOKEN="+token,
 		"CLAUDE_TASK_CLAUDE_PATH="+fakeClaudeBin,
 		"CLAUDE_TASK_HOME="+home,
+		"CLAUDE_TASK_GIT_SOCKET="+filepath.Join(socketDir, "git.sock"),
 		"CLAUDE_TASK_CANCEL_TERM_MS=300",
 		"CLAUDE_TASK_CANCEL_KILL_MS=900",
 	)

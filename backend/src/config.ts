@@ -15,6 +15,8 @@ export interface Config {
   /** Encrypts Credentials and secret env values (`SECRETS_MASTER_KEY`). */
   secrets: SecretBox;
   agents: AgentsConfig;
+  webUrl?: string;
+  github?: { appId: string; privateKey: string } | null;
 }
 
 export interface AgentsConfig {
@@ -56,12 +58,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cookieSecure: bool(env.COOKIE_SECURE, true),
     trustProxy: bool(env.TRUST_PROXY, false),
     logLevel: env.LOG_LEVEL ?? 'info',
-    bootstrapAdmin:
-      adminEmail && adminPassword
-        ? { email: adminEmail, password: adminPassword, displayName: env.ADMIN_NAME?.trim() || 'Admin' }
-        : null,
+    bootstrapAdmin: adminEmail && adminPassword ? { email: adminEmail, password: adminPassword, displayName: env.ADMIN_NAME?.trim() || 'Admin' } : null,
     loginRateLimit: { max: 10, windowMs: 15 * 60 * 1000 },
     secrets,
+    webUrl: (env.APP_URL?.trim() || `http://localhost:${env.PORT ?? 3000}`).replace(/\/+$/, ''),
+    github:
+      env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY
+        ? { appId: env.GITHUB_APP_ID.trim(), privateKey: env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, '\n') }
+        : null,
     agents: {
       runtime: env.AGENT_RUNTIME === 'fake' ? 'fake' : 'docker',
       dockerSocket: env.DOCKER_SOCKET ?? '/var/run/docker.sock',

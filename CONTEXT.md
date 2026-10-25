@@ -166,3 +166,18 @@ Pending work for one Task in an Agent's Queue: starting its Session, delivering 
 **Interrupt**:
 Stopping the current Turn without ending the Session.
 _Avoid_: cancel, kill (those end the Job)
+
+### Git integration
+
+**Repository**:
+The code repository linked to one Project. Several Projects may link the same Repository.
+_Avoid_: repo (in user-facing copy)
+
+**GitHub App Installation**:
+An organization's or user's grant allowing the platform's GitHub App to access selected Repositories.
+
+**Pull Request**:
+A request to review and merge a Task Branch into its Project's Base Branch. Its state is independent of the Task's Status.
+
+**Base Branch Protection**:
+Repository rules requiring pull requests and preventing the GitHub App from bypassing that requirement with direct pushes.

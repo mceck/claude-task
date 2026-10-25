@@ -1,3 +1,4 @@
+import { repositoryToken } from '../git/service';
 // The backend side of the Runner Protocol: every message is processed exactly once and in
 // order (per-Job seq), inside a transaction that locks task → agent → session → job.
 import type { JobFailureStage, RunnerJobMessage, RunnerToBackend } from '@claude-task/shared';
@@ -19,12 +20,33 @@ const OUTPUT_CAP = 64 * 1024;
 /** `last_activity_at` is refreshed at most this often while streaming. */
 const ACTIVITY_TOUCH_MS = 10_000;
 
-const appendCapped = (column: typeof jobs.setupOutput | typeof jobs.stderr, chunk: string) =>
-  sql`right(${column} || ${chunk}, ${OUTPUT_CAP})`;
+const appendCapped = (column: typeof jobs.setupOutput | typeof jobs.stderr, chunk: string) => sql`right(${column} || ${chunk}, ${OUTPUT_CAP})`;
 
 export async function handleRunnerMessage(ctx: AppContext, agentId: string, msg: RunnerToBackend): Promise<void> {
   if (msg.type === 'hello') return handleHello(ctx, agentId, msg);
   if (msg.type === 'pong') return;
+  if (msg.type === 'git.token_request') {
+    if (
+      typeof msg.requestId !== 'string' ||
+      msg.requestId.length > 100 ||
+      typeof msg.repository !== 'string' ||
+      msg.repository.length > 300 ||
+      typeof msg.jobId !== 'string'
+    )
+      return;
+    try {
+      const value = await repositoryToken(ctx, agentId, msg.jobId, msg.repository);
+      ctx.runners.send(agentId, { type: 'git.token', requestId: msg.requestId, jobId: msg.jobId, ...value });
+    } catch {
+      ctx.runners.send(agentId, {
+        type: 'git.token',
+        requestId: msg.requestId,
+        jobId: msg.jobId,
+        error: 'No active task for this repository, or GitHub could not issue a token. Check the GitHub App configuration.',
+      });
+    }
+    return;
+  }
   if (typeof msg.jobId === 'string' && typeof msg.seq === 'number') return handleJobMessage(ctx, agentId, msg);
   ctx.log.warn({ agentId, type: (msg as { type?: string }).type }, 'unknown runner message');
 }
@@ -105,6 +127,11 @@ async function processJobMessage(
   msg: RunnerJobMessage,
 ): Promise<void> {
   switch (msg.type) {
+    case 'job.worktree_ready':
+      if (msg.created && msg.remoteBranchMissing && session.started)
+        await systemComment(tx, after, job.taskId, 'The previous remote task branch was not found. The worktree was recreated from the base branch.');
+      return;
+
     case 'job.accepted':
       if (job.state === 'dispatched') {
         await tx.update(jobs).set({ state: 'running', startedAt: new Date() }).where(eq(jobs.id, job.id));
@@ -113,12 +140,18 @@ async function processJobMessage(
       return;
 
     case 'job.setup_output':
-      await tx.update(jobs).set({ setupOutput: appendCapped(jobs.setupOutput, String(msg.chunk)) }).where(eq(jobs.id, job.id));
+      await tx
+        .update(jobs)
+        .set({ setupOutput: appendCapped(jobs.setupOutput, String(msg.chunk)) })
+        .where(eq(jobs.id, job.id));
       after.emit(taskTopic(job.taskId), { type: 'job.setup_output', taskId: job.taskId, jobId: job.id, chunk: String(msg.chunk) });
       return;
 
     case 'job.stderr':
-      await tx.update(jobs).set({ stderr: appendCapped(jobs.stderr, String(msg.chunk)) }).where(eq(jobs.id, job.id));
+      await tx
+        .update(jobs)
+        .set({ stderr: appendCapped(jobs.stderr, String(msg.chunk)) })
+        .where(eq(jobs.id, job.id));
       return;
 
     case 'job.event': {
@@ -135,13 +168,16 @@ async function processJobMessage(
         .returning({ receivedAt: sessionEvents.receivedAt });
       if (!stored) return;
       if (!session.started) await tx.update(sessions).set({ started: true }).where(eq(sessions.id, session.id));
-      const [{ name: credentialName } = { name: 'unknown' }] = await tx.execute<{ name: string }>(
-        sql`select name from credentials where id = ${agent.credentialId}`,
-      ).then((r) => r.rows);
+      const [{ name: credentialName } = { name: 'unknown' }] = await tx
+        .execute<{ name: string }>(sql`select name from credentials where id = ${agent.credentialId}`)
+        .then((r) => r.rows);
       const prev = (job.projection as ProjectionState | null) ?? initialProjection();
       const result = project(prev, parsed, { jobId: job.id, credentialName, receivedAt: stored.receivedAt.toISOString() });
       await applyProjection(tx, after, job, agent.credentialId, result.mutations, result.broadcasts);
-      await tx.update(jobs).set({ projection: result.state as unknown as Record<string, unknown> }).where(eq(jobs.id, job.id));
+      await tx
+        .update(jobs)
+        .set({ projection: result.state as unknown as Record<string, unknown> })
+        .where(eq(jobs.id, job.id));
       if (!agent.lastActivityAt || Date.now() - agent.lastActivityAt.getTime() > ACTIVITY_TOUCH_MS) {
         await tx.update(agents).set({ lastActivityAt: new Date() }).where(eq(agents.id, agent.id));
       }
@@ -175,17 +211,39 @@ async function processJobMessage(
           error: crashed ? `claude exited with ${msg.signal ? `signal ${msg.signal}` : `code ${msg.exitCode}`}` : null,
         })
         .where(eq(jobs.id, job.id));
-      if (session.state === 'running') await tx.update(sessions).set({ state: restingState(session) }).where(eq(sessions.id, session.id));
+      if (session.state === 'running')
+        await tx
+          .update(sessions)
+          .set({ state: restingState(session) })
+          .where(eq(sessions.id, session.id));
       if (missing) {
         // The transcript is gone (e.g. the Agent Volume was reset): the next Job starts over with the Task's history.
         await tx.update(sessions).set({ started: false }).where(eq(sessions.id, session.id));
-        await systemComment(tx, after, job.taskId, "The agent's previous conversation for this task wasn't found, so its next run starts a new conversation with the task's history.");
+        await systemComment(
+          tx,
+          after,
+          job.taskId,
+          "The agent's previous conversation for this task wasn't found, so its next run starts a new conversation with the task's history.",
+        );
       } else if (exists) {
-        await tx.update(sessions).set({ started: true, state: session.state === 'running' ? 'idle' : session.state }).where(eq(sessions.id, session.id));
-        await systemComment(tx, after, job.taskId, "The agent's conversation already existed, so its next run resumes it. Post a comment (or press **Retry**) to continue.");
+        await tx
+          .update(sessions)
+          .set({ started: true, state: session.state === 'running' ? 'idle' : session.state })
+          .where(eq(sessions.id, session.id));
+        await systemComment(
+          tx,
+          after,
+          job.taskId,
+          "The agent's conversation already existed, so its next run resumes it. Post a comment (or press **Retry**) to continue.",
+        );
         if (session.state === 'running') await requeue(tx, after, job, { ...session, started: true }, { held: true });
       } else if (crashed) {
-        await systemComment(tx, after, job.taskId, `The agent's process stopped unexpectedly (${msg.signal ? `signal ${msg.signal}` : `exit code ${msg.exitCode}`}).${tail(job.stderr)}`);
+        await systemComment(
+          tx,
+          after,
+          job.taskId,
+          `The agent's process stopped unexpectedly (${msg.signal ? `signal ${msg.signal}` : `exit code ${msg.exitCode}`}).${tail(job.stderr)}`,
+        );
       }
       after.effect((ctx) => {
         ctx.scheduler.publishJob(job.id);
@@ -218,14 +276,20 @@ async function failJob(
   stage: JobFailureStage,
   message: string,
 ): Promise<void> {
-  await tx
-    .update(jobs)
-    .set({ state: 'failed', failureStage: stage, error: message, finishedAt: new Date() })
-    .where(eq(jobs.id, job.id));
+  await tx.update(jobs).set({ state: 'failed', failureStage: stage, error: message, finishedAt: new Date() }).where(eq(jobs.id, job.id));
   const stillActive = session.state === 'running';
-  if (stillActive) await tx.update(sessions).set({ state: restingState(session) }).where(eq(sessions.id, session.id));
+  if (stillActive)
+    await tx
+      .update(sessions)
+      .set({ state: restingState(session) })
+      .where(eq(sessions.id, session.id));
   const what = { worktree: 'preparing the worktree', setup: 'running the setup script', spawn: 'starting Claude Code' }[stage] ?? stage;
-  await systemComment(tx, after, job.taskId, `The agent couldn't start: ${what} failed.\n\n> ${message.split('\n').join('\n> ')}${tail(job.setupOutput)}\n\nFix the problem, then press **Retry** (or post a comment).`);
+  await systemComment(
+    tx,
+    after,
+    job.taskId,
+    `The agent couldn't start: ${what} failed.\n\n> ${message.split('\n').join('\n> ')}${tail(job.setupOutput)}\n\nFix the problem, then press **Retry** (or post a comment).`,
+  );
   // Its Messages go back to the front of the Queue, waiting for a Retry instead of looping.
   if (stillActive) await requeue(tx, after, job, session, { held: true });
   after.effect((ctx) => {
@@ -243,7 +307,10 @@ export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow):
   await tx.update(jobs).set({ state: 'interrupted', finishedAt: new Date() }).where(eq(jobs.id, job.id));
   const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
   if (session?.state === 'running') {
-    await tx.update(sessions).set({ state: restingState(session) }).where(eq(sessions.id, session.id));
+    await tx
+      .update(sessions)
+      .set({ state: restingState(session) })
+      .where(eq(sessions.id, session.id));
     if (job.lastSeq > 0 && session.started && job.state !== 'finishing') {
       await enqueue(tx, after, { agentId: job.agentId, taskId: job.taskId, sessionId: session.id, kind: 'resume_interrupted', front: true });
       await systemComment(tx, after, job.taskId, "The agent's container restarted in the middle of a turn. Resuming where it left off.");
@@ -269,7 +336,12 @@ async function requeue(tx: Executor, after: AfterCommit, job: JobRow, session: t
     held: opts.held,
   });
   const delivered = await tx.select({ id: comments.id }).from(comments).where(eq(comments.deliveredInJobId, job.id));
-  await attachComments(tx, after, entry.id, delivered.map((c) => c.id));
+  await attachComments(
+    tx,
+    after,
+    entry.id,
+    delivered.map((c) => c.id),
+  );
 }
 
 /** Between Jobs a Session is `idle`, or still `pending` if `claude` never created it. */
@@ -308,4 +380,3 @@ export async function recoverAbandonedJobs(ctx: AppContext): Promise<void> {
     });
   }
 }
-

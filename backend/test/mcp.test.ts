@@ -42,7 +42,7 @@ describe('Task Tools (MCP)', () => {
   it('lists the tools', async () => {
     const { client } = await setup(app);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(['create_task', 'get_task', 'list_tasks', 'set_status', 'update_task']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['create_task', 'get_task', 'list_tasks', 'open_pull_request', 'set_status', 'update_task']);
   });
 
   it('reads the own Task with statuses, labels and non-internal comments', async () => {

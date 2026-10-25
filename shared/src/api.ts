@@ -307,3 +307,14 @@ export interface ProjectBundle {
   statuses: Status[];
   labels: Label[];
 }
+
+// Git Integration
+export const githubAppBody = z.strictObject({
+  appId: z.string().trim().regex(/^[0-9]+$/).max(30),
+  privateKey: z.string().trim().min(1).max(20000).optional(),
+});
+export const repositoryBody = z.strictObject({
+  providerRepoId: z.string().regex(/^[0-9]+$/).max(30),
+  baseBranch: z.string().trim().min(1).max(250).optional(),
+});
+export type RepositoryBody = z.infer<typeof repositoryBody>;

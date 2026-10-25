@@ -1,3 +1,5 @@
+import type { GitProvider } from './git/provider';
+import type { GitSync } from './git/sync';
 import type { RealtimeEvent, Topic } from '@claude-task/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type { AgentRuntime } from './agents/runtime';
@@ -14,6 +16,8 @@ export interface AppContext {
   hub: RealtimeHub;
   blobs: BlobStore;
   runtime: AgentRuntime;
+  git: GitProvider;
+  gitSync: GitSync;
   /** Connected Runners, one per Agent. */
   runners: RunnerHub;
   /** Dispatcher, builds and the container reconciler. */

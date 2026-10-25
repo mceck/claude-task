@@ -46,6 +46,9 @@ interface CardRow extends Record<string, unknown> {
   session_agent_id: string | null;
   session_state: SessionState | null;
   queue_position: number | null;
+  branch_name: string | null;
+  branch_url: string | null;
+  pull_request: TaskCard['pullRequest'];
 }
 
 export interface CardQuery {
@@ -100,7 +103,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
       coalesce((select array_agg(ta.user_id::text order by ta.user_id)
         from task_assignees ta where ta.task_id = t.id), '{}') as assignee_ids,
       (select count(*)::int from comments c where c.task_id = t.id and c.deleted_at is null) as comment_count,
-      t.agent_id, ss.agent_id as session_agent_id, ss.state as session_state,
+      t.branch_name, t.branch_url, t.pull_request, t.agent_id, ss.agent_id as session_agent_id, ss.state as session_state,
       (select count(*)::int from queue_entries q join queue_entries q2 on q2.agent_id = q.agent_id and q2.position <= q.position
         where q.task_id = t.id and q.agent_id = ss.agent_id) as queue_position
     from tasks t
@@ -122,6 +125,9 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     labelIds: r.label_ids,
     assigneeIds: r.assignee_ids,
     commentCount: r.comment_count,
+    branchName: r.branch_name,
+    branchUrl: r.branch_url,
+    pullRequest: r.pull_request,
     agentId: r.agent_id,
     session:
       r.agent_id && r.session_agent_id === r.agent_id && r.session_state
@@ -271,7 +277,7 @@ export async function updateTask(
 ): Promise<Task> {
   const row = await lockTaskForWrite(tx, taskId);
   const { version, ...patch } = input;
-  const touched = (Object.keys(patch) as RevisionField[]).filter((k) => patch[k] !== undefined);
+  const touched = (Object.keys(patch) as (keyof typeof patch)[]).filter((k) => patch[k] !== undefined);
 
   if (version !== row.version) {
     const changedSince = await fieldsChangedSince(tx, row.id, version);
@@ -478,7 +484,7 @@ async function fieldsChangedSince(tx: Executor, taskId: string, version: number)
   return new Set(rows.flatMap((r) => r.changes.map((c) => c.field)));
 }
 
-async function emitTasksChanged(
+export async function emitTasksChanged(
   tx: Executor,
   after: AfterCommit,
   taskIds: string[],
@@ -522,7 +528,7 @@ async function currentFields(tx: Executor, row: TaskRow): Promise<Fields> {
 
 function diff(before: Fields, after: Fields): RevisionChange[] {
   const changes: RevisionChange[] = [];
-  for (const field of Object.keys(before) as RevisionField[]) {
+  for (const field of Object.keys(before) as (keyof Fields)[]) {
     const b = before[field];
     const a = after[field];
     const same = Array.isArray(b) && Array.isArray(a) ? b.join() === a.join() : b === a;

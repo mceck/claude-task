@@ -30,6 +30,10 @@ type Attachment struct {
 
 // Incoming is any backend → runner message; only the fields of its type are set.
 type Incoming struct {
+	RequestID          string            `json:"requestId"`
+	Token              string            `json:"token"`
+	ExpiresAt          string            `json:"expiresAt"`
+	Error              string            `json:"error"`
 	Type               string            `json:"type"`
 	JobID              string            `json:"jobId"`
 	Seq                int64             `json:"seq"`

@@ -1,3 +1,4 @@
+import { GitHubPage } from './pages/GitHubPage';
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -53,6 +54,7 @@ const router = createBrowserRouter([
       { path: '/agents', element: <AgentsPage /> },
       { path: '/agents/:agentId', element: <AgentPage /> },
       { path: '/admin/credentials', element: <CredentialsPage /> },
+      { path: '/admin/github', element: <GitHubPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

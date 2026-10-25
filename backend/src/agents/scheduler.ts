@@ -112,7 +112,7 @@ export class Scheduler {
       (async () => {
         const [s] = await this.ctx.db.select().from(sessions).where(eq(sessions.id, sessionId));
         if (!s?.worktreeRemovalPending) return;
-        if (!this.ctx.runners.send(s.agentId, { type: 'worktree.remove', worktreePath: s.worktreePath, repoPath: null })) return;
+        if (!this.ctx.runners.send(s.agentId, { type: 'worktree.remove', worktreePath: s.worktreePath, repoPath: `repos/${s.worktreePath.split('/')[1]}.git` })) return;
         await this.ctx.db.update(sessions).set({ worktreeRemovalPending: false }).where(eq(sessions.id, sessionId));
       })(),
     );

@@ -32,7 +32,7 @@ import {
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentItemPayload, RevisionChange, Usage } from '@claude-task/shared';
+import type { AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -96,6 +96,7 @@ export const projects = pgTable(
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
+    repository: jsonb('repository').$type<ProjectRepository>(),
     nextTaskNumber: integer('next_task_number').notNull().default(1),
     /** Runs in every newly created Worktree of the Project's Tasks. */
     setupScript: text('setup_script').notNull().default(''),
@@ -142,6 +143,9 @@ export const tasks = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
     number: integer('number').notNull(),
+    branchName: text('branch_name'),
+    branchUrl: text('branch_url'),
+    pullRequest: jsonb('pull_request').$type<PullRequest>(),
     title: text('title').notNull(),
     description: text('description').notNull().default(''),
     statusId: uuid('status_id')
@@ -527,3 +531,11 @@ export const rateLimitObservations = pgTable(
   },
   (t) => [index('rate_limit_observations_credential_idx').on(t.credentialId, t.observedAt)],
 );
+
+/** Singleton write-only GitHub App credentials; environment configuration takes precedence. */
+export const gitSettings = pgTable('git_settings', {
+  id: text('id').primaryKey(),
+  appId: text('app_id').notNull(),
+  privateKeyCiphertext: text('private_key_ciphertext').notNull(),
+  updatedAt: updatedAt(),
+});

@@ -29,13 +29,15 @@ type job struct {
 	out      *outbox
 	finished bool
 
-	ops       chan *protocol.Incoming // stdin work, in arrival order
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	stdin     *os.File
-	cancelled bool
-	exited    chan struct{}
-	reqSeq    int
+	ops                 chan *protocol.Incoming // stdin work, in arrival order
+	mu                  sync.Mutex
+	cmd                 *exec.Cmd
+	stdin               *os.File
+	cancelled           bool
+	exited              chan struct{}
+	gitToken            *gitToken
+	remoteBranchMissing bool
+	reqSeq              int
 }
 
 func newJob(r *Runner, m *protocol.Incoming) *job {
@@ -63,6 +65,9 @@ func (j *job) run() {
 	if err != nil {
 		j.fail("worktree", err)
 		return
+	}
+	if m.Git != nil {
+		j.emit("job.worktree_ready", map[string]any{"created": created, "remoteBranchMissing": j.remoteBranchMissing})
 	}
 	if created && m.SetupScript != "" {
 		if err := j.runSetup(worktree); err != nil {

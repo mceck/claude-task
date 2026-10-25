@@ -12,9 +12,7 @@ export const RUNNER_ATTACHMENTS_PATH = '/api/v1/runner/attachments';
 export const MCP_PATH = '/api/v1/mcp';
 
 /** A stream-json user message content block, as written to `claude`'s stdin. */
-export type InputBlock =
-  | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+export type InputBlock = { type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
 
 export interface AttachmentToFetch {
   /** Absolute URL; fetch with the runner token as bearer. */
@@ -77,6 +75,7 @@ export interface JobStartMessage {
 }
 
 export type BackendToRunner =
+  | { type: 'git.token'; requestId: string; jobId: string; token?: string; expiresAt?: string; error?: string }
   | JobStartMessage
   /** Write a user message to stdin (attachments are fetched first). */
   | { type: 'job.input'; jobId: string; message: InputBlock[]; attachmentsToFetch: AttachmentToFetch[] }
@@ -100,6 +99,7 @@ export type BackendToRunner =
  * are resent after a reconnect.
  */
 export type RunnerJobMessage =
+  | { type: 'job.worktree_ready'; jobId: string; seq: number; created: boolean; remoteBranchMissing: boolean }
   | { type: 'job.accepted'; jobId: string; seq: number }
   /** Worktree preparation and Setup Script output. */
   | { type: 'job.setup_output'; jobId: string; seq: number; chunk: string }
@@ -112,6 +112,7 @@ export type RunnerJobMessage =
   | { type: 'job.failed'; jobId: string; seq: number; stage: JobFailureStage; message: string };
 
 export type RunnerToBackend =
+  | { type: 'git.token_request'; requestId: string; jobId: string; repository: string }
   | {
       type: 'hello';
       protocolVersion: number;

@@ -177,6 +177,7 @@ export function systemPrompt(p: PromptInput): string {
     platform.push(
       '',
       'Git:',
+      '- `open_pull_request`: open or update a pull request from your task branch after committing and pushing it.',
       `- Never push to branches other than \`${p.branch}\`.`,
       '- Before moving the task to a review status, commit, push the task branch and open or update the pull request with `open_pull_request`.',
     );

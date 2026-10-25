@@ -87,6 +87,7 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
     case 'labels.changed':
       return updateBundles(qc, event.projectId, (b) => ({ ...b, labels: event.labels }));
     case 'project.updated':
+      void qc.invalidateQueries({ queryKey: ['repository-settings', event.project.id] });
       updateBundles(qc, event.project.id, (b) => ({ ...b, project: event.project }));
       void qc.invalidateQueries({ queryKey: ['projects'] });
       return;

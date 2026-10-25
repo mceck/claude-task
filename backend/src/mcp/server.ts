@@ -1,3 +1,5 @@
+import { openPullRequest } from '../git/service';
+import { GitProviderError } from '../git/provider';
 // Task Tools: the MCP server (Streamable HTTP, stateless) an Agent's `claude` reaches with its
 // Job token. Every mutation is a Revision attributed to the Agent.
 import { CATEGORIES, PRIORITIES, taskKey } from '@claude-task/shared';
@@ -58,7 +60,7 @@ async function run(fn: () => Promise<unknown>): Promise<ToolResult> {
   try {
     return ok(await fn());
   } catch (err) {
-    const message = err instanceof HttpError ? err.message : 'Internal error';
+    const message = err instanceof HttpError || err instanceof GitProviderError ? err.message : 'Internal error';
     return { content: [{ type: 'text', text: message }], isError: true };
   }
 }
@@ -127,6 +129,10 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
     (args) => run(() => createProjectTask(ctx, scope, args)),
   );
 
+  server.registerTool('open_pull_request', {
+    description: 'Open or update a pull request from your task branch. Commit and push the branch first. Never changes the task status.',
+    inputSchema: { title: z.string().trim().min(1).max(500), body: z.string().max(100000), draft: z.boolean().optional() },
+  }, (args) => run(() => openPullRequest(ctx, scope, args)));
   return server;
 }
 
@@ -189,6 +195,8 @@ async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined
       assignees: task.assigneeIds.map((id) => assignees({ type: 'user', id }).displayName),
       createdBy: task.createdBy.displayName,
       yours: row.id === scope.taskId,
+      branch: task.branchName,
+      pullRequest: task.pullRequest,
     },
     statuses: statusRows.map((s) => ({ name: s.name, category: s.category })),
     labels: labelRows.map((l) => l.name),
