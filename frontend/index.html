@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" class="dark" style="color-scheme: dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Claude Task</title>
+    <script>
+      // Apply the stored theme before first paint (next-themes takes over after mount).
+      try {
+        var t = localStorage.getItem('theme') || 'dark';
+        if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.classList.toggle('dark', t === 'dark');
+        document.documentElement.style.colorScheme = t;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

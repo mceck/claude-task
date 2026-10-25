@@ -1,0 +1,90 @@
+import type { Label, Priority, ProjectBundle, Role, Status, Task, User } from '@claude-task/shared';
+import { expect } from 'vitest';
+import type { ApiClient } from './client';
+import type { TestApp } from './app';
+
+let seq = 0;
+const unique = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
+
+/**
+ * Creates a user through the admin API, logs them in and clears the forced
+ * password change, returning a ready-to-use client.
+ */
+export async function createUser(
+  app: TestApp,
+  admin: ApiClient,
+  opts: { role?: Role; displayName?: string; email?: string; password?: string } = {},
+): Promise<{ user: User; client: ApiClient; password: string }> {
+  const email = opts.email ?? `user-${unique()}@example.com`;
+  const created = await admin.post('/users', {
+    email,
+    displayName: opts.displayName ?? `User ${seq}`,
+    role: opts.role ?? 'member',
+  });
+  expect(created.status).toBe(201);
+  const client = app.client();
+  await client.login(email, created.body.temporaryPassword);
+  const password = opts.password ?? 'a-real-password';
+  const changed = await client.post('/auth/password', {
+    currentPassword: created.body.temporaryPassword,
+    newPassword: password,
+  });
+  expect(changed.status).toBe(200);
+  return { user: changed.body.user, client, password };
+}
+
+let keySeq = 0;
+/** Unique 2–6 letter keys. */
+export function projectKey(): string {
+  let n = keySeq++;
+  let key = '';
+  do {
+    key = String.fromCharCode(65 + (n % 26)) + key;
+    n = Math.floor(n / 26);
+  } while (n > 0);
+  return `P${key.padStart(2, 'A')}`;
+}
+
+export async function createProject(
+  client: ApiClient,
+  body: { key?: string; name?: string; description?: string } = {},
+): Promise<ProjectBundle> {
+  const res = await client.post('/projects', { key: projectKey(), name: 'Project', ...body });
+  expect(res.status).toBe(201);
+  return res.body;
+}
+
+export function statusByName(bundle: { statuses: Status[] }, name: string): Status {
+  const s = bundle.statuses.find((x) => x.name === name);
+  if (!s) throw new Error(`no status ${name}`);
+  return s;
+}
+
+export async function createTask(
+  client: ApiClient,
+  projectId: string,
+  body: {
+    title?: string;
+    statusId?: string;
+    description?: string;
+    priority?: Priority;
+    labelIds?: string[];
+    assigneeIds?: string[];
+  } = {},
+): Promise<Task> {
+  const res = await client.post(`/projects/${projectId}/tasks`, { title: 'A task', ...body });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return res.body.task;
+}
+
+export async function createLabel(client: ApiClient, projectId: string, name: string, color = '#ff0000'): Promise<Label> {
+  const res = await client.post(`/projects/${projectId}/labels`, { name, color });
+  expect(res.status).toBe(201);
+  return res.body.label;
+}
+
+/** Board order of task titles in a status. */
+export async function columnTitles(client: ApiClient, projectId: string, statusId: string): Promise<string[]> {
+  const res = await client.get(`/projects/${projectId}/tasks?includeClosed=true`);
+  return (res.body.tasks as Task[]).filter((t) => t.statusId === statusId).map((t) => t.title);
+}

@@ -1,0 +1,24 @@
+# Local production-like stack: Postgres plus the backend image.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: claude_task
+      POSTGRES_PASSWORD: claude_task
+      POSTGRES_DB: claude_task
+    volumes:
+      - db:/var/lib/postgresql/data
+  app:
+    build: .
+    depends_on: [db]
+    ports: ['3000:3000']
+    environment:
+      DATABASE_URL: postgres://claude_task:claude_task@db:5432/claude_task
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - data:/data
+volumes:
+  db:
+  data:

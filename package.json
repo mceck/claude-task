@@ -1,0 +1,16 @@
+{
+  "name": "claude-task",
+  "private": true,
+  "packageManager": "pnpm@10.5.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @claude-task/backend test",
+    "test:e2e": "pnpm --filter @claude-task/frontend test:e2e",
+    "build": "pnpm --filter @claude-task/frontend build && pnpm --filter @claude-task/backend build",
+    "dev:backend": "pnpm --filter @claude-task/backend dev",
+    "dev:frontend": "pnpm --filter @claude-task/frontend dev"
+  }
+}

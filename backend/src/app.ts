@@ -1,0 +1,82 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import cookie from '@fastify/cookie';
+import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
+import websocket from '@fastify/websocket';
+import { API_PREFIX } from '@claude-task/shared';
+import Fastify from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
+import { installGuard } from './auth/guard';
+import { authRoutes } from './auth/routes';
+import type { AppContext } from './context';
+import { fromDatabaseError, HttpError } from './errors';
+import { commentRoutes } from './modules/comments/routes';
+import { labelRoutes } from './modules/labels/routes';
+import { projectRoutes } from './modules/projects/routes';
+import { statusRoutes } from './modules/statuses/routes';
+import { taskRoutes } from './modules/tasks/routes';
+import { userRoutes } from './modules/users/routes';
+import { realtimeRoutes } from './realtime/routes';
+
+export async function buildApp(
+  ctx: AppContext,
+  opts: { logger?: boolean | FastifyBaseLogger | { level: string } } = {},
+): Promise<FastifyInstance> {
+  const app = Fastify({
+    logger: opts.logger ?? { level: ctx.config.logLevel },
+    trustProxy: ctx.config.trustProxy,
+    bodyLimit: 1024 * 1024,
+  });
+
+  await app.register(cookie);
+  await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
+  await app.register(multipart, { limits: { fieldSize: 1024 * 1024, fields: 10 } });
+
+  app.setErrorHandler((err, request, reply) => {
+    const known = err instanceof HttpError ? err : fromDatabaseError(err);
+    if (known) {
+      return reply
+        .status(known.statusCode)
+        .send({ error: { code: known.code, message: known.message, details: known.details }, ...known.extra });
+    }
+    const status = (err as { statusCode?: number }).statusCode;
+    if (status && status >= 400 && status < 500) {
+      const e = err as { code?: string; message?: string };
+      return reply.status(status).send({ error: { code: e.code ?? 'bad_request', message: e.message ?? 'Bad request' } });
+    }
+    request.log.error(err);
+    return reply.status(500).send({ error: { code: 'internal', message: 'Internal server error' } });
+  });
+
+  await app.register(
+    async (api) => {
+      installGuard(api, ctx);
+      api.setNotFoundHandler((_request, reply) =>
+        reply.status(404).send({ error: { code: 'not_found', message: 'No such endpoint' } }),
+      );
+      authRoutes(api, ctx);
+      userRoutes(api, ctx);
+      projectRoutes(api, ctx);
+      statusRoutes(api, ctx);
+      labelRoutes(api, ctx);
+      taskRoutes(api, ctx);
+      commentRoutes(api, ctx);
+      realtimeRoutes(api, ctx);
+    },
+    { prefix: API_PREFIX },
+  );
+
+  const staticDir = ctx.config.staticDir ? path.resolve(ctx.config.staticDir) : null;
+  if (staticDir && existsSync(path.join(staticDir, 'index.html'))) {
+    await app.register(fastifyStatic, { root: staticDir, wildcard: false });
+    // Client-side routes all load the SPA shell.
+    app.setNotFoundHandler((request, reply) => {
+      if (request.method !== 'GET') return reply.status(404).send({ error: { code: 'not_found', message: 'Not found' } });
+      return reply.sendFile('index.html');
+    });
+  }
+
+  app.addHook('onClose', async () => ctx.hub.closeAll());
+  return app;
+}
