@@ -6,6 +6,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { keys } from '../api/queries';
 import { applyEvent, refreshTopic } from './cache';
+import { applyLiveEvent, clearLiveTurns } from './live';
 
 const LOGIN_ENDED = 4001;
 
@@ -24,6 +25,7 @@ class Realtime {
   }
 
   stop(): void {
+    clearLiveTurns();
     this.qc = null;
     clearTimeout(this.timer);
     this.socket?.close();
@@ -62,13 +64,17 @@ class Realtime {
     socket.onmessage = (e) => {
       const msg = JSON.parse(e.data as string) as ServerMessage;
       if (!this.qc) return;
-      if (msg.type === 'event') applyEvent(this.qc, msg.event);
+      if (msg.type === 'event') {
+        applyEvent(this.qc, msg.event);
+        applyLiveEvent(msg.event);
+      }
       // Events start flowing only now: refetch what may have changed between the query and the subscription.
       else if (msg.type === 'subscribed') for (const topic of msg.topics) refreshTopic(this.qc, topic);
     };
     socket.onclose = (e) => {
       if (this.socket !== socket || !this.qc) return;
       this.socket = null;
+      clearLiveTurns();
       // Logged out elsewhere, deactivated, or (when the handshake itself is refused) expired:
       // re-check the Login, so the app goes to /login instead of reconnecting forever.
       void this.qc.invalidateQueries({ queryKey: keys.me });

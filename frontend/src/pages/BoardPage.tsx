@@ -1,4 +1,4 @@
-import { emptyBoardFilter, isFilterActive, matchesBoardFilter, PRIORITIES, projectTopic } from '@claude-task/shared';
+import { AGENTS_TOPIC, emptyBoardFilter, isFilterActive, matchesBoardFilter, PRIORITIES, projectTopic } from '@claude-task/shared';
 import type { BoardFilter, Label, Priority, Status, Task, TaskCard, User } from '@claude-task/shared';
 import {
   closestCenter,
@@ -29,7 +29,8 @@ import { Label as FieldLabel } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
-import { keys, useBoardTasks, useProject, useUsers } from '../api/queries';
+import { keys, useAgents, useBoardTasks, useProject, useUsers } from '../api/queries';
+import { AgentAvatar } from '../components/agents';
 import { LabelChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, UserAvatar } from '../components/common';
 import { MultiPick } from '../components/MultiPick';
 import { TaskDetail } from '../components/TaskDetail';
@@ -50,6 +51,7 @@ export function BoardPage() {
   const users = useUsers();
   const [filter, setFilter] = useState<BoardFilter>(emptyBoardFilter);
   useTopic(project ? projectTopic(project.id) : null);
+  useTopic(AGENTS_TOPIC);
 
   const setParam = (name: string, value: string | null) =>
     setParams(
@@ -362,6 +364,8 @@ function SortableCard(props: CardProps) {
 }
 
 function Card({ card, labels, users, onOpen, dragging, selected }: CardProps) {
+  const agents = useAgents();
+  const agent = agents.data?.find((a) => a.id === card.agentId);
   const cardLabels = card.labelIds.map((id) => labels.find((l) => l.id === id)).filter((l): l is Label => !!l);
   const assignees = card.assigneeIds.map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u);
   return (
@@ -377,6 +381,10 @@ function Card({ card, labels, users, onOpen, dragging, selected }: CardProps) {
       <div className="mb-1.5 flex items-center gap-1.5">
         <PriorityIcon priority={card.priority} />
         <span className="font-mono text-[11px] text-muted-foreground">{card.key}</span>
+        {agent && <span aria-label={`Agent ${agent.name}: ${card.session?.queuePosition ? `queued #${card.session.queuePosition}` : card.session?.state ?? 'assigned'}`} className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
+          <AgentAvatar agent={agent} size="xs" state={card.session?.state} />
+          {card.session?.queuePosition ? `#${card.session.queuePosition}` : null}
+        </span>}
         {assignees.length > 0 && (
           <div className="ml-auto flex -space-x-1.5">
             {assignees.slice(0, 3).map((u) => (

@@ -31,9 +31,11 @@ export function realtimeRoutes(app: FastifyInstance, ctx: AppContext): void {
       socket.on('close', () => clearInterval(ping));
 
       socket.on('message', (raw) => {
+        const text = raw.toString();
+        if (Buffer.byteLength(text) > 64 * 1024) return socket.close(1009, 'message too large');
         let msg: ClientMessage;
         try {
-          msg = JSON.parse(raw.toString()) as ClientMessage;
+          msg = JSON.parse(text) as ClientMessage;
         } catch {
           return socket.send(JSON.stringify({ type: 'error', message: 'invalid JSON' }));
         }

@@ -9,3 +9,18 @@ A comment on a task whose job is running gets written to the `claude` process's 
 ## Consequences
 
 - If mid-turn injection doesn't work, the fallback is to hold comments until the turn's `result` and then write them to stdin straight away, so they start the next turn in the same process. Nothing else in the design changes.
+
+## Verification attempt — 2026-10-25
+
+Retried locally with Claude Code 2.1.310, a fresh `--session-id`, stream-json
+input/output, `--verbose --include-partial-messages`, and a minimal reply request.
+The organization still refuses model calls because its monthly spend limit was
+reached. The CLI emitted a synthetic assistant refusal and a `result` with subtype
+`success`, `is_error: true`, cost $0, then exited with code 1 after stdin closed.
+
+No successful model turn ran, so this does not verify mid-turn input, interrupt,
+successful stdin-close draining, session resume or thinking. This ADR remains
+**proposed**. The Go runner's black-box tests cover those protocol paths against a
+fake CLI; the production Docker smoke test confirms the real Base Image builds and
+the real non-root runner connects. Neither substitutes for the real conversation
+acceptance. See the remaining checks in [running and verification](../agents-runtime.md).

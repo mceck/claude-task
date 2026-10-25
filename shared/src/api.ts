@@ -1,5 +1,6 @@
 // Request payloads, validated server-side and typed client-side.
 import { z } from 'zod';
+import { CREDENTIAL_KINDS, EFFORT_LEVELS, PERMISSION_MODES } from './agents';
 import { CATEGORIES, PRIORITIES, ROLES } from './domain';
 import type { Label, Project, Status, Task, User } from './domain';
 
@@ -132,6 +133,8 @@ export const updateTaskBody = z.strictObject({
   priority: z.enum(PRIORITIES).optional(),
   labelIds: z.array(id).max(50).optional(),
   assigneeIds: z.array(id).max(50).optional(),
+  /** Assign an Agent (at most one), or null to unassign. */
+  agentId: id.nullable().optional(),
 });
 export type UpdateTaskBody = z.infer<typeof updateTaskBody>;
 
@@ -184,6 +187,104 @@ export const timelineQuery = z.object({
   before: z.string().max(500).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
+
+// Credentials (admin)
+
+const secret = z.string().trim().min(8, 'looks too short').max(10_000);
+
+export const createCredentialBody = z.strictObject({
+  name,
+  kind: z.enum(CREDENTIAL_KINDS),
+  secret,
+});
+export type CreateCredentialBody = z.infer<typeof createCredentialBody>;
+
+/** Rotating the secret keeps the Credential (and every Agent using it). */
+export const updateCredentialBody = z.strictObject({
+  name: name.optional(),
+  secret: secret.optional(),
+});
+export type UpdateCredentialBody = z.infer<typeof updateCredentialBody>;
+
+// Agents (admin, except reads and queue management)
+
+const agentFields = {
+  name,
+  avatarEmoji: z.string().trim().min(1).max(16),
+  avatarColor: color,
+  description: z.string().max(2000),
+  dockerfile: z.string().min(1).max(100_000),
+  credentialId: id,
+  model: z.string().trim().min(1).max(100).nullable(),
+  effort: z.enum(EFFORT_LEVELS).nullable(),
+  permissionMode: z.enum(PERMISSION_MODES),
+  systemPrompt: z.string().max(50_000),
+  /** CPUs, e.g. 2 or 0.5. */
+  cpuLimit: z.number().positive().max(256).nullable(),
+  memoryMb: z.int().min(256).max(1_048_576).nullable(),
+  enabled: z.boolean(),
+};
+
+export const createAgentBody = z.strictObject({
+  ...agentFields,
+  avatarEmoji: agentFields.avatarEmoji.default('🤖'),
+  avatarColor: agentFields.avatarColor.default('#6366f1'),
+  description: agentFields.description.default(''),
+  model: agentFields.model.default(null),
+  effort: agentFields.effort.default(null),
+  permissionMode: agentFields.permissionMode.default('bypassPermissions'),
+  systemPrompt: agentFields.systemPrompt.default(''),
+  cpuLimit: agentFields.cpuLimit.default(null),
+  memoryMb: agentFields.memoryMb.default(null),
+  enabled: agentFields.enabled.default(true),
+});
+export type CreateAgentBody = z.input<typeof createAgentBody>;
+
+export const updateAgentBody = z.strictObject({
+  name: agentFields.name.optional(),
+  avatarEmoji: agentFields.avatarEmoji.optional(),
+  avatarColor: agentFields.avatarColor.optional(),
+  description: agentFields.description.optional(),
+  dockerfile: agentFields.dockerfile.optional(),
+  credentialId: agentFields.credentialId.optional(),
+  model: agentFields.model.optional(),
+  effort: agentFields.effort.optional(),
+  permissionMode: agentFields.permissionMode.optional(),
+  systemPrompt: agentFields.systemPrompt.optional(),
+  cpuLimit: agentFields.cpuLimit.optional(),
+  memoryMb: agentFields.memoryMb.optional(),
+  enabled: agentFields.enabled.optional(),
+});
+export type UpdateAgentBody = z.infer<typeof updateAgentBody>;
+
+export const duplicateAgentBody = z.strictObject({ name: name.optional() });
+
+/** Recreate the container now even if the Agent is working (kills the running Job). */
+export const recreateAgentBody = z.strictObject({ force: z.boolean().default(false) });
+
+/** Same convention as moving Tasks: below `afterEntryId` or above `beforeEntryId`. */
+export const moveQueueEntryBody = z.strictObject({
+  afterEntryId: id.nullable().optional(),
+  beforeEntryId: id.nullable().optional(),
+});
+export type MoveQueueEntryBody = z.infer<typeof moveQueueEntryBody>;
+
+// Project settings for Agents
+
+export const updateAgentSettingsBody = z.strictObject({
+  setupScript: z.string().max(100_000).optional(),
+  agentInstructions: z.string().max(100_000).optional(),
+});
+export type UpdateAgentSettingsBody = z.infer<typeof updateAgentSettingsBody>;
+
+export const ENV_VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+
+export const putEnvVarBody = z.strictObject({
+  name: z.string().regex(ENV_VAR_NAME, 'must be a valid environment variable name'),
+  value: z.string().max(100_000),
+  secret: z.boolean().default(false),
+});
+export type PutEnvVarBody = z.input<typeof putEnvVarBody>;
 
 // Errors
 

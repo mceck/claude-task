@@ -4,9 +4,15 @@ import { buildApp } from './app';
 import { purgeExpiredLogins } from './auth/logins';
 import { FsBlobStore } from './blobstore';
 import type { BlobStore } from './blobstore';
+import { DockerRuntime } from './agents/docker-runtime';
+import { FakeRuntime } from './agents/fake-runtime';
+import type { AgentRuntime } from './agents/runtime';
+import { Scheduler } from './agents/scheduler';
+import { RunnerHub } from './runner/hub';
 import type { Config } from './config';
 import type { AppContext } from './context';
 import { createDb, runMigrations } from './db/client';
+import { resetInterruptedBuilds } from './modules/agents/builds';
 import { bootstrapAdmin } from './modules/users/service';
 import { RealtimeHub } from './realtime/hub';
 
@@ -19,18 +25,26 @@ export interface Server {
 /** Migrates the database, bootstraps the first admin and builds the app (not listening yet). */
 export async function createServer(
   config: Config,
-  overrides: { blobs?: BlobStore; logger?: boolean } = {},
+  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean } = {},
 ): Promise<Server> {
   const { db, pool } = createDb(config.databaseUrl);
   try {
     await runMigrations(db);
-    const ctx: AppContext = {
+    const ctx = {
       config,
       db,
       hub: new RealtimeHub(),
       blobs: overrides.blobs ?? new FsBlobStore(path.join(config.dataDir, 'blobs')),
-    };
+      runtime:
+        overrides.runtime ??
+        (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents)),
+      runners: new RunnerHub(() => ctx.log),
+    } as AppContext;
+    ctx.scheduler = new Scheduler(ctx);
     const app = await buildApp(ctx, { logger: overrides.logger });
+    ctx.log = app.log;
+    await resetInterruptedBuilds(db);
+    if (overrides.startScheduler !== false) ctx.scheduler.start();
     if (await bootstrapAdmin(db, config.bootstrapAdmin)) {
       app.log.info({ email: config.bootstrapAdmin!.email }, 'created the first admin from ADMIN_EMAIL');
     }
@@ -41,7 +55,9 @@ export async function createServer(
       ctx,
       async close() {
         clearInterval(purge);
+        ctx.scheduler.stop();
         await app.close();
+        await ctx.scheduler.settle();
         await pool.end();
       },
     };

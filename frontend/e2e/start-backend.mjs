@@ -20,7 +20,7 @@ await admin.end();
 const databaseUrl = new URL(adminUrl);
 databaseUrl.pathname = `/${dbName}`;
 
-const child = spawn(path.join(backendDir, 'node_modules/.bin/tsx'), ['src/main.ts'], {
+const child = spawn(path.join(backendDir, 'node_modules/.bin/tsx'), ['test/e2e/server.ts'], {
   cwd: backendDir,
   stdio: 'inherit',
   env: {
@@ -34,6 +34,8 @@ const child = spawn(path.join(backendDir, 'node_modules/.bin/tsx'), ['src/main.t
     ADMIN_NAME: 'Ada Admin',
     COOKIE_SECURE: 'false',
     LOG_LEVEL: 'warn',
+    SECRETS_MASTER_KEY: Buffer.alloc(32, 42).toString('base64'),
+    AGENT_RUNTIME: 'fake',
   },
 });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));

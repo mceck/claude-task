@@ -1,8 +1,14 @@
 ---
-status: to-do
+status: in-progress
 ---
 
 # Spec 02 — Agents & Runtime: containers, runner, queue, sessions, agent timeline
+
+Implementation: backend, runner and frontend are implemented. See
+[running and verification](../agents-runtime.md). Real conversation acceptance and
+ADR 0005 remain pending: the 2026-10-25 retry with Claude Code 2.1.310 was refused by
+the organization's monthly spend limit. The production Docker/runner smoke check
+(through agent `idle`, without a model request) passed.
 
 ## ADRs
 

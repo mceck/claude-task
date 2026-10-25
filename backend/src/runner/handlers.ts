@@ -1,0 +1,311 @@
+// The backend side of the Runner Protocol: every message is processed exactly once and in
+// order (per-Job seq), inside a transaction that locks task → agent → session → job.
+import type { JobFailureStage, RunnerJobMessage, RunnerToBackend } from '@claude-task/shared';
+import { taskTopic } from '@claude-task/shared';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import type { AfterCommit, AppContext } from '../context';
+import { transactWithRetry } from '../context';
+import type { Executor } from '../db/client';
+import { agents, comments, jobs, sessionEvents, sessions, tasks } from '../db/schema';
+import { ACTIVE_JOB_STATES, getAgentRow } from '../modules/agents/service';
+import type { JobRow } from '../modules/agents/service';
+import { applyProjection } from '../projection/apply';
+import { initialProjection, project } from '../projection/projector';
+import type { ProjectionState } from '../projection/projector';
+import { attachComments, enqueue } from '../sessions/queue';
+
+/** Setup output and stderr are kept up to this size (the tail). */
+const OUTPUT_CAP = 64 * 1024;
+/** `last_activity_at` is refreshed at most this often while streaming. */
+const ACTIVITY_TOUCH_MS = 10_000;
+
+const appendCapped = (column: typeof jobs.setupOutput | typeof jobs.stderr, chunk: string) =>
+  sql`right(${column} || ${chunk}, ${OUTPUT_CAP})`;
+
+export async function handleRunnerMessage(ctx: AppContext, agentId: string, msg: RunnerToBackend): Promise<void> {
+  if (msg.type === 'hello') return handleHello(ctx, agentId, msg);
+  if (msg.type === 'pong') return;
+  if (typeof msg.jobId === 'string' && typeof msg.seq === 'number') return handleJobMessage(ctx, agentId, msg);
+  ctx.log.warn({ agentId, type: (msg as { type?: string }).type }, 'unknown runner message');
+}
+
+async function handleHello(ctx: AppContext, agentId: string, msg: Extract<RunnerToBackend, { type: 'hello' }>): Promise<void> {
+  const { keep, pendingRemovals } = await transactWithRetry(ctx, async (tx, after) => {
+    await getAgentRow(tx, agentId, { lock: true });
+    await tx
+      .update(agents)
+      .set({
+        runnerConnectedAt: new Date(),
+        runnerDisconnectedAt: null,
+        runnerVersion: String(msg.runnerVersion ?? ''),
+        claudeVersion: String(msg.claudeVersion ?? ''),
+      })
+      .where(eq(agents.id, agentId));
+    const active = await tx
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])))
+      .for('update');
+    let keep: JobRow | null = null;
+    for (const job of active) {
+      if (job.id === msg.activeJobId) keep = job;
+      // The Runner restarted without it: the process is gone (container restart or crash).
+      else await recoverJob(tx, after, job);
+    }
+    const pendingRemovals = await tx
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.agentId, agentId), eq(sessions.worktreeRemovalPending, true)));
+    after.effect((c) => c.scheduler.publishAgent(agentId));
+    return { keep, pendingRemovals };
+  });
+
+  if (msg.activeJobId && keep) {
+    ctx.runners.send(agentId, { type: 'ack', jobId: keep.id, seq: keep.lastSeq });
+  } else if (msg.activeJobId) {
+    // A Job we've already settled: drop its backlog and stop whatever is left of it.
+    ctx.runners.send(agentId, { type: 'ack', jobId: msg.activeJobId, seq: Number.MAX_SAFE_INTEGER });
+    ctx.runners.send(agentId, { type: 'job.cancel', jobId: msg.activeJobId });
+  }
+  for (const s of pendingRemovals) ctx.scheduler.removeWorktree(s.id);
+  ctx.scheduler.kick(agentId);
+}
+
+export async function handleRunnerClosed(ctx: AppContext, agentId: string): Promise<void> {
+  await ctx.db.update(agents).set({ runnerDisconnectedAt: new Date() }).where(eq(agents.id, agentId));
+  await ctx.scheduler.publishAgent(agentId);
+}
+
+async function handleJobMessage(ctx: AppContext, agentId: string, msg: RunnerJobMessage): Promise<void> {
+  const [peek] = await ctx.db.select({ taskId: jobs.taskId, agentId: jobs.agentId }).from(jobs).where(eq(jobs.id, msg.jobId));
+  if (!peek || peek.agentId !== agentId) {
+    ctx.runners.send(agentId, { type: 'ack', jobId: msg.jobId, seq: msg.seq });
+    return;
+  }
+  const settled = await transactWithRetry(ctx, async (tx, after) => {
+    await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, peek.taskId)).for('key share');
+    const agent = await getAgentRow(tx, agentId, { lock: true });
+    const [job] = await tx.select().from(jobs).where(eq(jobs.id, msg.jobId)).for('update');
+    if (!job) return true;
+    const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
+    if (msg.seq <= job.lastSeq || !(ACTIVE_JOB_STATES as readonly string[]).includes(job.state)) return true;
+    await processJobMessage(tx, after, job, session!, agent, msg);
+    await tx.update(jobs).set({ lastSeq: msg.seq }).where(eq(jobs.id, job.id));
+    return true;
+  });
+  if (settled) ctx.runners.send(agentId, { type: 'ack', jobId: msg.jobId, seq: msg.seq });
+}
+
+async function processJobMessage(
+  tx: Executor,
+  after: AfterCommit,
+  job: JobRow,
+  session: typeof sessions.$inferSelect,
+  agent: typeof agents.$inferSelect,
+  msg: RunnerJobMessage,
+): Promise<void> {
+  switch (msg.type) {
+    case 'job.accepted':
+      if (job.state === 'dispatched') {
+        await tx.update(jobs).set({ state: 'running', startedAt: new Date() }).where(eq(jobs.id, job.id));
+        after.effect((ctx) => ctx.scheduler.publishJob(job.id));
+      }
+      return;
+
+    case 'job.setup_output':
+      await tx.update(jobs).set({ setupOutput: appendCapped(jobs.setupOutput, String(msg.chunk)) }).where(eq(jobs.id, job.id));
+      after.emit(taskTopic(job.taskId), { type: 'job.setup_output', taskId: job.taskId, jobId: job.id, chunk: String(msg.chunk) });
+      return;
+
+    case 'job.stderr':
+      await tx.update(jobs).set({ stderr: appendCapped(jobs.stderr, String(msg.chunk)) }).where(eq(jobs.id, job.id));
+      return;
+
+    case 'job.event': {
+      let parsed: unknown = null;
+      try {
+        parsed = JSON.parse(msg.line);
+      } catch {
+        parsed = { type: 'unparsed', line: String(msg.line).slice(0, 10_000) };
+      }
+      const [stored] = await tx
+        .insert(sessionEvents)
+        .values({ jobId: job.id, seq: msg.seq, payload: parsed })
+        .onConflictDoNothing()
+        .returning({ receivedAt: sessionEvents.receivedAt });
+      if (!stored) return;
+      if (!session.started) await tx.update(sessions).set({ started: true }).where(eq(sessions.id, session.id));
+      const [{ name: credentialName } = { name: 'unknown' }] = await tx.execute<{ name: string }>(
+        sql`select name from credentials where id = ${agent.credentialId}`,
+      ).then((r) => r.rows);
+      const prev = (job.projection as ProjectionState | null) ?? initialProjection();
+      const result = project(prev, parsed, { jobId: job.id, credentialName, receivedAt: stored.receivedAt.toISOString() });
+      await applyProjection(tx, after, job, agent.credentialId, result.mutations, result.broadcasts);
+      await tx.update(jobs).set({ projection: result.state as unknown as Record<string, unknown> }).where(eq(jobs.id, job.id));
+      if (!agent.lastActivityAt || Date.now() - agent.lastActivityAt.getTime() > ACTIVITY_TOUCH_MS) {
+        await tx.update(agents).set({ lastActivityAt: new Date() }).where(eq(agents.id, agent.id));
+      }
+      if (result.mutations.some((m) => m.op === 'turn')) after.effect((ctx) => ctx.scheduler.publishJob(job.id));
+      return;
+    }
+
+    case 'job.result':
+      // End of a Turn: let `claude` finish what's already on stdin, then exit. Later Comments queue.
+      if (job.state === 'running' || job.state === 'dispatched') {
+        await tx.update(jobs).set({ state: 'finishing' }).where(eq(jobs.id, job.id));
+        after.effect((ctx) => {
+          ctx.runners.send(job.agentId, { type: 'job.end', jobId: job.id });
+          ctx.scheduler.publishJob(job.id);
+        });
+      }
+      return;
+
+    case 'job.exited': {
+      const crashed = job.state !== 'finishing' && !job.cancelRequested && msg.exitCode !== 0;
+      const missing = /No conversation found/i.test(job.stderr);
+      // `claude` created the session before dying without output: resume it from now on.
+      const exists = !session.started && /Session ID .* is already in use/i.test(job.stderr);
+      await tx
+        .update(jobs)
+        .set({
+          state: crashed ? 'failed' : 'finished',
+          exitCode: msg.exitCode,
+          signal: msg.signal,
+          finishedAt: new Date(),
+          error: crashed ? `claude exited with ${msg.signal ? `signal ${msg.signal}` : `code ${msg.exitCode}`}` : null,
+        })
+        .where(eq(jobs.id, job.id));
+      if (session.state === 'running') await tx.update(sessions).set({ state: restingState(session) }).where(eq(sessions.id, session.id));
+      if (missing) {
+        // The transcript is gone (e.g. the Agent Volume was reset): the next Job starts over with the Task's history.
+        await tx.update(sessions).set({ started: false }).where(eq(sessions.id, session.id));
+        await systemComment(tx, after, job.taskId, "The agent's previous conversation for this task wasn't found, so its next run starts a new conversation with the task's history.");
+      } else if (exists) {
+        await tx.update(sessions).set({ started: true, state: session.state === 'running' ? 'idle' : session.state }).where(eq(sessions.id, session.id));
+        await systemComment(tx, after, job.taskId, "The agent's conversation already existed, so its next run resumes it. Post a comment (or press **Retry**) to continue.");
+        if (session.state === 'running') await requeue(tx, after, job, { ...session, started: true }, { held: true });
+      } else if (crashed) {
+        await systemComment(tx, after, job.taskId, `The agent's process stopped unexpectedly (${msg.signal ? `signal ${msg.signal}` : `exit code ${msg.exitCode}`}).${tail(job.stderr)}`);
+      }
+      after.effect((ctx) => {
+        ctx.scheduler.publishJob(job.id);
+        ctx.scheduler.publishTask(job.taskId);
+        ctx.scheduler.jobEnded(job.agentId);
+      });
+      return;
+    }
+
+    case 'job.failed':
+      if (job.cancelRequested) {
+        // Cancelled before `claude` started (the Task was closed): nothing to report.
+        await tx.update(jobs).set({ state: 'finished', finishedAt: new Date() }).where(eq(jobs.id, job.id));
+        after.effect((ctx) => {
+          ctx.scheduler.publishJob(job.id);
+          ctx.scheduler.jobEnded(job.agentId);
+        });
+        return;
+      }
+      await failJob(tx, after, job, session, msg.stage, String(msg.message));
+      return;
+  }
+}
+
+async function failJob(
+  tx: Executor,
+  after: AfterCommit,
+  job: JobRow,
+  session: typeof sessions.$inferSelect,
+  stage: JobFailureStage,
+  message: string,
+): Promise<void> {
+  await tx
+    .update(jobs)
+    .set({ state: 'failed', failureStage: stage, error: message, finishedAt: new Date() })
+    .where(eq(jobs.id, job.id));
+  const stillActive = session.state === 'running';
+  if (stillActive) await tx.update(sessions).set({ state: restingState(session) }).where(eq(sessions.id, session.id));
+  const what = { worktree: 'preparing the worktree', setup: 'running the setup script', spawn: 'starting Claude Code' }[stage] ?? stage;
+  await systemComment(tx, after, job.taskId, `The agent couldn't start: ${what} failed.\n\n> ${message.split('\n').join('\n> ')}${tail(job.setupOutput)}\n\nFix the problem, then press **Retry** (or post a comment).`);
+  // Its Messages go back to the front of the Queue, waiting for a Retry instead of looping.
+  if (stillActive) await requeue(tx, after, job, session, { held: true });
+  after.effect((ctx) => {
+    ctx.scheduler.publishJob(job.id);
+    ctx.scheduler.publishTask(job.taskId);
+    ctx.scheduler.jobEnded(job.agentId);
+  });
+}
+
+/**
+ * A Job whose process is gone without saying so (container restart, crash, Runner away too long):
+ * it's interrupted, and the Session resumes from the front of the Queue.
+ */
+export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow): Promise<void> {
+  await tx.update(jobs).set({ state: 'interrupted', finishedAt: new Date() }).where(eq(jobs.id, job.id));
+  const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
+  if (session?.state === 'running') {
+    await tx.update(sessions).set({ state: restingState(session) }).where(eq(sessions.id, session.id));
+    if (job.lastSeq > 0 && session.started && job.state !== 'finishing') {
+      await enqueue(tx, after, { agentId: job.agentId, taskId: job.taskId, sessionId: session.id, kind: 'resume_interrupted', front: true });
+      await systemComment(tx, after, job.taskId, "The agent's container restarted in the middle of a turn. Resuming where it left off.");
+    } else if (job.state !== 'finishing') {
+      // Nothing ran yet: the same work goes back to the front.
+      await requeue(tx, after, job, session, { held: false });
+    }
+  }
+  after.effect((ctx) => {
+    ctx.scheduler.publishJob(job.id);
+    ctx.scheduler.publishTask(job.taskId);
+  });
+}
+
+/** Puts a Job's Messages back in a Queue Entry at the front (they become `queued` again). */
+async function requeue(tx: Executor, after: AfterCommit, job: JobRow, session: typeof sessions.$inferSelect, opts: { held: boolean }) {
+  const entry = await enqueue(tx, after, {
+    agentId: job.agentId,
+    taskId: job.taskId,
+    sessionId: session.id,
+    kind: session.started ? job.kind : 'start',
+    front: true,
+    held: opts.held,
+  });
+  const delivered = await tx.select({ id: comments.id }).from(comments).where(eq(comments.deliveredInJobId, job.id));
+  await attachComments(tx, after, entry.id, delivered.map((c) => c.id));
+}
+
+/** Between Jobs a Session is `idle`, or still `pending` if `claude` never created it. */
+function restingState(session: typeof sessions.$inferSelect): 'idle' | 'pending' {
+  return session.started ? 'idle' : 'pending';
+}
+
+async function systemComment(tx: Executor, after: AfterCommit, taskId: string, body: string): Promise<void> {
+  const [row] = await tx
+    .insert(comments)
+    .values({ taskId, kind: 'system', authorType: 'system', authorId: null, body, createdAt: sql`clock_timestamp()` })
+    .returning({ id: comments.id });
+  after.effect((ctx) => ctx.scheduler.publishComments([row!.id], 'created'));
+}
+
+function tail(output: string, lines = 20): string {
+  const t = output.trimEnd().split('\n').slice(-lines).join('\n');
+  return t ? `\n\n\`\`\`\n${t.replace(/```/g, "'''")}\n\`\`\`` : '';
+}
+
+/** Jobs whose Runner has been away longer than the timeout are treated as interrupted. */
+export async function recoverAbandonedJobs(ctx: AppContext): Promise<void> {
+  const cutoff = new Date(Date.now() - ctx.config.agents.runnerReconnectTimeoutMs);
+  const stale = await ctx.db
+    .select({ job: jobs })
+    .from(jobs)
+    .innerJoin(agents, eq(agents.id, jobs.agentId))
+    .where(and(inArray(jobs.state, [...ACTIVE_JOB_STATES]), lt(agents.runnerDisconnectedAt, cutoff)));
+  for (const { job } of stale) {
+    if (ctx.runners.isConnected(job.agentId)) continue;
+    await transactWithRetry(ctx, async (tx, after) => {
+      await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, job.taskId)).for('key share');
+      await getAgentRow(tx, job.agentId, { lock: true });
+      const [current] = await tx.select().from(jobs).where(eq(jobs.id, job.id)).for('update');
+      if (current && (ACTIVE_JOB_STATES as readonly string[]).includes(current.state)) await recoverJob(tx, after, current);
+    });
+  }
+}
+

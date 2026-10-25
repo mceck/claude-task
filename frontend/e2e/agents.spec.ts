@@ -1,0 +1,275 @@
+import type { APIRequestContext, Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { Stream } from '../../backend/test/helpers/stream';
+import { createProject, createTask, login } from './helpers';
+
+const headers = { 'x-claude-task': '1' };
+
+async function seedAgent(request: APIRequestContext, name = 'Test agent') {
+  name = `${name} ${Date.now()}`;
+  const res = await request.post('/api/v1/credentials', {
+    headers,
+    data: { name: `Key ${Date.now()}`, kind: 'anthropic_api_key', secret: 'test-secret-1234' },
+  });
+  expect(res.status()).toBe(201);
+  const { credential } = await res.json();
+  const result = await request.post('/api/v1/agents', {
+    headers,
+    data: { name, credentialId: credential.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+  });
+  expect(result.status()).toBe(201);
+  const { agent } = await result.json();
+  await expect.poll(async () => (await (await request.get(`/api/v1/agents/${agent.id}`)).json()).agent.state).toBe('idle');
+  return agent as { id: string; name: string };
+}
+
+async function messages(request: APIRequestContext, agentId: string): Promise<Record<string, unknown>[]> {
+  return (await (await request.get(`/api/v1/__test/runners/${agentId}`)).json()).received;
+}
+
+async function jobStart(request: APIRequestContext, agentId: string, taskId: string) {
+  let start: Record<string, unknown> | undefined;
+  await expect
+    .poll(async () => {
+      const { jobs } = await (await request.get(`/api/v1/agents/${agentId}/jobs`)).json();
+      const job = jobs.find((j: { task: { id: string } }) => j.task.id === taskId);
+      start = (await messages(request, agentId)).find((m) => m.type === 'job.start' && m.jobId === job?.id);
+      return !!start;
+    })
+    .toBe(true);
+  return start! as { jobId: string; sessionId: string };
+}
+
+async function replay(request: APIRequestContext, agentId: string, jobId: string, events: Record<string, unknown>[], exit = false) {
+  expect((await request.post(`/api/v1/__test/runners/${agentId}`, { headers, data: { jobId, events, exit } })).ok()).toBe(true);
+}
+
+async function assign(page: Page, agentName: string) {
+  await page.getByRole('combobox', { name: 'Assign agent' }).click();
+  await page.getByRole('option', { name: agentName, exact: true }).click();
+}
+
+test('creates and rotates write-only credentials, configures an agent and reads build/container logs', async ({ page }) => {
+  await login(page.request);
+  await page.goto('/admin/credentials');
+  await page.getByRole('button', { name: 'New credential' }).click();
+  await page.getByLabel('Credential name').fill('Release credential');
+  await page.getByLabel('Secret', { exact: true }).fill('test-original-secret-9876');
+  await page.getByRole('button', { name: 'Save credential' }).click();
+  const credential = page.locator('section').filter({ hasText: 'Release credential' });
+  await expect(credential).toContainText('…9876');
+  await expect(page.locator('body')).not.toContainText('test-original-secret-9876');
+  await credential.getByRole('button', { name: 'Edit / rotate' }).click();
+  await expect(page.getByLabel('New secret')).toHaveValue('');
+  await page.getByLabel('New secret').fill('test-rotated-secret-4321');
+  await page.getByRole('button', { name: 'Save credential' }).click();
+  await expect(credential).toContainText('…4321');
+
+  await page.getByRole('link', { name: 'Agents', exact: true }).click();
+  await page.getByRole('button', { name: 'New agent' }).click();
+  await page.getByLabel('Agent name').fill('Release agent');
+  await page.getByLabel('Credential', { exact: true }).selectOption({ label: 'Release credential · …4321' });
+  await page.getByRole('button', { name: 'Create agent' }).click();
+  await expect(page.getByRole('heading', { name: 'Release agent' })).toBeVisible();
+  await expect(page.getByText('Runner: connected')).toBeVisible();
+  await page.getByRole('tab', { name: 'Builds', exact: true }).click();
+  await expect(page.getByLabel('Build output')).toContainText('Step 1/1');
+  await page.getByRole('tab', { name: 'Container logs' }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Container logs' })).toContainText('runner started');
+  await page.getByRole('tab', { name: 'Configuration' }).click();
+  await page.getByLabel('Model', { exact: true }).fill('claude-sonnet-5-5');
+  await page.getByLabel('Effort').selectOption('high');
+  await page.getByRole('button', { name: 'Save agent', exact: true }).click();
+  await expect(page.getByText('Agent saved', { exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('tab', { name: 'Configuration' }).click();
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('claude-sonnet-5-5');
+  await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Release agent (copy)' })).toBeVisible();
+  await page.goto('/admin/credentials');
+  await expect(credential.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
+  await expect(credential).toContainText('Release agent (copy)');
+});
+
+test('streams a turn, expands thinking and activities, delivers comments, stops and notifies the agent', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Fix the redirect');
+  const agent = await seedAgent(page.request, 'Runtime agent');
+  await page.goto(`/t/${task.key}`);
+  await assign(page, agent.name);
+  await expect(page.getByLabel('Session: running')).toBeVisible();
+  const job = await jobStart(page.request, agent.id, task.id);
+  const s = new Stream(job.sessionId);
+  await replay(page.request, agent.id, job.jobId, [s.delta('Checking the redirect now.')]);
+  await expect(page.getByLabel('Agent is writing')).toContainText('Checking the redirect now.');
+  await replay(page.request, agent.id, job.jobId, [
+    s.thinking('Inspect the failing case.'),
+    s.text('Checking the redirect now.'),
+    s.toolUse('tool-1', 'Bash', { command: 'npm test' }),
+    s.toolResult('tool-1', 'Tests passed'),
+  ]);
+  await expect(page.getByLabel('Agent is writing')).toHaveCount(0);
+  await page.getByLabel('Thinking', { exact: true }).getByRole('button').click();
+  await expect(page.getByText('Inspect the failing case.')).toBeVisible();
+  await page
+    .getByLabel('Activity', { exact: true })
+    .getByRole('button', { name: /1 action/ })
+    .click();
+  await page.getByRole('button', { name: /Ran.*npm test/ }).click();
+  await expect(page.getByText('Tests passed', { exact: true })).toBeVisible();
+
+  await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please check logout too.');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  await expect(page.getByLabel('Delivery: Delivered')).toBeVisible();
+  await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.input')).toBe(true);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.interrupt')).toBe(true);
+  await replay(page.request, agent.id, job.jobId, [s.text('Stopped after checking logout.'), s.result()]);
+  await expect(page.getByLabel('Turn summary')).toContainText('Turn finished');
+  await replay(page.request, agent.id, job.jobId, [], true);
+  await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Include the logout flow.');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Notify agent' })).toBeVisible();
+  await page.getByRole('button', { name: 'Notify agent' }).click();
+  await expect(page.getByRole('button', { name: 'Notify agent' })).toHaveCount(0);
+  await expect(page.getByLabel('System comment').filter({ hasText: 'notified the agent' })).toBeVisible();
+});
+
+test('shows card state and lets a member reorder the queue without managing agents', async ({ browser }) => {
+  const admin = await browser.newContext();
+  await login(admin.request);
+  const project = await createProject(admin.request);
+  const tasks = await Promise.all(['First', 'Second', 'Third'].map((title) => createTask(admin.request, project, title)));
+  const agent = await seedAgent(admin.request, 'Queue agent');
+  for (const task of [tasks[1]!, tasks[2]!, tasks[0]!]) {
+    const { task: current } = await (await admin.request.get(`/api/v1/tasks/${task.id}`)).json();
+    expect((await admin.request.patch(`/api/v1/tasks/${task.id}`, { headers, data: { version: current.version, agentId: agent.id } })).ok()).toBe(true);
+    if (task.id !== tasks[0]!.id) {
+      const job = await jobStart(admin.request, agent.id, task.id);
+      await replay(admin.request, agent.id, job.jobId, [new Stream(job.sessionId).result()], true);
+      await expect.poll(async () => (await (await admin.request.get(`/api/v1/tasks/${task.id}/session`)).json()).session.state).toBe('idle');
+    }
+  }
+  const running = await jobStart(admin.request, agent.id, tasks[0]!.id);
+  for (const task of tasks.slice(1)) {
+    expect((await admin.request.post(`/api/v1/tasks/${task.id}/comments`, { headers, data: { body: `Follow up on ${task.key}` } })).ok()).toBe(true);
+  }
+  const email = `member-${Date.now()}@example.com`;
+  await admin.request.post('/api/v1/users', { headers, data: { email, displayName: 'Member', temporaryPassword: 'temporary-password' } });
+  const member = await browser.newContext();
+  await login(member.request, email, 'temporary-password');
+  expect(
+    (await member.request.post('/api/v1/auth/password', { headers, data: { currentPassword: 'temporary-password', newPassword: 'member-password' } })).ok(),
+  ).toBe(true);
+  const page = await member.newPage();
+  await page.goto(`/p/${project.key}`);
+  await expect(page.getByRole('article', { name: tasks[1]!.key }).getByLabel(`Agent ${agent.name}: queued #1`)).toBeVisible();
+  await page.goto(`/agents/${agent.id}`);
+  await expect(page.getByRole('tab', { name: 'Configuration' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Restart', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: `Move ${tasks[2]!.key} up` }).click();
+  await expect(page.getByRole('list', { name: 'Agent queue' }).getByRole('listitem').first()).toContainText(tasks[2]!.key);
+  await page.getByRole('button', { name: `Remove ${tasks[2]!.key}`, exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'Agent queue' }).getByRole('listitem')).toHaveCount(1);
+  await page.goto(`/t/${tasks[2]!.key}`);
+  await expect(page.getByLabel('Delivery: Not delivered')).toBeVisible();
+  await page.goto(`/t/${tasks[1]!.key}`);
+  await expect(page.getByLabel('Delivery: Queued')).toBeVisible();
+  await replay(admin.request, agent.id, running.jobId, [new Stream(running.sessionId).result()], true);
+  await expect(page.getByLabel('Delivery: Delivered')).toBeVisible();
+  await page.goto('/admin/credentials');
+  await expect(page.getByText('Page not found')).toBeVisible();
+  await member.close();
+  await admin.close();
+});
+
+test('saves project setup, instructions and write-only environment secrets', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  await page.goto(`/p/${project.key}/settings`);
+  await page.getByRole('tab', { name: 'Agents', exact: true }).click();
+  await page.getByLabel('Worktree setup script').fill('npm ci');
+  await page.getByLabel('Agent instructions').fill('Always add regression tests.');
+  await page.getByRole('button', { name: 'Save agent settings' }).click();
+  await expect(page.getByText('Agent settings saved', { exact: true })).toBeVisible();
+  await page.getByLabel('Variable name').fill('DEPLOY_SECRET');
+  await page.getByLabel('Variable value').fill('private-value-6789');
+  await page.getByRole('checkbox', { name: 'Secret', exact: true }).check();
+  await page.getByRole('button', { name: 'Add variable', exact: true }).click();
+  await expect(page.getByText('Secret · …6789')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('private-value-6789');
+  await page.reload();
+  await page.getByRole('tab', { name: 'Agents', exact: true }).click();
+  await expect(page.getByLabel('Worktree setup script')).toHaveValue('npm ci');
+  await expect(page.getByLabel('Agent instructions')).toHaveValue('Always add regression tests.');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByLabel('Variable value')).toHaveValue('');
+});
+
+test('shows setup failures and retries the same session only on request', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Recover setup');
+  const agent = await seedAgent(page.request, 'Retry agent');
+  await page.goto(`/t/${task.key}`);
+  await assign(page, agent.name);
+  const start = await jobStart(page.request, agent.id, task.id);
+  expect(
+    (
+      await page.request.post(`/api/v1/__test/runners/${agent.id}`, { headers, data: { jobId: start.jobId, failure: 'npm ci failed: lockfile is missing' } })
+    ).ok(),
+  ).toBe(true);
+  await expect(page.getByLabel('System comment')).toContainText('lockfile is missing');
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect.poll(async () => (await messages(page.request, agent.id)).filter((m) => m.type === 'job.start').length).toBe(2);
+  const starts = (await messages(page.request, agent.id)).filter((m) => m.type === 'job.start');
+  expect(starts[1]!.sessionId).toBe(start.sessionId);
+  await expect(page.getByLabel('Session: running')).toBeVisible();
+});
+
+test('keeps the live session state when an older HTTP snapshot arrives late', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Live session state');
+  const agent = await seedAgent(page.request, 'Live state agent');
+  let release!: () => void;
+  let received!: () => void;
+  let completed!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    received = resolve;
+  });
+  const done = new Promise<void>((resolve) => {
+    completed = resolve;
+  });
+  await page.route(
+    `**/tasks/${task.id}/session`,
+    async (route) => {
+      const response = await route.fetch();
+      received();
+      await gate;
+      await route.fulfill({ response });
+      completed();
+    },
+    { times: 1 },
+  );
+  try {
+    await page.goto(`/t/${task.key}`);
+    await ready;
+    await assign(page, agent.name);
+    await jobStart(page.request, agent.id, task.id);
+    await expect(page.getByLabel('Session: running')).toBeVisible();
+    release();
+    await done;
+    await expect(page.getByLabel('Session: running')).toBeVisible();
+  } finally {
+    release();
+  }
+});

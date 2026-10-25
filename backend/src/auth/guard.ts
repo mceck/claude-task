@@ -12,6 +12,8 @@ declare module 'fastify' {
     auth?: 'public' | 'user' | 'admin';
     /** Reachable while the user still has to change a temporary password. */
     allowPendingPasswordChange?: boolean;
+    /** Bearer-token routes (Runner, MCP) send no cookies, so they need no CSRF header. */
+    csrf?: boolean;
   }
   interface FastifyRequest {
     auth: LoginInfo | null;
@@ -25,7 +27,7 @@ export function installGuard(app: FastifyInstance, ctx: AppContext): void {
   app.decorateRequest('auth', null);
   app.addHook('onRequest', async (request, reply) => {
     const config = request.routeOptions.config;
-    if (!SAFE_METHODS.has(request.method) && request.headers[CSRF_HEADER] === undefined) {
+    if (config.csrf !== false && !SAFE_METHODS.has(request.method) && request.headers[CSRF_HEADER] === undefined) {
       throw forbidden(`Missing ${CSRF_HEADER} header`, 'csrf');
     }
     const level = config.auth ?? 'user';

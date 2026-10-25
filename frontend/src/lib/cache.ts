@@ -1,5 +1,5 @@
 // Applies real-time events to the TanStack Query caches.
-import type { ProjectBundle, RealtimeEvent, Task, TaskCard, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
+import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, Task, TaskCard, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { keys } from '../api/queries';
 
@@ -91,7 +91,9 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       void qc.invalidateQueries({ queryKey: ['projects'] });
       return;
     case 'task.changed':
-      return setTask(qc, event.task);
+      setTask(qc, event.task);
+      void qc.invalidateQueries({ queryKey: keys.session(event.task.id) });
+      return;
     case 'task.removed':
       void qc.invalidateQueries({ queryKey: ['task'] });
       return;
@@ -111,18 +113,71 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
         createdAt: event.revision.createdAt,
         revision: event.revision,
       });
+    case 'session.changed':
+      // An older HTTP snapshot must not overwrite this newer scheduling event.
+      void qc.cancelQueries({ queryKey: keys.session(event.taskId), exact: true }, { revert: false });
+      qc.setQueryData(keys.session(event.taskId), event.session);
+      return;
+    case 'agent_item.created':
+    case 'agent_item.updated':
+      return putTimelineItem(qc, event.item.taskId, { type: 'agent', id: event.item.id, createdAt: event.item.createdAt, item: event.item });
+    case 'agent.updated':
+      return upsertAgent(qc, event.agent);
+    case 'agent.deleted':
+      qc.setQueryData<Agent[]>(keys.agents, (list) => list?.filter((a) => a.id !== event.agentId));
+      qc.removeQueries({ queryKey: keys.agent(event.agentId) });
+      return;
+    case 'queue.changed':
+      qc.setQueryData(keys.queue(event.agentId), event.entries);
+      return;
+    case 'build.updated':
+      qc.setQueryData<AgentBuild[]>(keys.builds(event.build.agentId), (list) => {
+        if (!list) return list;
+        const existing = list.find((b) => b.id === event.build.id);
+        if (existing) return list.map((b) => (b.id === event.build.id ? { ...b, ...event.build } : b));
+        return [{ ...event.build, log: '' }, ...list];
+      });
+      if (event.build.status !== 'building') void qc.invalidateQueries({ queryKey: keys.builds(event.build.agentId) });
+      return;
+    case 'build.log':
+      qc.setQueryData<AgentBuild[]>(keys.builds(event.agentId), (list) =>
+        list?.map((b) => (b.id === event.buildId ? { ...b, log: b.log + event.chunk } : b)),
+      );
+      return;
+    case 'job.updated':
+      qc.setQueryData<Job[]>(keys.jobs(event.job.agentId), (list) => {
+        if (!list) return list;
+        return list.some((j) => j.id === event.job.id) ? list.map((j) => (j.id === event.job.id ? event.job : j)) : [event.job, ...list];
+      });
+      void qc.invalidateQueries({ queryKey: keys.usage(event.job.agentId) });
+      void qc.invalidateQueries({ queryKey: keys.job(event.job.id) });
+      return;
   }
+}
+
+function upsertAgent(qc: QueryClient, agent: Agent): void {
+  qc.setQueryData<Agent[]>(keys.agents, (list) => {
+    if (!list) return list;
+    const next = list.some((a) => a.id === agent.id) ? list.map((a) => (a.id === agent.id ? agent : a)) : [...list, agent];
+    return next.sort((a, b) => a.name.localeCompare(b.name));
+  });
+  qc.setQueryData(keys.agent(agent.id), agent);
 }
 
 
 /** Refetches the queries a topic's events keep up to date. */
 export function refreshTopic(qc: QueryClient, topic: Topic): void {
-  const [kind, id] = topic.split(':') as ['project' | 'task', string];
-  if (kind === 'project') {
+  const [kind, id] = topic.split(':') as ['project' | 'task' | 'agents' | 'agent', string];
+  if (kind === 'agents') {
+    void qc.invalidateQueries({ queryKey: keys.agents });
+  } else if (kind === 'agent') {
+    for (const key of [keys.agent(id), keys.queue(id), keys.builds(id), keys.jobs(id), keys.usage(id)]) void qc.invalidateQueries({ queryKey: key });
+  } else if (kind === 'project') {
     void qc.invalidateQueries({ queryKey: keys.tasks(id) });
     void qc.invalidateQueries({ queryKey: ['project'], predicate: (q) => (q.state.data as ProjectBundle | undefined)?.project.id === id });
   } else {
     void qc.invalidateQueries({ queryKey: ['task'], predicate: (q) => (q.state.data as Task | undefined)?.id === id });
     void qc.invalidateQueries({ queryKey: keys.timeline(id) });
+    void qc.invalidateQueries({ queryKey: keys.session(id) });
   }
 }

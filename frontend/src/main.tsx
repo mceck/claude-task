@@ -18,6 +18,9 @@ import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { TaskPage } from './pages/TaskPage';
 import { UsersPage } from './pages/UsersPage';
+import { AgentsPage } from './pages/AgentsPage';
+import { AgentPage } from './pages/AgentPage';
+import { CredentialsPage } from './pages/CredentialsPage';
 
 const queryClient: QueryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -47,6 +50,9 @@ const router = createBrowserRouter([
       { path: '/p/:projectKey/settings', element: <ProjectSettingsPage /> },
       { path: '/t/:taskKey', element: <TaskPage /> },
       { path: '/admin/users', element: <UsersPage /> },
+      { path: '/agents', element: <AgentsPage /> },
+      { path: '/agents/:agentId', element: <AgentPage /> },
+      { path: '/admin/credentials', element: <CredentialsPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

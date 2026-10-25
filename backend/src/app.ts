@@ -17,7 +17,12 @@ import { projectRoutes } from './modules/projects/routes';
 import { statusRoutes } from './modules/statuses/routes';
 import { taskRoutes } from './modules/tasks/routes';
 import { userRoutes } from './modules/users/routes';
+import { agentRoutes } from './modules/agents/routes';
+import { credentialRoutes } from './modules/credentials/routes';
+import { agentSettingsRoutes } from './modules/projects/agent-settings';
+import { mcpRoutes } from './mcp/server';
 import { realtimeRoutes } from './realtime/routes';
+import { runnerRoutes } from './runner/routes';
 
 export async function buildApp(
   ctx: AppContext,
@@ -30,7 +35,9 @@ export async function buildApp(
   });
 
   await app.register(cookie);
-  await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
+  // Claude tool results are single stream-json lines and routinely exceed 64 KB.
+  // Browser control messages keep their smaller limit in realtime/routes.ts.
+  await app.register(websocket, { options: { maxPayload: 64 * 1024 * 1024 } });
   await app.register(multipart, { limits: { fieldSize: 1024 * 1024, fields: 10 } });
 
   app.setErrorHandler((err, request, reply) => {
@@ -62,7 +69,12 @@ export async function buildApp(
       labelRoutes(api, ctx);
       taskRoutes(api, ctx);
       commentRoutes(api, ctx);
+      credentialRoutes(api, ctx);
+      agentRoutes(api, ctx);
+      agentSettingsRoutes(api, ctx);
       realtimeRoutes(api, ctx);
+      runnerRoutes(api, ctx);
+      mcpRoutes(api, ctx);
     },
     { prefix: API_PREFIX },
   );
@@ -77,6 +89,9 @@ export async function buildApp(
     });
   }
 
-  app.addHook('onClose', async () => ctx.hub.closeAll());
+  app.addHook('onClose', async () => {
+    ctx.hub.closeAll();
+    await ctx.runners.closeAll();
+  });
   return app;
 }

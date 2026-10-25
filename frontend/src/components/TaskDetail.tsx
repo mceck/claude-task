@@ -1,4 +1,4 @@
-import { PRIORITIES, taskTopic } from '@claude-task/shared';
+import { AGENTS_TOPIC, PRIORITIES, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Expand, Link2, MoreHorizontal, Pencil, Plus, Trash2, X } from 'lucide-react';
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ApiError, del, errorMessage, patch, post } from '../api/client';
-import { useProject, useTask, useUsers } from '../api/queries';
+import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
 import { removeCard, setTask, toCard, upsertCard } from '../lib/cache';
 import { useTopic } from '../lib/realtime';
 import { LabelChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
@@ -20,6 +20,7 @@ import { Composer } from './Composer';
 import { Markdown, MarkdownEditor } from './Markdown';
 import { MultiPick } from './MultiPick';
 import { Timeline } from './Timeline';
+import { AgentAvatar, SessionChip } from './agents';
 
 type Fields = Omit<UpdateTaskBody, 'version'>;
 
@@ -29,10 +30,13 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const projectKey = taskKey.split('-')[0];
   const bundle = useProject(task ? task.key.split('-')[0] : undefined);
   const users = useUsers();
+  const agents = useAgents();
+  const session = useTaskSession(task?.id);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const confirm = useConfirm();
   useTopic(task ? taskTopic(task.id) : null);
+  useTopic(AGENTS_TOPIC);
 
   if (taskQuery.isPending) return <Loading className="h-full" />;
   if (!task) {
@@ -52,6 +56,17 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const statuses = [...(bundle.data?.statuses ?? [])].sort((a, b) => a.position - b.position);
   const labels = bundle.data?.labels ?? [];
   const people = users.data ?? [];
+
+  const sessionAction = async (action: 'stop' | 'retry' | 'notify') => {
+    try {
+      await post(`/tasks/${task.id}/session/${action}`);
+      // Dispatch can advance the Session before this HTTP response arrives.
+      // Refetch instead of overwriting a newer WebSocket update with that snapshot.
+      await qc.invalidateQueries({ queryKey: keys.session(task.id) });
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
 
   const applied = (t: Task) => {
     setTask(qc, t);
@@ -205,6 +220,22 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               }
             />
 
+            <PropLabel>Agent</PropLabel>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={task.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
+                <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No agent</SelectItem>
+                  {(agents.data ?? []).filter((a) => a.enabled || a.id === task.agentId).map((a) => (
+                    <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {session.data && <SessionChip session={session.data} />}
+              {session.data?.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
+              {task.agentId && session.data?.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
+            </div>
+
             <PropLabel>Labels</PropLabel>
             <MultiPick
               label="Labels"
@@ -236,6 +267,13 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
           </div>
 
           <Description description={task.description} onSave={(description) => save({ description })} />
+
+          {session.data?.unseenChanges && (
+            <div role="status" className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+              <span className="flex-1">The agent hasn’t seen the latest task changes.</span>
+              <Button size="sm" variant="outline" onClick={() => sessionAction('notify')}>Notify agent</Button>
+            </div>
+          )}
 
           <Separator />
 

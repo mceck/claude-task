@@ -1,4 +1,5 @@
 // Entity shapes returned by the API. Terms follow CONTEXT.md.
+import type { AgentItemPayload, Delivery, SessionState } from './agents';
 
 export const ROLES = ['admin', 'member'] as const;
 export type Role = (typeof ROLES)[number];
@@ -78,6 +79,10 @@ export interface TaskCard {
   labelIds: string[];
   assigneeIds: string[];
   commentCount: number;
+  /** The assigned Agent, if any. */
+  agentId: string | null;
+  /** The current Session's state on the card (agent avatar + state dot). */
+  session: { agentId: string; state: SessionState; queuePosition: number | null } | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -95,6 +100,7 @@ export const REVISION_FIELDS = [
   'priority',
   'labelIds',
   'assigneeIds',
+  'agentId',
 ] as const;
 export type RevisionField = (typeof REVISION_FIELDS)[number];
 
@@ -134,11 +140,26 @@ export interface Comment {
   editedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
+  /** Whether a User's Comment reached the Agent; null for Internal Notes, agent and system Comments, or with no Agent. */
+  delivery: Delivery | null;
+}
+
+/** Thinking, Activity, Turn Summaries and notices projected from an Agent's stream. */
+export interface AgentItem {
+  id: string;
+  taskId: string;
+  sessionId: string;
+  jobId: string;
+  agentId: string;
+  payload: AgentItemPayload;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type TimelineItem =
   | { type: 'comment'; id: string; createdAt: string; comment: Comment }
-  | { type: 'revision'; id: string; createdAt: string; revision: Revision };
+  | { type: 'revision'; id: string; createdAt: string; revision: Revision }
+  | { type: 'agent'; id: string; createdAt: string; item: AgentItem };
 
 export interface TimelinePage {
   /** Newest first. */

@@ -1,7 +1,7 @@
 import { PRIORITIES } from '@claude-task/shared';
-import type { Attachment, Comment, Label, Priority, Revision, RevisionChange, Status, User } from '@claude-task/shared';
+import type { Agent, AgentItem, Attachment, Comment, Label, Priority, Revision, RevisionChange, Status, User } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, Bot, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag, Trash2, Type, UserRound } from 'lucide-react';
+import { ArrowRightLeft, Bot, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -10,8 +10,10 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { del, errorMessage, patch } from '../api/client';
-import { useMe, useTimeline } from '../api/queries';
+import { useAgents, useMe, useTimeline } from '../api/queries';
 import { putTimelineItem } from '../lib/cache';
+import { AgentItemView, LiveTurnView } from './AgentTimeline';
+import { AgentAvatar, DeliveryBadge } from './agents';
 import { ErrorText, Loading, Time, useConfirm, UserAvatar } from './common';
 import { Markdown, MarkdownEditor } from './Markdown';
 
@@ -19,11 +21,14 @@ interface Lookups {
   statuses: Status[];
   labels: Label[];
   users: User[];
+  agents?: Agent[];
 }
 
 /** Comments and field changes of a Task, oldest first, with older pages loaded on demand. */
-export function Timeline({ taskId, ...lookups }: { taskId: string } & Lookups) {
+export function Timeline({ taskId, ...rest }: { taskId: string } & Lookups) {
   const timeline = useTimeline(taskId);
+  const agents = useAgents();
+  const lookups = { ...rest, agents: agents.data ?? [] };
   if (timeline.isPending) return <Loading />;
   if (timeline.error) return <ErrorText>{errorMessage(timeline.error)}</ErrorText>;
   const items = timeline.data.pages.flatMap((p) => p.items).reverse();
@@ -40,16 +45,19 @@ export function Timeline({ taskId, ...lookups }: { taskId: string } & Lookups) {
       {items.length === 0 && <li className="relative pl-10 text-sm text-muted-foreground">No activity yet.</li>}
       {items.map((item) =>
         item.type === 'comment' ? (
-          <CommentItem key={item.id} comment={item.comment} taskId={taskId} />
+          <CommentItem key={item.id} comment={item.comment} taskId={taskId} agents={lookups.agents} />
+        ) : item.type === 'agent' ? (
+          <AgentItemView key={item.id} item={item.item as AgentItem} />
         ) : (
           <RevisionItem key={item.id} revision={item.revision} {...lookups} />
         ),
       )}
+      <LiveTurnView taskId={taskId} />
     </ol>
   );
 }
 
-function CommentItem({ comment, taskId }: { comment: Comment; taskId: string }) {
+function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: string; agents: Agent[] }) {
   const me = useMe();
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -91,12 +99,22 @@ function CommentItem({ comment, taskId }: { comment: Comment; taskId: string }) 
     );
   }
 
+  const agent = comment.kind === 'agent' ? agents.find((a) => a.id === comment.author.id) : undefined;
   return (
-    <li aria-label={comment.internal ? 'Internal note' : 'Comment'} className="relative flex gap-3">
+    <li
+      aria-label={comment.internal ? 'Internal note' : comment.kind === 'agent' ? 'Agent comment' : comment.kind === 'system' ? 'System comment' : 'Comment'}
+      className="relative flex gap-3"
+    >
       <div className="z-10 shrink-0">
-        {comment.kind === 'agent' ? (
-          <span className="flex size-8 items-center justify-center rounded-full bg-violet-500/20 text-violet-400 ring-2 ring-background">
+        {agent ? (
+          <AgentAvatar agent={agent} size="md" />
+        ) : comment.kind === 'agent' ? (
+          <span className="flex size-8 items-center justify-center rounded-lg bg-violet-500/20 text-violet-400 ring-2 ring-background">
             <Bot className="size-4" />
+          </span>
+        ) : comment.kind === 'system' ? (
+          <span className="flex size-8 items-center justify-center rounded-full bg-amber-500/15 text-amber-400 ring-2 ring-background">
+            <TriangleAlert className="size-4" />
           </span>
         ) : (
           <UserAvatar
@@ -111,6 +129,7 @@ function CommentItem({ comment, taskId }: { comment: Comment; taskId: string }) 
           'min-w-0 flex-1 rounded-xl border bg-background/40 px-4 py-3 dark:bg-muted/20',
           comment.internal && 'border-amber-500/40 bg-amber-500/[0.06] dark:bg-amber-500/[0.06]',
           comment.kind === 'agent' && 'border-violet-500/30 bg-violet-500/[0.05]',
+          comment.kind === 'system' && 'border-amber-500/30 bg-amber-500/[0.05] dark:bg-amber-500/[0.05]',
         )}
       >
         <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -124,6 +143,7 @@ function CommentItem({ comment, taskId }: { comment: Comment; taskId: string }) 
           )}
           <Time iso={comment.createdAt} />
           {comment.editedAt && <span>· edited</span>}
+          {comment.delivery && <DeliveryBadge delivery={comment.delivery} />}
           {(own || canDelete) && !editing && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -219,6 +239,7 @@ const FIELD_ICON: Record<RevisionChange['field'], LucideIcon> = {
   priority: Flag,
   labelIds: Tag,
   assigneeIds: UserRound,
+  agentId: Bot,
 };
 
 function RevisionItem({ revision, ...lookups }: { revision: Revision } & Lookups) {
@@ -242,7 +263,7 @@ function RevisionItem({ revision, ...lookups }: { revision: Revision } & Lookups
   );
 }
 
-export function describeChange(c: RevisionChange, { statuses, labels, users }: Lookups): string {
+export function describeChange(c: RevisionChange, { statuses, labels, users, agents = [] }: Lookups): string {
   const status = (id: unknown) => statuses.find((s) => s.id === id)?.name ?? 'a deleted status';
   const label = (id: string) => labels.find((l) => l.id === id)?.name ?? 'a deleted label';
   const user = (id: string) => users.find((u) => u.id === id)?.displayName ?? 'someone';
@@ -277,6 +298,11 @@ export function describeChange(c: RevisionChange, { statuses, labels, users }: L
       return [added.length && `assigned ${added.map(user).join(', ')}`, removed.length && `unassigned ${removed.map(user).join(', ')}`]
         .filter(Boolean)
         .join(' and ');
+    }
+    case 'agentId': {
+      const agent = (id: unknown) => agents.find((a) => a.id === id)?.name ?? 'a deleted agent';
+      if (!c.after) return `unassigned the agent ${agent(c.before)}`;
+      return c.before ? `reassigned the task from ${agent(c.before)} to ${agent(c.after)}` : `assigned the agent ${agent(c.after)}`;
     }
   }
 }

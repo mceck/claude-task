@@ -3,10 +3,12 @@ import type { Actor, Attachment, Comment, TimelineItem, TimelinePage } from '@cl
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { attachments, comments, taskRevisions } from '../../db/schema';
+import { agentItems, attachments, comments, taskRevisions } from '../../db/schema';
+import { serializeAgentItem } from '../../projection/apply';
 import { badRequest, forbidden, notFound } from '../../errors';
 import type { UserRow } from '../../auth/logins';
 import { actorResolver } from '../actors';
+import { deliverComment } from '../../sessions/lifecycle';
 import { loadCard, serializeRevision } from '../tasks/service';
 import type { TaskRow } from '../tasks/service';
 
@@ -44,10 +46,11 @@ function serializeComment(c: CommentRow, author: Actor, files: AttachmentRow[]):
     editedAt: c.editedAt?.toISOString() ?? null,
     deletedAt: c.deletedAt?.toISOString() ?? null,
     createdAt: c.createdAt.toISOString(),
+    delivery: c.deliveryState === 'none' ? null : { state: c.deliveryState, reason: c.deliveryReason, jobId: c.deliveredInJobId },
   };
 }
 
-async function loadComments(db: Executor, ids: string[]): Promise<Map<string, Comment>> {
+export async function loadCommentsById(db: Executor, ids: string[]): Promise<Map<string, Comment>> {
   if (ids.length === 0) return new Map();
   const rows = await db.select().from(comments).where(inArray(comments.id, ids));
   const files = await db
@@ -72,7 +75,7 @@ async function loadComments(db: Executor, ids: string[]): Promise<Map<string, Co
 }
 
 async function loadComment(db: Executor, id: string): Promise<Comment> {
-  const comment = (await loadComments(db, [id])).get(id);
+  const comment = (await loadCommentsById(db, [id])).get(id);
   if (!comment) throw notFound('Comment');
   return comment;
 }
@@ -114,6 +117,7 @@ export async function createUserComment(
   if (input.attachments.length > 0) {
     await tx.insert(attachments).values(input.attachments.map((a, position) => ({ ...a, position, commentId: row!.id })));
   }
+  await deliverComment(tx, after, task, row!);
   const comment = await loadComment(tx, row!.id);
   after.emit(taskTopic(task.id), { type: 'comment.created', comment });
   await emitCardRefresh(tx, after, task.id);
@@ -177,7 +181,7 @@ export async function getAttachment(db: Executor, id: string) {
 interface Cursor {
   /** Postgres timestamp text, which keeps microsecond precision. */
   t: string;
-  k: 'comment' | 'revision';
+  k: 'comment' | 'revision' | 'agent';
   id: string;
 }
 
@@ -186,32 +190,34 @@ const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('bas
 function decodeCursor(raw: string): Cursor {
   try {
     const c = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Cursor;
-    if (typeof c.t === 'string' && (c.k === 'comment' || c.k === 'revision') && typeof c.id === 'string') return c;
+    if (typeof c.t === 'string' && ['comment', 'revision', 'agent'].includes(c.k) && typeof c.id === 'string') return c;
   } catch {
     // fall through
   }
   throw badRequest('Invalid cursor');
 }
 
-/** Comments and Revisions of a Task, merged newest first. */
+/** Comments, Revisions and the Agent's items of a Task, merged newest first. */
 export async function loadTimeline(
   db: Executor,
   taskId: string,
   opts: { before?: string; limit: number },
 ): Promise<TimelinePage> {
   const cursor = opts.before ? decodeCursor(opts.before) : null;
-  const page = await db.execute<{ kind: 'comment' | 'revision'; id: string; t: string }>(sql`
+  const page = await db.execute<{ kind: Cursor['k']; id: string; t: string }>(sql`
     select kind, id, t from (
       select 'comment' as kind, id, created_at, created_at::text as t from comments where task_id = ${taskId}
       union all
       select 'revision' as kind, id, created_at, created_at::text as t from task_revisions where task_id = ${taskId}
+      union all
+      select 'agent' as kind, id, created_at, created_at::text as t from agent_items where task_id = ${taskId}
     ) items
     ${cursor ? sql`where (created_at, kind, id) < (${cursor.t}::timestamptz, ${cursor.k}, ${cursor.id}::uuid)` : sql``}
     order by created_at desc, kind desc, id desc
     limit ${opts.limit + 1}`);
 
   const rows = page.rows.slice(0, opts.limit);
-  const commentMap = await loadComments(
+  const commentMap = await loadCommentsById(
     db,
     rows.filter((r) => r.kind === 'comment').map((r) => r.id),
   );
@@ -227,11 +233,16 @@ export async function loadTimeline(
     revisionRows.map((r) => [r.id, serializeRevision(r, resolve({ type: r.actorType, id: r.actorId }))]),
   );
 
-  const items: TimelineItem[] = rows.map((r) =>
-    r.kind === 'comment'
-      ? { type: 'comment', id: r.id, createdAt: commentMap.get(r.id)!.createdAt, comment: commentMap.get(r.id)! }
-      : { type: 'revision', id: r.id, createdAt: revisionMap.get(r.id)!.createdAt, revision: revisionMap.get(r.id)! },
+  const agentIds = rows.filter((r) => r.kind === 'agent').map((r) => r.id);
+  const agentMap = new Map(
+    (agentIds.length ? await db.select().from(agentItems).where(inArray(agentItems.id, agentIds)) : []).map((r) => [r.id, serializeAgentItem(r)]),
   );
+
+  const items: TimelineItem[] = rows.map((r) => {
+    if (r.kind === 'comment') return { type: 'comment', id: r.id, createdAt: commentMap.get(r.id)!.createdAt, comment: commentMap.get(r.id)! };
+    if (r.kind === 'agent') return { type: 'agent', id: r.id, createdAt: agentMap.get(r.id)!.createdAt, item: agentMap.get(r.id)! };
+    return { type: 'revision', id: r.id, createdAt: revisionMap.get(r.id)!.createdAt, revision: revisionMap.get(r.id)! };
+  });
   const last = rows[rows.length - 1];
   return {
     items,

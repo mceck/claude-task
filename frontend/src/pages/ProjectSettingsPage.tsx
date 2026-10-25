@@ -19,6 +19,7 @@ import { LabelChip, Loading, StatusDot, useConfirm } from '../components/common'
 import { useTopic } from '../lib/realtime';
 import { NotFoundPage } from './NotFoundPage';
 import { CATEGORY_COLOR, PageHeader } from './ProjectsPage';
+import { ProjectAgentSettings } from '../components/ProjectAgentSettings';
 
 export function ProjectSettingsPage() {
   const { projectKey } = useParams();
@@ -42,6 +43,7 @@ export function ProjectSettingsPage() {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="statuses">Statuses</TabsTrigger>
           <TabsTrigger value="labels">Labels</TabsTrigger>
+          <TabsTrigger value="agents">Agents</TabsTrigger>
         </TabsList>
         <TabsContent value="general">
           <General project={project} />
@@ -52,6 +54,7 @@ export function ProjectSettingsPage() {
         <TabsContent value="labels">
           <Labels bundle={bundle.data} />
         </TabsContent>
+        <TabsContent value="agents"><ProjectAgentSettings projectId={project.id} /></TabsContent>
       </Tabs>
     </div>
   );

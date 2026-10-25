@@ -1,11 +1,14 @@
 // Real-time events pushed to browsers over the WebSocket. Events are notifications
 // carrying the new projection; on reconnect clients refetch instead of replaying.
-import type { Comment, Label, Project, Revision, Status, Task, TaskCard } from './domain';
+import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, TaskSession } from './agents';
+import type { AgentItem, Comment, Label, Project, Revision, Status, Task, TaskCard } from './domain';
 
-export type Topic = `project:${string}` | `task:${string}`;
+export type Topic = `project:${string}` | `task:${string}` | 'agents' | `agent:${string}`;
 
 export const projectTopic = (projectId: string): Topic => `project:${projectId}`;
 export const taskTopic = (taskId: string): Topic => `task:${taskId}`;
+export const AGENTS_TOPIC: Topic = 'agents';
+export const agentTopic = (agentId: string): Topic => `agent:${agentId}`;
 
 /** Events on `project:<id>` (the Board). */
 export type BoardEvent =
@@ -24,9 +27,26 @@ export type TaskEvent =
   | { type: 'comment.created'; comment: Comment }
   | { type: 'comment.updated'; comment: Comment }
   | { type: 'comment.deleted'; comment: Comment }
-  | { type: 'revision.created'; revision: Revision };
+  | { type: 'revision.created'; revision: Revision }
+  | { type: 'session.changed'; taskId: string; session: TaskSession | null }
+  | { type: 'agent_item.created'; item: AgentItem }
+  | { type: 'agent_item.updated'; item: AgentItem }
+  /** Live text or thinking of the running Turn; not persisted, the final Comment follows. */
+  | { type: 'live.delta'; taskId: string; delta: LiveDelta }
+  /** Transient status of the running Turn (API retries); null clears it. */
+  | { type: 'live.status'; taskId: string; status: { kind: 'retrying'; attempt: number; maxRetries: number; error: string | null } | null }
+  | { type: 'job.setup_output'; taskId: string; jobId: string; chunk: string };
 
-export type RealtimeEvent = BoardEvent | TaskEvent;
+/** Events on `agents` (the Agents list) and `agent:<id>` (an Agent's detail view). */
+export type AgentEvent =
+  | { type: 'agent.updated'; agent: Agent }
+  | { type: 'agent.deleted'; agentId: string }
+  | { type: 'queue.changed'; agentId: string; entries: QueueEntry[] }
+  | { type: 'build.updated'; build: Omit<AgentBuild, 'log'> }
+  | { type: 'build.log'; agentId: string; buildId: string; chunk: string }
+  | { type: 'job.updated'; job: Job };
+
+export type RealtimeEvent = BoardEvent | TaskEvent | AgentEvent;
 
 export type ClientMessage =
   | { type: 'subscribe'; topics: Topic[] }

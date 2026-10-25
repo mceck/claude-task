@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, inject } from 'vitest';
+import { FakeRuntime } from '../../src/agents/fake-runtime';
 import { FsBlobStore } from '../../src/blobstore';
 import type { Config } from '../../src/config';
+import { SecretBox } from '../../src/secrets';
 import { bootstrapAdmin } from '../../src/modules/users/service';
 import { createServer } from '../../src/server';
 import type { Server } from '../../src/server';
@@ -37,6 +39,10 @@ export interface TestApp {
   client(): ApiClient;
   /** A client logged in as the bootstrapped admin. */
   admin(): Promise<ApiClient>;
+  /** The in-memory Docker stand-in. */
+  runtime: FakeRuntime;
+  /** Waits until the backend's background work (dispatch, builds, publishing) is done. */
+  settle(): Promise<void>;
 }
 
 export interface TestAppOptions {
@@ -66,9 +72,21 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       logLevel: 'silent',
       bootstrapAdmin: ADMIN,
       loginRateLimit: { max: 1000, windowMs: 60_000 },
+      secrets: new SecretBox(Buffer.alloc(32, 7)),
+      agents: {
+        runtime: 'fake',
+        dockerSocket: '/dev/null',
+        claudeCodeVersion: '2.1.310',
+        backendUrl: 'http://backend.test',
+        network: null,
+        commitEmailDomain: 'agents.test',
+        reconcileIntervalMs: 60 * 60_000,
+        runnerReconnectTimeoutMs: 5 * 60_000,
+      },
       ...options.config,
     };
-    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false });
+    t.runtime = new FakeRuntime();
+    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false, runtime: t.runtime });
     await server.app.listen({ host: '127.0.0.1', port: 0 });
     const address = server.app.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');
@@ -80,6 +98,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       await c.login(ADMIN.email, ADMIN.password);
       return c;
     };
+    t.settle = () => server.ctx.scheduler.settle();
   });
 
   afterAll(async () => {
@@ -89,6 +108,10 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
 
   if (!options.keepData) {
     beforeEach(async () => {
+      await t.server.ctx.runners.closeAll();
+      await t.server.ctx.scheduler.settle();
+      t.runtime.containers.clear();
+      t.runtime.onContainerCreated = null;
       await truncateAll(t.server);
       await bootstrapAdmin(t.server.ctx.db, t.server.ctx.config.bootstrapAdmin);
     });

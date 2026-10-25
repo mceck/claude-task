@@ -8,6 +8,7 @@ import type { AppContext } from '../../context';
 import { statuses } from '../../db/schema';
 import { badRequest, notFound, parse } from '../../errors';
 import { getProject } from '../projects/service';
+import { onStatusClosedChanged } from '../../sessions/lifecycle';
 import { relocateStatusTasks } from '../tasks/service';
 import { assertEntryAndExit, emitStatusesChanged, getStatus, listStatuses, serializeStatus } from './service';
 
@@ -49,6 +50,9 @@ export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
         assertEntryAndExit(all.map((s) => (s.id === id ? body.category! : s.category)));
       }
       const [status] = await tx.update(statuses).set(body).where(eq(statuses.id, id)).returning();
+      if (body.category && (body.category === 'closed') !== (existing.category === 'closed')) {
+        await onStatusClosedChanged(tx, after, id, body.category === 'closed');
+      }
       await emitStatusesChanged(tx, after, existing.projectId);
       return { status: serializeStatus(status!) };
     });

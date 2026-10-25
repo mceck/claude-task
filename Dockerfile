@@ -10,9 +10,11 @@ RUN pnpm install --frozen-lockfile
 COPY shared shared
 COPY backend backend
 COPY frontend frontend
+COPY runner runner
 RUN pnpm build \
  && pnpm --filter @claude-task/backend deploy --prod --legacy /out \
  && cp -r backend/dist backend/drizzle /out/ \
+ && cp -r backend/agent-base runner /out/ \
  && cp -r frontend/dist /out/public
 
 FROM node:24-slim

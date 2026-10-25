@@ -1,7 +1,7 @@
 import type { RealtimeEvent, ServerMessage, Topic } from '@claude-task/shared';
 import type { WebSocket } from 'ws';
 
-const TOPIC_PATTERN = /^(project|task):[0-9a-f-]{36}$/;
+const TOPIC_PATTERN = /^(?:(?:project|task|agent):[0-9a-f-]{36}|agents)$/;
 
 export function isTopic(value: unknown): value is Topic {
   return typeof value === 'string' && TOPIC_PATTERN.test(value);

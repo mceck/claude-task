@@ -1,0 +1,196 @@
+package test
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// gitIn runs git with the test's isolated config and returns trimmed output.
+func gitIn(t *testing.T, home, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = isolatedEnv(home)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// origin is a bare repository standing in for GitHub, with `main` and an existing Task Branch.
+type origin struct {
+	t          *testing.T
+	home, bare string
+	seed       string
+}
+
+func newOrigin(t *testing.T) *origin {
+	dir := t.TempDir()
+	o := &origin{t: t, home: dir, bare: filepath.Join(dir, "origin.git"), seed: filepath.Join(dir, "seed")}
+	gitIn(t, dir, dir, "init", "--bare", "--quiet", "-b", "main", o.bare)
+	gitIn(t, dir, dir, "clone", "--quiet", o.bare, o.seed)
+	gitIn(t, dir, o.seed, "checkout", "--quiet", "-b", "main")
+	o.commit("README.md", "hello", "initial")
+	gitIn(t, dir, o.seed, "push", "--quiet", "origin", "main")
+	gitIn(t, dir, o.seed, "checkout", "--quiet", "-b", "task/t-9-existing")
+	o.commit("feature.txt", "earlier work", "earlier work")
+	gitIn(t, dir, o.seed, "push", "--quiet", "origin", "task/t-9-existing")
+	gitIn(t, dir, o.seed, "checkout", "--quiet", "main")
+	return o
+}
+
+func (o *origin) commit(file, content, message string) {
+	if err := os.WriteFile(filepath.Join(o.seed, file), []byte(content), 0o644); err != nil {
+		o.t.Fatal(err)
+	}
+	gitIn(o.t, o.home, o.seed, "add", file)
+	gitIn(o.t, o.home, o.seed, "-c", "user.name=Seed", "-c", "user.email=seed@example.com", "commit", "--quiet", "-m", message)
+}
+
+func (o *origin) url() string { return "file://" + o.bare }
+
+func (o *origin) spec(branch string) msg {
+	return msg{
+		"cloneUrl": o.url(), "baseBranch": "main", "taskBranch": branch, "branchExists": false,
+		"repoPath": "repos/proj.git", "commitName": "Ada (claude-task)", "commitEmail": "ada@agents.claude-task.local",
+	}
+}
+
+// runJob starts a Job on a git Worktree and ends it after its first Turn.
+func runJob(t *testing.T, b *backend, id, worktree string, git msg, setup string) {
+	t.Helper()
+	b.send(jobStart(jobOpts{id: id, session: "s-" + id, worktree: worktree, git: git, setup: setup, text: "go"}))
+	b.waitEvent(id, "result", isResult)
+	b.send(msg{"type": "job.end", "jobId": id})
+	b.waitType(id, "job.exited")
+}
+
+func TestWorktreeOnANewTaskBranch(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	runJob(t, b, "j1", "worktrees/proj/T-1", o.spec("task/t-1-login"), "mkdir -p .claude-task && touch .claude-task/setup-ran")
+
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	repo := filepath.Join(home, "repos/proj.git")
+	if gitIn(t, home, wt, "rev-parse", "--abbrev-ref", "HEAD") != "task/t-1-login" {
+		t.Fatal("worktree not on the task branch")
+	}
+	if gitIn(t, home, wt, "rev-parse", "HEAD") != gitIn(t, home, o.seed, "rev-parse", "main") {
+		t.Fatal("task branch doesn't start at origin/main")
+	}
+	if _, err := os.Stat(filepath.Join(wt, ".claude-task/setup-ran")); err != nil {
+		t.Fatal("setup script didn't run in the new worktree")
+	}
+	if out := b.setupOutput("j1"); !strings.Contains(out, "git") {
+		t.Fatalf("git output not streamed: %q", out)
+	}
+	if gitIn(t, home, wt, "config", "user.name") != "Ada (claude-task)" || gitIn(t, home, wt, "config", "user.email") != "ada@agents.claude-task.local" {
+		t.Fatal("commit identity not set")
+	}
+
+	// Attachments are invisible to git, and a plain `git push` publishes the task branch.
+	os.MkdirAll(filepath.Join(wt, ".claude-task/attachments/c1"), 0o755)
+	os.WriteFile(filepath.Join(wt, ".claude-task/attachments/c1/x.log"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(wt, "change.txt"), []byte("work"), 0o644)
+	if status := gitIn(t, home, wt, "status", "--porcelain"); status != "?? change.txt" {
+		t.Fatalf("status %q", status)
+	}
+	gitIn(t, home, wt, "add", "change.txt")
+	gitIn(t, home, wt, "commit", "--quiet", "-m", "agent work")
+	gitIn(t, home, wt, "push", "--quiet")
+	if author := gitIn(t, home, o.bare, "log", "-1", "--format=%an <%ae>", "task/t-1-login"); author != "Ada (claude-task) <ada@agents.claude-task.local>" {
+		t.Fatalf("pushed commit author %q", author)
+	}
+	if !strings.Contains(gitIn(t, home, repo, "branch", "--list"), "task/t-1-login") {
+		t.Fatal("local task branch missing")
+	}
+}
+
+func TestWorktreeFromAnExistingRemoteTaskBranch(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	spec := o.spec("task/t-9-existing")
+	spec["branchExists"] = true
+	runJob(t, b, "j1", "worktrees/proj/T-9", spec, "")
+
+	wt := filepath.Join(home, "worktrees/proj/T-9")
+	if data, err := os.ReadFile(filepath.Join(wt, "feature.txt")); err != nil || string(data) != "earlier work" {
+		t.Fatalf("previous work missing: %q %v", data, err)
+	}
+	os.WriteFile(filepath.Join(wt, "more.txt"), []byte("more"), 0o644)
+	gitIn(t, home, wt, "add", "more.txt")
+	gitIn(t, home, wt, "commit", "--quiet", "-m", "more")
+	gitIn(t, home, wt, "push", "--quiet")
+	if gitIn(t, home, o.bare, "log", "-1", "--format=%s", "task/t-9-existing") != "more" {
+		t.Fatal("push didn't reach the existing remote branch")
+	}
+}
+
+func TestNextJobsFetchAndKeepTheExistingWorktree(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	runJob(t, b, "j1", "worktrees/proj/T-1", o.spec("task/t-1"), "")
+
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("uncommitted"), 0o644)
+	o.commit("news.txt", "new on main", "news")
+	gitIn(t, o.home, o.seed, "push", "--quiet", "origin", "main")
+
+	// Same Task again: the worktree with uncommitted work is left as it is, and no setup runs.
+	runJob(t, b, "j2", "worktrees/proj/T-1", o.spec("task/t-1"), "touch setup-ran")
+	if data, _ := os.ReadFile(filepath.Join(wt, "wip.txt")); string(data) != "uncommitted" {
+		t.Fatal("uncommitted work lost")
+	}
+	if _, err := os.Stat(filepath.Join(wt, "setup-ran")); err == nil {
+		t.Fatal("setup ran on an existing worktree")
+	}
+
+	// Another Task branches from the freshly fetched main.
+	runJob(t, b, "j3", "worktrees/proj/T-2", o.spec("task/t-2"), "")
+	if _, err := os.Stat(filepath.Join(home, "worktrees/proj/T-2/news.txt")); err != nil {
+		t.Fatal("new worktree isn't based on the fetched main")
+	}
+}
+
+func TestRemovingAWorktreeKeepsTheBranches(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	runJob(t, b, "j1", "worktrees/proj/T-1", o.spec("task/t-1"), "")
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	repo := filepath.Join(home, "repos/proj.git")
+	os.WriteFile(filepath.Join(wt, "change.txt"), []byte("work"), 0o644)
+	gitIn(t, home, wt, "add", "change.txt")
+	gitIn(t, home, wt, "commit", "--quiet", "-m", "committed, not pushed")
+	os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("dirty"), 0o644)
+
+	b.send(msg{"type": "worktree.remove", "worktreePath": "worktrees/proj/T-1", "repoPath": "repos/proj.git"})
+	waitUntil(t, 10*time.Second, "worktree removed", func() bool { _, err := os.Stat(wt); return os.IsNotExist(err) })
+	if strings.Contains(gitIn(t, home, repo, "worktree", "list"), "T-1") {
+		t.Fatal("worktree still registered")
+	}
+	if gitIn(t, home, repo, "log", "-1", "--format=%s", "task/t-1") != "committed, not pushed" {
+		t.Fatal("local task branch lost")
+	}
+
+	// Reopening recreates the worktree at the same path from the kept branch.
+	runJob(t, b, "j2", "worktrees/proj/T-1", o.spec("task/t-1"), "")
+	if _, err := os.Stat(filepath.Join(wt, "change.txt")); err != nil {
+		t.Fatal("recreated worktree lost the branch's commits")
+	}
+
+	b.send(msg{"type": "worktree.remove", "worktreePath": "worktrees/proj/T-3", "repoPath": nil})
+	os.MkdirAll(filepath.Join(home, "worktrees/proj/T-3"), 0o755)
+	b.send(msg{"type": "worktree.remove", "worktreePath": "worktrees/proj/T-3", "repoPath": nil})
+	waitUntil(t, 10*time.Second, "plain worktree removed", func() bool {
+		_, err := os.Stat(filepath.Join(home, "worktrees/proj/T-3"))
+		return os.IsNotExist(err)
+	})
+}

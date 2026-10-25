@@ -1,7 +1,9 @@
-import type { Label, Priority, ProjectBundle, Role, Status, Task, User } from '@claude-task/shared';
+import { DEFAULT_AGENT_DOCKERFILE } from '@claude-task/shared';
+import type { Agent, Comment, Credential, Label, Priority, ProjectBundle, Role, Status, Task, TaskSession, TimelineItem, User } from '@claude-task/shared';
 import { expect } from 'vitest';
 import type { ApiClient } from './client';
 import type { TestApp } from './app';
+import { FakeRunner } from './runner';
 
 let seq = 0;
 const unique = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -87,4 +89,72 @@ export async function createLabel(client: ApiClient, projectId: string, name: st
 export async function columnTitles(client: ApiClient, projectId: string, statusId: string): Promise<string[]> {
   const res = await client.get(`/projects/${projectId}/tasks?includeClosed=true`);
   return (res.body.tasks as Task[]).filter((t) => t.statusId === statusId).map((t) => t.title);
+}
+
+// Agents
+
+export async function createCredential(
+  admin: ApiClient,
+  body: { name?: string; kind?: 'claude_oauth_token' | 'anthropic_api_key'; secret?: string } = {},
+): Promise<Credential> {
+  const res = await admin.post('/credentials', {
+    name: body.name ?? `Credential ${unique()}`,
+    kind: body.kind ?? 'claude_oauth_token',
+    secret: body.secret ?? 'sk-ant-oat01-secret-value-1234',
+  });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return res.body.credential;
+}
+
+/**
+ * Creates an Agent, lets its (fake) image build and container start, and connects a fake
+ * Runner with the container's token, so the Agent is idle and ready for Jobs.
+ */
+export async function createAgent(
+  app: TestApp,
+  admin: ApiClient,
+  opts: { name?: string; credentialId?: string; connect?: boolean; body?: Record<string, unknown> } = {},
+): Promise<{ agent: Agent; runner: FakeRunner }> {
+  const credentialId = opts.credentialId ?? (await createCredential(admin)).id;
+  const res = await admin.post('/agents', {
+    name: opts.name ?? `Agent ${unique()}`,
+    dockerfile: DEFAULT_AGENT_DOCKERFILE,
+    credentialId,
+    ...opts.body,
+  });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  await app.settle();
+  const runner = opts.connect === false ? (null as unknown as FakeRunner) : await FakeRunner.connect(app, res.body.agent.id);
+  const agent = (await admin.get(`/agents/${res.body.agent.id}`)).body.agent as Agent;
+  return { agent, runner };
+}
+
+/** Assigns (or with null unassigns) the Task's Agent. */
+export async function assignAgent(client: ApiClient, taskId: string, agentId: string | null): Promise<Task> {
+  const current = (await client.get(`/tasks/${taskId}`)).body.task as Task;
+  const res = await client.patch(`/tasks/${taskId}`, { version: current.version, agentId });
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  return res.body.task;
+}
+
+export async function moveToStatus(client: ApiClient, taskId: string, statusId: string): Promise<Task> {
+  const res = await client.post(`/tasks/${taskId}/move`, { statusId });
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  return res.body.task;
+}
+
+export async function comment(client: ApiClient, taskId: string, body: string, internal = false): Promise<Comment> {
+  const res = await client.post(`/tasks/${taskId}/comments`, { body, internal });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return res.body.comment;
+}
+
+export async function getSession(client: ApiClient, taskId: string): Promise<TaskSession | null> {
+  return (await client.get(`/tasks/${taskId}/session`)).body.session;
+}
+
+/** The Timeline oldest first. */
+export async function timeline(client: ApiClient, taskId: string): Promise<TimelineItem[]> {
+  const res = await client.get(`/tasks/${taskId}/timeline?limit=200`);
+  return (res.body.items as TimelineItem[]).slice().reverse();
 }

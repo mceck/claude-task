@@ -6,6 +6,7 @@ import type {
   Revision,
   RevisionChange,
   RevisionField,
+  SessionState,
   Task,
   TaskCard,
 } from '@claude-task/shared';
@@ -14,7 +15,8 @@ import type { SQL } from 'drizzle-orm';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { labels, projects, statuses, taskAssignees, taskLabels, taskRevisions, tasks, users } from '../../db/schema';
+import { agents, labels, projects, statuses, taskAssignees, taskLabels, taskRevisions, tasks, users } from '../../db/schema';
+import { onTaskChanged } from '../../sessions/lifecycle';
 import { badRequest, conflict, notFound } from '../../errors';
 import { actorResolver } from '../actors';
 
@@ -40,6 +42,10 @@ interface CardRow extends Record<string, unknown> {
   label_ids: string[];
   assignee_ids: string[];
   comment_count: number;
+  agent_id: string | null;
+  session_agent_id: string | null;
+  session_state: SessionState | null;
+  queue_position: number | null;
 }
 
 export interface CardQuery {
@@ -93,10 +99,14 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
         from task_labels tl join labels l on l.id = tl.label_id where tl.task_id = t.id), '{}') as label_ids,
       coalesce((select array_agg(ta.user_id::text order by ta.user_id)
         from task_assignees ta where ta.task_id = t.id), '{}') as assignee_ids,
-      (select count(*)::int from comments c where c.task_id = t.id and c.deleted_at is null) as comment_count
+      (select count(*)::int from comments c where c.task_id = t.id and c.deleted_at is null) as comment_count,
+      t.agent_id, ss.agent_id as session_agent_id, ss.state as session_state,
+      (select count(*)::int from queue_entries q join queue_entries q2 on q2.agent_id = q.agent_id and q2.position <= q.position
+        where q.task_id = t.id and q.agent_id = ss.agent_id) as queue_position
     from tasks t
     join projects p on p.id = t.project_id
     join statuses s on s.id = t.status_id
+    left join sessions ss on ss.id = t.current_session_id
     ${where.length > 0 ? sql`where ${sql.join(where, sql` and `)}` : sql``}
     order by s.position, t.position, t.id`);
 
@@ -112,6 +122,11 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     labelIds: r.label_ids,
     assigneeIds: r.assignee_ids,
     commentCount: r.comment_count,
+    agentId: r.agent_id,
+    session:
+      r.agent_id && r.session_agent_id === r.agent_id && r.session_state
+        ? { agentId: r.agent_id, state: r.session_state, queuePosition: r.queue_position || null }
+        : null,
     version: r.version,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
@@ -240,6 +255,7 @@ export interface UpdateTaskInput {
   priority?: Priority;
   labelIds?: string[];
   assigneeIds?: string[];
+  agentId?: string | null;
 }
 
 /**
@@ -275,6 +291,7 @@ export async function updateTask(
   }
   if (patch.labelIds !== undefined) next.labelIds = await validLabels(tx, row.projectId, patch.labelIds);
   if (patch.assigneeIds !== undefined) next.assigneeIds = await validAssignees(tx, patch.assigneeIds);
+  if (patch.agentId !== undefined) next.agentId = patch.agentId === null ? null : await validAgent(tx, patch.agentId);
 
   const changes = diff(current, next);
   if (changes.length === 0) return loadTask(tx, row.id);
@@ -287,6 +304,7 @@ export async function updateTask(
       description: next.description,
       priority: next.priority,
       statusId: next.statusId,
+      agentId: next.agentId,
       ...(changed.has('statusId') ? { position: await endOfColumn(tx, next.statusId) } : {}),
       version: row.version + 1,
       updatedAt: new Date(),
@@ -295,6 +313,9 @@ export async function updateTask(
   if (changed.has('labelIds')) await setLabels(tx, row.id, next.labelIds);
   if (changed.has('assigneeIds')) await setAssignees(tx, row.id, next.assigneeIds);
   await recordRevisions(tx, after, actor, [{ taskId: row.id, version: row.version + 1, changes }]);
+  if (changed.has('agentId') || changed.has('statusId')) {
+    await onTaskChanged(tx, after, await getTaskRow(tx, row.id), { agentId: row.agentId, statusId: row.statusId });
+  }
 
   const [task] = await emitTasksChanged(tx, after, [row.id], 'task.updated');
   return task!;
@@ -340,6 +361,7 @@ export async function moveTask(
   await recordRevisions(tx, after, actor, [
     { taskId: row.id, version: row.version + 1, changes: [{ field: 'statusId', before: row.statusId, after: input.statusId }] },
   ]);
+  await onTaskChanged(tx, after, await getTaskRow(tx, row.id), { agentId: row.agentId, statusId: row.statusId });
   const [task] = await emitTasksChanged(tx, after, [row.id], 'task.moved');
   return task!;
 }
@@ -382,6 +404,9 @@ export async function relocateStatusTasks(
       changes: [{ field: 'statusId', before: t.statusId, after: input.toStatusId }],
     })),
   );
+  for (const t of moving) {
+    await onTaskChanged(tx, after, { ...t, statusId: input.toStatusId }, { agentId: t.agentId, statusId: t.statusId });
+  }
   await emitTasksChanged(tx, after, moving.map((t) => t.id), 'task.moved');
 }
 
@@ -476,6 +501,7 @@ interface Fields {
   priority: Priority;
   labelIds: string[];
   assigneeIds: string[];
+  agentId: string | null;
 }
 
 async function currentFields(tx: Executor, row: TaskRow): Promise<Fields> {
@@ -490,6 +516,7 @@ async function currentFields(tx: Executor, row: TaskRow): Promise<Fields> {
     priority: row.priority,
     labelIds: l.map((x) => x.id).sort(),
     assigneeIds: a.map((x) => x.id).sort(),
+    agentId: row.agentId,
   };
 }
 
@@ -532,6 +559,12 @@ async function validAssignees(tx: Executor, ids: string[]): Promise<string[]> {
   const found = await tx.select({ id: users.id }).from(users).where(inArray(users.id, unique));
   if (found.length !== unique.length) throw badRequest('Unknown user');
   return unique;
+}
+
+async function validAgent(tx: Executor, id: string): Promise<string> {
+  const [found] = await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, id));
+  if (!found) throw badRequest('Unknown agent');
+  return found.id;
 }
 
 async function assertStatusInProject(tx: Executor, statusId: string, projectId: string) {
