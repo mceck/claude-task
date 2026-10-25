@@ -7,7 +7,7 @@ because the available organization has exhausted its monthly spend limit; see
 
 ## Local development
 
-Use Node 22+, pnpm, PostgreSQL and a running Docker daemon. Copy `.env.example` to
+Use Node 22+, pnpm, PostgreSQL and a running Docker daemon. Copy `backend/.env.example` to
 `backend/.env`. Set `DATABASE_URL`, the bootstrap admin details, and
 `SECRETS_MASTER_KEY` to the output of `openssl rand -base64 32`. Keep that key stable
 and backed up alongside the database: existing encrypted credentials need it.

@@ -1,0 +1,14 @@
+name: claude-task
+services:
+  api:
+    command: pnpm dev:backend
+    domains:
+      - claude-task-api.localhost
+    port: 3000
+    autostart: true
+  frontend:
+    command: pnpm dev:frontend
+    domains:
+      - claude-task.localhost
+    port: 5173
+    autostart: true

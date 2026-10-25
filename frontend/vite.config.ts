@@ -16,5 +16,7 @@ export default defineConfig({
     proxy: {
       '/api': { target: backend, ws: true },
     },
+    host: true,
+    allowedHosts: true
   },
 });
