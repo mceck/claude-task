@@ -606,6 +606,29 @@ describe('Session lifecycle', () => {
     expect(agentComments.map((c) => c.body)).toEqual(['Before the blip.\n\nAfter the blip.']);
     expect(await getSession(admin, task.id)).toMatchObject({ state: 'running' });
   });
+
+  // Deleting would drop the Job's row while `claude` keeps running with the Task's secrets,
+  // and the Runner would refuse every later Job of the Agent as "another job is running".
+  it('refuses deleting a Task, or its Project, while a Job works on it', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const member = await createUser(app, admin, { role: 'member' });
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+
+    const refused = await member.client.delete(`/tasks/${task.id}`);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toMatch(/stop/i);
+    expect((await admin.post(`/projects/${project.id}/archive`)).status).toBe(200);
+    expect((await admin.delete(`/projects/${project.id}`)).status).toBe(409);
+    expect((await admin.get(`/tasks/${task.id}`)).status).toBe(200);
+
+    await runner.exit(start.jobId);
+    expect((await member.client.delete(`/tasks/${task.id}`)).status).toBe(204);
+    expect((await admin.delete(`/projects/${project.id}`)).status).toBe(204);
+  });
 });
 
 describe('the Queue', () => {

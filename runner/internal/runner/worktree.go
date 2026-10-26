@@ -104,7 +104,9 @@ func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) (bo
 // and its Worktrees must survive that.
 func staleClone(repo string, g *protocol.GitSpec) bool {
 	config := func(key string) (string, bool) {
-		out, err := exec.Command("git", "-C", repo, "config", "--get", key).Output()
+		cmd := exec.Command("git", "-C", repo, "config", "--get", key)
+		cmd.Env = gitEnv()
+		out, err := cmd.Output()
 		return strings.TrimSpace(string(out)), err == nil
 	}
 	if g.RepositoryID != "" {
@@ -181,7 +183,7 @@ func ensureExcluded(repo string) error {
 }
 
 func gitEnv() []string {
-	return append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	return append(childEnv(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 }
 
 func runGit(out io.Writer, dir string, args ...string) error {

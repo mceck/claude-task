@@ -302,7 +302,9 @@ func (r *Runner) spillPath(jobID string) string {
 func claudeVersion(path string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	cmd.Env = childEnv()
+	out, err := cmd.Output()
 	if err != nil {
 		return "unknown"
 	}

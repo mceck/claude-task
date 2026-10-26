@@ -370,3 +370,25 @@ func TestMiseFailureStopsClaudeAndCanBeRetried(t *testing.T) {
 		t.Fatalf("install not retried: %v", err)
 	}
 }
+
+// Hooks in the Agent's repositories run during the Runner's own git commands: without the Runner token.
+func TestRunnerGitCommandsKeepTheRunnerTokenFromHooks(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	runJob(t, b, "j1", "worktrees/proj/T-1", o.spec("task/t-1-login"), "")
+
+	leak := filepath.Join(home, "leak")
+	hook := "#!/bin/sh\necho \"[$CLAUDE_TASK_RUNNER_TOKEN]\" >> " + leak + "\n"
+	if err := os.WriteFile(filepath.Join(home, "repos/proj.git/hooks/post-checkout"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runJob(t, b, "j2", "worktrees/proj/T-2", o.spec("task/t-2-signup"), "")
+	out, err := os.ReadFile(leak)
+	if err != nil {
+		t.Fatalf("the hook didn't run: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "[]" {
+		t.Fatalf("a hook saw the runner token: %q", out)
+	}
+}

@@ -29,6 +29,30 @@ import { mcpRoutes } from './mcp/server';
 import { realtimeRoutes } from './realtime/routes';
 import { runnerRoutes } from './runner/routes';
 
+/**
+ * Defense in depth for the web app: Agents write descriptions and comments users view, so no
+ * inline or third-party script may run, and no other site may frame the app. Styles stay
+ * inline-capable (the editors set them), and images may come from any HTTPS URL.
+ */
+const WEB_APP_HEADERS = {
+  'content-security-policy': [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "frame-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; '),
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'same-origin',
+};
+
 export async function buildApp(
   ctx: AppContext,
   opts: { logger?: boolean | FastifyBaseLogger | { level: string } } = {},
@@ -91,7 +115,11 @@ export async function buildApp(
 
   const staticDir = ctx.config.staticDir ? path.resolve(ctx.config.staticDir) : null;
   if (staticDir && existsSync(path.join(staticDir, 'index.html'))) {
-    await app.register(fastifyStatic, { root: staticDir, wildcard: false });
+    await app.register(fastifyStatic, {
+      root: staticDir,
+      wildcard: false,
+      setHeaders: (reply) => reply.headers(WEB_APP_HEADERS),
+    });
     // Client-side routes all load the SPA shell.
     app.setNotFoundHandler((request, reply) => {
       if (request.method !== 'GET') return reply.status(404).send({ error: { code: 'not_found', message: 'Not found' } });

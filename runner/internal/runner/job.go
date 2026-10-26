@@ -108,7 +108,7 @@ func (j *job) run() {
 }
 
 func (j *job) env() []string {
-	env := os.Environ()
+	env := childEnv()
 	for k, v := range j.start.Env {
 		env = append(env, k+"="+v)
 	}
