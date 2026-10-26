@@ -1,6 +1,19 @@
 #!/bin/bash
 # Development services share the persistent Agent Volume and bind only to loopback.
 set -euo pipefail
+
+# The Runner token must reach only the Runner. /proc/1/environ, readable by the agent user and
+# so by every tool, keeps the environment this process started with: re-exec without the token,
+# handing it over on a pipe.
+if [[ -n "${CLAUDE_TASK_RUNNER_TOKEN-}" ]]; then
+  exec 3< <(printf '%s' "$CLAUDE_TASK_RUNNER_TOKEN")
+  exec env -u CLAUDE_TASK_RUNNER_TOKEN "$0" "$@"
+fi
+runner_token=""
+if { true <&3; } 2>/dev/null; then
+  IFS= read -r runner_token <&3 || true
+  exec 3<&-
+fi
 export PATH="/usr/lib/postgresql/16/bin:$PATH"
 data="$HOME/.local/share/claude-task"
 mkdir -p "$data/run"
@@ -97,6 +110,7 @@ if enabled rustfs; then
   ready rustfs curl -fsS http://127.0.0.1:9000/health/ready
 fi
 
-/usr/local/bin/claude-task-runner "$@" &
+CLAUDE_TASK_RUNNER_TOKEN="$runner_token" /usr/local/bin/claude-task-runner "$@" &
 pids+=("$!")
+unset runner_token
 wait "${pids[-1]}"

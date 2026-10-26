@@ -40,9 +40,15 @@ export class FakeRunner {
     return token;
   }
 
-  static async connect(app: TestApp, agentId: string, opts: { token?: string; activeJobId?: string | null; hello?: boolean } = {}): Promise<FakeRunner> {
+  /** `autoPong: false` plays a Runner that went silent (a half-open connection). */
+  static async connect(
+    app: TestApp,
+    agentId: string,
+    opts: { token?: string; activeJobId?: string | null; hello?: boolean; autoPong?: boolean } = {},
+  ): Promise<FakeRunner> {
     const socket = new WebSocket(`${app.url.replace(/^http/, 'ws')}${RUNNER_WS_PATH}`, {
       headers: { authorization: `Bearer ${opts.token ?? FakeRunner.token(app, agentId)}` },
+      autoPong: opts.autoPong ?? true,
     });
     await new Promise<void>((resolve, reject) => {
       socket.once('open', () => resolve());

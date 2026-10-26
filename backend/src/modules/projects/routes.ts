@@ -7,6 +7,7 @@ import type { AfterCommit, AppContext } from '../../context';
 import type { Executor } from '../../db/client';
 import { attachments, comments, projects, tasks } from '../../db/schema';
 import { badRequest, parse } from '../../errors';
+import { removeDeletedWorktrees } from '../../sessions/lifecycle';
 import { listTags } from '../tags/service';
 import { listStatuses } from '../statuses/service';
 import { assertNoActiveJobs } from '../tasks/service';
@@ -59,8 +60,9 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
     await transact(ctx, async (tx, after) => {
       const project = await getProject(tx, id, { lock: true });
       if (!project.archivedAt) throw badRequest('Archive the project before deleting it');
-      await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.projectId, project.id)).for('update');
+      const doomed = await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.projectId, project.id)).for('update');
       await assertNoActiveJobs(tx, eq(tasks.projectId, project.id));
+      await removeDeletedWorktrees(tx, after, doomed.map((t) => t.id));
       const blobs = await tx
         .select({ blobId: attachments.blobId })
         .from(attachments)

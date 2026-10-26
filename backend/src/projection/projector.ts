@@ -24,6 +24,8 @@ export interface ProjectionState {
   /** Credential errors are reported once per Job. */
   credentialReported: boolean;
   hasVisibleOutput?: boolean;
+  /** What the CLI's own `<synthetic>` message said this Turn, which its `result` repeats. */
+  syntheticText?: string | null;
   nextId: number;
 }
 
@@ -92,6 +94,8 @@ export function projectionId(jobId: string, n: number): string {
 type Json = Record<string, any>;
 
 export function project(prev: ProjectionState, event: unknown, ctx: ProjectionContext): ProjectionResult {
+  // Deltas only stream to browsers: the state stays as it is (and needn't be stored again).
+  if ((event as Json | null)?.type === 'stream_event') return { state: prev, mutations: [], broadcasts: deltaBroadcasts(prev, event as Json) };
   const s: ProjectionState = structuredClone(prev);
   const mutations: Mutation[] = [];
   const broadcasts: Broadcast[] = [];
@@ -120,9 +124,6 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
   switch (e.type) {
     case 'system':
       handleSystem();
-      break;
-    case 'stream_event':
-      handleDelta();
       break;
     case 'assistant':
       startTurn();
@@ -182,16 +183,6 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     }
   }
 
-  function handleDelta() {
-    if (e.parent_tool_use_id) return;
-    const delta = e.event?.type === 'content_block_delta' ? e.event.delta : null;
-    if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-      broadcasts.push({ type: 'live.delta', delta: { kind: 'text', commentId: s.comment?.id ?? null, text: delta.text } });
-    } else if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
-      broadcasts.push({ type: 'live.delta', delta: { kind: 'thinking', commentId: null, text: delta.thinking } });
-    }
-  }
-
   function handleAssistant() {
     const content: Json[] = Array.isArray(e.message?.content) ? e.message.content : [];
     if (content.some((b) => b?.type === 'text' && b.text)) s.hasVisibleOutput = true;
@@ -199,6 +190,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     if (e.message?.model === '<synthetic>') {
       const text = content.filter((b) => b?.type === 'text').map((b) => String(b.text)).join('\n').trim();
       if (text) mutations.push({ op: 'system_comment', body: text });
+      s.syntheticText = text || null;
       closeText();
       return;
     }
@@ -219,6 +211,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
         const text = String(block.thinking ?? '').trim();
         if (text === '') continue;
         s.comment = null;
+        s.activity = null;
         if (s.thinking) {
           s.thinking.text = `${s.thinking.text}\n\n${text}`;
           mutations.push({ op: 'item.update', id: s.thinking.id, payload: { kind: 'thinking', text: s.thinking.text } });
@@ -272,9 +265,15 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       if (!entry) continue;
       const output = resultText(block.content);
       const isError = block.is_error === true;
-      entry.status = isError ? 'error' : 'ok';
       entry.output = output.length > OUTPUT_DISPLAY_LIMIT ? `${output.slice(0, OUTPUT_DISPLAY_LIMIT)}\n… (truncated)` : output;
-      entry.outcome = outcome(entry.name, output, isError, e.tool_use_result);
+      // A Stop rejects the running tool call: interrupted, not failed.
+      if (isError && typeof e.tool_use_result === 'string' && /rejected/i.test(e.tool_use_result)) {
+        entry.status = 'interrupted';
+        entry.outcome = 'interrupted';
+      } else {
+        entry.status = isError ? 'error' : 'ok';
+        entry.outcome = outcome(entry.name, output, isError, e.tool_use_result);
+      }
       updateGroup(where.itemId);
     }
   }
@@ -283,6 +282,8 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     clearRetry();
     closeText();
     s.activity = null;
+    // Calls still waiting won't get a result anymore (the Turn stopped first).
+    mutations.push(...settleGroups(s));
     const total = typeof e.total_cost_usd === 'number' ? e.total_cost_usd : null;
     const costUsd = total === null ? null : Math.max(0, total - s.costSoFar);
     if (total !== null) s.costSoFar = Math.max(s.costSoFar, total);
@@ -313,11 +314,13 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     if (isError) {
       const detail = typeof e.result === 'string' && e.result.trim() ? e.result.trim() : null;
       const errors = Array.isArray(e.errors) ? e.errors.filter((x: unknown) => typeof x === 'string') : [];
-      mutations.push({ op: 'system_comment', body: resultMessage(subtype, detail ?? errors.join('\n')) });
+      // The synthetic message already said it (spend limits, API errors).
+      if (!detail || detail !== s.syntheticText) mutations.push({ op: 'system_comment', body: resultMessage(subtype, detail ?? errors.join('\n')) });
     } else if (!s.hasVisibleOutput && s.toolCalls === 0 && typeof e.result === 'string' && e.result.trim()) {
       mutations.push({ op: 'system_comment', body: e.result.trim() });
     }
     s.hasVisibleOutput = false;
+    s.syntheticText = null;
     s.turns++;
     s.turnStartedAt = null;
     s.toolCalls = 0;
@@ -351,6 +354,44 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
   }
 }
 
+/**
+ * The Job is over (its process exited or is gone): tool calls still waiting will never get a
+ * result. Pure, like `project`, and a no-op once settled.
+ */
+export function endJob(prev: ProjectionState): ProjectionResult {
+  const s: ProjectionState = structuredClone(prev);
+  return { state: s, mutations: settleGroups(s), broadcasts: [] };
+}
+
+/** Marks every pending call of the Turn's Activity groups interrupted; one update per changed group. */
+function settleGroups(s: ProjectionState): Mutation[] {
+  const settle = (entries: ActivityEntry[]): boolean => {
+    let changed = false;
+    for (const entry of entries) {
+      if (entry.status === 'pending') {
+        entry.status = 'interrupted';
+        entry.outcome ??= 'interrupted';
+        changed = true;
+      }
+      if (settle(entry.children)) changed = true;
+    }
+    return changed;
+  };
+  const mutations: Mutation[] = [];
+  for (const [id, entries] of Object.entries(s.groups)) {
+    if (settle(entries)) mutations.push({ op: 'item.update', id, payload: { kind: 'activity', entries } });
+  }
+  return mutations;
+}
+
+function deltaBroadcasts(s: ProjectionState, e: Json): Broadcast[] {
+  if (e.parent_tool_use_id) return [];
+  const delta = e.event?.type === 'content_block_delta' ? e.event.delta : null;
+  if (delta?.type === 'text_delta' && typeof delta.text === 'string') return [{ type: 'live.delta', delta: { kind: 'text', commentId: s.comment?.id ?? null, text: delta.text } }];
+  if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') return [{ type: 'live.delta', delta: { kind: 'thinking', commentId: null, text: delta.thinking } }];
+  return [];
+}
+
 function toolEntry(block: Json): ActivityEntry {
   const name = String(block.name ?? 'tool');
   return {
@@ -359,10 +400,18 @@ function toolEntry(block: Json): ActivityEntry {
     summary: summarizeTool(name, block.input ?? {}),
     status: 'pending',
     outcome: null,
-    input: block.input ?? null,
+    input: capStrings(block.input ?? null),
     output: null,
     children: [],
   };
+}
+
+/** Long strings in a tool's input (a whole file being written) are cut for display; the raw stream keeps them. */
+function capStrings(value: unknown): unknown {
+  if (typeof value === 'string') return value.length > OUTPUT_DISPLAY_LIMIT ? `${value.slice(0, OUTPUT_DISPLAY_LIMIT)}\n… (truncated)` : value;
+  if (Array.isArray(value)) return value.map(capStrings);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, capStrings(v)]));
+  return value;
 }
 
 const code = (s: string) => `\`${s.replace(/`/g, "'")}\``;

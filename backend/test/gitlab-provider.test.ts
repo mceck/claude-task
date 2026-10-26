@@ -70,8 +70,9 @@ describe('GitLab provider HTTP contract', () => {
     expect(await provider.branchExists(ref, 'task/api-1-x')).toBe(true);
     expect(await provider.branchExists(ref, 'missing')).toBe(false);
     expect(provider.branchWebUrl(ref, 'task/api-1-x')).toMatch(/\/acme\/platform\/service\/-\/tree\/task\/api-1-x$/);
-    expect(await provider.gitUpstream({ ...ref, defaultBranch: 'main', private: true, cloneUrl: 'https://gitlab.example.com/a.git', webUrl: '' })).toEqual({
-      url: 'https://gitlab.example.com/a.git',
+    // The token only ever goes to the Connection's own scheme and host, whatever GitLab reports as clone URL.
+    expect(await provider.gitUpstream({ ...ref, defaultBranch: 'main', private: true, cloneUrl: 'http://elsewhere.example/a.git', webUrl: '' })).toEqual({
+      url: `${provider.baseUrl}/acme/platform/service.git`,
       username: 'oauth2',
       password: 'glpat-valid',
     });

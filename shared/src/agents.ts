@@ -207,7 +207,8 @@ export interface ActivityEntry {
   name: string;
   /** One line, e.g. "Edited `src/auth.ts`". */
   summary: string;
-  status: 'pending' | 'ok' | 'error';
+  /** `interrupted`: it never got a result (a Stop, the Turn or the process ended first). */
+  status: 'pending' | 'ok' | 'error' | 'interrupted';
   /** Short outcome, e.g. "exit 1". */
   outcome: string | null;
   input: unknown;

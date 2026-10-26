@@ -1,4 +1,5 @@
-import { DEFAULT_AGENT_DOCKERFILE, agentTopic } from '@claude-task/shared';
+import { sql } from 'drizzle-orm';
+import { DEFAULT_AGENT_DOCKERFILE, agentTopic, projectTopic } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import { assignAgent, assignAndStart, createAgent, createCredential, createProject, createTask, createUser } from './helpers/fixtures';
@@ -203,6 +204,26 @@ describe('agents', () => {
     expect(app.runtime.containers.has(res.body.agent.id)).toBe(true);
   });
 
+  it('duplicates an Agent repeatedly with unique names that fit, without leaking avatar copies', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { name: 'A'.repeat(100), connect: false });
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    const form = new FormData();
+    form.append('file', new Blob([png], { type: 'image/png' }), 'a.png');
+    expect((await admin.request('PUT', `/agents/${agent.id}/avatar`, { form })).status).toBeLessThan(300);
+    const names: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const res = await admin.post(`/agents/${agent.id}/duplicate`, {});
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      names.push(res.body.agent.name);
+    }
+    expect(new Set(names).size).toBe(3);
+    for (const n of names) expect(n.length).toBeLessThanOrEqual(100);
+    const blobs = await app.server.ctx.db.execute<{ n: number }>(sql`select count(*)::int as n from agents where avatar_blob_id is not null`);
+    expect(blobs.rows[0]!.n).toBe(4);
+    expect((await admin.post(`/agents/${agent.id}/duplicate`, { name: names[0] })).status).toBe(409);
+  });
+
   it('deletes an Agent without open Sessions, with its container, images and volume', async () => {
     const admin = await app.admin();
     const { project } = await createProject(admin);
@@ -219,6 +240,30 @@ describe('agents', () => {
     await app.settle();
     expect(app.runtime.removed).toContain(agent.id);
     expect((await admin.get(`/tasks/${task.id}`)).body.task.agentId).toBeNull();
+  });
+
+  it('deleting an Agent left on closed Tasks unassigns them visibly, with a Revision', async () => {
+    const admin = await app.admin();
+    const bundle = await createProject(admin);
+    const { agent, runner } = await createAgent(app, admin);
+    const task = await createTask(admin, bundle.project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    const closed = bundle.statuses.find((s) => s.category === 'closed')!;
+    expect((await admin.post(`/tasks/${task.id}/move`, { statusId: closed.id })).status).toBe(200);
+    await runner.exit(start.jobId, null, 'SIGTERM');
+    const before = (await admin.get(`/tasks/${task.id}`)).body.task;
+
+    const ws = await WsTestClient.connect(app.url, admin.cookie);
+    await ws.subscribe(projectTopic(bundle.project.id));
+    expect((await admin.delete(`/agents/${agent.id}`)).status).toBe(204);
+    const { event } = await ws.next('task.updated', (e) => e.task.id === task.id);
+    expect(event.task.agentId).toBeNull();
+    ws.close();
+    const after = (await admin.get(`/tasks/${task.id}`)).body.task;
+    expect(after).toMatchObject({ agentId: null, version: before.version + 1 });
+    const items = (await admin.get(`/tasks/${task.id}/timeline`)).body.items;
+    expect(items.some((i: { type: string; revision?: { changes: { field: string }[] } }) => i.type === 'revision' && i.revision!.changes.some((c) => c.field === 'agentId' ))).toBe(true);
   });
 
   it('lets members see Agents and their Queue but not change them', async () => {
@@ -245,6 +290,21 @@ describe('agents', () => {
     const { agent } = await createAgent(app, admin, { connect: false });
     await expect(FakeRunner.connect(app, agent.id, { token: 'nope' })).rejects.toThrow(/401/);
   });
+
+  it('drops a Runner connection that stops answering pings, so its Jobs can be recovered', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { connect: false });
+    const config = app.server.ctx.config.agents;
+    config.runnerPingIntervalMs = 50;
+    try {
+      const runner = await FakeRunner.connect(app, agent.id, { autoPong: false });
+      await expect(Promise.race([runner.closed, new Promise((r) => setTimeout(() => r('still open'), 2000))])).resolves.not.toBe('still open');
+      await app.settle();
+      expect((await admin.get(`/agents/${agent.id}`)).body.agent.runnerConnected).toBe(false);
+    } finally {
+      delete config.runnerPingIntervalMs;
+    }
+  });
 });
 
 describe('project settings for Agents', () => {
@@ -263,6 +323,11 @@ describe('project settings for Agents', () => {
       { id: expect.any(String), name: 'NODE_ENV', secret: false, value: 'test', last4: null },
     ]);
     expect(JSON.stringify(settings)).not.toContain('hunter2');
+    // A short secret would be (almost) fully revealed by its last 4 characters.
+    await admin.put(`/projects/${project.id}/env/PIN`, { value: '12345678', secret: true });
+    const pin = (await member.get(`/projects/${project.id}/agent-settings`)).body.settings.env.find((e: { name: string }) => e.name === 'PIN');
+    expect(pin).toMatchObject({ secret: true, value: null, last4: '' });
+    await admin.delete(`/projects/${project.id}/env/PIN`);
 
     expect((await member.put(`/projects/${project.id}/env/X`, { value: '1' })).status).toBe(403);
     expect((await member.delete(`/projects/${project.id}/env/NODE_ENV`)).status).toBe(403);

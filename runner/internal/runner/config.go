@@ -16,6 +16,7 @@ type Config struct {
 	Home              string
 	CancelTerm        time.Duration
 	CancelKill        time.Duration
+	SetupTimeout      time.Duration // for each of mise install and the Setup Script
 	OutboxMemoryBytes int
 	Version           string
 }
@@ -28,6 +29,7 @@ func ConfigFromEnv(version string) (Config, error) {
 		Home:              os.Getenv("CLAUDE_TASK_HOME"),
 		CancelTerm:        time.Duration(envInt("CLAUDE_TASK_CANCEL_TERM_MS", 10_000)) * time.Millisecond,
 		CancelKill:        time.Duration(envInt("CLAUDE_TASK_CANCEL_KILL_MS", 20_000)) * time.Millisecond,
+		SetupTimeout:      time.Duration(envInt("CLAUDE_TASK_SETUP_TIMEOUT_MS", 30*60_000)) * time.Millisecond,
 		OutboxMemoryBytes: envInt("CLAUDE_TASK_OUTBOX_MEMORY_BYTES", 50<<20),
 		Version:           version,
 	}

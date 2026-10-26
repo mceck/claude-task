@@ -251,23 +251,28 @@ export class Scheduler {
       if (info.state === 'running') this.kick(agentId);
     }
     if (info.state === 'running') {
-      const configured = await db.transaction(async (tx) => {
-        // The same lock excludes dispatch while files are synchronized.
+      // No lock is held while Docker works (installs can take minutes and the Agent's row lock
+      // would stall every Comment on its Tasks). Dispatch stays off on its own: it needs the
+      // configured revision to match, and reconciles of one Agent are serialized.
+      const pending = await db.transaction(async (tx) => {
         const [current] = await tx.select().from(agents).where(eq(agents.id, agentId)).for('update');
-        if (!current || current.extensionsRevision === current.configuredExtensionsRevision) return false;
+        if (!current || current.extensionsRevision === current.configuredExtensionsRevision) return null;
         const [busy] = await tx.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
-        if (busy) return false;
-        try {
-          const extensions = await agentExtensions(tx, agentId);
-          await runtime.configureSkills(agentId, current.extensionsRevision, extensions.skills.map(({ name, files }) => ({ name, files })));
-          await runtime.configurePlugins(agentId, extensions.plugins.map(({ name, source }) => ({ name, source })));
-          await tx.update(agents).set({ configuredExtensionsRevision: current.extensionsRevision, extensionsError: null }).where(eq(agents.id, agentId));
-          return true;
-        } catch (err) {
-          await tx.update(agents).set({ extensionsError: (err instanceof Error ? err.message : 'Could not configure skills and plugins').slice(0, 2000) }).where(eq(agents.id, agentId));
-          return false;
-        }
+        if (busy) return null;
+        return { revision: current.extensionsRevision, extensions: await agentExtensions(tx, agentId) };
       });
+      let configured = false;
+      if (pending) {
+        const { revision, extensions } = pending;
+        try {
+          await runtime.configureSkills(agentId, revision, extensions.skills.map(({ name, files }) => ({ name, files })));
+          await runtime.configurePlugins(agentId, extensions.plugins.map(({ name, source }) => ({ name, source })));
+          await db.update(agents).set({ configuredExtensionsRevision: revision, extensionsError: null }).where(eq(agents.id, agentId));
+          configured = true;
+        } catch (err) {
+          await db.update(agents).set({ extensionsError: (err instanceof Error ? err.message : 'Could not configure skills and plugins').slice(0, 2000) }).where(eq(agents.id, agentId));
+        }
+      }
       await this.publishAgent(agentId);
       if (configured) this.kick(agentId);
     }

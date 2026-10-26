@@ -39,6 +39,8 @@ export interface AgentsConfig {
   reconcileIntervalMs: number;
   /** A Job whose Runner stays away this long is treated as interrupted. */
   runnerReconnectTimeoutMs: number;
+  /** How often the backend pings each Runner; one missed round drops the connection (default 30s). */
+  runnerPingIntervalMs?: number;
 }
 
 /** The Claude Code version the Base Image installs, verified against the stream-json format in tests. */

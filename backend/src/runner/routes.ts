@@ -38,9 +38,18 @@ export function runnerRoutes(app: FastifyInstance, ctx: AppContext): void {
         message: (msg) => handleRunnerMessage(ctx, agentId, msg),
         close: () => handleRunnerClosed(ctx, agentId),
       });
+      // A Runner that misses a whole round is gone (e.g. a half-open connection): dropping it lets
+      // its Job be recovered instead of looking connected forever.
+      let alive = true;
+      socket.on('pong', () => (alive = true));
+      socket.on('message', () => (alive = true));
       const ping = setInterval(() => {
-        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: 'ping' }));
-      }, PING_INTERVAL_MS);
+        if (!alive) return socket.terminate();
+        alive = false;
+        if (socket.readyState !== socket.OPEN) return;
+        socket.ping();
+        socket.send(JSON.stringify({ type: 'ping' }));
+      }, ctx.config.agents.runnerPingIntervalMs ?? PING_INTERVAL_MS);
       socket.on('close', () => clearInterval(ping));
     },
   );

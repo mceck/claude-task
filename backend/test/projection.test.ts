@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { ActivityEntry } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
-import { initialProjection, project, projectionId } from '../src/projection/projector';
+import { endJob, initialProjection, project, projectionId } from '../src/projection/projector';
 import type { Broadcast, Mutation, ProjectionState } from '../src/projection/projector';
 import { Stream } from './helpers/stream';
 import type { StreamEvent } from './helpers/stream';
@@ -120,7 +120,12 @@ describe('stream projection', () => {
         s.toolUse('b', 'mcp__github__create_issue', {}),
         s.result(),
       ],
-      expected: ['activity: Task tool `set_status` (pending) | github: `create_issue` (pending)', 'summary: success 2 tools'],
+      expected: ['activity: Task tool `set_status` (interrupted, interrupted) | github: `create_issue` (interrupted, interrupted)', 'summary: success 2 tools'],
+    },
+    {
+      name: 'thinking between tool calls closes the Activity group, keeping the order',
+      events: [s.thinking('First.'), s.toolUse('a', 'Read', { file_path: 'a' }), s.toolResult('a', 'x'), s.thinking('Second.'), s.toolUse('b', 'Read', { file_path: 'b' }), s.toolResult('b', 'y'), s.result()],
+      expected: ['thinking: First.', 'activity: Read `a` (ok)', 'thinking: Second.', 'activity: Read `b` (ok)', 'summary: success 2 tools'],
     },
     {
       name: 'compaction leaves a notice',
@@ -130,7 +135,7 @@ describe('stream projection', () => {
     {
       name: 'a non-success result also posts a System Comment',
       events: [s.toolUse('a', 'Bash', { command: 'x' }), s.result({ subtype: 'error_max_turns', isError: true, result: '' })],
-      expected: ['activity: Ran `x` (pending)', 'summary: error_max_turns 1 tools', 'system: The turn stopped: it reached the maximum number of steps.'],
+      expected: ['activity: Ran `x` (interrupted, interrupted)', 'summary: error_max_turns 1 tools', 'system: The turn stopped: it reached the maximum number of steps.'],
     },
     {
       name: 'credential errors name the Credential, once',
@@ -203,6 +208,25 @@ describe('stream projection', () => {
     expect(timeline(mutations)[0]).toBe('activity: Ran `make` (ok, exit 0) | Ran `make test` (error, exit 1)');
   });
 
+  it('settles tool calls left without a result when the Job ends', () => {
+    const { state } = replay([s.toolUse('a', 'Bash', { command: 'sleep 999' }), s.toolUse('b', 'Task', { description: 'dig' }), s.toolUse('c', 'Read', {}, 'b')]);
+    const ended = endJob(state);
+    expect(timeline(ended.mutations)).toEqual(['activity: Ran `sleep 999` (interrupted, interrupted) | Started a subagent: dig (interrupted, interrupted) [Read `a file` (interrupted, interrupted)]']);
+    expect(endJob(ended.state).mutations).toEqual([]);
+  });
+
+  it('leaves the state alone for deltas, so nothing needs to be stored', () => {
+    const { state } = replay([s.toolUse('a', 'Bash', { command: 'x' })]);
+    expect(project(state, s.delta('more'), ctx).state).toBe(state);
+  });
+
+  it('keeps huge tool inputs out of the stored Activity', () => {
+    const big = 'x'.repeat(1024 * 1024);
+    const { mutations } = replay([s.toolUse('a', 'Write', { file_path: 'big.txt', content: big }), s.toolResult('a', 'ok'), s.result()]);
+    const sizes = mutations.filter((m) => m.op === 'item.create' || m.op === 'item.update').map((m) => JSON.stringify(m).length);
+    for (const size of sizes) expect(size).toBeLessThan(64 * 1024);
+  });
+
   it('ignores lines it does not know', () => {
     expect(replay([{ type: 'control_response', response: {} }, { type: 'system', subtype: 'hook_started' }, 'garbage', null]).mutations).toEqual([]);
   });
@@ -214,6 +238,7 @@ describe('stream projection', () => {
     expect(mutations.find((m) => m.op === 'rate_limit')).toMatchObject({ info: { status: 'rejected', rateLimitType: 'seven_day' } });
     expect(mutations.some((m) => m.op === 'comment.create')).toBe(false);
     const system = mutations.filter((m) => m.op === 'system_comment').map((m) => (m as { body: string }).body);
+    expect(system).toHaveLength(1);
     expect(system[0]).toMatch(/spend limit/);
     expect(timeline(mutations)).toContain('summary: success 0 tools');
   });
@@ -232,6 +257,7 @@ describe('recorded streams (ADR 0005 spike)', () => {
     expect(lines.some((l) => l.startsWith('system:'))).toBe(false);
     expect(lines.filter((l) => l.startsWith('summary:'))).toEqual(['summary: error_during_execution 1 tools', 'summary: success 0 tools']);
     expect(mutations.filter((m) => m.op === 'turn').map((m) => m.op === 'turn' && m.turn.isError)).toEqual([false, false]);
+    expect(lines[0]).toMatch(/^activity: Ran .* \(interrupted, interrupted\)$/);
   });
 
   it('empty thinking blocks produce no Timeline item', () => {

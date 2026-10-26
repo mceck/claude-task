@@ -18,7 +18,7 @@ interface Props {
 
 /** The Task's conversation: the Timeline, following new output while at the bottom, with the composer docked below. */
 export function TaskActivity({ task, statuses, tags, users, session, notice, hideChanges }: Props) {
-  const draft = useCommentDraft();
+  const draft = useCommentDraft(task.id);
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(true);

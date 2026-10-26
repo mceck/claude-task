@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { generateKeyPairSync } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -7,6 +8,8 @@ import { useTestApp } from './helpers/app';
 import { assignAgent, assignAndStart, createAgent, createProject, createTask, createUser, getSession, moveToStatus, statusByName, timeline } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
+import { FakeGitProvider } from '../src/git/fake-provider';
+import { GitProviderError } from '../src/git/provider';
 
 const privateKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
 
@@ -121,6 +124,22 @@ describe('Git integration through the public API', () => {
     expect((await admin.get(`/tasks/${task.id}`)).body.task.pullRequest).toMatchObject({ provider: 'gitlab', number: 1 });
     expect((await timeline(admin, task.id)).some((i) => i.type === 'comment' && i.comment.body.startsWith('Merge request [!1]'))).toBe(true);
     await client.close();
+  });
+
+  it('never links a repository of a Git Connection deleted meanwhile', async () => {
+    const admin = await app.admin();
+    const gitlab = (await admin.post('/git/connections', { provider: 'gitlab', name: 'GitLab', token: 'glpat-x' })).body.connection;
+    const bundle = await createProject(admin);
+    let linked!: Promise<{ status: number }>;
+    // The deletion holds the connection's lock while the link runs its provider checks.
+    await app.server.ctx.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${gitlab.id}`}))`);
+      linked = admin.put(`/projects/${bundle.project.id}/repository`, { connectionId: gitlab.id, providerRepoId: '101' });
+      await new Promise((r) => setTimeout(r, 300));
+      await tx.execute(sql`delete from git_connections where id = ${gitlab.id}::uuid`);
+    });
+    expect((await linked).status).toBe(400);
+    expect((await admin.get(`/projects/${bundle.project.id}/repository`)).body.repository).toBeNull();
   });
 
   it('links accessible repositories as a member, defaults and validates the base branch, and rechecks protection', async () => {
@@ -282,5 +301,28 @@ describe('Git integration through the public API', () => {
     expect((await timeline(admin, task.id)).some((i) => i.type === 'comment' && i.comment.body.includes('previous remote task branch was not found'))).toBe(
       true,
     );
+  });
+
+  it('a git provider outage holds that Task for Retry instead of blocking the Agent Queue', async () => {
+    const { admin, agent, runner, task } = await setup();
+    const other = await createProject(admin);
+    const plain = await createTask(admin, other.project.id, { title: 'No repository' });
+    app.git.branchExists = async () => {
+      throw new GitProviderError('GitHub is unavailable', 503);
+    };
+    await assignAndStart(admin, task.id, agent.id);
+    await assignAndStart(admin, plain.id, agent.id);
+
+    const start = await runner.next('job.start');
+    expect(start.git).toBeNull();
+    const system = (await timeline(admin, task.id)).filter((i) => i.type === 'comment' && i.comment.kind === 'system');
+    expect(system.map((i) => (i.type === 'comment' ? i.comment.body : ''))).toEqual([expect.stringContaining('GitHub is unavailable')]);
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'pending', held: true });
+
+    app.git.branchExists = FakeGitProvider.prototype.branchExists;
+    await runner.exit(start.jobId);
+    expect((await admin.post(`/tasks/${task.id}/session/retry`)).status).toBe(200);
+    const retried = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(retried.git!.taskBranch).toBeTruthy();
   });
 });

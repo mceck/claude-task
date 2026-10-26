@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { ApiError, post } from '../api/client';
 import { useMe, useProjects } from '../api/queries';
+import { clearCommentDrafts } from '../lib/drafts';
 import { realtime } from '../lib/realtime';
 import { Loading, UserAvatar } from './common';
 import { Logo } from './Logo';
@@ -116,6 +117,7 @@ function UserMenu({ name, email, id, canChangePassword }: { name: string; email:
     await post('/auth/logout').catch(() => undefined);
     realtime.stop();
     qc.clear();
+    clearCommentDrafts();
     navigate('/login');
   };
 

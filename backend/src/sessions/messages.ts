@@ -15,13 +15,30 @@ export const IMAGE_BLOCK_MAX_BYTES = 5 * 1024 * 1024;
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 export const AGENT_HOME = '/home/agent';
 
+/**
+ * Images inlined in one Message, in total: beyond this they're fetched into the Worktree, so a
+ * Message stays well within the Runner connection's frame limit (and the API's request size).
+ */
+export const INLINE_IMAGE_BUDGET = { bytes: 16 * 1024 * 1024, count: 20 };
+export type InlineBudget = { bytes: number; count: number };
+export const inlineBudget = (): InlineBudget => ({ ...INLINE_IMAGE_BUDGET });
+
+/** Takes the image out of the budget if it fits. */
+function spend(budget: InlineBudget, size: number): boolean {
+  if (budget.count < 1 || size > budget.bytes) return false;
+  budget.count -= 1;
+  budget.bytes -= size;
+  return true;
+}
+
 export interface MessageParts {
   blocks: InputBlock[];
   fetch: AttachmentToFetch[];
 }
 
 export function attachmentPath(commentId: string, filename: string): string {
-  return `.claude-task/attachments/${commentId}/${filename.replace(/[/\\]/g, '_') || 'file'}`;
+  const name = filename.replace(/[/\\]/g, '_');
+  return `.claude-task/attachments/${commentId}/${name && !/^\.+$/.test(name) ? name : 'file'}`;
 }
 
 /** Files linked from a Task's description (or a change notice), ready to give to the Agent. */
@@ -38,7 +55,14 @@ const ATTACHMENT_LINK = new RegExp(`${API_PREFIX}/attachments/([0-9a-f]{8}-[0-9a
  * Description files stay linked by URL in the text (so the Agent can edit the description without
  * breaking the links); this tells it where each one is on disk and shows it small images.
  */
-export async function renderTaskFiles(ctx: AppContext, db: Executor, taskId: string, text: string, seen = new Set<string>()): Promise<TaskFiles> {
+export async function renderTaskFiles(
+  ctx: AppContext,
+  db: Executor,
+  taskId: string,
+  text: string,
+  seen = new Set<string>(),
+  budget = inlineBudget(),
+): Promise<TaskFiles> {
   // `seen` holds the files already shown in this message, so repeated links don't resend them.
   const ids = [...new Set([...text.matchAll(ATTACHMENT_LINK)].map((m) => m[1]!))].filter((id) => !seen.has(id));
   for (const id of ids) seen.add(id);
@@ -56,7 +80,7 @@ export async function renderTaskFiles(ctx: AppContext, db: Executor, taskId: str
     const path = attachmentPath(f.id, f.filename);
     result.fetch.push({ url: `${ctx.config.agents.backendUrl}${RUNNER_ATTACHMENTS_PATH}/${f.id}`, path });
     let shown = '';
-    if (IMAGE_TYPES.has(f.contentType) && f.size <= IMAGE_BLOCK_MAX_BYTES) {
+    if (IMAGE_TYPES.has(f.contentType) && f.size <= IMAGE_BLOCK_MAX_BYTES && spend(budget, f.size)) {
       const data = await readBlob(ctx, f.blobId);
       if (data) {
         result.images.push({ type: 'text', text: `(Image from the description: ${f.filename})` });
@@ -71,7 +95,13 @@ export async function renderTaskFiles(ctx: AppContext, db: Executor, taskId: str
 }
 
 /** `[Comment by <name> — <ISO time>]` and the body; attachments as images or fetched files. */
-export async function renderComments(ctx: AppContext, db: Executor, rows: CommentRow[], seenTaskFiles = new Set<string>()): Promise<MessageParts> {
+export async function renderComments(
+  ctx: AppContext,
+  db: Executor,
+  rows: CommentRow[],
+  seenTaskFiles = new Set<string>(),
+  budget = inlineBudget(),
+): Promise<MessageParts> {
   const parts: MessageParts = { blocks: [], fetch: [] };
   if (rows.length === 0) return parts;
   const resolve = await actorResolver(db, rows.map((r) => ({ type: r.authorType, id: r.authorId })));
@@ -80,10 +110,17 @@ export async function renderComments(ctx: AppContext, db: Executor, rows: Commen
     .from(attachments)
     .where(inArray(attachments.commentId, rows.map((r) => r.id)))
     .orderBy(asc(attachments.position));
+  // The newest images are the likeliest to matter: they get the inline budget first.
+  const inline = new Set<string>();
+  for (const c of [...rows].reverse()) {
+    for (const f of files.filter((x) => x.commentId === c.id).reverse()) {
+      if (IMAGE_TYPES.has(f.contentType) && f.size <= IMAGE_BLOCK_MAX_BYTES && spend(budget, f.size)) inline.add(f.id);
+    }
+  }
 
   for (const c of rows) {
     if (c.noticeMessage) {
-      const files = await renderTaskFiles(ctx, db, c.taskId, c.noticeMessage, seenTaskFiles);
+      const files = await renderTaskFiles(ctx, db, c.taskId, c.noticeMessage, seenTaskFiles, budget);
       parts.blocks.push({ type: 'text', text: files.note ? `${c.noticeMessage}\n${files.note}` : c.noticeMessage }, ...files.images);
       parts.fetch.push(...files.fetch);
       continue;
@@ -94,7 +131,7 @@ export async function renderComments(ctx: AppContext, db: Executor, rows: Commen
       ? c.body : `[Comment by ${who} — ${c.createdAt.toISOString()}]\n${c.body}`;
     const images: InputBlock[] = [];
     for (const f of files.filter((x) => x.commentId === c.id)) {
-      if (IMAGE_TYPES.has(f.contentType) && f.size <= IMAGE_BLOCK_MAX_BYTES) {
+      if (inline.has(f.id)) {
         const data = await readBlob(ctx, f.blobId);
         if (data) {
           images.push({ type: 'image', source: { type: 'base64', media_type: f.contentType, data: data.toString('base64') } });

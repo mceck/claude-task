@@ -6,7 +6,7 @@ import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { tags } from '../../db/schema';
-import { parse } from '../../errors';
+import { notFound, parse } from '../../errors';
 import { getProject } from '../projects/service';
 import { detachTag } from '../tasks/service';
 import { emitTagsChanged, getTag, listTags, serializeTag } from './service';
@@ -43,8 +43,9 @@ export function tagRoutes(app: FastifyInstance, ctx: AppContext): void {
     return transact(ctx, async (tx, after) => {
       const existing = await getTag(tx, id);
       const [tag] = await tx.update(tags).set(body).where(eq(tags.id, id)).returning();
+      if (!tag) throw notFound('Tag');
       await emitTagsChanged(tx, after, existing.projectId);
-      return { tag: serializeTag(tag!) };
+      return { tag: serializeTag(tag) };
     });
   });
 

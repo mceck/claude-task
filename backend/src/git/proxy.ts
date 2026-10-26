@@ -16,6 +16,12 @@ const SERVICES = new Set(['git-upload-pack', 'git-receive-pack']);
 const IDLE_MS = 5 * 60_000;
 /** The ref-update commands sit before the pack; anything larger isn't a real push. */
 const COMMANDS_CAP = 64 * 1024;
+/** Request bytes read before the commands must have shown up (gzip can yield nothing for long). */
+const RAW_CAP = 1024 * 1024;
+const REQUEST_TYPES: Record<string, string> = {
+  'git-upload-pack': 'application/x-git-upload-pack-request',
+  'git-receive-pack': 'application/x-git-receive-pack-request',
+};
 const REQUEST_HEADERS = ['content-type', 'accept', 'accept-encoding', 'content-encoding', 'content-length', 'git-protocol', 'user-agent'];
 const RESPONSE_HEADERS = ['content-type', 'cache-control', 'content-encoding', 'expires', 'pragma'];
 const ZERO = /^0+$/;
@@ -43,6 +49,13 @@ export function gitProxyRoutes(app: FastifyInstance, ctx: AppContext): void {
     const grant = await authorize(ctx, request, reply);
     if (grant) await forward(ctx, request, reply, grant, `/info/refs?service=${service}`, service, null);
   });
+  // Other content types would be parsed (and consumed) by Fastify before the proxy sees them.
+  app.addHook('onRequest', async (request, reply) => {
+    const service = request.method === 'POST' ? /\/(git-(?:upload|receive)-pack)$/.exec(request.url)?.[1] : undefined;
+    if (service && request.headers['content-type']?.split(';')[0]!.trim() !== REQUEST_TYPES[service]) {
+      return deny(reply.header('connection', 'close'), 415, `Send ${REQUEST_TYPES[service]}`);
+    }
+  });
   app.post('/:repo/git-upload-pack', async (request, reply) => {
     const grant = await authorize(ctx, request, reply);
     if (grant) await forward(ctx, request, reply, grant, '/git-upload-pack', 'git-upload-pack', request.raw);
@@ -54,7 +67,8 @@ export function gitProxyRoutes(app: FastifyInstance, ctx: AppContext): void {
     try {
       head = await readCommands(request.raw, request.headers['content-encoding'] === 'gzip');
     } catch {
-      return deny(reply, 400, 'Malformed push request');
+      // The rest of the body is never read: close the connection rather than keep it hanging.
+      return deny(reply.header('connection', 'close'), 400, 'Malformed push request');
     }
     const allowed = `refs/heads/${grant.branchName}`;
     const refused = !grant.branchName || head.commands.some((c) => c.ref !== allowed || ZERO.test(c.newId));
@@ -213,6 +227,7 @@ function pktLines(data: Buffer): string[] | null {
 function readCommands(source: Readable, gzip: boolean): Promise<{ raw: Buffer[]; commands: Command[]; capabilities: Set<string> }> {
   return new Promise((resolve, reject) => {
     const raw: Buffer[] = [];
+    let rawSize = 0;
     let plain = Buffer.alloc(0);
     let settled = false;
     const gunzip = gzip ? zlib.createGunzip() : null;
@@ -249,6 +264,8 @@ function readCommands(source: Readable, gzip: boolean): Promise<{ raw: Buffer[];
     };
     const onData = (chunk: Buffer) => {
       raw.push(chunk);
+      rawSize += chunk.length;
+      if (rawSize > RAW_CAP) return onError(new Error('push commands too far into the request'));
       if (gunzip) gunzip.write(chunk);
       else onPlain(chunk);
     };
@@ -267,7 +284,8 @@ function parseCommands(lines: string[]): { commands: Command[]; capabilities: Se
   let capabilities = new Set<string>();
   for (const [index, line] of lines.entries()) {
     const [text, caps] = line.replace(/\n$/, '').split('\0');
-    if (index === 0 && caps !== undefined) capabilities = new Set(caps.split(' ').filter(Boolean));
+    // On the first command, which a shallow clone puts after its `shallow` lines.
+    if (caps !== undefined && capabilities.size === 0) capabilities = new Set(caps.split(' ').filter(Boolean));
     if (text!.startsWith('shallow ')) continue;
     const match = /^([0-9a-f]{40}|[0-9a-f]{64}) ([0-9a-f]{40}|[0-9a-f]{64}) (\S+)$/.exec(text!);
     // Push certificates and anything unexpected can't be checked, so they're refused as a ref.

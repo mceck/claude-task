@@ -1,6 +1,7 @@
 import type { RealtimeEvent, ServerMessage, Topic } from '@claude-task/shared';
 import type { WebSocket } from 'ws';
 
+const MAX_BACKLOG_BYTES = 16 * 1024 * 1024;
 const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents)$/;
 
 export function isTopic(value: unknown): value is Topic {
@@ -50,7 +51,14 @@ export class RealtimeHub {
     if (!set) return;
     const data = JSON.stringify({ type: 'event', topic, event } satisfies ServerMessage);
     for (const conn of set) {
-      if (conn.socket.readyState === conn.socket.OPEN) conn.socket.send(data);
+      if (conn.socket.readyState !== conn.socket.OPEN) continue;
+      // A browser that stopped reading would make its backlog grow without end: drop it, it
+      // refetches everything when it reconnects.
+      if (conn.socket.bufferedAmount > MAX_BACKLOG_BYTES) {
+        conn.socket.terminate();
+        continue;
+      }
+      conn.socket.send(data);
     }
   }
 

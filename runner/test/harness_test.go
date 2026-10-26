@@ -73,6 +73,8 @@ type backend struct {
 	gaps       []string
 	autoAck    bool
 	files      map[string][]byte
+	// reply answers a processed message right away, like the real backend's scheduler.
+	reply func(m msg) []msg
 }
 
 func newBackend(t *testing.T) *backend {
@@ -157,6 +159,12 @@ func (b *backend) receive(c *websocket.Conn, m msg) {
 	if b.autoAck {
 		data, _ := json.Marshal(msg{"type": "ack", "jobId": jobID, "seq": b.lastSeq[jobID]})
 		c.Write(context.Background(), websocket.MessageText, data)
+	}
+	if b.reply != nil {
+		for _, r := range b.reply(m) {
+			data, _ := json.Marshal(r)
+			c.Write(context.Background(), websocket.MessageText, data)
+		}
 	}
 }
 

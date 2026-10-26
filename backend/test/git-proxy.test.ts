@@ -129,6 +129,63 @@ describe('Git Proxy', () => {
     expect(text).toContain(`ng refs/heads/main claude-task: only ${branch} can be pushed`);
   });
 
+  it('refuses an endless gzip body that never yields commands, without waiting for its end', async () => {
+    const { project, start } = await running();
+    // A gzip header with FCOMMENT set, then a comment that never ends: gunzip yields nothing.
+    const header = Buffer.from([0x1f, 0x8b, 0x08, 0x10, 0, 0, 0, 0, 0, 0xff]);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent === 0) controller.enqueue(header);
+        sent += 1;
+        controller.enqueue(new Uint8Array(64 * 1024).fill(0x61));
+        if (sent > 512) controller.close();
+      },
+    });
+    const res = await fetch(`${app.url}/git/${project.id}.git/git-receive-pack`, {
+      method: 'POST',
+      headers: {
+        authorization: `Basic ${Buffer.from(`claude-task:${start.git!.token}`).toString('base64')}`,
+        'content-type': 'application/x-git-receive-pack-request',
+        'content-encoding': 'gzip',
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit).catch(() => null);
+    // Refused with a 400, or the connection closed under the still-sending client.
+    if (res) expect(res.status).toBe(400);
+    expect(sent).toBeLessThan(512);
+  });
+
+  it('answers git requests sent with another content type instead of hanging', async () => {
+    const { project, start } = await running();
+    const head = upstream.rev('acme', 'example', 'refs/heads/main')!;
+    for (const service of ['git-receive-pack', 'git-upload-pack']) {
+      const res = await fetch(`${app.url}/git/${project.id}.git/${service}`, {
+        method: 'POST',
+        headers: { authorization: `Basic ${Buffer.from(`claude-task:${start.git!.token}`).toString('base64')}`, 'content-type': 'text/plain' },
+        body: `${pkt(`${head} ${head} refs/heads/main\0report-status\n`)}0000`,
+        signal: AbortSignal.timeout(3000),
+      });
+      expect(res.status).toBe(415);
+    }
+  });
+
+  it('refuses a push from a shallow clone with the readable reason', async () => {
+    const { project, branch, authed } = await running();
+    const seed = path.join(work, 'seed');
+    await run(work, 'clone', '-q', authed(project.id), seed);
+    for (const m of ['one', 'two']) await run(seed, 'commit', '-q', '--allow-empty', '-m', m);
+    await run(seed, 'checkout', '-q', '-b', branch);
+    expect((await run(seed, 'push', '-q', 'origin', branch)).ok).toBe(true);
+    const repo = path.join(work, 'repo');
+    expect((await run(work, 'clone', '-q', '--depth', '1', '--branch', branch, authed(project.id), repo)).ok).toBe(true);
+    await run(repo, 'commit', '-q', '--allow-empty', '-m', 'Sneaky');
+    const result = await run(repo, 'push', 'origin', 'HEAD:refs/heads/feature');
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain(`claude-task: only ${branch} can be pushed`);
+  });
+
   it('streams protocol v2 requests with gzip bodies to upstream', async () => {
     const { project, start } = await running();
     const body = gzipSync(Buffer.from(`${pkt('command=ls-refs\n')}0001${pkt('peel\n')}0000`));

@@ -26,6 +26,20 @@ describe('realtime', () => {
 
   afterEach(() => ws.close());
 
+  it('drops a subscriber that stopped reading instead of buffering for it without end', async () => {
+    const task = await createTask(admin, bundle.project.id);
+    await ws.subscribe(taskTopic(task.id));
+    ws.stopReading();
+    const delta = { kind: 'text' as const, commentId: null, text: 'x'.repeat(256 * 1024) };
+    const server = app.server.ctx.hub as unknown as { connections: Map<{ bufferedAmount: number }, unknown> };
+    for (let i = 0; i < 400; i++) {
+      app.server.ctx.hub.publish(taskTopic(task.id), { type: 'live.delta', taskId: task.id, delta });
+      await new Promise((r) => setImmediate(r));
+    }
+    for (const socket of server.connections.keys()) expect(socket.bufferedAmount).toBeLessThan(32 * 1024 * 1024);
+    expect([...server.connections.keys()]).toHaveLength(0);
+  });
+
   describe('connecting', () => {
     it('refuses connections without a session', async () => {
       await expect(WsTestClient.connect(app.url, null)).rejects.toThrow(/401/);

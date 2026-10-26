@@ -151,7 +151,9 @@ export class GitLabProvider implements GitProvider {
     return `${this.webUrl(ref)}/-/tree/${branch.split('/').map(encodeURIComponent).join('/')}`;
   }
   async gitUpstream(repository: Repository): Promise<GitUpstream> {
-    return { url: repository.cloneUrl, username: 'oauth2', password: this.token };
+    // Built from the Connection's URL rather than GitLab's reported clone URL, which can point to
+    // plain http (a misconfigured external_url) or another host: the token must not go there.
+    return { url: `${this.webUrl(repository)}.git`, username: 'oauth2', password: this.token };
   }
   async checkBaseBranchProtection(ref: RepositoryRef, branch: string): Promise<BranchProtection> {
     const result: BranchProtection = {
