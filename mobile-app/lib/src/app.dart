@@ -115,8 +115,8 @@ class _Reveal extends StatelessWidget {
   const _Reveal({required this.visible, required this.child});
   @override
   Widget build(BuildContext context) => AnimatedSize(
-    duration: const Duration(milliseconds: 220),
-    curve: Curves.easeOutCubic,
+    duration: Motion.medium,
+    curve: Motion.enter,
     alignment: Alignment.topCenter,
     child: visible ? child : const SizedBox(width: double.infinity),
   );
@@ -128,7 +128,16 @@ class _Splash extends StatelessWidget {
   Widget build(BuildContext context) => const Center(
     child: Column(
       mainAxisSize: MainAxisSize.min,
-      children: [BrandMark(size: 56), SizedBox(height: 28), Spinner()],
+      children: [
+        FadeSlideIn(
+          scale: .6,
+          offset: Offset.zero,
+          duration: Motion.slow,
+          child: BrandMark(size: 56),
+        ),
+        SizedBox(height: 28),
+        Spinner(),
+      ],
     ),
   );
 }

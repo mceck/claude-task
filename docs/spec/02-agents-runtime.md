@@ -5,10 +5,10 @@ status: in-progress
 # Spec 02 — Agents & Runtime: containers, runner, queue, sessions, agent timeline
 
 Implementation: backend, runner and frontend are implemented. See
-[running and verification](../agents-runtime.md). Real conversation acceptance and
-ADR 0005 remain pending: the 2026-10-25 retry with Claude Code 2.1.310 was refused by
-the organization's monthly spend limit. The production Docker/runner smoke check
-(through agent `idle`, without a model request) passed.
+[running and verification](../agents-runtime.md). The spike against the real CLI
+(Claude Code 2.1.310, 2026-10-26) is done and recorded in ADR 0005 (accepted). The
+production Docker/runner smoke check (through agent `idle`, without a model request)
+passed; the full Docker + real `claude` scenarios are still to run.
 
 ## ADRs
 
@@ -16,7 +16,7 @@ the organization's monthly spend limit. The production Docker/runner smoke check
 - [ADR 0002](../adr/0002-one-container-per-agent-one-job-at-a-time.md) — One long-lived container per agent, one job at a time
 - [ADR 0003](../adr/0003-backend-owned-queue-outbound-runner.md) — Backend owns the queue; the runner connects outbound and holds no state
 - [ADR 0004](../adr/0004-agent-output-from-stream-not-hooks.md) — Agent output comes from the stream-json stdout, not from Claude Code hooks
-- [ADR 0005](../adr/0005-mid-turn-message-injection.md) — Deliver comments to a running job by writing to stdin mid-turn (proposed, pending spike)
+- [ADR 0005](../adr/0005-mid-turn-message-injection.md) — Deliver comments to a running job by writing to stdin mid-turn (accepted)
 
 Depends on: [Spec 01 — Core Board](01-core-board.md). Uses the Git operations defined in [Spec 03 — Git Integration](03-git-integration.md).
 

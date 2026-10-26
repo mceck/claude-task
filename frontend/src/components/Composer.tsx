@@ -132,7 +132,7 @@ export function Composer({
 
   const empty = !body.trim() && files.length === 0;
 
-  const placeholder = internal ? 'Write an internal note…' : 'Leave a comment… Markdown, drop or paste files.';
+  const placeholder = internal ? 'Write an internal chat…' : 'Leave a comment… Markdown, drop or paste files.';
 
   return (
     <Popover open={suggestions.length > 0}>
@@ -145,13 +145,13 @@ export function Composer({
           onDropCapture={onDrop}
           className={cn(
             'rounded-xl border bg-background/50 p-3 transition-colors focus-within:border-ring/60 dark:bg-input/10',
-            internal && 'border-amber-500/40 bg-amber-500/5 focus-within:border-amber-500/60 dark:bg-amber-500/5',
+            internal && 'border-dashed border-slate-400/50 bg-slate-500/[0.08] focus-within:border-slate-400/70 dark:bg-slate-500/[0.08]',
             dragOver && 'border-dashed border-primary',
           )}
         >
           {internal && (
-            <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-amber-500">
-              <Lock className="size-3" /> Internal note: only people see this, never the agent.
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-400">
+              <Lock className="size-3" /> Internal chat: only people see this, never the agent.
             </p>
           )}
           <Suspense
@@ -208,7 +208,7 @@ export function Composer({
                 className="data-[state=checked]:bg-amber-500"
               />
               <Label htmlFor={`internal-${taskId}`} className={cn('text-xs', internal ? 'text-amber-500' : 'text-muted-foreground')}>
-                Internal note
+                Internal chat
               </Label>
             </div>
             <input
@@ -232,9 +232,9 @@ export function Composer({
               size="sm"
               onClick={submit}
               disabled={busy || empty}
-              className={cn(internal && 'bg-amber-500 text-black hover:bg-amber-500/85')}
+              className={cn(internal && 'bg-slate-600 text-white hover:bg-slate-600/85')}
             >
-              {internal ? 'Add note' : 'Comment'}
+              {internal ? 'Send' : 'Comment'}
               <ArrowUp />
             </Button>
           </div>

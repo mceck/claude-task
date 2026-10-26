@@ -24,7 +24,7 @@ void main() {
     },
   );
   testWidgets(
-    'phone navigates Project → grouped Tasks → conversation with a persistent Internal Note composer',
+    'phone navigates Project → grouped Tasks → conversation with a persistent Internal chat composer',
     (tester) async {
       tester.view.physicalSize = const Size(430, 932);
       tester.view.devicePixelRatio = 1;
@@ -46,7 +46,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('comment-composer')), findsOneWidget);
       expect(
-        find.textContaining('INTERNAL NOTE · never delivered'),
+        find.textContaining('Internal chat · never delivered'),
         findsOneWidget,
       );
       await tester.enterText(
@@ -117,4 +117,98 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets(
+    'conversation describes Revisions in words and offers to notify the Agent of unseen changes',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final h = Harness();
+      addTearDown(h.dispose);
+      h.api.currentTask = {...taskData(), 'agentId': 'agent-1'};
+      h.api.items = [
+        commentData('comment-1', 'Hello team'),
+        revisionData('revision-1', [
+          {'field': 'statusId', 'before': 'status-1', 'after': 'status-2'},
+        ], position: '2'),
+      ];
+      h.api.session = {
+        'state': 'idle',
+        'queuePosition': null,
+        'held': false,
+        'unseenChanges': true,
+      };
+      await h.login();
+      await h.openTask();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('moved it from Open to Closed'),
+        findsOneWidget,
+      );
+      expect(find.text('waiting for messages'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('session-notify')));
+      await tester.pumpAndSettle();
+      expect(h.api.calls, contains('POST /tasks/task-1/session/notify'));
+      expect(find.byKey(const Key('session-notify')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'switching to Internal chat keeps the composer in place and the text focused',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final h = Harness();
+      addTearDown(h.dispose);
+      await h.login();
+      await h.openTask();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+      final field = find.byKey(const Key('comment-composer'));
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      final before = tester.getRect(field);
+      final editable = tester.state<EditableTextState>(
+        find.descendant(of: field, matching: find.byType(EditableText)),
+      );
+      await tester.tap(find.byKey(const ValueKey('segment:true')));
+      await tester.pump();
+      expect(tester.getRect(field), before);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(field), before);
+      expect(
+        tester.state<EditableTextState>(
+          find.descendant(of: field, matching: find.byType(EditableText)),
+        ),
+        same(editable),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets('long Comments are clamped from their first frame', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final h = Harness();
+    addTearDown(h.dispose);
+    h.api.items = [
+      commentData('long', List.filled(60, 'A long line of text.').join('\n\n')),
+    ];
+    await h.login();
+    await h.openTask();
+    await tester.pumpWidget(TaskApp(controller: h.controller));
+    await tester.pump();
+    expect(find.text('Show more'), findsOneWidget);
+    await tester.tap(find.text('Show more'));
+    await tester.pump();
+    expect(find.text('Show less'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

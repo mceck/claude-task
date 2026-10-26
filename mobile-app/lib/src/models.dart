@@ -16,11 +16,20 @@ class User {
 }
 
 class Project {
-  final String id, key, name;
+  final String id, key, name, description;
+
+  /// Task counts per Status category, from the Projects list.
+  final Map<String, int> taskCounts;
   Project.fromJson(Json json)
     : id = json['id'] as String,
       key = json['key'] as String,
-      name = json['name'] as String;
+      name = json['name'] as String,
+      description = json['description'] as String? ?? '',
+      taskCounts = {
+        for (final e in (json['taskCounts'] as Map? ?? {}).entries)
+          e.key as String: (e.value as num).toInt(),
+      };
+  int get taskTotal => taskCounts.values.fold(0, (a, b) => a + b);
 }
 
 class TaskStatus {
@@ -34,9 +43,11 @@ class TaskStatus {
 
 class Tag {
   final String id, name;
+  final String? color;
   Tag.fromJson(Json json)
     : id = json['id'] as String,
-      name = json['name'] as String;
+      name = json['name'] as String,
+      color = json['color'] as String?;
 }
 
 class Agent {
@@ -64,8 +75,12 @@ class SkillCommand {
 class Task {
   final String id, projectId, key, title, description, statusId, priority;
   final String? agentId, branchName, branchUrl, pullRequestUrl;
+
+  /// The Agent Session as the board card shows it.
+  final String? sessionState;
+  final int? queuePosition;
   final List<String> tagIds, assigneeIds;
-  final int version;
+  final int version, commentCount;
   Task.fromJson(Json json)
     : id = json['id'] as String,
       projectId = json['projectId'] as String,
@@ -78,6 +93,10 @@ class Task {
       tagIds = strings(json['tagIds']),
       assigneeIds = strings(json['assigneeIds']),
       version = json['version'] as int? ?? 1,
+      commentCount = (json['commentCount'] as num?)?.toInt() ?? 0,
+      sessionState = (json['session'] as Map?)?['state'] as String?,
+      queuePosition = ((json['session'] as Map?)?['queuePosition'] as num?)
+          ?.toInt(),
       branchName = json['branchName'] as String?,
       branchUrl = json['branchUrl'] as String?,
       pullRequestUrl = (json['pullRequest'] as Map?)?['url'] as String?;

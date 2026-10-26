@@ -201,4 +201,84 @@ void main() {
       expect(h.controller.user, isNull);
     },
   );
+  test(
+    'a stored agent Comment replaces its live text in the same update, never leaving a gap',
+    () async {
+      final h = Harness();
+      await h.login();
+      await h.openTask();
+      h.live.eventController.add({
+        'type': 'live.delta',
+        'taskId': 'task-1',
+        'delta': {'kind': 'text', 'commentId': 'agent-1', 'text': 'Done.'},
+      });
+      final seen = <(bool, bool)>[];
+      h.controller.addListener(
+        () => seen.add((
+          h.controller.liveText.containsKey('agent-1'),
+          h.controller.timeline.any((e) => e.id == 'agent-1'),
+        )),
+      );
+      h.live.eventController.add({
+        'type': 'comment.created',
+        'comment': {
+          ...commentData('agent-1', 'Done.', position: '3')['comment']
+              as Map<String, dynamic>,
+          'kind': 'agent',
+          'author': {
+            'id': 'agent-1',
+            'displayName': 'Ada Bot',
+            'type': 'agent',
+          },
+        },
+      });
+      // Every update shows the text somewhere: live, stored, or (never) both.
+      expect(seen, isNotEmpty);
+      expect(seen.every((s) => s.$1 != s.$2), isTrue);
+      expect(h.controller.timeline.last.id, 'agent-1');
+      h.controller.dispose();
+    },
+  );
+  test(
+    'live updates edit entries in place and never pull in unloaded ones',
+    () async {
+      final h = Harness();
+      await h.login();
+      await h.openTask();
+      final order = h.controller.timeline.map((e) => e.id).toList();
+      h.live.eventController.add({
+        'type': 'comment.updated',
+        'comment': commentData('comment-1', 'Hello team, edited')['comment'],
+      });
+      expect(h.controller.timeline.map((e) => e.id).toList(), order);
+      expect(h.controller.timeline.first.body, 'Hello team, edited');
+      // An update for an entry that isn't loaded waits for the refresh.
+      h.live.eventController.add({
+        'type': 'comment.updated',
+        'comment': commentData('not-loaded', 'Old')['comment'],
+      });
+      expect(h.controller.timeline.any((e) => e.id == 'not-loaded'), isFalse);
+      h.controller.dispose();
+    },
+  );
+  test(
+    'the Timeline reads oldest first even when the server has no read positions',
+    () async {
+      final h = Harness();
+      // Newest first, as the API returns it, with the '0' a missing
+      // task_activity row produces.
+      h.api.items = [
+        for (final (i, body) in ['First', 'Second', 'Third'].indexed)
+          {...commentData('c$i', body, position: '$i'), 'readPosition': '0'},
+      ];
+      await h.login();
+      await h.openTask();
+      expect(h.controller.timeline.map((e) => e.body), [
+        'First',
+        'Second',
+        'Third',
+      ]);
+      h.controller.dispose();
+    },
+  );
 }

@@ -1,29 +1,44 @@
 import 'package:flutter/material.dart';
 
-/// Dark tokens mirroring the web frontend (`frontend/src/index.css`).
+/// Dark tokens: warm graphite layers with a terracotta accent. Semantic colors
+/// (Agent violet, Internal chat slate, warning amber) match the web frontend.
 abstract final class Palette {
-  static const bg = Color(0xff0b0c10);
-  static const sidebar = Color(0xff08090c);
-  static const surface = Color(0xff121418);
-  static const raised = Color(0xff17181d);
-  static const muted = Color(0xff1d1e23);
-  static const hover = Color(0xff22232c);
+  static const bg = Color(0xff0f0f0e);
+  static const sidebar = Color(0xff0a0a09);
+  static const surface = Color(0xff161615);
+  static const raised = Color(0xff1c1c1b);
+  static const muted = Color(0xff242422);
+  static const hover = Color(0xff2b2b29);
   static const border = Color(0x14ffffff);
-  static const borderStrong = Color(0x24ffffff);
-  static const fg = Color(0xfff1f2f4);
-  static const fgMuted = Color(0xff9598a2);
-  static const fgSubtle = Color(0xff676a75);
-  static const primary = Color(0xff7c83f7);
-  static const primarySoft = Color(0xffa7b0fd);
+  static const borderStrong = Color(0x26ffffff);
+  static const fg = Color(0xfff5f4f1);
+  static const fgMuted = Color(0xffa29f98);
+  static const fgSubtle = Color(0xff706d67);
+  static const primary = Color(0xffdb6a44);
+  static const primarySoft = Color(0xfff3a184);
+  static const primaryDeep = Color(0xffb8502f);
   static const violet = Color(0xffa78bfa);
+  static const slate = Color(0xff94a3b8);
+  static const slateDeep = Color(0xff475569);
   static const danger = Color(0xffff6467);
   static const warning = Color(0xffedb345);
+  static const orange = Color(0xfffb923c);
   static const success = Color(0xff4ac06c);
   static const info = Color(0xff38bdf8);
 }
 
 abstract final class Radii {
   static const sm = 8.0, md = 12.0, lg = 16.0, xl = 22.0;
+}
+
+/// Shared durations and curves, so every transition feels the same.
+abstract final class Motion {
+  static const fast = Duration(milliseconds: 150);
+  static const medium = Duration(milliseconds: 240);
+  static const slow = Duration(milliseconds: 420);
+  static const enter = Curves.easeOutCubic;
+  static const exit = Curves.easeInCubic;
+  static const pop = Curves.easeOutBack;
 }
 
 const mono = 'GeistMono';
@@ -36,6 +51,20 @@ Color tint(String seed) {
   }
   return HSLColor.fromAHSL(1, (hash % 360).toDouble(), .55, .62).toColor();
 }
+
+/// Session state colors shared by the board rows and the conversation header.
+Color sessionColor(String? state, {bool queued = false, bool held = false}) =>
+    held
+    ? Palette.danger
+    : queued
+    ? Palette.info
+    : switch (state) {
+        'running' => Palette.success,
+        'pending' => Palette.info,
+        'paused' => Palette.warning,
+        'idle' => Palette.fgMuted,
+        _ => Palette.fgSubtle,
+      };
 
 Color hexColor(String hex, [Color fallback = Palette.fgMuted]) {
   final value = int.tryParse(hex.replaceFirst('#', ''), radix: 16);
@@ -64,8 +93,8 @@ ThemeData buildTheme() {
     displaySmall: TextStyle(
       fontSize: 32,
       fontWeight: FontWeight.w600,
-      letterSpacing: -1,
-      height: 1.15,
+      letterSpacing: -1.1,
+      height: 1.12,
     ),
     headlineMedium: TextStyle(
       fontSize: 28,
@@ -74,14 +103,14 @@ ThemeData buildTheme() {
       height: 1.2,
     ),
     headlineSmall: TextStyle(
-      fontSize: 24,
+      fontSize: 25,
       fontWeight: FontWeight.w600,
-      letterSpacing: -.6,
+      letterSpacing: -.7,
     ),
     titleLarge: TextStyle(
       fontSize: 19,
       fontWeight: FontWeight.w600,
-      letterSpacing: -.3,
+      letterSpacing: -.35,
     ),
     titleMedium: TextStyle(
       fontSize: 15.5,
@@ -124,9 +153,9 @@ ThemeData buildTheme() {
       space: 1,
     ),
     iconTheme: const IconThemeData(color: Palette.fgMuted, size: 20),
-    textSelectionTheme: const TextSelectionThemeData(
+    textSelectionTheme: TextSelectionThemeData(
       cursorColor: Palette.primary,
-      selectionColor: Color(0x557c83f7),
+      selectionColor: Palette.primary.withValues(alpha: .32),
       selectionHandleColor: Palette.primary,
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -186,10 +215,10 @@ ThemeData buildTheme() {
     bottomSheetTheme: const BottomSheetThemeData(
       backgroundColor: Palette.raised,
       surfaceTintColor: Colors.transparent,
-      modalBarrierColor: Color(0xaa000000),
+      modalBarrierColor: Color(0xb3000000),
       showDragHandle: false,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
     ),
     snackBarTheme: SnackBarThemeData(

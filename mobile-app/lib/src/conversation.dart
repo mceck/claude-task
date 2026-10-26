@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'app.dart';
@@ -32,6 +33,9 @@ class _ConversationState extends State<Conversation> {
   bool _atBottom = true, _loadingOlder = false, _readPending = false;
   String? _readId;
   String _stamp = '';
+
+  /// Entries already shown; anything else arriving later animates in.
+  Set<String>? _seen;
   @override
   void initState() {
     super.initState();
@@ -123,6 +127,9 @@ class _ConversationState extends State<Conversation> {
     // The outgoing page of a transition may outlive the selected Task.
     if (t == null) return const SizedBox.shrink();
     _afterContent();
+    if (_seen == null && c.timeline.isNotEmpty) {
+      _seen = {for (final e in c.timeline) e.id};
+    }
     final live =
         c.liveThinking.isNotEmpty ||
         c.liveText.isNotEmpty ||
@@ -165,6 +172,15 @@ class _ConversationState extends State<Conversation> {
                         reverse: true,
                         padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
                         itemCount: c.timeline.length + 2,
+                        // Entries keep their element (open sections, loaded
+                        // images, measured heights) when newer ones arrive.
+                        findChildIndexCallback: (key) {
+                          if (key is! ValueKey<String>) return null;
+                          final i = c.timeline.indexWhere(
+                            (e) => e.id == key.value,
+                          );
+                          return i < 0 ? null : c.timeline.length - i;
+                        },
                         itemBuilder: (context, index) {
                           if (index == 0) return _LiveTail(controller: c);
                           if (index == c.timeline.length + 1) {
@@ -192,17 +208,29 @@ class _ConversationState extends State<Conversation> {
                           final newDay =
                               previous == null ||
                               !_sameDay(previous.createdAt, entry.createdAt);
-                          return Column(
+                          // Agent output was already on screen as the live tail.
+                          final fresh =
+                              (_seen?.add(entry.id) ?? false) &&
+                              entry.type != 'agent' &&
+                              entry.content['kind'] != 'agent';
+                          return FadeSlideIn(
                             key: ValueKey(entry.id),
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (newDay) _DaySeparator(date: entry.createdAt),
-                              TimelineTile(
-                                entry: entry,
-                                controller: c,
-                                grouped: !newDay && _continues(previous, entry),
-                              ),
-                            ],
+                            enabled: fresh,
+                            duration: Motion.fast,
+                            offset: Offset.zero,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (newDay)
+                                  _DaySeparator(date: entry.createdAt),
+                                TimelineTile(
+                                  entry: entry,
+                                  controller: c,
+                                  grouped:
+                                      !newDay && _continues(previous, entry),
+                                ),
+                              ],
+                            ),
                           );
                         },
                       ),
@@ -241,7 +269,7 @@ class _ConversationState extends State<Conversation> {
                                   Icon(
                                     Icons.arrow_downward_rounded,
                                     size: 16,
-                                    color: Palette.fg,
+                                    color: Palette.primarySoft,
                                   ),
                                   SizedBox(width: 6),
                                   Text(
@@ -295,12 +323,20 @@ class _Header extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    final c = controller, t = task;
+    final c = controller, t = task, session = c.session;
     final following = c.preference?.following == true;
     final muted = c.preference?.muted == true;
+    final running = c.online && session?['state'] == 'running';
+    final retry =
+        c.online &&
+        t.agentId != null &&
+        _held(session) &&
+        session?['state'] != 'running';
+    final unseen = c.online && session?['unseenChanges'] == true;
     return Container(
       padding: EdgeInsets.fromLTRB(onBack == null ? 20 : 6, 10, 10, 10),
       decoration: const BoxDecoration(
+        color: Palette.bg,
         border: Border(bottom: BorderSide(color: Palette.border)),
       ),
       child: Row(
@@ -326,7 +362,7 @@ class _Header extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 4),
                   Row(
                     children: [
                       Text(
@@ -338,7 +374,35 @@ class _Header extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Flexible(child: SessionBadge(session: c.session)),
+                      Flexible(
+                        child: AnimatedSwitcher(
+                          duration: Motion.medium,
+                          layoutBuilder: (current, previous) => Stack(
+                            alignment: Alignment.centerLeft,
+                            children: [...previous, ?current],
+                          ),
+                          child: SessionBadge(
+                            key: ValueKey(sessionLabel(session)),
+                            session: session,
+                          ),
+                        ),
+                      ),
+                      // Beside the state it acts on, in free space: showing it
+                      // never shifts the title or the header actions.
+                      for (final action in [
+                        if (running) _PillAction.stop,
+                        if (retry) _PillAction.retry,
+                        if (unseen) _PillAction.notify,
+                      ]) ...[
+                        const SizedBox(width: 6),
+                        _SessionPill(
+                          action: action,
+                          onTap: () => perform(
+                            context,
+                            () => c.sessionAction(action.name),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ],
@@ -367,7 +431,6 @@ class _Header extends StatelessWidget {
               icon: Icons.more_horiz_rounded,
               tooltip: 'Task actions',
               onPressed: () async {
-                final hasSession = c.online && c.session != null;
                 final action = await showActions<String>(anchor, [
                   ActionItem(
                     'follow',
@@ -379,21 +442,21 @@ class _Header extends StatelessWidget {
                   ),
                   ActionItem(
                     'stop',
-                    'Interrupt',
+                    'Stop',
                     Icons.stop_circle_outlined,
-                    enabled: hasSession,
+                    enabled: running,
                   ),
                   ActionItem(
                     'retry',
                     'Retry',
                     Icons.replay_rounded,
-                    enabled: hasSession,
+                    enabled: c.online && t.agentId != null && _held(session),
                   ),
                   ActionItem(
                     'notify',
                     'Notify agent',
                     Icons.campaign_outlined,
-                    enabled: hasSession,
+                    enabled: c.online && session?['unseenChanges'] == true,
                   ),
                   ActionItem(
                     'delete',
@@ -423,44 +486,130 @@ class _Header extends StatelessWidget {
   }
 }
 
-/// The Agent Session's state as a compact badge.
+bool _held(Json? session) =>
+    session?['held'] == true ||
+    (session?['lastJob'] as Map?)?['state'] == 'failed';
+
+/// The web frontend's wording: "queued #2", "running", "waiting for messages"…
+String sessionLabel(Json? session) {
+  if (session == null) return 'No Agent Session';
+  if (_held(session) && session['state'] != 'running') {
+    return 'waiting for retry';
+  }
+  final queue = session['queuePosition'];
+  if (queue != null) return 'queued #$queue';
+  return switch (session['state']) {
+    'pending' => 'starting',
+    'idle' => 'waiting for messages',
+    final String state => state,
+    _ => 'unknown',
+  };
+}
+
+/// The Agent Session's state as a compact chip.
 class SessionBadge extends StatelessWidget {
   final Json? session;
   const SessionBadge({super.key, this.session});
   @override
   Widget build(BuildContext context) {
     final state = session?['state'] as String?;
-    final queue = session?['queuePosition'];
-    final failed =
-        (session?['lastJob'] as Map?)?['state'] == 'failed' ||
-        session?['held'] == true;
-    final (label, color) = switch (state) {
-      null => ('No Agent Session', Palette.fgSubtle),
-      'running' => ('running', Palette.success),
-      'pending' => ('pending', Palette.warning),
-      'paused' => ('paused', Palette.warning),
-      'closed' => ('closed', Palette.fgSubtle),
-      _ when failed => ('needs retry', Palette.danger),
-      _ when queue != null => ('queued #$queue', Palette.info),
-      _ => (state, Palette.fgMuted),
-    };
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        state == 'running'
-            ? PulseDot(color: color, size: 6)
-            : Dot(color: color, size: 6),
-        const SizedBox(width: 5),
-        Flexible(
-          child: Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11.5, color: color),
+    final held = _held(session) && state != 'running';
+    final color = session == null
+        ? Palette.fgSubtle
+        : sessionColor(
+            state,
+            queued: session?['queuePosition'] != null,
+            held: held,
+          );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(6, 2, 8, 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .1),
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: color.withValues(alpha: .22)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          state == 'running'
+              ? PulseDot(color: color, size: 6)
+              : Dot(color: color, size: 6),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              sessionLabel(session),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: Color.lerp(color, Colors.white, .2),
+                height: 1.3,
+              ),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
+}
+
+enum _PillAction {
+  stop(Icons.stop_rounded, 'Stop', 'Stop the Agent', Palette.danger),
+  retry(
+    Icons.replay_rounded,
+    'Retry',
+    'The last Job failed: retry it',
+    Palette.danger,
+  ),
+  notify(
+    Icons.campaign_outlined,
+    'Notify',
+    'The Agent hasn’t seen the latest Task changes: notify it',
+    Palette.warning,
+  );
+
+  final IconData icon;
+  final String label, detail;
+  final Color color;
+  const _PillAction(this.icon, this.label, this.detail, this.color);
+}
+
+/// A Session action as a small pill beside the Session state, in the header's
+/// free space: it takes no room from the conversation or the composer.
+class _SessionPill extends StatelessWidget {
+  final _PillAction action;
+  final VoidCallback onTap;
+  const _SessionPill({required this.action, required this.onTap});
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: action.detail,
+    child: Pressable(
+      key: Key('session-${action.name}'),
+      onTap: onTap,
+      semanticLabel: action.detail,
+      pressedScale: .94,
+      color: action.color.withValues(alpha: .12),
+      border: Border.all(color: action.color.withValues(alpha: .3)),
+      borderRadius: BorderRadius.circular(99),
+      padding: const EdgeInsets.fromLTRB(6, 2, 8, 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(action.icon, size: 12, color: action.color),
+          const SizedBox(width: 3),
+          Text(
+            action.label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: action.color,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _DaySeparator extends StatelessWidget {
@@ -509,18 +658,23 @@ class _DaySeparator extends StatelessWidget {
   }
 }
 
+/// What the running Turn is writing right now, like the web's live view.
 class _LiveTail extends StatelessWidget {
   final TaskController controller;
   const _LiveTail({required this.controller});
   @override
   Widget build(BuildContext context) {
     final c = controller;
-    if (c.liveThinking.isEmpty && c.liveText.isEmpty && c.liveStatus.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    final live =
+        c.liveThinking.isNotEmpty ||
+        c.liveText.isNotEmpty ||
+        c.liveStatus.isNotEmpty;
     final agent = c.agents.where((a) => a.id == c.task?.agentId).firstOrNull;
+    // No size or fade transition: the stored entry replaces this in the same
+    // frame, so animating here would show a gap or a flicker.
+    if (!live) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -528,6 +682,7 @@ class _LiveTail extends StatelessWidget {
             label: agent?.name ?? 'Agent',
             emoji: agent?.emoji ?? '🤖',
             size: 32,
+            circle: false,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -543,36 +698,53 @@ class _LiveTail extends StatelessWidget {
                         fontSize: 14,
                       ),
                     ),
+                    const SizedBox(width: 6),
+                    const Pill(label: 'Agent', color: Palette.violet),
                     const SizedBox(width: 8),
-                    const PulseDot(color: Palette.success, size: 6),
+                    const TypingDots(),
                   ],
                 ),
                 const SizedBox(height: 6),
                 if (c.liveThinking.isNotEmpty)
-                  _Collapsible(
-                    icon: Icons.psychology_outlined,
-                    title: 'Thinking · streaming',
-                    child: SelectableText(
-                      c.liveThinking,
-                      style: const TextStyle(
-                        color: Palette.fgMuted,
-                        fontSize: 13.5,
-                        height: 1.5,
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: _Collapsible(
+                      icon: Icons.psychology_outlined,
+                      title: 'Thinking · streaming',
+                      child: SelectableText(
+                        c.liveThinking,
+                        style: const TextStyle(
+                          color: Palette.fgMuted,
+                          fontSize: 13.5,
+                          height: 1.5,
+                        ),
                       ),
                     ),
                   ),
                 for (final text in c.liveText.values)
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Md('$text ▍', selectable: false, onLink: openLink),
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: DashedOutline(
+                      color: Palette.violet.withValues(alpha: .4),
+                      borderRadius: _bubbleRadius(own: false),
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                        decoration: BoxDecoration(
+                          color: Palette.violet.withValues(alpha: .05),
+                          borderRadius: _bubbleRadius(own: false),
+                        ),
+                        child: Md(
+                          '$text ▍',
+                          selectable: false,
+                          onLink: openLink,
+                        ),
+                      ),
+                    ),
                   ),
                 if (c.liveStatus.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Notice(
-                      message: c.liveStatus,
-                      icon: Icons.hourglass_top_rounded,
-                    ),
+                  Notice(
+                    message: c.liveStatus,
+                    icon: Icons.hourglass_top_rounded,
                   ),
               ],
             ),
@@ -597,11 +769,16 @@ class TimelineTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final e = entry;
     if (e.type == 'revision') {
-      final changes = objects(
-        e.content['changes'],
-      ).map((v) => '${v['field']}: ${v['after']}').join(', ');
+      final changes = objects(e.content['changes']);
+      final described = [
+        for (final c in changes) describeChange(c, controller),
+      ];
+      final text = described.length < 2
+          ? described.join()
+          : '${described.take(described.length - 1).join(', ')} and ${described.last}';
       return _Meta(
-        icon: Icons.edit_note_rounded,
+        icon: changeIcon(changes.firstOrNull?['field'] as String?),
+        ringed: true,
         child: Text.rich(
           TextSpan(
             children: [
@@ -612,7 +789,8 @@ class TimelineTile extends StatelessWidget {
                   color: Palette.fgMuted,
                 ),
               ),
-              TextSpan(text: ' changed $changes'),
+              TextSpan(text: ' $text'),
+              TextSpan(text: ' · ${_CommentView._time(e.createdAt)}'),
             ],
           ),
         ),
@@ -625,6 +803,7 @@ class TimelineTile extends StatelessWidget {
           child: _Collapsible(
             icon: Icons.psychology_outlined,
             title: 'Thinking',
+            color: Palette.violet,
             child: SelectableText(
               payload['text'] as String? ?? '',
               style: const TextStyle(
@@ -675,12 +854,14 @@ class TimelineTile extends StatelessWidget {
       );
     }
     final kind = e.content['kind'];
-    if (kind == 'system') {
+    if (e.deleted) {
       return _Meta(
-        icon: Icons.info_outline_rounded,
-        child: e.deleted
-            ? const Text('Comment deleted')
-            : Md(e.body, size: 12.5),
+        icon: Icons.delete_outline_rounded,
+        ringed: true,
+        child: Text(
+          '${e.author} deleted a comment · ${_CommentView._time(e.createdAt)}',
+          style: const TextStyle(fontStyle: FontStyle.italic),
+        ),
       );
     }
     final own = kind == 'user' && e.authorId == controller.user?.id;
@@ -722,6 +903,7 @@ class TimelineTile extends StatelessWidget {
       final accepted = await confirm(
         anchor,
         title: 'Delete Comment?',
+        message: 'Its attachments are deleted too.',
         confirmLabel: 'Delete',
       );
       if (accepted && anchor.mounted) {
@@ -759,6 +941,82 @@ class TimelineTile extends StatelessWidget {
   }
 }
 
+IconData changeIcon(String? field) => switch (field) {
+  'title' => Icons.title_rounded,
+  'description' => Icons.notes_rounded,
+  'statusId' => Icons.swap_horiz_rounded,
+  'priority' => Icons.flag_outlined,
+  'tagIds' => Icons.sell_outlined,
+  'assigneeIds' => Icons.person_outline_rounded,
+  'agentId' => Icons.smart_toy_outlined,
+  'pullRequest' => Icons.merge_rounded,
+  _ => Icons.edit_note_rounded,
+};
+
+/// A Revision change in words, as the web Timeline says it.
+String describeChange(Json change, TaskController c) {
+  final before = change['before'], after = change['after'];
+  String status(Object? id) =>
+      c.statuses.where((s) => s.id == id).firstOrNull?.name ??
+      'a deleted status';
+  String tag(Object? id) =>
+      c.tags.where((l) => l.id == id).firstOrNull?.name ?? 'a deleted tag';
+  String user(Object? id) =>
+      c.users.where((u) => u.id == id).firstOrNull?.displayName ?? 'someone';
+  String agent(Object? id) =>
+      c.agents.where((a) => a.id == id).firstOrNull?.name ?? 'a deleted agent';
+  String plural(int n, String word) => n == 1 ? word : '${word}s';
+  final was = strings(before is List ? before : const []);
+  final now = strings(after is List ? after : const []);
+  final added = now.where((x) => !was.contains(x)).toList();
+  final removed = was.where((x) => !now.contains(x)).toList();
+  switch (change['field']) {
+    case 'title':
+      return 'renamed the task from “$before” to “$after”';
+    case 'description':
+      return 'updated the description';
+    case 'statusId':
+      return 'moved it from ${status(before)} to ${status(after)}';
+    case 'priority':
+      return 'changed priority from $before to $after';
+    case 'tagIds':
+      return [
+        if (added.isNotEmpty)
+          'added ${plural(added.length, 'tag')} ${added.map(tag).join(', ')}',
+        if (removed.isNotEmpty)
+          'removed ${plural(removed.length, 'tag')} ${removed.map(tag).join(', ')}',
+      ].join(' and ');
+    case 'assigneeIds':
+      return [
+        if (added.isNotEmpty) 'assigned ${added.map(user).join(', ')}',
+        if (removed.isNotEmpty) 'unassigned ${removed.map(user).join(', ')}',
+      ].join(' and ');
+    case 'agentId':
+      if (after == null) return 'unassigned the agent ${agent(before)}';
+      return before == null
+          ? 'assigned the agent ${agent(after)}'
+          : 'reassigned the task from ${agent(before)} to ${agent(after)}';
+    case 'pullRequest':
+      final pr = (after ?? before) as Map?;
+      final gitlab = pr?['provider'] == 'gitlab';
+      final noun = gitlab ? 'merge request' : 'pull request';
+      if (after == null) return 'removed the $noun link';
+      final state = pr?['state'] == 'open' && pr?['draft'] == true
+          ? 'draft'
+          : pr?['state'];
+      return 'updated $noun ${gitlab ? '!' : '#'}${pr?['number']} ($state)';
+    default:
+      return 'changed ${change['field']}';
+  }
+}
+
+BorderRadius _bubbleRadius({required bool own}) => BorderRadius.only(
+  topLeft: Radius.circular(own ? 18 : 6),
+  topRight: Radius.circular(own ? 6 : 18),
+  bottomLeft: const Radius.circular(18),
+  bottomRight: const Radius.circular(18),
+);
+
 class _CommentView extends StatelessWidget {
   final TimelineEntry entry;
   final bool own, grouped;
@@ -775,8 +1033,31 @@ class _CommentView extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    final e = entry, isAgent = e.content['kind'] == 'agent';
+    final e = entry, kind = e.content['kind'];
+    final isAgent = kind == 'agent', isSystem = kind == 'system';
     final delivery = e.content['delivery'] as Map?;
+    // Same tones as the web Timeline: Agent violet, System amber, Internal chat slate.
+    final (Color fill, Color line) = e.internal
+        ? (
+            Palette.slate.withValues(alpha: .08),
+            Palette.slate.withValues(alpha: .45),
+          )
+        : isAgent
+        ? (
+            Palette.violet.withValues(alpha: .06),
+            Palette.violet.withValues(alpha: .28),
+          )
+        : isSystem
+        ? (
+            Palette.warning.withValues(alpha: .06),
+            Palette.warning.withValues(alpha: .3),
+          )
+        : own
+        ? (
+            Palette.primary.withValues(alpha: .14),
+            Palette.primary.withValues(alpha: .3),
+          )
+        : (Palette.surface, Palette.border);
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -786,45 +1067,42 @@ class _CommentView extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.lock_rounded, size: 12, color: Palette.warning),
+                Icon(Icons.lock_rounded, size: 12, color: Palette.slate),
                 SizedBox(width: 5),
                 Flexible(
                   child: Text(
-                    'INTERNAL NOTE · never delivered to the Agent',
+                    'Internal chat · never delivered to the Agent',
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
-                      fontSize: 10.5,
-                      letterSpacing: .5,
-                      color: Palette.warning,
+                      fontSize: 11,
+                      color: Palette.slate,
                     ),
                   ),
                 ),
               ],
             ),
           ),
-        e.deleted
-            ? const Text(
-                'Comment deleted',
-                style: TextStyle(
-                  fontStyle: FontStyle.italic,
-                  color: Palette.fgSubtle,
-                ),
-              )
-            : Md(e.body, onLink: openLink),
+        if (e.body.isNotEmpty)
+          _Clamped(
+            fade: Color.alphaBlend(fill, Palette.bg),
+            child: Md(e.body, size: isSystem ? 13.5 : 14.5, onLink: openLink),
+          ),
         for (final attachment in e.attachments)
           AttachmentTile(attachment: attachment, controller: controller),
       ],
     );
-    final footer = Wrap(
-      spacing: 6,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        Text(_time(e.createdAt), style: _metaStyle),
-        if (e.content['editedAt'] != null)
-          const Text('· Edited', style: _metaStyle),
-        if (delivery != null) _Delivery(delivery: delivery),
-      ],
+    final bubble = _Bubble(
+      fill: fill,
+      line: line,
+      dashed: e.internal,
+      radius: _bubbleRadius(own: own),
+      child: body,
     );
+    final meta = [
+      if (e.content['editedAt'] != null)
+        const Text('Edited', style: _metaStyle),
+      if (delivery != null) _Delivery(delivery: delivery),
+    ];
     final actions = onActions == null
         ? null
         : Builder(
@@ -847,30 +1125,21 @@ class _CommentView extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                    decoration: BoxDecoration(
-                      color: e.internal
-                          ? Palette.warning.withValues(alpha: .1)
-                          : Palette.primary.withValues(alpha: .16),
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(18),
-                        topRight: Radius.circular(18),
-                        bottomLeft: Radius.circular(18),
-                        bottomRight: Radius.circular(6),
-                      ),
-                      border: Border.all(
-                        color: e.internal
-                            ? Palette.warning.withValues(alpha: .35)
-                            : Palette.primary.withValues(alpha: .28),
-                      ),
-                    ),
-                    child: body,
-                  ),
+                  bubble,
                   const SizedBox(height: 4),
                   Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: [?actions, footer],
+                    children: [
+                      ?actions,
+                      Wrap(
+                        spacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(_time(e.createdAt), style: _metaStyle),
+                          ...meta,
+                        ],
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -891,7 +1160,11 @@ class _CommentView extends StatelessWidget {
         ),
         if (isAgent) ...[
           const SizedBox(width: 6),
-          const Pill(label: 'Agent', color: Palette.primary),
+          const Pill(label: 'Agent', color: Palette.violet),
+        ],
+        if (isSystem) ...[
+          const SizedBox(width: 6),
+          const Pill(label: 'System', color: Palette.warning),
         ],
         const SizedBox(width: 8),
         Text(_time(e.createdAt), style: _metaStyle),
@@ -906,11 +1179,26 @@ class _CommentView extends StatelessWidget {
             width: 32,
             child: grouped
                 ? null
+                : isSystem
+                ? Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Palette.warning.withValues(alpha: .14),
+                    ),
+                    child: const Icon(
+                      Icons.warning_amber_rounded,
+                      size: 17,
+                      color: Palette.warning,
+                    ),
+                  )
                 : Avatar(
                     label: e.author,
                     emoji: isAgent ? agent?.emoji ?? '🤖' : null,
                     seed: e.authorId ?? e.author,
                     size: 32,
+                    circle: !isAgent,
                   ),
           ),
           const SizedBox(width: 12),
@@ -918,40 +1206,12 @@ class _CommentView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (!grouped) ...[name, const SizedBox(height: 4)],
-                isAgent && !e.internal
-                    ? body
-                    : Container(
-                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                        decoration: BoxDecoration(
-                          color: e.internal
-                              ? Palette.warning.withValues(alpha: .08)
-                              : Palette.surface,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(6),
-                            topRight: Radius.circular(18),
-                            bottomLeft: Radius.circular(18),
-                            bottomRight: Radius.circular(18),
-                          ),
-                          border: Border.all(
-                            color: e.internal
-                                ? Palette.warning.withValues(alpha: .35)
-                                : Palette.border,
-                          ),
-                        ),
-                        child: body,
-                      ),
-                if (e.content['editedAt'] != null || delivery != null)
+                if (!grouped) ...[name, const SizedBox(height: 5)],
+                bubble,
+                if (meta.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
-                    child: Wrap(
-                      spacing: 6,
-                      children: [
-                        if (e.content['editedAt'] != null)
-                          const Text('Edited', style: _metaStyle),
-                        if (delivery != null) _Delivery(delivery: delivery),
-                      ],
-                    ),
+                    child: Wrap(spacing: 6, children: meta),
                   ),
               ],
             ),
@@ -970,6 +1230,236 @@ class _CommentView extends StatelessWidget {
   }
 }
 
+class _Bubble extends StatelessWidget {
+  final Color fill, line;
+  final bool dashed;
+  final BorderRadius radius;
+  final Widget child;
+  const _Bubble({
+    required this.fill,
+    required this.line,
+    required this.radius,
+    required this.child,
+    this.dashed = false,
+  });
+  @override
+  Widget build(BuildContext context) {
+    final box = Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        color: fill,
+        borderRadius: radius,
+        border: dashed ? null : Border.all(color: line),
+      ),
+      child: child,
+    );
+    return dashed
+        ? DashedOutline(color: line, borderRadius: radius, child: box)
+        : box;
+  }
+}
+
+/// Long Comments are clamped with a fade and a "Show more" toggle, like the web.
+/// The decision is made during layout, so a Comment never shows at full height
+/// for a frame and then shrinks.
+class _Clamped extends StatefulWidget {
+  final Widget child;
+
+  /// The opaque color behind the text, faded over the clamped bottom.
+  final Color fade;
+  const _Clamped({required this.child, required this.fade});
+  @override
+  State<_Clamped> createState() => _ClampedState();
+}
+
+class _ClampedState extends State<_Clamped> {
+  bool _expanded = false;
+  @override
+  Widget build(BuildContext context) => _ClampLayout(
+    expanded: _expanded,
+    fade: widget.fade,
+    content: widget.child,
+    toggle: Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Pressable(
+        onTap: () => setState(() => _expanded = !_expanded),
+        pressedScale: .96,
+        borderRadius: BorderRadius.circular(8),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _expanded
+                  ? Icons.keyboard_arrow_up_rounded
+                  : Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: Palette.fgMuted,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              _expanded ? 'Show less' : 'Show more',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Palette.fgMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _ClampLayout extends MultiChildRenderObjectWidget {
+  final bool expanded;
+  final Color fade;
+  _ClampLayout({
+    required this.expanded,
+    required this.fade,
+    required Widget content,
+    required Widget toggle,
+  }) : super(children: [content, toggle]);
+  @override
+  _RenderClamp createRenderObject(BuildContext context) =>
+      _RenderClamp(expanded, fade);
+  @override
+  void updateRenderObject(BuildContext context, _RenderClamp renderObject) {
+    renderObject
+      ..expanded = expanded
+      ..fade = fade;
+  }
+}
+
+class _ClampParentData extends ContainerBoxParentData<RenderBox> {}
+
+/// Lays out the content at full height; past [max] (+ some slack, so a line or
+/// two isn't hidden) it shows [max] with a fade, and the toggle below it.
+class _RenderClamp extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _ClampParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _ClampParentData> {
+  static const max = 320.0, slack = 40.0, fadeHeight = 64.0;
+  _RenderClamp(this._expanded, this._fade);
+
+  bool _expanded;
+  set expanded(bool value) {
+    if (value == _expanded) return;
+    _expanded = value;
+    markNeedsLayout();
+  }
+
+  Color _fade;
+  set fade(Color value) {
+    if (value == _fade) return;
+    _fade = value;
+    markNeedsPaint();
+  }
+
+  bool _overflowing = false;
+  bool get _clamped => _overflowing && !_expanded;
+
+  RenderBox get _content => firstChild!;
+  RenderBox get _toggle => lastChild!;
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _ClampParentData) {
+      child.parentData = _ClampParentData();
+    }
+  }
+
+  Size _measure(BoxConstraints constraints, {required bool dry}) {
+    final loose = BoxConstraints(maxWidth: constraints.maxWidth);
+    final content = dry
+        ? _content.getDryLayout(loose)
+        : (_content..layout(loose, parentUsesSize: true)).size;
+    final overflowing = content.height > max + slack;
+    if (!dry) _overflowing = overflowing;
+    var width = content.width, height = content.height;
+    if (overflowing) {
+      final toggle = dry
+          ? _toggle.getDryLayout(loose)
+          : (_toggle..layout(loose, parentUsesSize: true)).size;
+      if (!_expanded) height = max;
+      if (!dry) {
+        (_toggle.parentData as _ClampParentData).offset = Offset(0, height);
+      }
+      height += toggle.height;
+      width = width > toggle.width ? width : toggle.width;
+    } else if (!dry) {
+      _toggle.layout(loose);
+    }
+    return constraints.constrain(Size(width, height));
+  }
+
+  @override
+  void performLayout() => size = _measure(constraints, dry: false);
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) =>
+      _measure(constraints, dry: true);
+
+  @override
+  double computeMinIntrinsicWidth(double height) =>
+      _content.getMinIntrinsicWidth(height);
+  @override
+  double computeMaxIntrinsicWidth(double height) =>
+      _content.getMaxIntrinsicWidth(height);
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (!_clamped) {
+      context.paintChild(_content, offset);
+    } else {
+      final visible = offset & Size(size.width, max);
+      context.pushClipRect(
+        needsCompositing,
+        offset,
+        Offset.zero & Size(size.width, max),
+        (context, offset) => context.paintChild(_content, offset),
+      );
+      final band = Rect.fromLTRB(
+        visible.left,
+        visible.bottom - fadeHeight,
+        visible.right,
+        visible.bottom,
+      );
+      context.canvas.drawRect(
+        band,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [_fade.withValues(alpha: 0), _fade],
+          ).createShader(band),
+      );
+    }
+    if (_overflowing) {
+      context.paintChild(
+        _toggle,
+        offset + (_toggle.parentData as _ClampParentData).offset,
+      );
+    }
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    if (_overflowing &&
+        result.addWithPaintOffset(
+          offset: (_toggle.parentData as _ClampParentData).offset,
+          position: position,
+          hitTest: (result, transformed) =>
+              _toggle.hitTest(result, position: transformed),
+        )) {
+      return true;
+    }
+    if (_clamped && position.dy > max) return false;
+    return _content.hitTest(result, position: position);
+  }
+}
+
 class _Delivery extends StatelessWidget {
   final Map delivery;
   const _Delivery({required this.delivery});
@@ -977,22 +1467,27 @@ class _Delivery extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = delivery['state'] as String?;
     final reason = delivery['reason'] as String?;
+    // Web DeliveryBadge colors.
     final (icon, color, label) = switch (state) {
-      'delivered' => (Icons.done_all_rounded, Palette.primarySoft, 'Delivered'),
-      'queued' => (Icons.schedule_rounded, Palette.fgSubtle, 'Queued'),
+      'delivered' => (
+        Icons.check_circle_outline_rounded,
+        Palette.success,
+        'Delivered',
+      ),
+      'queued' => (Icons.schedule_rounded, Palette.info, 'Queued'),
       'not_delivered' => (
-        Icons.error_outline_rounded,
-        Palette.danger,
+        Icons.do_not_disturb_alt_rounded,
+        Palette.fgMuted,
         'Not delivered',
       ),
       _ => (Icons.circle_outlined, Palette.fgSubtle, '$state'),
     };
     return Tooltip(
-      message: 'Delivery: $state${reason == null ? '' : ' · $reason'}',
+      message: 'Delivery: $label${reason == null ? '' : ' · $reason'}',
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: color),
+          Icon(icon, size: 12, color: color),
           const SizedBox(width: 3),
           Text(
             reason == null ? label : '$label · $reason',
@@ -1009,10 +1504,14 @@ class _Meta extends StatelessWidget {
   final IconData icon;
   final Widget child;
   final Color color;
+
+  /// Draws the icon in a small ring, like the web Timeline's Revisions.
+  final bool ringed;
   const _Meta({
     required this.icon,
     required this.child,
     this.color = Palette.fgSubtle,
+    this.ringed = false,
   });
   @override
   Widget build(BuildContext context) => Padding(
@@ -1020,7 +1519,23 @@ class _Meta extends StatelessWidget {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(width: 32, child: Icon(icon, size: 15, color: color)),
+        SizedBox(
+          width: 32,
+          child: ringed
+              ? Center(
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: Palette.bg,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Palette.borderStrong),
+                    ),
+                    child: Icon(icon, size: 12, color: color),
+                  ),
+                )
+              : Icon(icon, size: 15, color: color),
+        ),
         const SizedBox(width: 12),
         Expanded(
           child: DefaultTextStyle.merge(
@@ -1050,6 +1565,7 @@ class _Collapsible extends StatefulWidget {
   final String title;
   final String? trailing;
   final bool alert;
+  final Color color;
   final Widget child;
   const _Collapsible({
     required this.icon,
@@ -1057,6 +1573,7 @@ class _Collapsible extends StatefulWidget {
     required this.child,
     this.trailing,
     this.alert = false,
+    this.color = Palette.fgMuted,
   });
   @override
   State<_Collapsible> createState() => _CollapsibleState();
@@ -1074,66 +1591,73 @@ class _CollapsibleState extends State<_Collapsible> {
         borderRadius: BorderRadius.circular(Radii.md),
         border: Border.all(color: Palette.border),
       ),
-      child: Column(
-        crossAxisAlignment: _open
-            ? CrossAxisAlignment.stretch
-            : CrossAxisAlignment.start,
-        children: [
-          Pressable(
-            onTap: () => setState(() => _open = !_open),
-            pressedScale: 1,
-            padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
-            child: Row(
-              mainAxisSize: _open ? MainAxisSize.max : MainAxisSize.min,
-              children: [
-                Icon(
-                  widget.icon,
-                  size: 15,
-                  color: widget.alert ? Palette.danger : Palette.fgMuted,
-                ),
-                const SizedBox(width: 7),
-                Text(
-                  widget.title,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
-                    color: Palette.fgMuted,
+      child: AnimatedSize(
+        duration: Motion.medium,
+        curve: Motion.enter,
+        alignment: Alignment.topLeft,
+        child: Column(
+          crossAxisAlignment: _open
+              ? CrossAxisAlignment.stretch
+              : CrossAxisAlignment.start,
+          children: [
+            Pressable(
+              onTap: () => setState(() => _open = !_open),
+              pressedScale: 1,
+              padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+              child: Row(
+                mainAxisSize: _open ? MainAxisSize.max : MainAxisSize.min,
+                children: [
+                  Icon(
+                    widget.icon,
+                    size: 15,
+                    color: widget.alert ? Palette.danger : widget.color,
                   ),
-                ),
-                if (widget.trailing != null) ...[
                   const SizedBox(width: 7),
-                  Flexible(
-                    fit: _open ? FlexFit.tight : FlexFit.loose,
-                    child: Text(
-                      widget.trailing!,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: widget.alert ? Palette.danger : Palette.fgSubtle,
-                      ),
+                  Text(
+                    widget.title,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      color: Palette.fgMuted,
                     ),
                   ),
-                ] else if (_open)
-                  const Spacer(),
-                const SizedBox(width: 4),
-                AnimatedRotation(
-                  turns: _open ? .5 : 0,
-                  duration: const Duration(milliseconds: 180),
-                  child: const Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    size: 17,
-                    color: Palette.fgSubtle,
+                  if (widget.trailing != null) ...[
+                    const SizedBox(width: 7),
+                    Flexible(
+                      fit: _open ? FlexFit.tight : FlexFit.loose,
+                      child: Text(
+                        widget.trailing!,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: widget.alert
+                              ? Palette.danger
+                              : Palette.fgSubtle,
+                        ),
+                      ),
+                    ),
+                  ] else if (_open)
+                    const Spacer(),
+                  const SizedBox(width: 4),
+                  AnimatedRotation(
+                    turns: _open ? .5 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 17,
+                      color: Palette.fgSubtle,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          if (_open)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: widget.child,
-            ),
-        ],
+            if (_open)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: widget.child,
+              ),
+          ],
+        ),
       ),
     ),
   );
@@ -1396,10 +1920,17 @@ class Composer extends StatefulWidget {
 
 class _ComposerState extends State<Composer> {
   late final TextEditingController _text;
+  final _focus = FocusNode();
+  final _link = LayerLink();
+  final _suggestions = OverlayPortalController();
   @override
   void initState() {
     super.initState();
     _text = TextEditingController(text: widget.controller.draft.text);
+    _focus.addListener(() => setState(() {}));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _suggestions.show();
+    });
   }
 
   @override
@@ -1417,6 +1948,7 @@ class _ComposerState extends State<Composer> {
   @override
   void dispose() {
     _text.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
@@ -1447,11 +1979,214 @@ class _ComposerState extends State<Composer> {
   @override
   Widget build(BuildContext context) {
     final c = widget.controller, draft = widget.controller.draft;
-    final accent = draft.internal ? Palette.warning : Palette.primary;
+    final internal = draft.internal;
+    // Internal chat looks like the web composer: dashed slate, never the accent.
+    final line = internal
+        ? Palette.slate.withValues(alpha: _focus.hasFocus ? .75 : .5)
+        : _focus.hasFocus
+        ? Palette.primary.withValues(alpha: .55)
+        : Palette.borderStrong;
+    final radius = BorderRadius.circular(Radii.xl);
+    final sendLabel = internal ? 'Send to internal chat' : 'Send comment';
+    final box = AnimatedContainer(
+      duration: Motion.medium,
+      curve: Motion.enter,
+      decoration: BoxDecoration(
+        color: internal
+            ? Color.alphaBlend(
+                Palette.slate.withValues(alpha: .08),
+                Palette.surface,
+              )
+            : Palette.surface,
+        borderRadius: radius,
+        // Always 1px, so switching to the dashed outline moves nothing.
+        border: Border.all(color: internal ? Colors.transparent : line),
+        boxShadow: [
+          const BoxShadow(
+            color: Color(0x55000000),
+            blurRadius: 24,
+            offset: Offset(0, 8),
+          ),
+          if (_focus.hasFocus && !internal)
+            BoxShadow(
+              color: Palette.primary.withValues(alpha: .12),
+              blurRadius: 0,
+              spreadRadius: 3,
+            ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 14, 0),
+            child: Row(
+              children: [
+                Flexible(
+                  child: Segmented<bool>(
+                    key: const Key('internal-toggle'),
+                    value: internal,
+                    onChanged: c.sending
+                        ? null
+                        : (v) => c.setDraft(c.draft.copyWith(internal: v)),
+                    segments: const [
+                      Segment(
+                        false,
+                        'Comment',
+                        icon: Icons.chat_bubble_outline_rounded,
+                      ),
+                      Segment(
+                        true,
+                        'Internal chat',
+                        icon: Icons.lock_outline_rounded,
+                        color: Palette.slate,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (draft.files.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final file in draft.files)
+                    FadeSlideIn(
+                      key: ValueKey(file.path),
+                      scale: .85,
+                      offset: Offset.zero,
+                      child: _DraftChip(
+                        file: file,
+                        onRemove: c.sending
+                            ? null
+                            : () => c.setDraft(
+                                draft.copyWith(
+                                  files: draft.files
+                                      .where((f) => f != file)
+                                      .toList(),
+                                ),
+                              ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 0, 0, 7),
+                child: IconAction(
+                  icon: Icons.attach_file_rounded,
+                  tooltip: 'Attach local files',
+                  size: 36,
+                  onPressed: c.sending ? null : _attach,
+                ),
+              ),
+              Expanded(
+                child: CallbackShortcuts(
+                  bindings: {
+                    const SingleActivator(
+                      LogicalKeyboardKey.enter,
+                      meta: true,
+                    ): () {
+                      if (_canSend) perform(context, c.send);
+                    },
+                    const SingleActivator(
+                      LogicalKeyboardKey.enter,
+                      control: true,
+                    ): () {
+                      if (_canSend) perform(context, c.send);
+                    },
+                  },
+                  child: TextField(
+                    key: const Key('comment-composer'),
+                    controller: _text,
+                    focusNode: _focus,
+                    enabled: !c.sending,
+                    minLines: 1,
+                    maxLines: 6,
+                    maxLength: 100000,
+                    textCapitalization: TextCapitalization.sentences,
+                    style: const TextStyle(fontSize: 15, height: 1.4),
+                    decoration: InputDecoration(
+                      hintText: internal
+                          ? 'Hidden from the Agent…'
+                          : c.task?.agentId == null
+                          ? 'Leave a comment…'
+                          : 'Message the Agent…',
+                      // One line, so changing it never resizes the composer.
+                      hintMaxLines: 1,
+                      counterText: '',
+                      filled: false,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      disabledBorder: InputBorder.none,
+                      contentPadding: const EdgeInsets.fromLTRB(8, 14, 8, 14),
+                    ),
+                    onChanged: (v) => c.setDraft(c.draft.copyWith(text: v)),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(0, 0, 8, 7),
+                child: Tooltip(
+                  message: sendLabel,
+                  child: AnimatedOpacity(
+                    opacity: _canSend ? 1 : .4,
+                    duration: Motion.fast,
+                    child: Pressable(
+                      key: const Key('send-comment'),
+                      onTap: _canSend ? () => perform(context, c.send) : null,
+                      semanticLabel: sendLabel,
+                      pressedScale: .88,
+                      color: internal ? Palette.slateDeep : Palette.primary,
+                      hoverColor: const Color(0x22ffffff),
+                      borderRadius: BorderRadius.circular(99),
+                      child: SizedBox.square(
+                        dimension: 36,
+                        child: AnimatedSwitcher(
+                          duration: Motion.fast,
+                          transitionBuilder: (child, animation) =>
+                              ScaleTransition(
+                                scale: animation,
+                                child: FadeTransition(
+                                  opacity: animation,
+                                  child: child,
+                                ),
+                              ),
+                          child: c.sending
+                              ? const Padding(
+                                  key: ValueKey('sending'),
+                                  padding: EdgeInsets.all(10),
+                                  child: Spinner(size: 16, color: Colors.white),
+                                )
+                              : const Icon(
+                                  Icons.arrow_upward_rounded,
+                                  key: ValueKey('send'),
+                                  size: 19,
+                                  color: Colors.white,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1468,235 +2203,55 @@ class _ComposerState extends State<Composer> {
                       : null,
                 ),
               ),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              decoration: BoxDecoration(
-                color: draft.internal
-                    ? Color.alphaBlend(
-                        Palette.warning.withValues(alpha: .06),
-                        Palette.surface,
-                      )
-                    : Palette.surface,
-                borderRadius: BorderRadius.circular(Radii.xl),
-                border: Border.all(
-                  color: draft.internal
-                      ? Palette.warning.withValues(alpha: .45)
-                      : Palette.borderStrong,
+            CompositedTransformTarget(
+              link: _link,
+              child: LayoutBuilder(
+                builder: (context, constraints) => OverlayPortal(
+                  controller: _suggestions,
+                  // Over the conversation, like the web popover, so it never
+                  // pushes the Timeline up.
+                  overlayChildBuilder: (context) => Positioned(
+                    width: constraints.maxWidth,
+                    child: CompositedTransformFollower(
+                      link: _link,
+                      showWhenUnlinked: false,
+                      targetAnchor: Alignment.topLeft,
+                      followerAnchor: Alignment.bottomLeft,
+                      child: internal
+                          ? const SizedBox.shrink()
+                          : SkillSuggestions(
+                              text: _text,
+                              skills: c.session?['commands'] is List
+                                  ? objects(
+                                      c.session?['commands'],
+                                    ).map(SkillCommand.fromJson).toList()
+                                  : c.agents
+                                            .where(
+                                              (a) => a.id == c.task?.agentId,
+                                            )
+                                            .firstOrNull
+                                            ?.skillCommands ??
+                                        [],
+                              onSelected: (value) =>
+                                  c.setDraft(c.draft.copyWith(text: value)),
+                            ),
+                    ),
+                  ),
+                  // Always wrapped, only its color changes: swapping the parent
+                  // would rebuild the text field and drop its focus.
+                  child: TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(
+                      end: internal ? line : Colors.transparent,
+                    ),
+                    duration: Motion.medium,
+                    builder: (context, color, child) => DashedOutline(
+                      color: color ?? Colors.transparent,
+                      borderRadius: radius,
+                      child: child!,
+                    ),
+                    child: box,
+                  ),
                 ),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x55000000),
-                    blurRadius: 24,
-                    offset: Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 12, 0),
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Segmented<bool>(
-                            key: const Key('internal-toggle'),
-                            value: draft.internal,
-                            onChanged: c.sending
-                                ? null
-                                : (v) =>
-                                      c.setDraft(c.draft.copyWith(internal: v)),
-                            segments: const [
-                              Segment(
-                                false,
-                                'Comment',
-                                icon: Icons.chat_bubble_outline_rounded,
-                              ),
-                              Segment(
-                                true,
-                                'Internal Note',
-                                icon: Icons.lock_outline_rounded,
-                                color: Palette.warning,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (!c.online || draft.internal)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-                      child: Row(
-                        children: [
-                          Icon(
-                            c.online
-                                ? Icons.visibility_off_outlined
-                                : Icons.cloud_off_rounded,
-                            size: 13,
-                            color: Palette.warning,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              !c.online
-                                  ? 'Draft saved offline'
-                                  : 'Never delivered to the Agent',
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11.5,
-                                color: Palette.warning,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (draft.files.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-                      child: Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          for (final file in draft.files)
-                            _DraftChip(
-                              file: file,
-                              onRemove: c.sending
-                                  ? null
-                                  : () => c.setDraft(
-                                      draft.copyWith(
-                                        files: draft.files
-                                            .where((f) => f != file)
-                                            .toList(),
-                                      ),
-                                    ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (!draft.internal)
-                    SkillSuggestions(
-                      text: _text,
-                      skills: c.session?['commands'] is List
-                          ? objects(
-                              c.session?['commands'],
-                            ).map(SkillCommand.fromJson).toList()
-                          : c.agents
-                                    .where((a) => a.id == c.task?.agentId)
-                                    .firstOrNull
-                                    ?.skillCommands ??
-                                [],
-                      onSelected: (value) =>
-                          c.setDraft(c.draft.copyWith(text: value)),
-                    ),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(6, 0, 0, 7),
-                        child: IconAction(
-                          icon: Icons.add_rounded,
-                          tooltip: 'Attach local files',
-                          size: 36,
-                          onPressed: c.sending ? null : _attach,
-                        ),
-                      ),
-                      Expanded(
-                        child: CallbackShortcuts(
-                          bindings: {
-                            const SingleActivator(
-                              LogicalKeyboardKey.enter,
-                              meta: true,
-                            ): () {
-                              if (_canSend) perform(context, c.send);
-                            },
-                            const SingleActivator(
-                              LogicalKeyboardKey.enter,
-                              control: true,
-                            ): () {
-                              if (_canSend) perform(context, c.send);
-                            },
-                          },
-                          child: TextField(
-                            key: const Key('comment-composer'),
-                            controller: _text,
-                            enabled: !c.sending,
-                            minLines: 1,
-                            maxLines: 6,
-                            maxLength: 100000,
-                            textCapitalization: TextCapitalization.sentences,
-                            style: const TextStyle(fontSize: 15, height: 1.4),
-                            decoration: InputDecoration(
-                              hintText: draft.internal
-                                  ? 'Write an Internal Note…'
-                                  : 'Write a Comment…',
-                              counterText: '',
-                              filled: false,
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              disabledBorder: InputBorder.none,
-                              contentPadding: const EdgeInsets.fromLTRB(
-                                8,
-                                14,
-                                8,
-                                14,
-                              ),
-                            ),
-                            onChanged: (v) =>
-                                c.setDraft(c.draft.copyWith(text: v)),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(0, 0, 8, 7),
-                        child: Tooltip(
-                          message: draft.internal
-                              ? 'Post Internal Note'
-                              : 'Send',
-                          child: AnimatedOpacity(
-                            opacity: _canSend ? 1 : .4,
-                            duration: const Duration(milliseconds: 150),
-                            child: Pressable(
-                              key: const Key('send-comment'),
-                              onTap: _canSend
-                                  ? () => perform(context, c.send)
-                                  : null,
-                              semanticLabel: draft.internal
-                                  ? 'Post Internal Note'
-                                  : 'Send',
-                              pressedScale: .9,
-                              color: accent,
-                              hoverColor: const Color(0x22ffffff),
-                              borderRadius: BorderRadius.circular(99),
-                              child: SizedBox.square(
-                                dimension: 36,
-                                child: c.sending
-                                    ? const Padding(
-                                        padding: EdgeInsets.all(10),
-                                        child: Spinner(
-                                          size: 16,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : Icon(
-                                        draft.internal
-                                            ? Icons.lock_rounded
-                                            : Icons.arrow_upward_rounded,
-                                        size: 19,
-                                        color: draft.internal
-                                            ? const Color(0xff2a1d05)
-                                            : Colors.white,
-                                      ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
               ),
             ),
           ],
@@ -1723,7 +2278,7 @@ class _DraftChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.attach_file_rounded, size: 14),
+          const Icon(Icons.insert_drive_file_outlined, size: 14),
           const SizedBox(width: 4),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 180),

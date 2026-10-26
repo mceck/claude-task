@@ -36,6 +36,14 @@ Json taskData({
   'assigneeIds': <String>[],
   'agentId': null,
 };
+
+/// Later positions were created later, as on the server.
+String at(String position) => DateTime.utc(
+  2026,
+  10,
+  26,
+  10,
+).add(Duration(seconds: int.parse(position))).toIso8601String();
 Json commentData(
   String id,
   String body, {
@@ -44,18 +52,31 @@ Json commentData(
 }) => {
   'type': 'comment',
   'id': id,
-  'createdAt': '2026-10-26T10:00:00.000Z',
+  'createdAt': at(position),
   'readPosition': position,
   'comment': {
     'id': id,
     'taskId': 'task-1',
-    'createdAt': '2026-10-26T10:00:00.000Z',
+    'createdAt': at(position),
     'kind': 'user',
     'body': body,
     'internal': internal,
     'author': {'id': 'user-1', 'displayName': 'Ada', 'type': 'user'},
     'attachments': <Json>[],
     'delivery': internal ? null : {'state': 'queued', 'reason': null},
+  },
+};
+Json revisionData(String id, List<Json> changes, {String position = '1'}) => {
+  'type': 'revision',
+  'id': id,
+  'createdAt': '2026-10-26T10:05:00.000Z',
+  'readPosition': position,
+  'revision': {
+    'id': id,
+    'taskId': 'task-1',
+    'createdAt': '2026-10-26T10:05:00.000Z',
+    'actor': {'id': 'user-1', 'displayName': 'Ada'},
+    'changes': changes,
   },
 };
 Json preferenceData({
@@ -180,6 +201,7 @@ class FakeApi implements TaskApi {
       failSend = false,
       partialCreate = false;
   bool hasOlder = false;
+  Json? session;
   int createCount = 0, sendCount = 0, readCount = 0;
   @override
   Future<Json> request(
@@ -291,7 +313,11 @@ class FakeApi implements TaskApi {
             : null,
       };
     }
-    if (path == '/tasks/task-1/session') return {'session': null};
+    if (path == '/tasks/task-1/session') return {'session': session};
+    if (path.startsWith('/tasks/task-1/session/') && method == 'POST') {
+      session = {...?session, 'unseenChanges': false};
+      return {'session': session};
+    }
     if (path == '/tasks/task-1/preferences') {
       if (method == 'PATCH') pref = {...pref, ...body!};
       return {'preference': pref};

@@ -4,8 +4,7 @@ status: in-progress
 
 # Spec 04 — Flutter conversation frontend
 
-Design date: 2026-10-26. Implementation started on 2026-10-26; progress and
-verification are tracked in `TODO.md` at the repository root.
+Design date: 2026-10-26. Implementation started on 2026-10-26.
 
 ## Intent
 

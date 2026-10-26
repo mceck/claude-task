@@ -105,7 +105,7 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
   const agent = comment.kind === 'agent' ? agents.find((a) => a.id === comment.author.id) : undefined;
   return (
     <li
-      aria-label={comment.internal ? 'Internal note' : comment.kind === 'agent' ? 'Agent comment' : comment.kind === 'system' ? 'System comment' : 'Comment'}
+      aria-label={comment.internal ? 'Internal chat' : comment.kind === 'agent' ? 'Agent comment' : comment.kind === 'system' ? 'System comment' : 'Comment'}
       className="relative flex gap-3"
     >
       <div className="z-10 shrink-0">
@@ -130,7 +130,7 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
       <div
         className={cn(
           'min-w-0 flex-1 rounded-xl border bg-background/40 px-4 py-3 dark:bg-muted/20',
-          comment.internal && 'border-amber-500/40 bg-amber-500/[0.06] dark:bg-amber-500/[0.06]',
+          comment.internal && 'border-dashed border-slate-400/50 bg-slate-500/[0.08] dark:bg-slate-500/[0.08]',
           comment.kind === 'agent' && 'border-violet-500/30 bg-violet-500/[0.05]',
           comment.kind === 'system' && 'border-amber-500/30 bg-amber-500/[0.05] dark:bg-amber-500/[0.05]',
         )}
@@ -140,8 +140,8 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
           {comment.kind === 'agent' && <Badge className="h-4 bg-violet-500/20 px-1.5 text-[10px] text-violet-400">Agent</Badge>}
           {comment.kind === 'system' && <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">System</Badge>}
           {comment.internal && (
-            <Badge variant="outline" className="h-4 gap-1 border-amber-500/40 px-1.5 text-[10px] text-amber-500">
-              <Lock /> Internal note
+            <Badge variant="outline" className="h-4 gap-1 border-dashed border-slate-400/50 px-1.5 text-[10px] text-slate-400">
+              <Lock /> Internal chat
             </Badge>
           )}
           <Time iso={comment.createdAt} />

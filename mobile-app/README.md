@@ -118,7 +118,7 @@ All five native projects are present; no Flutter browser project is generated.
 
 ## Verification record
 
-Implementation progress and final command results are tracked in the repository-root `TODO.md`. Real phone delivery remains an external verification step until deployment-specific Firebase/APNs credentials, application IDs, signing and a phone are supplied. Passing a fake-transport test does not constitute real phone push verification.
+Real phone delivery remains an external verification step until deployment-specific Firebase/APNs credentials, application IDs, signing and a phone are supplied. Passing a fake-transport test does not constitute real phone push verification.
 
 Results on the macOS development host (2026-10-26):
 

@@ -51,7 +51,3 @@ Test external behavior only, at the highest seam:
 3. **Opt-in e2e smoke** with real Docker, `claude` and GitHub.
 
 The event projection gets table-driven unit tests over recorded fixtures. Frontend gets a small Playwright suite.
-
-## First thing to build
-
-The spike in Spec 02 (see ADR 0005, `proposed`): verify mid-turn stdin injection, interrupt, stdin-close behavior, `--session-id`/`--resume`, and thinking blocks against the real CLI, and record stream fixtures. Then update ADR 0005.

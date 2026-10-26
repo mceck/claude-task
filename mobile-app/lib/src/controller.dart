@@ -449,17 +449,22 @@ class TaskController extends ChangeNotifier {
   void _mergeTimeline(List<Json> items) {
     final byId = {for (final item in timeline) item.id: item.json};
     for (final item in items) {
-      byId[item['id'] as String] = item;
+      final id = item['id'] as String, known = byId[id]?['readPosition'];
+      // Live events carry no position: keep the one already known.
+      byId[id] = item['readPosition'] == null && known != null
+          ? {...item, 'readPosition': known}
+          : item;
     }
+    // Display order is the server's and the web's: creation time, then kind,
+    // then id (loadTimeline's `created_at, kind, id`, oldest first). The read
+    // position tracks reading only; it can be missing or '0', and sorting by
+    // it showed the conversation newest first.
     timeline = byId.values.map(TimelineEntry.new).toList()
       ..sort((a, b) {
-        final ap = a.json['readPosition'] as String?,
-            bp = b.json['readPosition'] as String?;
-        if (ap != null && bp != null) {
-          return BigInt.parse(ap).compareTo(BigInt.parse(bp));
-        }
         final time = a.createdAt.compareTo(b.createdAt);
-        return time != 0 ? time : a.id.compareTo(b.id);
+        if (time != 0) return time;
+        final kind = a.type.compareTo(b.type);
+        return kind != 0 ? kind : a.id.compareTo(b.id);
       });
   }
 
@@ -788,16 +793,23 @@ class TaskController extends ChangeNotifier {
       _subscribe();
       notifyListeners();
     }
-    if (type.startsWith('comment.') &&
-        (event['comment'] as Map?)?['taskId'] == task?.id) {
-      liveText.remove((event['comment'] as Map)['id']);
-      liveText.remove('current');
+    // Apply the new projection right away, in the same frame that retires its
+    // live preview, so streamed text never vanishes before the stored version
+    // shows up (the debounced refresh below only reconciles).
+    final entry = _timelineEntry(type, event);
+    if (entry != null) {
+      _mergeTimeline([entry]);
+      _retireLive(type, event);
+      notifyListeners();
     }
-    if (type.startsWith('agent_item.') &&
-        ((event['item'] as Map?)?['payload'] as Map?)?['kind'] ==
-            'turn_summary') {
-      liveText.clear();
-      liveThinking = '';
+    if (type == 'session.changed' && event['taskId'] == task?.id) {
+      session = event['session'] as Json?;
+      if (session?['state'] != 'running') {
+        liveText.clear();
+        liveThinking = '';
+        liveStatus = '';
+      }
+      notifyListeners();
     }
     _refreshTimer?.cancel();
     _refreshTimer = Timer(const Duration(milliseconds: 180), () {
@@ -808,6 +820,53 @@ class TaskController extends ChangeNotifier {
         }),
       );
     });
+  }
+
+  /// The Timeline item a Task event carries, shaped like the timeline API's.
+  Json? _timelineEntry(String type, Json event) {
+    final (kind, key) = type.startsWith('comment.')
+        ? ('comment', 'comment')
+        : type == 'revision.created'
+        ? ('revision', 'revision')
+        : type.startsWith('agent_item.')
+        ? ('agent', 'item')
+        : (null, null);
+    final value = key == null ? null : event[key] as Map?;
+    if (kind == null || value == null || value['taskId'] != task?.id) {
+      return null;
+    }
+    // An update to an entry that isn't loaded (an older page) waits for the
+    // refresh, instead of landing at the bottom.
+    if (!type.endsWith('.created') &&
+        !timeline.any((e) => e.id == value['id'])) {
+      return null;
+    }
+    return {
+      'type': kind,
+      'id': value['id'],
+      'createdAt': value['createdAt'],
+      key!: Map<String, dynamic>.from(value),
+    };
+  }
+
+  /// The stored version arrived: its live preview has done its job (as on the web).
+  void _retireLive(String type, Json event) {
+    if (type.startsWith('comment.')) {
+      final comment = event['comment'] as Map;
+      liveText.remove(comment['id']);
+      if (comment['kind'] == 'agent') liveText.remove('current');
+    } else if (type.startsWith('agent_item.')) {
+      switch (((event['item'] as Map)['payload'] as Map?)?['kind']) {
+        case 'thinking':
+          liveThinking = '';
+        case 'activity':
+          liveText.remove('current');
+        case 'turn_summary':
+          liveText.clear();
+          liveThinking = '';
+          liveStatus = '';
+      }
+    }
   }
 
   void reconnect() {

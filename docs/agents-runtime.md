@@ -198,26 +198,15 @@ Mailpit API reads, and signed S3 bucket/object operations against RustFS. All fi
 services retained their data after restart and after recreating the container with
 services disabled and subsequently re-enabled, using the same Agent Volume.
 
-## Remaining real-CLI acceptance
+## Real-CLI acceptance
 
-Claude Code 2.1.310 was retried on 2026-10-25 with stream-json input/output and a
-fresh session id. It returned a spend-limit refusal (`result.subtype = success`,
-`is_error = true`, exit code 1, cost $0). That verifies the refusal shape only.
-It does not establish mid-turn delivery, interrupt, successful stdin-close draining,
-resume or thinking behavior. ADR 0005 stays proposed, and Spec 02 stays in-progress.
+The CLI spike ran on 2026-10-26 with Claude Code 2.1.310 and is recorded in
+[ADR 0005](adr/0005-mid-turn-message-injection.md) (accepted): mid-turn delivery,
+control-request interrupt, stdin-close draining, `--session-id`/`--resume`, partial
+messages, resume of an interrupted turn and MCP over HTTP behave as the design
+assumes. Sanitized recordings are in `backend/test/fixtures/streams`.
 
-With a funded credential, record sanitized stream fixtures while checking:
-
-1. Start with `--session-id`, inject a second user input during a tool call, and
-   check whether the first result reflects it.
-2. Send a stream-json `control_request` interrupt; verify the turn ends and the
-   process remains available until stdin closes.
-3. Queue multiple inputs, close stdin after the first result and verify the CLI
-   drains the already written inputs before exiting.
-4. Start another process with `--resume` in the same worktree and verify its memory.
-5. Capture thinking, nested subagent activity and compaction where available.
-
-Then update ADR 0005 with the observations (or implement the documented fallback),
-add the recordings under `backend/test/fixtures/streams`, and run the real
-Docker/Claude smoke scenarios from Spec 02. GitHub branch/PR operations belong to
+Still to do: nested subagent and compaction fixtures, and the real Docker + `claude`
+smoke scenarios from Spec 02 (assign, comment mid-run, Stop, container kill and
+resume). GitHub branch/PR operations belong to
 [Spec 03](spec/03-git-integration.md); this spec does not implement that provider.

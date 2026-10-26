@@ -79,7 +79,7 @@ test('drags between columns and within a column; another browser sees it live', 
   await b.close();
 });
 
-test('posts a comment and an internal note, seen live elsewhere', async ({ browser }) => {
+test('posts a comment and an internal chat, seen live elsewhere', async ({ browser }) => {
   const a = await loggedInContext(browser);
   const b = await loggedInContext(browser);
   const project = await createProject(a.request);
@@ -101,15 +101,15 @@ test('posts a comment and an internal note, seen live elsewhere', async ({ brows
   const comment = pageA.getByRole('listitem', { name: 'Comment' });
   await expect(comment.locator('strong')).toHaveText('important');
 
-  await pageA.getByRole('switch', { name: 'Internal note' }).click();
+  await pageA.getByRole('switch', { name: 'Internal chat' }).click();
   await pageA.getByRole('textbox', { name: 'Comment', exact: true }).fill('Only for us');
-  await pageA.getByRole('button', { name: 'Add note' }).click();
-  const note = pageA.getByRole('listitem', { name: 'Internal note' });
+  await pageA.getByRole('button', { name: 'Send' }).click();
+  const note = pageA.getByRole('listitem', { name: 'Internal chat' });
   await expect(note).toContainText('Only for us');
-  await expect(note).toContainText('Internal note');
+  await expect(note).toContainText('Internal chat');
 
   await expect(pageB.getByRole('listitem', { name: 'Comment' }).locator('strong')).toHaveText('important', { timeout: 1000 });
-  await expect(pageB.getByRole('listitem', { name: 'Internal note' })).toContainText('Only for us', { timeout: 1000 });
+  await expect(pageB.getByRole('listitem', { name: 'Internal chat' })).toContainText('Only for us', { timeout: 1000 });
 
   // Editing a comment uses the same editor.
   await comment.getByRole('button', { name: 'Comment actions' }).click();
@@ -121,7 +121,7 @@ test('posts a comment and an internal note, seen live elsewhere', async ({ brows
   await expect(comment).toContainText('This is important Really.');
 
   // Pasted files become attachments of the comment, not part of its text.
-  await pageA.getByRole('switch', { name: 'Internal note' }).click();
+  await pageA.getByRole('switch', { name: 'Internal chat' }).click();
   await pageA.getByRole('textbox', { name: 'Comment', exact: true }).evaluate((el) => {
     const data = new DataTransfer();
     data.items.add(new File(['notes'], 'notes.txt', { type: 'text/plain' }));
@@ -253,7 +253,7 @@ for (const view of ['page', 'board dialog'] as const) {
     expect((await details.boundingBox())!.x).toBeGreaterThan((await activity.boundingBox())!.x);
 
     await composer.fill('Keep this draft.');
-    await scope.getByRole('switch', { name: 'Internal note', exact: true }).click();
+    await scope.getByRole('switch', { name: 'Internal chat', exact: true }).click();
     await scope.getByLabel('Attach files', { exact: true }).setInputFiles({ name: 'draft.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment.') });
     if (view === 'board dialog') {
       // Escape inside a field never closes the task.
@@ -276,7 +276,7 @@ for (const view of ['page', 'board dialog'] as const) {
     await expect(activity).toBeVisible();
     await scope.getByRole('button', { name: 'Focus activity' }).click();
     await expect(composer).toHaveText('Keep this draft.');
-    await expect(scope.getByRole('switch', { name: 'Internal note', exact: true })).toBeChecked();
+    await expect(scope.getByRole('switch', { name: 'Internal chat', exact: true })).toBeChecked();
     await expect(scope.getByLabel('Files to attach')).toContainText('draft.txt');
 
     await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers: { 'x-claude-task': '1' }, data: { body: 'A new comment while reading.' } });
@@ -289,10 +289,10 @@ for (const view of ['page', 'board dialog'] as const) {
       // On narrow screens the sidebar overlays the main panel.
       await scope.getByRole('button', { name: 'Hide details' }).click();
     }
-    await expect(scope.getByRole('button', { name: 'Add note' })).toBeInViewport();
-    await scope.getByRole('button', { name: 'Add note' }).click();
-    await expect(scope.getByRole('listitem', { name: 'Internal note' })).toContainText('Keep this draft.');
-    await expect(scope.getByRole('listitem', { name: 'Internal note' })).toContainText('draft.txt');
+    await expect(scope.getByRole('button', { name: 'Send' })).toBeInViewport();
+    await scope.getByRole('button', { name: 'Send' }).click();
+    await expect(scope.getByRole('listitem', { name: 'Internal chat' })).toContainText('Keep this draft.');
+    await expect(scope.getByRole('listitem', { name: 'Internal chat' })).toContainText('draft.txt');
     await expect(composer).toHaveText('');
     await page.screenshot({ path: testInfo.outputPath('task-view.png') });
 

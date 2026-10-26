@@ -2,6 +2,209 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'theme.dart';
 
+/// Fades and slides its child in once, after [delay]. No timers: the delay is
+/// part of the animation, so nothing stays pending when it's disposed early.
+class FadeSlideIn extends StatefulWidget {
+  final Widget child;
+  final Duration delay, duration;
+  final Offset offset;
+  final double scale;
+  final bool enabled;
+  const FadeSlideIn({
+    super.key,
+    required this.child,
+    this.delay = Duration.zero,
+    this.duration = Motion.medium,
+    this.offset = const Offset(0, .08),
+    this.scale = 1,
+    this.enabled = true,
+  });
+
+  /// Staggers list items, capped so long lists don't wait.
+  FadeSlideIn.staggered({
+    Key? key,
+    required int index,
+    required Widget child,
+    Offset offset = const Offset(0, .12),
+    bool enabled = true,
+  }) : this(
+         key: key,
+         enabled: enabled,
+         delay: Duration(milliseconds: 30 * (index < 10 ? index : 10)),
+         offset: offset,
+         child: child,
+       );
+
+  @override
+  State<FadeSlideIn> createState() => _FadeSlideInState();
+}
+
+final _introduced = <String>{};
+
+/// True only the first time [key] asks in this app session: lists play their
+/// entrance once, not every time you come back to them.
+bool firstIntro(String key) => _introduced.add(key);
+
+class _FadeSlideInState extends State<FadeSlideIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: widget.delay + widget.duration,
+  );
+  late final Animation<double> _progress = CurvedAnimation(
+    parent: _controller,
+    curve: Interval(
+      widget.delay.inMicroseconds /
+          (widget.delay + widget.duration).inMicroseconds,
+      1,
+      curve: Motion.enter,
+    ),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_controller.isAnimating || _controller.isCompleted) return;
+    if (!widget.enabled || MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = 1;
+    } else {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _progress,
+    child: widget.child,
+    builder: (context, child) {
+      final t = _progress.value;
+      return Opacity(
+        opacity: t.clamp(0, 1),
+        child: FractionalTranslation(
+          translation: widget.offset * (1 - t),
+          child: widget.scale == 1
+              ? child
+              : Transform.scale(
+                  scale: widget.scale + (1 - widget.scale) * t,
+                  child: child,
+                ),
+        ),
+      );
+    },
+  );
+}
+
+/// A rounded dashed outline, used for Internal chat and streaming text like
+/// the web frontend's dashed borders.
+class DashedOutline extends StatelessWidget {
+  final Widget child;
+  final Color color;
+  final BorderRadius borderRadius;
+  final double dash, gap, width;
+  const DashedOutline({
+    super.key,
+    required this.child,
+    required this.color,
+    this.borderRadius = const BorderRadius.all(Radius.circular(Radii.md)),
+    this.dash = 5,
+    this.gap = 4,
+    this.width = 1,
+  });
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+    foregroundPainter: _DashedPainter(color, borderRadius, dash, gap, width),
+    child: child,
+  );
+}
+
+class _DashedPainter extends CustomPainter {
+  final Color color;
+  final BorderRadius radius;
+  final double dash, gap, width;
+  const _DashedPainter(
+    this.color,
+    this.radius,
+    this.dash,
+    this.gap,
+    this.width,
+  );
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = (Offset.zero & size).deflate(width / 2);
+    final path = Path()..addRRect(radius.toRRect(rect));
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = width
+      ..style = PaintingStyle.stroke;
+    for (final metric in path.computeMetrics()) {
+      for (var d = 0.0; d < metric.length; d += dash + gap) {
+        canvas.drawPath(metric.extractPath(d, d + dash), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedPainter old) =>
+      old.color != color || old.radius != radius || old.width != width;
+}
+
+/// Three bouncing dots while an Agent is writing.
+class TypingDots extends StatefulWidget {
+  final Color color;
+  const TypingDots({super.key, this.color = Palette.violet});
+  @override
+  State<TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _controller,
+    builder: (context, _) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < 3; i++)
+          Builder(
+            builder: (context) {
+              final phase = ((_controller.value - i * .16) % 1 + 1) % 1;
+              final lift = phase < .5
+                  ? Curves.easeInOut.transform(phase * 2)
+                  : 0.0;
+              final up = phase < .25 ? lift : (phase < .5 ? 1 - lift : 0.0);
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                child: Transform.translate(
+                  offset: Offset(0, -3 * up),
+                  child: Dot(
+                    color: widget.color.withValues(alpha: .45 + .55 * up),
+                    size: 5,
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    ),
+  );
+}
+
 /// Tap target with hover and press feedback instead of Material ink.
 class Pressable extends StatefulWidget {
   final Widget child;
@@ -83,7 +286,7 @@ class _PressableState extends State<Pressable> {
   }
 }
 
-enum Tone { primary, secondary, ghost, danger, warning }
+enum Tone { primary, secondary, ghost, danger, warning, slate }
 
 class AppButton extends StatelessWidget {
   final String label;
@@ -107,6 +310,7 @@ class AppButton extends StatelessWidget {
     final (background, foreground, border) = switch (tone) {
       Tone.primary => (Palette.primary, Colors.white, null),
       Tone.warning => (Palette.warning, const Color(0xff2a1d05), null),
+      Tone.slate => (Palette.slateDeep, Colors.white, null),
       Tone.danger => (
         Palette.danger.withValues(alpha: .14),
         Palette.danger,
@@ -147,22 +351,36 @@ class AppButton extends StatelessWidget {
         ),
       ],
     );
+    final solid =
+        tone == Tone.primary || tone == Tone.warning || tone == Tone.slate;
     return AnimatedOpacity(
       opacity: enabled || busy ? 1 : .45,
-      duration: const Duration(milliseconds: 150),
-      child: Pressable(
-        onTap: enabled ? onPressed : null,
-        color: background,
-        hoverColor: tone == Tone.primary || tone == Tone.warning
-            ? const Color(0x1fffffff)
-            : const Color(0x0fffffff),
-        border: border,
-        borderRadius: BorderRadius.circular(compact ? 10 : Radii.md),
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 12 : 18,
-          vertical: compact ? 8 : 13,
+      duration: Motion.fast,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(compact ? 10 : Radii.md),
+          boxShadow: tone == Tone.primary && enabled && !compact
+              ? [
+                  BoxShadow(
+                    color: Palette.primary.withValues(alpha: .28),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
+                ]
+              : null,
         ),
-        child: content,
+        child: Pressable(
+          onTap: enabled ? onPressed : null,
+          color: background,
+          hoverColor: solid ? const Color(0x1fffffff) : const Color(0x0fffffff),
+          border: border,
+          borderRadius: BorderRadius.circular(compact ? 10 : Radii.md),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 12 : 18,
+            vertical: compact ? 8 : 13,
+          ),
+          child: content,
+        ),
       ),
     );
   }
@@ -690,43 +908,67 @@ class EmptyState extends StatelessWidget {
   Widget build(BuildContext context) => Center(
     child: SingleChildScrollView(
       padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: [
-                  Palette.primary.withValues(alpha: .25),
-                  Palette.primary.withValues(alpha: .04),
-                ],
+      child: FadeSlideIn(
+        offset: const Offset(0, .06),
+        duration: Motion.slow,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FadeSlideIn(
+              scale: .6,
+              offset: Offset.zero,
+              delay: const Duration(milliseconds: 80),
+              duration: Motion.slow,
+              child: Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(22),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Palette.primary.withValues(alpha: .22),
+                      Palette.primary.withValues(alpha: .04),
+                    ],
+                  ),
+                  border: Border.all(
+                    color: Palette.primary.withValues(alpha: .28),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Palette.primary.withValues(alpha: .12),
+                      blurRadius: 30,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Icon(icon, color: Palette.primarySoft, size: 28),
               ),
-              border: Border.all(color: Palette.primary.withValues(alpha: .25)),
             ),
-            child: Icon(icon, color: Palette.primarySoft, size: 28),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          if (message != null) ...[
-            const SizedBox(height: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 300),
-              child: Text(
-                message!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Palette.fgMuted, fontSize: 13.5),
+            const SizedBox(height: 18),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            if (message != null) ...[
+              const SizedBox(height: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 300),
+                child: Text(
+                  message!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Palette.fgMuted,
+                    fontSize: 13.5,
+                  ),
+                ),
               ),
-            ),
+            ],
+            if (action != null) ...[const SizedBox(height: 18), action!],
           ],
-          if (action != null) ...[const SizedBox(height: 18), action!],
-        ],
+        ),
       ),
     ),
   );
@@ -787,35 +1029,55 @@ class SectionLabel extends StatelessWidget {
   );
 }
 
-/// The app's gradient mark.
+/// The app's mark: the web logo's three board columns on the accent gradient.
 class BrandMark extends StatelessWidget {
   final double size;
   const BrandMark({super.key, this.size = 44});
   @override
-  Widget build(BuildContext context) => Container(
-    width: size,
-    height: size,
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(size * .3),
-      gradient: const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xff8b93ff), Color(0xff6a4ff0)],
+  Widget build(BuildContext context) {
+    // Same proportions as frontend/src/components/Logo.tsx (a 16-unit box).
+    final unit = size * .58 / 16;
+    Widget column(double height) => Container(
+      width: 3 * unit,
+      height: height * unit,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(unit),
       ),
-      boxShadow: [
-        BoxShadow(
-          color: Palette.primary.withValues(alpha: .35),
-          blurRadius: size * .5,
-          offset: Offset(0, size * .12),
+    );
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size * .3),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xfff0916b), Palette.primaryDeep],
         ),
-      ],
-    ),
-    child: Icon(
-      Icons.auto_awesome_rounded,
-      color: Colors.white,
-      size: size * .52,
-    ),
-  );
+        border: Border.all(color: Colors.white.withValues(alpha: .14)),
+        boxShadow: [
+          BoxShadow(
+            color: Palette.primary.withValues(alpha: .35),
+            blurRadius: size * .5,
+            offset: Offset(0, size * .12),
+          ),
+        ],
+      ),
+      child: SizedBox.square(
+        dimension: 16 * unit,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(2 * unit, 3 * unit, 2 * unit, 0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [column(10), column(6), column(8)],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 bool isCompact(BuildContext context) => MediaQuery.sizeOf(context).width < 700;

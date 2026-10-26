@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models.dart';
+import 'theme.dart';
+import 'widgets.dart';
 
 /// Completes the slash token at the caret without replacing the rest of the draft.
 class SkillSuggestions extends StatelessWidget {
@@ -39,28 +41,79 @@ class SkillSuggestions extends StatelessWidget {
           )
           .toList();
       if (suggestions.isEmpty) return const SizedBox.shrink();
-      return ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 200),
-        child: Material(
-          borderRadius: BorderRadius.circular(8),
-          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      // Above the composer, like the web's command popover.
+      return FadeSlideIn(
+        offset: const Offset(0, .06),
+        duration: Motion.fast,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          constraints: const BoxConstraints(maxHeight: 220),
+          decoration: BoxDecoration(
+            color: Palette.raised,
+            borderRadius: BorderRadius.circular(Radii.md),
+            border: Border.all(color: Palette.borderStrong),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 24,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
           child: ListView(
             shrinkWrap: true,
-            padding: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.all(4),
             children: [
               for (final skill in suggestions)
-                ListTile(
+                Pressable(
                   key: ValueKey('skill-command:${skill.name}'),
-                  dense: true,
-                  title: Text('/${skill.name}'),
-                  subtitle: Text(
-                    '${skill.kind == 'skill'
-                        ? 'Skill'
-                        : skill.kind == 'mcp'
-                        ? 'MCP'
-                        : 'Claude'} · ${skill.description}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  pressedScale: .99,
+                  borderRadius: BorderRadius.circular(Radii.sm),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            '/${skill.name}',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Pill(
+                            label: skill.kind == 'skill'
+                                ? 'Skill'
+                                : skill.kind == 'mcp'
+                                ? 'MCP'
+                                : 'Claude',
+                            color: skill.kind == 'skill'
+                                ? Palette.primary
+                                : skill.kind == 'mcp'
+                                ? Palette.info
+                                : Palette.violet,
+                          ),
+                        ],
+                      ),
+                      if (skill.description.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            skill.description,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Palette.fgMuted,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   onTap: () {
                     final start = caret - query.length - 1;
