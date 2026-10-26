@@ -245,6 +245,21 @@ describe('agents', () => {
     const { agent } = await createAgent(app, admin, { connect: false });
     await expect(FakeRunner.connect(app, agent.id, { token: 'nope' })).rejects.toThrow(/401/);
   });
+
+  it('drops a Runner connection that stops answering pings, so its Jobs can be recovered', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { connect: false });
+    const config = app.server.ctx.config.agents;
+    config.runnerPingIntervalMs = 50;
+    try {
+      const runner = await FakeRunner.connect(app, agent.id, { autoPong: false });
+      await expect(Promise.race([runner.closed, new Promise((r) => setTimeout(() => r('still open'), 2000))])).resolves.not.toBe('still open');
+      await app.settle();
+      expect((await admin.get(`/agents/${agent.id}`)).body.agent.runnerConnected).toBe(false);
+    } finally {
+      delete config.runnerPingIntervalMs;
+    }
+  });
 });
 
 describe('project settings for Agents', () => {

@@ -127,7 +127,8 @@ function sanitizeFilename(name: string | undefined): string {
   const base = (name ?? '').split(/[\\/]/).pop() ?? '';
   // Drop control characters and keep it a sane length.
   const clean = base.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 255);
-  return clean || 'file';
+  // `.` and `..` would name a directory once the file lands in the Worktree.
+  return clean && !/^\.+$/.test(clean) ? clean : 'file';
 }
 
 function contentDisposition(type: 'inline' | 'attachment', filename: string): string {

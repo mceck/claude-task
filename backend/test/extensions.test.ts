@@ -246,4 +246,33 @@ describe('plugin catalog', () => {
     await runner.next('job.start');
     expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ extensionsPending: false, extensionsError: null });
   });
+
+  it('keeps Comments flowing while a slow plugin installation runs, and dispatches once it is done', async () => {
+    const admin = await app.admin();
+    const plugin = (await admin.post('/plugins', { name: 'slow', source: 'org/market' })).body.plugin;
+    const { agent, runner } = await createAgent(app, admin);
+    const { project } = await createProject(admin);
+    const task = await createTask(admin, project.id);
+    let release!: () => void;
+    const installing = new Promise<void>((r) => (release = r));
+    let started!: () => void;
+    const began = new Promise<void>((r) => (started = r));
+    const original = app.runtime.configurePlugins.bind(app.runtime);
+    vi.spyOn(app.runtime, 'configurePlugins').mockImplementation(async (...args) => {
+      started();
+      await installing;
+      return original(...args);
+    });
+    await admin.patch(`/agents/${agent.id}`, { pluginIds: [plugin.id] });
+    await began;
+
+    const posted = assignAndStart(admin, task.id, agent.id).then(() => 'posted');
+    expect(await Promise.race([posted, new Promise((r) => setTimeout(() => r('blocked'), 1500))])).toBe('posted');
+    expect(runner.messages('job.start')).toHaveLength(0);
+
+    release();
+    await app.settle();
+    const start = await runner.next('job.start');
+    expect(start.jobId).toBeTruthy();
+  });
 });

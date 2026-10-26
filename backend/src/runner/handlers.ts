@@ -72,6 +72,8 @@ async function handleHello(ctx: AppContext, agentId: string, msg: Extract<Runner
 }
 
 export async function handleRunnerClosed(ctx: AppContext, agentId: string): Promise<void> {
+  // The Runner may already be back on a new connection, whose hello must not be overwritten.
+  if (ctx.runners.isConnected(agentId)) return;
   await ctx.db.update(agents).set({ runnerDisconnectedAt: new Date() }).where(eq(agents.id, agentId));
   await ctx.scheduler.publishAgent(agentId);
 }
@@ -327,7 +329,7 @@ function restingState(session: typeof sessions.$inferSelect): 'idle' | 'pending'
   return session.started ? 'idle' : 'pending';
 }
 
-async function systemComment(tx: Executor, after: AfterCommit, taskId: string, body: string): Promise<void> {
+export async function systemComment(tx: Executor, after: AfterCommit, taskId: string, body: string): Promise<void> {
   const [row] = await tx
     .insert(comments)
     .values({ taskId, kind: 'system', authorType: 'system', authorId: null, body, createdAt: sql`clock_timestamp()` })

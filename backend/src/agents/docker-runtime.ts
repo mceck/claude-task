@@ -104,12 +104,8 @@ export class DockerRuntime implements AgentRuntime {
     const { archive, script } = await skillArchive(revision, skills);
     const container = this.docker.getContainer(containerName(agentId));
     await container.putArchive(archive, { path: AGENT_HOME });
-    const exec = await container.exec({ Cmd: ['/bin/bash', '-c', script], User: 'agent', AttachStdout: true, AttachStderr: true });
-    const stream = await exec.start({ hijack: true, stdin: false });
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-    const result = await exec.inspect();
-    if (result.ExitCode !== 0) throw new Error(demux(Buffer.concat(chunks)).trim() || 'Could not configure agent skills');
+    const result = await execIn(container, ['/bin/bash', '-c', script]);
+    if (result.exitCode !== 0) throw new Error(`${result.stderr}${result.stdout}`.trim() || 'Could not configure agent skills');
   }
 
   async configurePlugins(agentId: string, plugins: InstalledPlugin[]): Promise<void> {

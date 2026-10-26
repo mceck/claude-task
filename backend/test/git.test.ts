@@ -7,6 +7,8 @@ import { useTestApp } from './helpers/app';
 import { assignAgent, assignAndStart, createAgent, createProject, createTask, createUser, getSession, moveToStatus, statusByName, timeline } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
+import { FakeGitProvider } from '../src/git/fake-provider';
+import { GitProviderError } from '../src/git/provider';
 
 const privateKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
 
@@ -282,5 +284,28 @@ describe('Git integration through the public API', () => {
     expect((await timeline(admin, task.id)).some((i) => i.type === 'comment' && i.comment.body.includes('previous remote task branch was not found'))).toBe(
       true,
     );
+  });
+
+  it('a git provider outage holds that Task for Retry instead of blocking the Agent Queue', async () => {
+    const { admin, agent, runner, task } = await setup();
+    const other = await createProject(admin);
+    const plain = await createTask(admin, other.project.id, { title: 'No repository' });
+    app.git.branchExists = async () => {
+      throw new GitProviderError('GitHub is unavailable', 503);
+    };
+    await assignAndStart(admin, task.id, agent.id);
+    await assignAndStart(admin, plain.id, agent.id);
+
+    const start = await runner.next('job.start');
+    expect(start.git).toBeNull();
+    const system = (await timeline(admin, task.id)).filter((i) => i.type === 'comment' && i.comment.kind === 'system');
+    expect(system.map((i) => (i.type === 'comment' ? i.comment.body : ''))).toEqual([expect.stringContaining('GitHub is unavailable')]);
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'pending', held: true });
+
+    app.git.branchExists = FakeGitProvider.prototype.branchExists;
+    await runner.exit(start.jobId);
+    expect((await admin.post(`/tasks/${task.id}/session/retry`)).status).toBe(200);
+    const retried = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(retried.git!.taskBranch).toBeTruthy();
   });
 });

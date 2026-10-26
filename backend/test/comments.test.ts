@@ -181,5 +181,13 @@ describe('comments', () => {
       const res = await upload(member, task.id, 'x', [{ name: '../../etc/passwd', type: 'text/plain', data: 'x' }]);
       expect(res.body.comment.attachments[0].filename).toBe('passwd');
     });
+
+    it('never keeps a dot-only filename, which would name a directory in the Worktree', async () => {
+      for (const name of ['..', '.', 'a/..', ' .. ']) {
+        const res = await upload(member, task.id, 'x', [{ name, type: 'text/plain', data: 'x' }]);
+        expect(res.status).toBe(201);
+        expect(res.body.comment.attachments[0].filename).toBe('file');
+      }
+    });
   });
 });

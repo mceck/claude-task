@@ -21,7 +21,8 @@ export interface MessageParts {
 }
 
 export function attachmentPath(commentId: string, filename: string): string {
-  return `.claude-task/attachments/${commentId}/${filename.replace(/[/\\]/g, '_') || 'file'}`;
+  const name = filename.replace(/[/\\]/g, '_');
+  return `.claude-task/attachments/${commentId}/${name && !/^\.+$/.test(name) ? name : 'file'}`;
 }
 
 /** Files linked from a Task's description (or a change notice), ready to give to the Agent. */
