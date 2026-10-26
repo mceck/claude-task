@@ -53,7 +53,7 @@ export function gitProxyRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.addHook('onRequest', async (request, reply) => {
     const service = request.method === 'POST' ? /\/(git-(?:upload|receive)-pack)$/.exec(request.url)?.[1] : undefined;
     if (service && request.headers['content-type']?.split(';')[0]!.trim() !== REQUEST_TYPES[service]) {
-      return deny(reply, 415, `Send ${REQUEST_TYPES[service]}`);
+      return deny(reply.header('connection', 'close'), 415, `Send ${REQUEST_TYPES[service]}`);
     }
   });
   app.post('/:repo/git-upload-pack', async (request, reply) => {
@@ -67,7 +67,8 @@ export function gitProxyRoutes(app: FastifyInstance, ctx: AppContext): void {
     try {
       head = await readCommands(request.raw, request.headers['content-encoding'] === 'gzip');
     } catch {
-      return deny(reply, 400, 'Malformed push request');
+      // The rest of the body is never read: close the connection rather than keep it hanging.
+      return deny(reply.header('connection', 'close'), 400, 'Malformed push request');
     }
     const allowed = `refs/heads/${grant.branchName}`;
     const refused = !grant.branchName || head.commands.some((c) => c.ref !== allowed || ZERO.test(c.newId));

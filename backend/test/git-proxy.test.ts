@@ -151,8 +151,9 @@ describe('Git Proxy', () => {
       },
       body,
       duplex: 'half',
-    } as RequestInit);
-    expect(res.status).toBe(400);
+    } as RequestInit).catch(() => null);
+    // Refused with a 400, or the connection closed under the still-sending client.
+    if (res) expect(res.status).toBe(400);
     expect(sent).toBeLessThan(512);
   });
 
