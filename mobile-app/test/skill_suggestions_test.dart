@@ -1,7 +1,7 @@
 import 'package:claude_task_mobile/src/app.dart';
 import 'package:claude_task_mobile/src/models.dart';
 import 'package:claude_task_mobile/src/ui/skill_suggestions.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'support.dart';
 

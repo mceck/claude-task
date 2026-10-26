@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:fleather/fleather.dart' show FleatherLocalizations;
 import 'api.dart' as api;
 import 'auth_view.dart';

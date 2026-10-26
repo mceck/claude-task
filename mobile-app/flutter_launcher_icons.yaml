@@ -1,0 +1,32 @@
+# Launcher icons generated from the brand mark in assets/app_icon.png.
+# Run: dart run flutter_launcher_icons
+#
+# assets/launcher_icon.png is the opaque, 1024x1024 source (iOS forbids
+# transparency); assets/launcher_icon_foreground.png is the transparent
+# foreground used by Android's adaptive icon.
+flutter_launcher_icons:
+  image_path: "assets/launcher_icon.png"
+
+  android: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/launcher_icon_foreground.png"
+  adaptive_icon_foreground_inset: 18
+
+  ios: true
+  remove_alpha_ios: true
+  background_color_ios: "#FFFFFF"
+
+  web:
+    generate: true
+    image_path: "assets/launcher_icon.png"
+    background_color: "#FFFFFF"
+    theme_color: "#0F0F0E"
+
+  windows:
+    generate: true
+    image_path: "assets/launcher_icon.png"
+    icon_size: 256
+
+  macos:
+    generate: true
+    image_path: "assets/launcher_icon.png"

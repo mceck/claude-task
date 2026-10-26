@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:claude_task_mobile/src/app.dart';
 import 'support.dart';
@@ -45,7 +45,13 @@ void main() {
       await tester.tap(find.text('Fix login'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('comment-composer')), findsOneWidget);
-      expect(find.textContaining('Internal chat'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('internal-toggle')),
+          matching: find.text('Internal chat'),
+        ),
+        findsOneWidget,
+      );
       await tester.enterText(
         find.byKey(const Key('comment-composer')),
         'A draft for humans',

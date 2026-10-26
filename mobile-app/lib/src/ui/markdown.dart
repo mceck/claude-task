@@ -1,10 +1,12 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' as legacy;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:material_ui/material_ui.dart';
+
 import 'theme.dart';
 
 MarkdownStyleSheet markdownStyle(BuildContext context, {double size = 14.5}) {
   final base = TextStyle(fontSize: size, height: 1.55, color: Palette.fg);
-  return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+  return MarkdownStyleSheet.fromTheme(legacy.Theme.of(context)).copyWith(
     p: base,
     listBullet: base,
     a: base.copyWith(
@@ -58,43 +60,53 @@ class Md extends StatelessWidget {
     this.onLink,
   });
   @override
-  Widget build(BuildContext context) => MarkdownBody(
-    data: data,
-    selectable: selectable,
-    styleSheet: markdownStyle(context, size: size),
-    onTapLink: (_, href, _) => onLink?.call(href),
-    imageBuilder: (uri, title, alt) => Semantics(
-      link: true,
-      child: InkWell(
-        onTap: onLink == null ? null : () => onLink!(uri.toString()),
-        borderRadius: BorderRadius.circular(Radii.sm),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: Palette.sidebar,
+  // flutter_markdown_plus still uses the SDK's Material theme and localizations.
+  // Keep its compatibility scope here until the package migrates to material_ui.
+  // ignore: deprecated_member_use
+  Widget build(BuildContext context) => MaterialUiCompatibilityBridge(
+    child: Builder(
+      builder: (context) => MarkdownBody(
+        data: data,
+        selectable: selectable,
+        styleSheet: markdownStyle(context, size: size),
+        onTapLink: (_, href, _) => onLink?.call(href),
+        imageBuilder: (uri, title, alt) => Semantics(
+          link: true,
+          child: InkWell(
+            onTap: onLink == null ? null : () => onLink!(uri.toString()),
             borderRadius: BorderRadius.circular(Radii.sm),
-            border: Border.all(color: Palette.border),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.image_outlined,
-                size: 18,
-                color: Palette.primarySoft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Palette.sidebar,
+                borderRadius: BorderRadius.circular(Radii.sm),
+                border: Border.all(color: Palette.border),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  alt == null || alt.isEmpty ? 'Linked image' : alt,
-                  style: const TextStyle(color: Palette.fgMuted, fontSize: 13),
-                ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.image_outlined,
+                    size: 18,
+                    color: Palette.primarySoft,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      alt == null || alt.isEmpty ? 'Linked image' : alt,
+                      style: const TextStyle(
+                        color: Palette.fgMuted,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.open_in_new_rounded,
+                    size: 14,
+                    color: Palette.fgSubtle,
+                  ),
+                ],
               ),
-              const Icon(
-                Icons.open_in_new_rounded,
-                size: 14,
-                color: Palette.fgSubtle,
-              ),
-            ],
+            ),
           ),
         ),
       ),

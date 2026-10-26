@@ -4,7 +4,7 @@ Flutter conversation frontend for the existing Claude Task installation. Project
 
 ## Develop and verify
 
-Use Flutter 3.38.3 / Dart 3.10.1 or newer. Dependencies and platform pod versions are locked. From the repository root:
+Use Flutter 3.47.6 / Dart 3.13.5 or newer; `.tool-versions` pins the verified Flutter SDK. Dart dependencies are locked in `pubspec.lock`; iOS and macOS use Swift Package Manager with checked-in `Package.resolved` files. CocoaPods is no longer required. From the repository root:
 
 ```sh
 pnpm install
@@ -30,6 +30,8 @@ flutter test
 flutter test integration_test/native_smoke_test.dart -d macos
 flutter test integration_test/task_description_test.dart -d macos
 flutter build macos --debug
+flutter build apk --debug
+flutter build ios --simulator --debug
 ```
 
 From the repository root, backend verification uses real PostgreSQL:
@@ -50,7 +52,7 @@ The visual editor supports headings 1–6, bold, italic, strikethrough, inline c
 
 Opening a description, changing the selection or switching modes does not rewrite its source. After a visual edit, Markdown spacing and delimiters may be normalized. Structures the visual document cannot represent (for example nested blockquotes, hard line breaks, titled links, inline images and multi-paragraph list items) open in Markdown mode with Preview available, preserving the original content. `markdown_document_test.dart` checks parsing and serialization against rendered Markdown; editor tests cover formatting, undo/redo, dialogs and real task form submissions. Layout goldens cover phone and desktop forms, with additional keyboard-inset checks.
 
-Fleather is pinned to 1.26.0 for the current Flutter toolchain. AppFlowy Editor 6.2 was evaluated but requires `file_picker ^10.2.0`, conflicting with the app's existing `^13.2.0`; no dependency override or downgrade was introduced.
+Fleather uses `^1.28.0`, locked to 1.28.0, with the standalone `material_ui` and `cupertino_ui` packages. The app and editor share these components; `Md` wraps `flutter_markdown_plus` in a scoped compatibility bridge while that package still uses the SDK's Material widgets. AppFlowy Editor 6.2 was evaluated but requires `file_picker ^10.2.0`, conflicting with the app's existing `^13.2.0`; no dependency override or downgrade was introduced.
 
 ## Local conversations and drafts
 
@@ -117,13 +119,13 @@ Paths are relative to `/api/v1`. Subscribe to `user:<authenticated-user-id>` for
 
 ## Platforms and signing
 
-All five native projects are present; no Flutter browser project is generated.
+All five native projects are present. A web scaffold is also included, but browser support is outside the native app verification below.
 
 | Target | Requirements and verification |
 | --- | --- |
-| macOS | macOS 12+, Xcode and CocoaPods. Network-client and selected-file entitlements are included. Debug build verified locally; native smoke verified (see Verification record). Distribution requires appropriate signing/notarization. |
-| iOS | iOS 15+, Xcode/CocoaPods, Apple team, bundle ID and signing profiles; APNs capability for push. Scaffolded; no phone delivery/signing validation on this host. |
-| Android | Android SDK/Java, accepted SDK licenses, Google Play services for FCM, signing configuration for distribution. Scaffolded; no physical-device/build verification claimed. The generated release setup still uses the development signing key until replaced. |
+| macOS | macOS 12+, Xcode and Swift Package Manager. Network-client and selected-file entitlements are included. Debug build verified locally; native smoke verified (see Verification record). Distribution requires appropriate signing/notarization. |
+| iOS | iOS 15+, Xcode and Swift Package Manager. Uses the UIScene lifecycle. Simulator debug build verified; distribution requires an Apple team, bundle ID, signing profiles and APNs capability for push. No phone delivery/signing validation on this host. |
+| Android | Android SDK/Java and accepted SDK licenses. Uses Gradle 9.3.1, AGP 9.1.1 and built-in Kotlin with compiler 2.4.0. Debug APK build verified; no physical-device verification. Google Play services are needed for FCM. Distribution requires signing configuration; the generated release setup still uses the development signing key until replaced. |
 | Windows | Flutter Windows toolchain and Visual Studio C++ desktop workload on Windows. Scaffolded; not built on macOS. |
 | Linux | Flutter Linux toolchain, GTK development libraries and libsecret/keyring. Scaffolded; not built on macOS. |
 
@@ -131,9 +133,12 @@ All five native projects are present; no Flutter browser project is generated.
 
 Real phone delivery remains an external verification step until deployment-specific Firebase/APNs credentials, application IDs, signing and a phone are supplied. Passing a fake-transport test does not constitute real phone push verification.
 
-Results on the macOS development host (2026-10-26):
+Flutter 3.47.6 / Dart 3.13.5 verification on the macOS development host (2026-10-26):
 
-- `flutter analyze`: no issues. `flutter test`: 19 tests passed.
-- `flutter test integration_test/native_smoke_test.dart -d macos` passed (real Keychain and file-storage plugins, fake API) and `flutter build macos --debug` succeeded.
-- `pnpm typecheck` passes for all packages. `backend/test/mobile.test.ts` and the rest of the backend suite pass, except one test belonging to the separate, in-progress Task attachments work (`sessions.test.ts`, "stores uploads on the task…").
-- iOS, Android, Windows and Linux are scaffolded only; they were not built here. Real phone push has not been verified.
+- `flutter analyze`: no issues. `flutter test`: 68 tests passed, including phone/desktop layout goldens and Markdown theme compatibility.
+- `flutter test integration_test/native_smoke_test.dart -d macos` passed after the Swift Package Manager migration (real Keychain and file-storage plugins, fake API), including a successful macOS debug build.
+- `flutter build apk --debug` and `flutter build ios --simulator --debug` succeeded. Android reports an upstream `firebase_core` Kotlin Gradle Plugin migration warning; the build passes.
+- `pnpm --filter @claude-task/frontend build` succeeded.
+- Windows and Linux remain scaffolded only. Physical phone execution, distribution signing and real phone push have not been verified.
+
+Earlier backend verification, before the Flutter SDK migration: `pnpm typecheck` passed for all packages. `backend/test/mobile.test.ts` and the rest of the backend suite passed, except one test belonging to the separate, in-progress Task attachments work (`sessions.test.ts`, "stores uploads on the task…"). These backend checks were not rerun for the SDK migration.
