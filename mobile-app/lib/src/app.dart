@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'api.dart' as api;
 import 'auth_view.dart';
 import 'controller.dart';
+import 'ui/theme.dart';
+import 'ui/widgets.dart';
 import 'workspace.dart';
 
 class TaskApp extends StatefulWidget {
@@ -36,100 +38,97 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) => MaterialApp(
     title: 'Claude Task',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      brightness: Brightness.dark,
-      useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xff9a8cff),
-        brightness: Brightness.dark,
-        surface: const Color(0xff1c1d24),
-      ),
-      scaffoldBackgroundColor: const Color(0xff1c1d24),
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-        filled: true,
-      ),
-      dividerColor: const Color(0xff343640),
-    ),
+    theme: buildTheme(),
     home: AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) {
         final c = widget.controller;
-        if (c.booting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
+        final Widget page = c.booting
+            ? const _Splash(key: ValueKey('boot'))
+            : c.user == null
+            ? AuthView(key: const ValueKey('auth'), controller: c)
+            : c.user!.mustChangePassword
+            ? AuthView(
+                key: const ValueKey('password'),
+                controller: c,
+                changePassword: true,
+              )
+            : Workspace(key: const ValueKey('workspace'), controller: c);
+        final offline =
+            c.user != null && c.connection != api.ConnectionState.connected;
         return Scaffold(
           body: SafeArea(
+            bottom: false,
             child: Column(
               children: [
-                if (c.user != null &&
-                    c.connection != api.ConnectionState.connected)
-                  Material(
-                    color: const Color(0xff4b3b1f),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 4,
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            c.connection == api.ConnectionState.offline
-                                ? Icons.cloud_off
-                                : Icons.sync,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              c.connection == api.ConnectionState.offline
-                                  ? 'Offline · loaded conversations and drafts are available'
-                                  : 'Reconnecting…',
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: c.reconnect,
-                            child: const Text('Reconnect'),
-                          ),
-                        ],
-                      ),
+                _Reveal(
+                  visible: offline && !c.booting,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: Notice(
+                      icon: c.connection == api.ConnectionState.offline
+                          ? Icons.cloud_off_rounded
+                          : Icons.sync_rounded,
+                      message: c.connection == api.ConnectionState.offline
+                          ? 'Offline · loaded conversations and drafts are available'
+                          : 'Reconnecting…',
+                      actionLabel: 'Reconnect',
+                      onAction: c.reconnect,
                     ),
                   ),
-                if (c.error != null)
-                  Material(
-                    color: const Color(0xff4b2833),
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 16),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              c.error!,
-                              key: const Key('error-banner'),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: c.clearError,
-                            icon: const Icon(Icons.close),
-                          ),
-                        ],
-                      ),
+                ),
+                _Reveal(
+                  visible: c.error != null,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: Notice(
+                      icon: Icons.error_outline_rounded,
+                      color: Palette.danger,
+                      message: c.error ?? '',
+                      messageKey: c.error == null
+                          ? null
+                          : const Key('error-banner'),
+                      onClose: c.clearError,
                     ),
                   ),
+                ),
                 Expanded(
-                  child: c.user == null
-                      ? AuthView(controller: c)
-                      : c.user!.mustChangePassword
-                      ? AuthView(controller: c, changePassword: true)
-                      : Workspace(controller: c),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 280),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: page,
+                  ),
                 ),
               ],
             ),
           ),
         );
       },
+    ),
+  );
+}
+
+class _Reveal extends StatelessWidget {
+  final bool visible;
+  final Widget child;
+  const _Reveal({required this.visible, required this.child});
+  @override
+  Widget build(BuildContext context) => AnimatedSize(
+    duration: const Duration(milliseconds: 220),
+    curve: Curves.easeOutCubic,
+    alignment: Alignment.topCenter,
+    child: visible ? child : const SizedBox(width: double.infinity),
+  );
+}
+
+class _Splash extends StatelessWidget {
+  const _Splash({super.key});
+  @override
+  Widget build(BuildContext context) => const Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [BrandMark(size: 56), SizedBox(height: 28), Spinner()],
     ),
   );
 }
@@ -141,10 +140,6 @@ Future<void> perform(
   try {
     await action();
   } catch (e) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
-    }
+    if (context.mounted) toast(context, e.toString());
   }
 }

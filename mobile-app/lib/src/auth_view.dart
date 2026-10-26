@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'app.dart';
 import 'controller.dart';
+import 'ui/theme.dart';
+import 'ui/widgets.dart';
 
 class AuthView extends StatefulWidget {
   final TaskController controller;
@@ -22,7 +24,7 @@ class _AuthViewState extends State<AuthView> {
   final _email = TextEditingController(),
       _password = TextEditingController(),
       _newPassword = TextEditingController();
-  bool _changing = false;
+  bool _changing = false, _reveal = false;
   @override
   void dispose() {
     _url.dispose();
@@ -54,107 +56,162 @@ class _AuthViewState extends State<AuthView> {
   }
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(28),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Form(
-          key: _form,
-          child: AutofillGroup(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Icon(
-                  Icons.forum_rounded,
-                  size: 48,
-                  color: Color(0xffb5a9ff),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  widget.changePassword
-                      ? 'Choose a new password'
-                      : 'Your team. Your Agents.',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  widget.changePassword
-                      ? 'Change your temporary password to continue.'
-                      : 'Sign in to your Claude Task installation.',
-                ),
-                const SizedBox(height: 28),
-                if (!widget.changePassword) ...[
-                  TextFormField(
-                    key: const Key('installation-url'),
-                    controller: _url,
-                    keyboardType: TextInputType.url,
-                    autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Installation URL',
-                      hintText: 'https://tasks.example.com',
+  Widget build(BuildContext context) {
+    final change = widget.changePassword;
+    final busy = widget.controller.busy || _changing;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          center: const Alignment(0, -1.1),
+          radius: 1.1,
+          colors: [Palette.primary.withValues(alpha: .16), Palette.bg],
+        ),
+      ),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Form(
+              key: _form,
+              child: AutofillGroup(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: BrandMark(size: 52),
                     ),
-                    validator: _required,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    key: const Key('email'),
-                    controller: _email,
-                    keyboardType: TextInputType.emailAddress,
-                    autofillHints: const [AutofillHints.username],
-                    decoration: const InputDecoration(labelText: 'Email'),
-                    validator: _required,
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                TextFormField(
-                  key: const Key('password'),
-                  controller: _password,
-                  obscureText: true,
-                  autofillHints: const [AutofillHints.password],
-                  decoration: InputDecoration(
-                    labelText: widget.changePassword
-                        ? 'Current password'
-                        : 'Password',
-                  ),
-                  validator: _required,
-                  onFieldSubmitted: (_) => _submit(),
-                ),
-                if (widget.changePassword) ...[
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    key: const Key('new-password'),
-                    controller: _newPassword,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'New password',
+                    const SizedBox(height: 28),
+                    Text(
+                      change
+                          ? 'Choose a new password'
+                          : 'Your team.\nYour Agents.',
+                      style: Theme.of(context).textTheme.displaySmall,
                     ),
-                    validator: (v) => v != null && v.length >= 8
-                        ? null
-                        : 'At least 8 characters',
-                  ),
-                ],
-                const SizedBox(height: 24),
-                FilledButton(
-                  onPressed: widget.controller.busy || _changing
-                      ? null
-                      : _submit,
-                  child: Text(
-                    widget.changePassword ? 'Change password' : 'Sign in',
-                  ),
+                    const SizedBox(height: 10),
+                    Text(
+                      change
+                          ? 'Change your temporary password to continue.'
+                          : 'Sign in to your Claude Task installation.',
+                      style: const TextStyle(
+                        color: Palette.fgMuted,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    if (!change) ...[
+                      const FieldLabel('Installation URL'),
+                      TextFormField(
+                        key: const Key('installation-url'),
+                        controller: _url,
+                        keyboardType: TextInputType.url,
+                        autocorrect: false,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          hintText: 'https://tasks.example.com',
+                          prefixIcon: Icon(Icons.dns_outlined, size: 19),
+                        ),
+                        validator: _required,
+                      ),
+                      const SizedBox(height: 18),
+                      const FieldLabel('Email'),
+                      TextFormField(
+                        key: const Key('email'),
+                        controller: _email,
+                        keyboardType: TextInputType.emailAddress,
+                        autocorrect: false,
+                        textInputAction: TextInputAction.next,
+                        autofillHints: const [AutofillHints.username],
+                        decoration: const InputDecoration(
+                          hintText: 'you@company.com',
+                          prefixIcon: Icon(
+                            Icons.alternate_email_rounded,
+                            size: 19,
+                          ),
+                        ),
+                        validator: _required,
+                      ),
+                      const SizedBox(height: 18),
+                    ],
+                    FieldLabel(change ? 'Current password' : 'Password'),
+                    TextFormField(
+                      key: const Key('password'),
+                      controller: _password,
+                      obscureText: !_reveal,
+                      autofillHints: const [AutofillHints.password],
+                      textInputAction: change
+                          ? TextInputAction.next
+                          : TextInputAction.go,
+                      decoration: InputDecoration(
+                        hintText: '••••••••',
+                        prefixIcon: const Icon(
+                          Icons.lock_outline_rounded,
+                          size: 19,
+                        ),
+                        suffixIcon: IconButton(
+                          tooltip: _reveal ? 'Hide password' : 'Show password',
+                          onPressed: () => setState(() => _reveal = !_reveal),
+                          icon: Icon(
+                            _reveal
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            size: 19,
+                          ),
+                        ),
+                      ),
+                      validator: _required,
+                      onFieldSubmitted: change ? null : (_) => _submit(),
+                    ),
+                    if (change) ...[
+                      const SizedBox(height: 18),
+                      const FieldLabel(
+                        'New password',
+                        hint: 'min. 8 characters',
+                      ),
+                      TextFormField(
+                        key: const Key('new-password'),
+                        controller: _newPassword,
+                        obscureText: !_reveal,
+                        autofillHints: const [AutofillHints.newPassword],
+                        decoration: const InputDecoration(
+                          hintText: '••••••••',
+                          prefixIcon: Icon(Icons.key_rounded, size: 19),
+                        ),
+                        validator: (v) => v != null && v.length >= 8
+                            ? null
+                            : 'At least 8 characters',
+                        onFieldSubmitted: (_) => _submit(),
+                      ),
+                    ],
+                    const SizedBox(height: 28),
+                    AppButton(
+                      label: change ? 'Change password' : 'Sign in',
+                      icon: change ? null : Icons.arrow_forward_rounded,
+                      busy: busy,
+                      expand: true,
+                      onPressed: _submit,
+                    ),
+                    if (change) ...[
+                      const SizedBox(height: 10),
+                      AppButton(
+                        label: 'Log out',
+                        tone: Tone.ghost,
+                        expand: true,
+                        onPressed: () =>
+                            perform(context, widget.controller.logout),
+                      ),
+                    ],
+                  ],
                 ),
-                if (widget.changePassword)
-                  TextButton(
-                    onPressed: () => perform(context, widget.controller.logout),
-                    child: const Text('Log out'),
-                  ),
-              ],
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
+
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'Required' : null;
 }

@@ -53,10 +53,10 @@ void main() {
         find.byKey(const Key('comment-composer')),
         'A draft for humans',
       );
-      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byKey(const ValueKey('segment:true')));
       await tester.pumpAndSettle();
       expect(h.controller.draft.internal, true);
-      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Fix login'));
       await tester.pumpAndSettle();
@@ -105,7 +105,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('new-task-agent')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('🤖 Ada Bot').last);
+      await tester.tap(find.text('Ada Bot').last);
       await tester.pumpAndSettle();
       expect(find.text('Create and assign'), findsOneWidget);
       h.api.failAssignment = true;

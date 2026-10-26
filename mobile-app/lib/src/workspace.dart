@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'app.dart';
 import 'controller.dart';
 import 'conversation.dart';
+import 'models.dart';
 import 'task_forms.dart';
+import 'ui/theme.dart';
+import 'ui/widgets.dart';
 
 class Workspace extends StatelessWidget {
   final TaskController controller;
@@ -14,138 +17,379 @@ class Workspace extends StatelessWidget {
       c.conversationVisible = c.task != null;
       if (wide) {
         return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SizedBox(width: 78, child: ProjectList(controller: c, rail: true)),
-            const VerticalDivider(width: 1),
-            SizedBox(
-              width: 300,
+            SizedBox(width: 76, child: ProjectRail(controller: c)),
+            Container(
+              width: 320,
+              decoration: const BoxDecoration(
+                color: Palette.sidebar,
+                border: Border(
+                  left: BorderSide(color: Palette.border),
+                  right: BorderSide(color: Palette.border),
+                ),
+              ),
               child: c.project == null
-                  ? const Center(child: Text('Select a Project'))
-                  : TaskList(controller: c),
+                  ? const EmptyState(
+                      icon: Icons.folder_open_rounded,
+                      title: 'Select a Project',
+                      message: 'Pick a Project from the rail to see its Tasks.',
+                    )
+                  : TaskList(key: ValueKey(c.project!.id), controller: c),
             ),
-            const VerticalDivider(width: 1),
             Expanded(
               child: c.task == null
-                  ? const Center(
-                      child: Text('Select a Task to join the conversation'),
+                  ? const EmptyState(
+                      icon: Icons.forum_outlined,
+                      title: 'Select a Task to join the conversation',
+                      message:
+                          'Tasks are grouped by Status. Open one to talk with its Agent.',
                     )
-                  : Conversation(key: ValueKey(c.task!.id), controller: c),
+                  : Conversation(
+                      key: ValueKey(c.task!.id),
+                      controller: c,
+                      showDetailsAction: box.maxWidth < 1500,
+                    ),
             ),
-            if (box.maxWidth >= 1500 && c.task != null) ...[
-              const VerticalDivider(width: 1),
-              SizedBox(width: 320, child: TaskDetails(controller: c)),
-            ],
+            if (box.maxWidth >= 1500 && c.task != null)
+              Container(
+                width: 340,
+                decoration: const BoxDecoration(
+                  color: Palette.sidebar,
+                  border: Border(left: BorderSide(color: Palette.border)),
+                ),
+                child: TaskDetails(controller: c),
+              ),
           ],
         );
       }
-      if (c.task != null) {
-        return Conversation(
-          key: ValueKey(c.task!.id),
-          controller: c,
-          onBack: () => c.backToTasks(),
-        );
-      }
-      if (c.project != null) {
-        return TaskList(controller: c, onBack: () => c.backToProjects());
-      }
-      return ProjectList(controller: c);
+      final depth = c.task != null
+          ? 2
+          : c.project != null
+          ? 1
+          : 0;
+      final Widget page = depth == 2
+          ? Conversation(
+              key: ValueKey('task:${c.task!.id}'),
+              controller: c,
+              onBack: c.backToTasks,
+              showDetailsAction: true,
+            )
+          : depth == 1
+          ? TaskList(
+              key: ValueKey('tasks:${c.project!.id}'),
+              controller: c,
+              onBack: c.backToProjects,
+            )
+          : ProjectList(key: const ValueKey('projects'), controller: c);
+      return PopScope(
+        canPop: depth == 0,
+        onPopInvokedWithResult: (popped, _) {
+          if (popped) return;
+          depth == 2 ? c.backToTasks() : c.backToProjects();
+        },
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 260),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween(
+                begin: const Offset(.04, 0),
+                end: Offset.zero,
+              ).animate(animation),
+              child: child,
+            ),
+          ),
+          child: page,
+        ),
+      );
     },
+  );
+}
+
+class ProjectRail extends StatelessWidget {
+  final TaskController controller;
+  const ProjectRail({super.key, required this.controller});
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    return ColoredBox(
+      color: Palette.sidebar,
+      child: Column(
+        children: [
+          const SizedBox(height: 18),
+          const BrandMark(size: 40),
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 16),
+            width: 28,
+            height: 2,
+            decoration: BoxDecoration(
+              color: Palette.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                for (final p in c.projects)
+                  _RailItem(
+                    project: p,
+                    selected: c.project?.id == p.id,
+                    onTap: () => c.selectProject(p),
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16, top: 8),
+            child: Tooltip(
+              message: 'Profile',
+              child: Pressable(
+                onTap: () => showProfile(context, c),
+                borderRadius: BorderRadius.circular(99),
+                semanticLabel: 'Profile',
+                child: Avatar(label: c.user!.displayName, size: 38),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RailItem extends StatelessWidget {
+  final Project project;
+  final bool selected;
+  final VoidCallback onTap;
+  const _RailItem({
+    required this.project,
+    required this.selected,
+    required this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Stack(
+      alignment: Alignment.centerLeft,
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          width: 4,
+          height: selected ? 32 : 0,
+          decoration: const BoxDecoration(
+            color: Palette.fg,
+            borderRadius: BorderRadius.horizontal(right: Radius.circular(4)),
+          ),
+        ),
+        Center(
+          child: Tooltip(
+            message: project.name,
+            preferBelow: false,
+            child: Pressable(
+              onTap: onTap,
+              pressedScale: .92,
+              borderRadius: BorderRadius.circular(16),
+              child: Avatar(
+                label: project.key,
+                seed: project.name,
+                size: 48,
+                circle: false,
+                initials: false,
+                selected: selected,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
   );
 }
 
 class ProjectList extends StatelessWidget {
   final TaskController controller;
-  final bool rail;
-  const ProjectList({super.key, required this.controller, this.rail = false});
+  const ProjectList({super.key, required this.controller});
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: const Color(0xff14151b),
-    child: Column(
+  Widget build(BuildContext context) {
+    final c = controller;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 20),
-          child: rail
-              ? const Icon(Icons.forum_rounded, color: Color(0xffb5a9ff))
-              : Text(
+          padding: const EdgeInsets.fromLTRB(20, 18, 14, 6),
+          child: Row(
+            children: [
+              const BrandMark(size: 34),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
                   'Projects',
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
+              ),
+              Tooltip(
+                message: 'Profile',
+                child: Pressable(
+                  onTap: () => showProfile(context, c),
+                  borderRadius: BorderRadius.circular(99),
+                  semanticLabel: 'Profile',
+                  child: Avatar(label: c.user!.displayName, size: 36),
+                ),
+              ),
+            ],
+          ),
         ),
         Expanded(
-          child: controller.projects.isEmpty
-              ? const Center(child: Text('No Projects'))
-              : ListView(
-                  children: [
-                    for (final p in controller.projects)
-                      rail
-                          ? Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 7,
-                                horizontal: 10,
-                              ),
-                              child: Tooltip(
-                                message: p.name,
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(16),
-                                  onTap: () => controller.selectProject(p),
-                                  child: Container(
-                                    height: 52,
-                                    decoration: BoxDecoration(
-                                      color: controller.project?.id == p.id
-                                          ? const Color(0xff7662ce)
-                                          : const Color(0xff2c2e38),
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: Text(
-                                      p.key,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 12,
-                                      ),
-                                    ),
+          child: c.projects.isEmpty
+              ? const EmptyState(
+                  icon: Icons.folder_off_outlined,
+                  title: 'No Projects',
+                  message: 'Projects created on the web appear here.',
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                  itemCount: c.projects.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 10),
+                  itemBuilder: (context, i) {
+                    final p = c.projects[i];
+                    return Pressable(
+                      onTap: () => c.selectProject(p),
+                      color: Palette.surface,
+                      border: Border.all(color: Palette.border),
+                      borderRadius: BorderRadius.circular(Radii.lg),
+                      pressedScale: .98,
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        children: [
+                          Avatar(
+                            label: p.key,
+                            seed: p.name,
+                            size: 46,
+                            circle: false,
+                            initials: false,
+                            selected: true,
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  p.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  p.key,
+                                  style: const TextStyle(
+                                    fontFamily: mono,
+                                    fontSize: 12,
+                                    color: Palette.fgSubtle,
                                   ),
                                 ),
-                              ),
-                            )
-                          : ListTile(
-                              leading: CircleAvatar(child: Text(p.key)),
-                              title: Text(p.name),
-                              subtitle: Text(p.key),
-                              onTap: () => controller.selectProject(p),
+                              ],
                             ),
-                  ],
+                          ),
+                          const Icon(
+                            Icons.chevron_right_rounded,
+                            color: Palette.fgSubtle,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
         ),
-        PopupMenuButton<String>(
-          tooltip: 'Profile',
-          icon: const Icon(Icons.account_circle_outlined),
-          onSelected: (value) {
-            perform(
-              context,
-              value == 'logout'
-                  ? controller.logout
-                  : controller.enableNotifications,
-            );
-          },
-          itemBuilder: (_) => [
-            PopupMenuItem(
-              enabled: false,
-              child: Text(controller.user!.displayName),
+      ],
+    );
+  }
+}
+
+Future<void> showProfile(BuildContext context, TaskController c) =>
+    showAppSheet<void>(
+      context,
+      maxWidth: 400,
+      builder: (sheet) => SheetScaffold(
+        title: 'Profile',
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Avatar(label: c.user!.displayName, size: 52, selected: true),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        c.user!.displayName,
+                        style: Theme.of(sheet).textTheme.titleMedium,
+                      ),
+                      Text(
+                        c.user!.email,
+                        style: const TextStyle(
+                          color: Palette.fgMuted,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            PopupMenuItem(enabled: false, child: Text(controller.push.status)),
-            const PopupMenuItem(
-              value: 'notifications',
-              child: Text('Enable notifications'),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Palette.surface,
+                borderRadius: BorderRadius.circular(Radii.md),
+                border: Border.all(color: Palette.border),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.notifications_none_rounded, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      c.push.status,
+                      style: const TextStyle(fontSize: 13.5),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const PopupMenuItem(value: 'logout', child: Text('Log out')),
           ],
         ),
-        const SizedBox(height: 12),
-      ],
-    ),
-  );
-}
+        actions: [
+          AppButton(
+            label: 'Log out',
+            icon: Icons.logout_rounded,
+            tone: Tone.danger,
+            onPressed: () {
+              Navigator.pop(sheet);
+              perform(context, c.logout);
+            },
+          ),
+          AppButton(
+            label: 'Enable notifications',
+            tone: Tone.secondary,
+            onPressed: () {
+              Navigator.pop(sheet);
+              perform(context, c.enableNotifications);
+            },
+          ),
+        ],
+      ),
+    );
 
 class TaskList extends StatefulWidget {
   final TaskController controller;
@@ -156,10 +400,23 @@ class TaskList extends StatefulWidget {
 }
 
 class _TaskListState extends State<TaskList> {
+  final _searchField = TextEditingController();
+  final _collapsed = <String>{};
   String _search = '', _priority = '', _tag = '', _assignee = '';
+  int get _filterCount =>
+      [_priority, _tag, _assignee].where((v) => v.isNotEmpty).length;
+
+  @override
+  void dispose() {
+    _searchField.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
+    if (c.project == null) return const SizedBox.shrink();
+    final filtering = _search.isNotEmpty || _filterCount > 0;
     final filtered = c.tasks
         .where(
           (t) =>
@@ -174,261 +431,423 @@ class _TaskListState extends State<TaskList> {
                       : t.assigneeIds.contains(_assignee))),
         )
         .toList();
-    return ColoredBox(
-      color: const Color(0xff21222b),
-      child: Column(
-        children: [
-          SizedBox(
-            height: 64,
-            child: Row(
-              children: [
-                if (widget.onBack != null)
-                  IconButton(
-                    onPressed: widget.onBack,
-                    icon: const Icon(Icons.arrow_back),
-                  ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Text(
-                    c.project!.name,
-                    style: Theme.of(context).textTheme.titleLarge,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+    final groups = [
+      for (final status in c.statuses.where(
+        (s) => c.includeClosed || s.category != 'closed',
+      ))
+        (status, filtered.where((t) => t.statusId == status.id).toList()),
+    ].where((g) => !filtering || g.$2.isNotEmpty).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            widget.onBack == null ? 18 : 6,
+            12,
+            12,
+            10,
+          ),
+          child: Row(
+            children: [
+              if (widget.onBack != null)
+                IconAction(
+                  icon: Icons.arrow_back_ios_new_rounded,
+                  tooltip: 'Back',
+                  onPressed: widget.onBack,
                 ),
-                IconButton(
-                  tooltip: 'Create Task',
-                  onPressed: c.online ? () => showCreateTask(context, c) : null,
-                  icon: const Icon(Icons.add),
+              if (widget.onBack != null) ...[
+                const SizedBox(width: 4),
+                Avatar(
+                  label: c.project!.key,
+                  seed: c.project!.name,
+                  size: 32,
+                  circle: false,
+                  initials: false,
+                  selected: true,
                 ),
-                if (widget.onBack != null)
-                  PopupMenuButton<String>(
-                    onSelected: (v) => perform(
-                      context,
-                      v == 'logout' ? c.logout : c.enableNotifications,
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      c.project!.name,
+                      style: Theme.of(context).textTheme.titleLarge,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(
-                        value: 'notifications',
-                        child: Text('Enable notifications'),
+                    Text(
+                      '${c.tasks.length} Tasks',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Palette.fgSubtle,
                       ),
-                      const PopupMenuItem(
-                        value: 'logout',
-                        child: Text('Log out'),
+                    ),
+                  ],
+                ),
+              ),
+              IconAction(
+                icon: Icons.add_rounded,
+                tooltip: 'Create Task',
+                filled: true,
+                size: 36,
+                onPressed: c.online ? () => showCreateTask(context, c) : null,
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: TextField(
+            key: const Key('task-search'),
+            controller: _searchField,
+            decoration: InputDecoration(
+              hintText: 'Search Tasks',
+              prefixIcon: const Icon(Icons.search_rounded, size: 19),
+              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              suffixIcon: _search.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      icon: const Icon(Icons.close_rounded, size: 17),
+                      onPressed: () => setState(() {
+                        _searchField.clear();
+                        _search = '';
+                      }),
+                    ),
+            ),
+            onChanged: (v) => setState(() => _search = v),
+          ),
+        ),
+        SizedBox(
+          height: 48,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            children: [
+              ChoiceChipX(
+                label: 'Archive',
+                icon: Icons.inventory_2_outlined,
+                selected: c.includeClosed,
+                onChanged: (v) => setState(() => c.includeClosed = v),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChipX(
+                label: 'Filters',
+                icon: Icons.tune_rounded,
+                selected: _filterCount > 0,
+                count: _filterCount,
+                onChanged: (_) => _openFilters(context),
+              ),
+              if (_filterCount > 0) ...[
+                const SizedBox(width: 4),
+                AppButton(
+                  label: 'Clear',
+                  tone: Tone.ghost,
+                  compact: true,
+                  onPressed: () => setState(() {
+                    _priority = '';
+                    _tag = '';
+                    _assignee = '';
+                  }),
+                ),
+              ],
+            ],
+          ),
+        ),
+        Expanded(
+          child: filtered.isEmpty && filtering
+              ? const EmptyState(
+                  icon: Icons.search_off_rounded,
+                  title: 'No matching Tasks',
+                  message: 'Try another search or clear the filters.',
+                )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 24),
+                  children: [
+                    for (final (status, tasks) in groups) ...[
+                      _GroupHeader(
+                        status: status,
+                        count: tasks.length,
+                        collapsed: _collapsed.contains(status.id),
+                        onTap: () => setState(() {
+                          if (!_collapsed.remove(status.id)) {
+                            _collapsed.add(status.id);
+                          }
+                        }),
+                      ),
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOutCubic,
+                        alignment: Alignment.topCenter,
+                        child: _collapsed.contains(status.id)
+                            ? const SizedBox(width: double.infinity)
+                            : Column(
+                                children: [
+                                  for (final task in tasks)
+                                    _TaskRow(
+                                      task: task,
+                                      controller: c,
+                                      selected: c.task?.id == task.id,
+                                    ),
+                                ],
+                              ),
                       ),
                     ],
-                  ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: TextField(
-              key: const Key('task-search'),
-              decoration: const InputDecoration(
-                hintText: 'Search Tasks',
-                prefixIcon: Icon(Icons.search),
-                isDense: true,
-              ),
-              onChanged: (v) => setState(() => _search = v),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                FilterChip(
-                  label: const Text('Archive'),
-                  selected: c.includeClosed,
-                  onSelected: (v) => setState(() => c.includeClosed = v),
+                    if (c.tasks.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 40),
+                        child: EmptyState(
+                          icon: Icons.task_alt_rounded,
+                          title: 'No Tasks yet',
+                          message: 'Create the first Task with the + button.',
+                        ),
+                      ),
+                  ],
                 ),
-                const Spacer(),
-                IconButton(
-                  tooltip: 'Task filters',
-                  icon: Icon(
-                    Icons.filter_list,
-                    color:
-                        _priority.isNotEmpty ||
-                            _tag.isNotEmpty ||
-                            _assignee.isNotEmpty
-                        ? const Color(0xffb5a9ff)
-                        : null,
-                  ),
-                  onPressed: () async {
-                    await showDialog<void>(
-                      context: context,
-                      builder: (context) => StatefulBuilder(
-                        builder: (context, set) => AlertDialog(
-                          title: const Text('Task filters'),
-                          content: SizedBox(
-                            width: 320,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                DropdownButtonFormField<String>(
-                                  initialValue: _priority,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Priority',
-                                  ),
-                                  items:
-                                      [
-                                            '',
-                                            'urgent',
-                                            'high',
-                                            'normal',
-                                            'low',
-                                            'none',
-                                          ]
-                                          .map(
-                                            (v) => DropdownMenuItem(
-                                              value: v,
-                                              child: Text(
-                                                v.isEmpty
-                                                    ? 'All priorities'
-                                                    : v,
-                                              ),
-                                            ),
-                                          )
-                                          .toList(),
-                                  onChanged: (v) => set(() => _priority = v!),
-                                ),
-                                const SizedBox(height: 12),
-                                DropdownButtonFormField<String>(
-                                  initialValue: _tag,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Label',
-                                  ),
-                                  items: [
-                                    const DropdownMenuItem(
-                                      value: '',
-                                      child: Text('All Tags'),
-                                    ),
-                                    for (final l in c.tags)
-                                      DropdownMenuItem(
-                                        value: l.id,
-                                        child: Text(l.name),
-                                      ),
-                                  ],
-                                  onChanged: (v) => set(() => _tag = v!),
-                                ),
-                                const SizedBox(height: 12),
-                                DropdownButtonFormField<String>(
-                                  initialValue: _assignee,
-                                  decoration: const InputDecoration(
-                                    labelText: 'User',
-                                  ),
-                                  items: [
-                                    const DropdownMenuItem(
-                                      value: '',
-                                      child: Text('All Users'),
-                                    ),
-                                    const DropdownMenuItem(
-                                      value: 'none',
-                                      child: Text('Unassigned'),
-                                    ),
-                                    for (final u in c.users)
-                                      DropdownMenuItem(
-                                        value: u.id,
-                                        child: Text(u.displayName),
-                                      ),
-                                  ],
-                                  onChanged: (v) => set(() => _assignee = v!),
-                                ),
-                              ],
-                            ),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Apply'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                    if (mounted) setState(() {});
-                  },
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              children: [
-                for (final status in c.statuses.where(
-                  (s) => c.includeClosed || s.category != 'closed',
-                )) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 22, 12, 6),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.expand_more,
-                          size: 16,
-                          color: _color(status.color),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          status.name.toUpperCase(),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  for (final task in filtered.where(
-                    (t) => t.statusId == status.id,
-                  ))
-                    ListTile(
-                      dense: true,
-                      selected: c.task?.id == task.id,
-                      leading: Icon(
-                        Icons.tag,
-                        color: c.preferences[task.id]?.unread == true
-                            ? const Color(0xffc6bbff)
-                            : Colors.grey,
-                        size: 22,
-                      ),
-                      title: Text(
-                        task.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: c.preferences[task.id]?.unread == true
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                        ),
-                      ),
-                      subtitle: Text(
-                        task.key,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      trailing: c.preferences[task.id]?.muted == true
-                          ? const Icon(
-                              Icons.notifications_off_outlined,
-                              size: 16,
-                            )
-                          : task.agentId != null
-                          ? const Icon(Icons.smart_toy_outlined, size: 16)
-                          : null,
-                      onTap: () => c.selectTask(task),
-                    ),
-                ],
-                if (filtered.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text('No matching Tasks'),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Color _color(String hex) =>
-      Color(int.tryParse(hex.replaceFirst('#', 'ff'), radix: 16) ?? 0xffaaaaaa);
+  Future<void> _openFilters(BuildContext context) async {
+    final c = widget.controller;
+    await showAppSheet<void>(
+      context,
+      builder: (sheet) => StatefulBuilder(
+        builder: (sheet, set) {
+          void update(VoidCallback change) {
+            setState(change);
+            set(() {});
+          }
+
+          Widget group(String label, List<Widget> chips) => Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionLabel(label),
+                Wrap(spacing: 8, runSpacing: 8, children: chips),
+              ],
+            ),
+          );
+          return SheetScaffold(
+            title: 'Task filters',
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                group('Priority', [
+                  for (final p in ['', ...priorities])
+                    ChoiceChipX(
+                      label: p.isEmpty ? 'Any' : priorityLabel(p),
+                      icon: p.isEmpty ? null : priorityIcon(p),
+                      selected: _priority == p,
+                      onChanged: (_) => update(() => _priority = p),
+                    ),
+                ]),
+                if (c.tags.isNotEmpty)
+                  group('Tag', [
+                    ChoiceChipX(
+                      label: 'Any',
+                      selected: _tag.isEmpty,
+                      onChanged: (_) => update(() => _tag = ''),
+                    ),
+                    for (final l in c.tags)
+                      ChoiceChipX(
+                        label: l.name,
+                        leading: Dot(color: tint(l.name), size: 7),
+                        selected: _tag == l.id,
+                        onChanged: (_) => update(() => _tag = l.id),
+                      ),
+                  ]),
+                group('User', [
+                  ChoiceChipX(
+                    label: 'Anyone',
+                    selected: _assignee.isEmpty,
+                    onChanged: (_) => update(() => _assignee = ''),
+                  ),
+                  ChoiceChipX(
+                    label: 'Unassigned',
+                    selected: _assignee == 'none',
+                    onChanged: (_) => update(() => _assignee = 'none'),
+                  ),
+                  for (final u in c.users)
+                    ChoiceChipX(
+                      label: u.displayName,
+                      leading: Avatar(label: u.displayName, size: 18),
+                      selected: _assignee == u.id,
+                      onChanged: (_) => update(() => _assignee = u.id),
+                    ),
+                ]),
+              ],
+            ),
+            actions: [
+              AppButton(
+                label: 'Reset',
+                tone: Tone.secondary,
+                onPressed: () => update(() {
+                  _priority = '';
+                  _tag = '';
+                  _assignee = '';
+                }),
+              ),
+              AppButton(label: 'Apply', onPressed: () => Navigator.pop(sheet)),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _GroupHeader extends StatelessWidget {
+  final TaskStatus status;
+  final int count;
+  final bool collapsed;
+  final VoidCallback onTap;
+  const _GroupHeader({
+    required this.status,
+    required this.count,
+    required this.collapsed,
+    required this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 14, bottom: 4),
+    child: Pressable(
+      onTap: onTap,
+      pressedScale: 1,
+      borderRadius: BorderRadius.circular(8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Row(
+        children: [
+          AnimatedRotation(
+            turns: collapsed ? -.25 : 0,
+            duration: const Duration(milliseconds: 180),
+            child: const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: Palette.fgSubtle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Dot(color: hexColor(status.color), size: 8),
+          const SizedBox(width: 8),
+          Text(
+            status.name.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: .9,
+              color: Palette.fgMuted,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$count',
+            style: const TextStyle(fontSize: 11, color: Palette.fgSubtle),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _TaskRow extends StatelessWidget {
+  final Task task;
+  final TaskController controller;
+  final bool selected;
+  const _TaskRow({
+    required this.task,
+    required this.controller,
+    required this.selected,
+  });
+  @override
+  Widget build(BuildContext context) {
+    final c = controller, pref = c.preferences[task.id];
+    final unread = pref?.unread == true;
+    final agent = c.agents.where((a) => a.id == task.agentId).firstOrNull;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Pressable(
+        onTap: () => c.selectTask(task),
+        pressedScale: .985,
+        color: selected ? Palette.hover : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        padding: const EdgeInsets.fromLTRB(6, 9, 10, 9),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 14,
+              child: unread
+                  ? const Dot(color: Palette.primary, size: 7, glow: true)
+                  : null,
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    task.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.3,
+                      fontWeight: unread || selected
+                          ? FontWeight.w600
+                          : FontWeight.w400,
+                      color: unread || selected ? Palette.fg : Palette.fgMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Text(
+                        task.key,
+                        style: const TextStyle(
+                          fontFamily: mono,
+                          fontSize: 11,
+                          color: Palette.fgSubtle,
+                        ),
+                      ),
+                      if (task.priority != 'none') ...[
+                        const SizedBox(width: 8),
+                        Icon(
+                          priorityIcon(task.priority),
+                          size: 12,
+                          color: priorityColor(task.priority),
+                        ),
+                      ],
+                      if (pref?.muted == true) ...[
+                        const SizedBox(width: 8),
+                        const Icon(
+                          Icons.notifications_off_outlined,
+                          size: 12,
+                          color: Palette.fgSubtle,
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (task.agentId != null) ...[
+              const SizedBox(width: 8),
+              Tooltip(
+                message: agent?.name ?? 'Agent',
+                child: Avatar(
+                  label: agent?.name ?? 'Agent',
+                  emoji: agent?.emoji ?? '🤖',
+                  size: 24,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
