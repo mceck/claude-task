@@ -8,8 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { api, del, errorMessage, post } from '../api/client';
 import { keys, useMe, useMcpServers, usePlugins, useSkills } from '../api/queries';
-import { Field } from '../components/AgentForm';
-import { ErrorText, Loading } from '../components/common';
+import { Field, ErrorText, Loading } from '../components/common';
 
 export function ExtensionsPage() {
   const me = useMe();

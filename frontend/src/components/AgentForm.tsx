@@ -9,11 +9,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useCredentials, useMcpServers, usePlugins } from '../api/queries';
 import { AgentAvatar } from './agents';
+import { Field } from './common';
 import { AgentSkillSelector } from './AgentSkillSelector';
 import { api, del, errorMessage } from '../api/client';
 
 /** What the form wants done with the Agent's image once the Agent is saved. */
-export type AvatarChange = { file: File } | { remove: true } | null;
+type AvatarChange = { file: File } | { remove: true } | null;
 
 /** Uploads or removes the image; call after the Agent exists. */
 export async function applyAvatarChange(agentId: string, change: AvatarChange): Promise<void> {
@@ -29,16 +30,6 @@ export async function applyAvatarChange(agentId: string, change: AvatarChange): 
 
 const AVATAR_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp';
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
-
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
-  return (
-    <label className="block space-y-1.5">
-      <span className="text-sm font-medium">{label}</span>
-      {children}
-      {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
-    </label>
-  );
-}
 
 export function LogView({ children, label = 'Log' }: { children: string; label?: string }) {
   return (

@@ -117,7 +117,7 @@ Future<void> showCreateTask(BuildContext context, TaskController c) async {
     dismissible: false,
     builder: (sheet) => StatefulBuilder(
       builder: (context, set) {
-        final agent = agents.where((a) => a.id == agentId).firstOrNull;
+        final agent = agents.byId(agentId);
         return SheetScaffold(
           title: 'New Task',
           subtitle: c.project?.name,
@@ -251,8 +251,8 @@ class TaskDetails extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = controller, t = controller.task;
     if (t == null) return const SizedBox.shrink();
-    final status = c.statuses.where((s) => s.id == t.statusId).firstOrNull;
-    final agent = c.agents.where((a) => a.id == t.agentId).firstOrNull;
+    final status = c.statuses.byId(t.statusId);
+    final agent = c.agents.byId(t.agentId);
     final tags = c.tags.where((l) => t.tagIds.contains(l.id)).toList();
     final assignees = c.users.where((u) => t.assigneeIds.contains(u.id));
     final edit = c.online ? () => showEditTask(context, c) : null;

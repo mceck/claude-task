@@ -3,7 +3,7 @@
 import type { RealtimeEvent } from '@claude-task/shared';
 import { useSyncExternalStore } from 'react';
 
-export interface LiveTurn {
+interface LiveTurn {
   text: string;
   thinking: string;
   retrying: { attempt: number; maxRetries: number; error: string | null } | null;

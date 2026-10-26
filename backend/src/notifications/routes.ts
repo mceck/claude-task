@@ -11,8 +11,9 @@ import { getProject } from '../modules/projects/service';
 import { getTaskRow } from '../modules/tasks/service';
 import { hashToken } from '../secrets';
 import { advanceRead, preferences, setPreference } from './preferences';
+import { idOrKey } from '../ids';
 
-const params = z.object({ id: z.string().min(1).max(64) });
+const params = z.object({ id: idOrKey });
 export function notificationRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/notifications/status', async () => ({ configured: ctx.push.configured, provider: 'fcm' }));
   app.get('/projects/:id/task-preferences', async (request) => {

@@ -30,7 +30,7 @@ import { Time } from './common';
 import { Markdown } from './Markdown';
 import { CollapsibleBody } from './Timeline';
 
-export function toolIcon(name: string): LucideIcon {
+function toolIcon(name: string): LucideIcon {
   if (name === 'Bash') return Terminal;
   if (['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(name)) return FilePen;
   if (name === 'Read') return FileText;

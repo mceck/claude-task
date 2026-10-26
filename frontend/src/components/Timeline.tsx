@@ -317,7 +317,7 @@ function RevisionItem({ revision, ...lookups }: { revision: Revision } & Lookups
   );
 }
 
-export function describeChange(c: RevisionChange, { statuses, tags, users, agents = [] }: Lookups): string {
+function describeChange(c: RevisionChange, { statuses, tags, users, agents = [] }: Lookups): string {
   const status = (id: unknown) => statuses.find((s) => s.id === id)?.name ?? 'a deleted status';
   const label = (id: string) => tags.find((l) => l.id === id)?.name ?? 'a deleted tag';
   const user = (id: string) => users.find((u) => u.id === id)?.displayName ?? 'someone';

@@ -10,8 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { del, errorMessage, patch, post } from '../api/client';
 import { keys, useCredentials, useMe } from '../api/queries';
-import { Field } from '../components/AgentForm';
-import { ErrorText, Loading, useConfirm } from '../components/common';
+import { Field, ErrorText, Loading, useConfirm } from '../components/common';
 import { NotFoundPage } from './NotFoundPage';
 import { PageHeader } from './ProjectsPage';
 

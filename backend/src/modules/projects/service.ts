@@ -4,6 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client';
 import { projects, statuses } from '../../db/schema';
 import { notFound } from '../../errors';
+import { UUID } from '../../ids';
 
 export type ProjectRow = typeof projects.$inferSelect;
 
@@ -29,7 +30,6 @@ export function serializeProject(p: ProjectRow): Project {
   };
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Projects are addressable by id or by key (for readable URLs). */
 export async function getProject(db: Executor, idOrKey: string, opts: { lock?: boolean } = {}): Promise<ProjectRow> {

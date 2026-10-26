@@ -3,15 +3,21 @@ import type {
   AgentBuild,
   AgentUsage,
   Credential,
+  GitConnection,
   Job,
   JobDetail,
   ProjectAgentSettings,
   QueueEntry,
+  RepositoryGroup,
+  RepositorySettings,
   RateLimitObservation,
   TaskSession,
+  McpServer,
   MeResponse,
+  Plugin,
   ProjectBundle,
   ProjectSummary,
+  Skill,
   Task,
   TaskCard,
   TimelinePage,
@@ -161,13 +167,13 @@ export function useCredentials(enabled = true) {
 }
 
 export function useSkills() {
-  return useQuery({ queryKey: keys.skills, queryFn: () => get<{ skills: import('@claude-task/shared').Skill[] }>('/skills').then((r) => r.skills) });
+  return useQuery({ queryKey: keys.skills, queryFn: () => get<{ skills: Skill[] }>('/skills').then((r) => r.skills) });
 }
 export function usePlugins() {
-  return useQuery({ queryKey: keys.plugins, queryFn: () => get<{ plugins: import('@claude-task/shared').Plugin[] }>('/plugins').then((r) => r.plugins) });
+  return useQuery({ queryKey: keys.plugins, queryFn: () => get<{ plugins: Plugin[] }>('/plugins').then((r) => r.plugins) });
 }
 export function useMcpServers() {
-  return useQuery({ queryKey: keys.mcpServers, queryFn: () => get<{ mcpServers: import('@claude-task/shared').McpServer[] }>('/mcp-servers').then((r) => r.mcpServers) });
+  return useQuery({ queryKey: keys.mcpServers, queryFn: () => get<{ mcpServers: McpServer[] }>('/mcp-servers').then((r) => r.mcpServers) });
 }
 
 export function useTaskSession(taskId: string | undefined) {
@@ -187,11 +193,11 @@ export function useAgentSettings(projectId: string) {
 
 // Git Integration
 export function useRepositoryGroups() {
-  return useQuery({ queryKey: ['git-repositories'], queryFn: () => get<{ groups: import('@claude-task/shared').RepositoryGroup[] }>('/git/repositories').then((r) => r.groups) });
+  return useQuery({ queryKey: ['git-repositories'], queryFn: () => get<{ groups: RepositoryGroup[] }>('/git/repositories').then((r) => r.groups) });
 }
 export function useRepositorySettings(projectId: string) {
-  return useQuery({ queryKey: ['repository-settings', projectId], queryFn: () => get<import('@claude-task/shared').RepositorySettings>(`/projects/${projectId}/repository`) });
+  return useQuery({ queryKey: ['repository-settings', projectId], queryFn: () => get<RepositorySettings>(`/projects/${projectId}/repository`) });
 }
 export function useGitConnections(enabled: boolean) {
-  return useQuery({ queryKey: ['git-connections'], queryFn: () => get<{ connections: import('@claude-task/shared').GitConnection[] }>('/git/connections').then((r) => r.connections), enabled });
+  return useQuery({ queryKey: ['git-connections'], queryFn: () => get<{ connections: GitConnection[] }>('/git/connections').then((r) => r.connections), enabled });
 }

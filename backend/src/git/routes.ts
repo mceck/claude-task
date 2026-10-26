@@ -5,8 +5,9 @@ import type { AppContext } from '../context';
 import { parse } from '../errors';
 import { createConnection, deleteConnection, listConnections, listRepositoryGroups, updateConnection } from './connections';
 import { linkRepository, recheckProtection, repositorySettings } from './service';
+import { idOrKey } from '../ids';
 
-const params = z.object({ id: z.string().min(1).max(64) });
+const params = z.object({ id: idOrKey });
 export function gitRoutes(app: FastifyInstance, ctx: AppContext) {
   const admin = { config: { auth: 'admin' as const } };
   app.get('/git/connections', admin, async () => ({ connections: await listConnections(ctx) }));

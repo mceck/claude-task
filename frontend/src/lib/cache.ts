@@ -28,7 +28,7 @@ function updateBundles(qc: QueryClient, projectId: string, fn: (b: ProjectBundle
   qc.setQueriesData<ProjectBundle>({ queryKey: ['project'] }, (b) => (b && b.project.id === projectId ? fn(b) : b));
 }
 
-export function isClosedStatus(qc: QueryClient, projectId: string, statusId: string): boolean {
+function isClosedStatus(qc: QueryClient, projectId: string, statusId: string): boolean {
   return findBundle(qc, projectId)?.statuses.find((s) => s.id === statusId)?.category === 'closed';
 }
 

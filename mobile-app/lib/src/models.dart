@@ -1,12 +1,23 @@
 typedef Json = Map<String, dynamic>;
 
+abstract interface class Identified {
+  String get id;
+}
+
+extension IdLookup<T extends Identified> on Iterable<T> {
+  /// The element with this id, or null (also for a null id).
+  T? byId(Object? id) => where((x) => x.id == id).firstOrNull;
+}
+
 List<Json> objects(dynamic value) => (value as List? ?? [])
     .map((e) => Map<String, dynamic>.from(e as Map))
     .toList();
 List<String> strings(dynamic value) => (value as List? ?? []).cast<String>();
 
-class User {
-  final String id, email, displayName;
+class User implements Identified {
+  @override
+  final String id;
+  final String email, displayName;
   final bool mustChangePassword;
   User.fromJson(Json json)
     : id = json['id'] as String,
@@ -32,8 +43,10 @@ class Project {
   int get taskTotal => taskCounts.values.fold(0, (a, b) => a + b);
 }
 
-class TaskStatus {
-  final String id, name, category, color;
+class TaskStatus implements Identified {
+  @override
+  final String id;
+  final String name, category, color;
   TaskStatus.fromJson(Json json)
     : id = json['id'] as String,
       name = json['name'] as String,
@@ -41,8 +54,10 @@ class TaskStatus {
       color = json['color'] as String? ?? '#888888';
 }
 
-class Tag {
-  final String id, name;
+class Tag implements Identified {
+  @override
+  final String id;
+  final String name;
   final String? color;
   Tag.fromJson(Json json)
     : id = json['id'] as String,
@@ -50,8 +65,10 @@ class Tag {
       color = json['color'] as String?;
 }
 
-class Agent {
-  final String id, name, emoji;
+class Agent implements Identified {
+  @override
+  final String id;
+  final String name, emoji;
   final bool enabled;
   final List<SkillCommand> skillCommands;
   Agent.fromJson(Json json)

@@ -7,8 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { errorMessage, post, put } from '../api/client';
 import { useRepositoryGroups, useRepositorySettings, keys } from '../api/queries';
-import { Field } from './AgentForm';
-import { ErrorText, Loading, Time } from './common';
+import { Field, ErrorText, Loading, Time } from './common';
 import { ProviderBadge, providerName } from './Git';
 
 /** Picker values identify a Repository across connections. */

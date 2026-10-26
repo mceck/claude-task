@@ -26,11 +26,12 @@ import { notifyAgent } from '../../sessions/notify';
 import { loadTaskSession } from '../../sessions/view';
 import { getAgentRow, loadAgent, loadAgents, loadBuilds, loadJobs, serializeBuild, taskRefs } from './service';
 import { agentExtensions, setAssignments } from '../extensions/service';
+import { idOrKey } from '../../ids';
 
 const params = z.object({ id: z.uuid() });
 const entryParams = z.object({ id: z.uuid(), entryId: z.uuid() });
 const buildParams = z.object({ id: z.uuid(), buildId: z.uuid() });
-const taskParams = z.object({ id: z.string().min(1).max(64) });
+const taskParams = z.object({ id: idOrKey });
 const logsQuery = z.object({ tail: z.coerce.number().int().min(1).max(5000).default(500) });
 
 function assertDockerfile(dockerfile: string): void {
@@ -42,6 +43,15 @@ async function assertCredential(db: Executor, id: string): Promise<void> {
   const [row] = await db.select({ id: credentials.id }).from(credentials).where(eq(credentials.id, id));
   if (!row) throw badRequest('Unknown credential');
 }
+
+async function getQueueEntry(db: Executor, agentId: string, entryId: string) {
+  const [entry] = await db.select().from(queueEntries).where(and(eq(queueEntries.id, entryId), eq(queueEntries.agentId, agentId)));
+  if (!entry) throw notFound('Queue entry');
+  return entry;
+}
+
+const avatarTooLarge = () =>
+  new HttpError(413, 'file_too_large', `The avatar must be at most ${AGENT_AVATAR_MAX_BYTES / 1024 / 1024} MB`);
 
 export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   const admin = { config: { auth: 'admin' as const } };
@@ -254,8 +264,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(moveQueueEntryBody, request.body);
     await transact(ctx, async (tx, after) => {
       await getAgentRow(tx, id, { lock: true });
-      const [entry] = await tx.select().from(queueEntries).where(and(eq(queueEntries.id, entryId), eq(queueEntries.agentId, id)));
-      if (!entry) throw notFound('Queue entry');
+      const entry = await getQueueEntry(tx, id, entryId);
       await moveEntry(tx, after, entry, body);
     });
     return { entries: await loadQueue(ctx.db, id) };
@@ -265,8 +274,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id, entryId } = parse(entryParams, request.params);
     await transact(ctx, async (tx, after) => {
       await getAgentRow(tx, id, { lock: true });
-      const [entry] = await tx.select().from(queueEntries).where(and(eq(queueEntries.id, entryId), eq(queueEntries.agentId, id)));
-      if (!entry) throw notFound('Queue entry');
+      const entry = await getQueueEntry(tx, id, entryId);
       if (entry.kind === 'start') throw badRequest("A session start can't be removed from the queue; unassign the agent instead");
       await removeEntry(tx, after, entry, 'removed from queue');
     });
@@ -363,7 +371,7 @@ async function receiveAvatar(ctx: AppContext, request: FastifyRequest): Promise<
       }
       blobId = (await ctx.blobs.put(part.file, { filename: 'avatar', contentType })).id;
       if (part.file.truncated) {
-        throw new HttpError(413, 'file_too_large', `The avatar must be at most ${AGENT_AVATAR_MAX_BYTES / 1024 / 1024} MB`);
+        throw avatarTooLarge();
       }
     }
     if (!blobId) throw badRequest('Missing image file');
@@ -371,7 +379,7 @@ async function receiveAvatar(ctx: AppContext, request: FastifyRequest): Promise<
   } catch (err) {
     if (blobId) await ctx.blobs.delete(blobId);
     if ((err as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') {
-      throw new HttpError(413, 'file_too_large', `The avatar must be at most ${AGENT_AVATAR_MAX_BYTES / 1024 / 1024} MB`);
+      throw avatarTooLarge();
     }
     throw err;
   }

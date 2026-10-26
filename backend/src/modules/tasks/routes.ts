@@ -8,9 +8,10 @@ import { parse } from '../../errors';
 import { loadTimeline } from '../comments/service';
 import { getProject } from '../projects/service';
 import { createTask, deleteTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from './service';
+import { idOrKey } from '../../ids';
 
-const projectParams = z.object({ projectId: z.string().min(1).max(64) });
-const params = z.object({ id: z.string().min(1).max(64) });
+const projectParams = z.object({ projectId: idOrKey });
+const params = z.object({ id: idOrKey });
 
 export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/projects/:projectId/tasks', async (request) => {
