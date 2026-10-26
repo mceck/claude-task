@@ -1,5 +1,5 @@
-import { checkAgentDockerfile, EFFORT_LEVELS, PERMISSION_MODES } from '@claude-task/shared';
-import type { Agent, CreateAgentBody, EffortLevel, PermissionMode } from '@claude-task/shared';
+import { AGENT_SERVICES, AGENT_SERVICE_INFO, DEFAULT_AGENT_SERVICES, checkAgentDockerfile, EFFORT_LEVELS, PERMISSION_MODES } from '@claude-task/shared';
+import type { Agent, AgentService, CreateAgentBody, EffortLevel, PermissionMode } from '@claude-task/shared';
 import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { Link } from 'react-router';
@@ -100,6 +100,7 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
   const [color, setColor] = useState(agent?.avatarColor ?? '#6366f1');
   const [description, setDescription] = useState(agent?.description ?? '');
   const [dockerfile, setDockerfile] = useState(agent?.dockerfile ?? 'FROM claude-task/agent-base\nUSER agent\n');
+  const [services, setServices] = useState<AgentService[]>(agent?.services ?? DEFAULT_AGENT_SERVICES);
   const [credentialId, setCredentialId] = useState(agent?.credentialId ?? '');
   const [model, setModel] = useState(agent?.model ?? '');
   const [effort, setEffort] = useState<EffortLevel | ''>(agent?.effort ?? '');
@@ -128,6 +129,7 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
         avatarColor: color,
         description,
         dockerfile,
+        services,
         credentialId,
         model: model.trim() || null,
         effort: effort || null,
@@ -282,6 +284,27 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
           </label>
         ))}
         <Link to="/admin/extensions" className="text-xs underline">Manage shared plugins</Link>
+      </fieldset>
+      <fieldset className="space-y-2 rounded-lg border p-3">
+        <legend className="px-1 text-sm font-medium">Services</legend>
+        <p className="text-xs text-muted-foreground">
+          Installed and started inside this agent’s container. Data persists across rebuilds.
+          Changes rebuild the image and apply when the agent is idle.
+        </p>
+        {AGENT_SERVICES.map((service) => (
+          <label key={service} className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              aria-label={AGENT_SERVICE_INFO[service].name}
+              checked={services.includes(service)}
+              onChange={(e) => setServices(e.target.checked ? [...services, service] : services.filter((value) => value !== service))}
+            />
+            <span>
+              <b>{AGENT_SERVICE_INFO[service].name}</b>
+              <span className="block text-xs text-muted-foreground">{AGENT_SERVICE_INFO[service].description}</span>
+            </span>
+          </label>
+        ))}
       </fieldset>
       <div className="space-y-1.5">
         <Label>Dockerfile</Label>

@@ -24,6 +24,7 @@ export class FakeRuntime implements AgentRuntime {
     this.configuredPlugins.set(agentId, plugins);
   }
   readonly containers = new Map<string, FakeContainer>();
+  readonly builds: { agentId: string; buildId: string; dockerfile: string }[] = [];
   readonly removed: string[] = [];
   /** Next builds' outcomes, consumed in order; default success. */
   private readonly script: { fail?: string; user?: string; log?: string; hold?: Promise<void> }[] = [];
@@ -58,6 +59,7 @@ export class FakeRuntime implements AgentRuntime {
   }
 
   async buildAgentImage(input: { agentId: string; buildId: string; dockerfile: string }, onLog: (chunk: string) => void): Promise<BuildResult> {
+    this.builds.push(input);
     const next = this.script.shift() ?? {};
     onLog(next.log ?? `Step 1/1 : FROM claude-task/agent-base:${this.baseVersion}\n`);
     await next.hold;

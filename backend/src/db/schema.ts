@@ -33,7 +33,7 @@ import {
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind } from '@claude-task/shared';
+import type { AgentService, AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -295,6 +295,7 @@ export const agents = pgTable(
     avatarBlobId: text('avatar_blob_id'),
     description: text('description').notNull().default(''),
     dockerfile: text('dockerfile').notNull(),
+    services: jsonb('services').$type<AgentService[]>().notNull().default(['postgres', 'redis']),
     credentialId: uuid('credential_id')
       .notNull()
       .references(() => credentials.id, { onDelete: 'restrict' }),

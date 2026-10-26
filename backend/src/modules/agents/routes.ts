@@ -80,7 +80,8 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
       await tx.update(agents).set({ ...fields, updatedAt: new Date() }).where(eq(agents.id, id));
       await setAssignments(tx, id, { skillIds, mcpServerIds, pluginIds });
     });
-    if (body.dockerfile !== undefined && body.dockerfile !== before.dockerfile) ctx.scheduler.build(id);
+    if ((body.dockerfile !== undefined && body.dockerfile !== before.dockerfile)
+      || (body.services !== undefined && JSON.stringify(body.services) !== JSON.stringify(before.services))) ctx.scheduler.build(id);
     else void ctx.scheduler.reconcile(id).then(() => ctx.scheduler.kick(id), () => {});
     if (body.enabled) ctx.scheduler.kick(id);
     await ctx.scheduler.publishAgent(id);
@@ -170,6 +171,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
         avatarBlobId,
         description: source.description,
         dockerfile: source.dockerfile,
+        services: source.services,
         credentialId: source.credentialId,
         model: source.model,
         effort: source.effort,

@@ -40,14 +40,19 @@ export class DockerRuntime implements AgentRuntime {
   readonly baseVersion: string;
   private readonly docker: Docker;
   private readonly baseDockerfile: string;
+  private readonly baseScripts: Record<string, Buffer>;
   private readonly runner: { dir: string; files: string[] };
 
   constructor(private readonly config: AgentsConfig, paths = defaultPaths()) {
     this.docker = new Docker({ socketPath: config.dockerSocket });
     this.baseDockerfile = readFileSync(paths.baseDockerfile, 'utf8');
+    this.baseScripts = Object.fromEntries(['install-services.sh', 'entrypoint.sh'].map((name) => [
+      `agent-base/${name}`, readFileSync(path.join(path.dirname(paths.baseDockerfile), name)),
+    ]));
     this.runner = { dir: paths.runnerDir, files: runnerFiles(paths.runnerDir) };
     // The platform version: pinned CLI + Base Image recipe + Runner sources.
     const h = createHash('sha256').update(config.claudeCodeVersion).update('\0').update(this.baseDockerfile);
+    for (const [name, content] of Object.entries(this.baseScripts)) h.update('\0').update(name).update('\0').update(content);
     for (const f of this.runner.files) h.update('\0').update(f).update('\0').update(readFileSync(path.join(this.runner.dir, f)));
     this.baseVersion = `${config.claudeCodeVersion}-${h.digest('hex').slice(0, 12)}`;
   }
@@ -56,7 +61,7 @@ export class DockerRuntime implements AgentRuntime {
     const tag = `${BASE_IMAGE}:${this.baseVersion}`;
     if (await this.imageExists(tag)) return;
     onLog(`Building ${tag} (Claude Code ${this.config.claudeCodeVersion})…\n`);
-    const files: Record<string, Buffer | string> = { Dockerfile: this.baseDockerfile };
+    const files: Record<string, Buffer | string> = { Dockerfile: this.baseDockerfile, ...this.baseScripts };
     for (const f of this.runner.files) files[path.posix.join('runner', f.split(path.sep).join('/'))] = readFileSync(path.join(this.runner.dir, f));
     await this.build(files, { t: tag, buildargs: { CLAUDE_CODE_VERSION: this.config.claudeCodeVersion, RUNNER_VERSION: this.baseVersion } }, onLog);
     await this.docker.getImage(tag).tag({ repo: BASE_IMAGE, tag: 'latest' });

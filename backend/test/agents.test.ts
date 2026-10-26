@@ -23,7 +23,9 @@ describe('agents', () => {
     });
     expect(res.status).toBe(201);
     const id = res.body.agent.id;
+    expect(res.body.agent.services).toEqual(['postgres', 'redis']);
     await app.settle();
+    expect(app.runtime.builds[0]!.dockerfile).toContain('RUN /usr/local/bin/claude-task-install-services postgres redis\n');
 
     const container = app.runtime.containers.get(id)!;
     expect(container.spec).toMatchObject({ cpuLimit: 2, memoryMb: 4096, image: expect.stringContaining(`claude-task/agent-${id}:`) });
@@ -60,6 +62,41 @@ describe('agents', () => {
     ws.close();
   });
 
+  it('installs only selected services, accepts no services and preserves selection on unrelated edits', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { body: { services: ['rustfs', 'mysql', 'mailpit'] }, connect: false });
+    expect(agent.services).toEqual(['mysql', 'mailpit', 'rustfs']);
+    expect(app.runtime.builds.at(-1)!.dockerfile).toContain('RUN /usr/local/bin/claude-task-install-services mysql mailpit rustfs\n');
+    expect(app.runtime.builds.at(-1)!.dockerfile).toContain('ENV CLAUDE_TASK_SERVICES="mysql mailpit rustfs"');
+    const count = app.runtime.builds.length;
+    await admin.patch(`/agents/${agent.id}`, { description: 'Updated description' });
+    await admin.patch(`/agents/${agent.id}`, { services: ['mailpit', 'rustfs', 'mysql'] });
+    await app.settle();
+    expect(app.runtime.builds).toHaveLength(count);
+    expect((await admin.get(`/agents/${agent.id}`)).body.agent.services).toEqual(agent.services);
+    expect((await admin.get('/agents')).body.agents[0].services).toEqual(agent.services);
+
+    const oldImage = app.runtime.containers.get(agent.id)!.spec.image;
+    expect((await admin.patch(`/agents/${agent.id}`, { services: [] })).status).toBe(200);
+    await app.settle();
+    expect((await admin.get(`/agents/${agent.id}`)).body.agent.services).toEqual([]);
+    expect(app.runtime.builds.at(-1)!.dockerfile).toContain('ENV CLAUDE_TASK_SERVICES=""');
+    expect(app.runtime.containers.get(agent.id)!.spec.image).not.toBe(oldImage);
+
+    const empty = await createAgent(app, admin, { body: { services: [] }, connect: false });
+    expect(empty.agent.services).toEqual([]);
+  });
+
+  it('rejects unknown or duplicate services on creation and update', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { connect: false });
+    for (const services of [['mongo'], ['redis', 'redis'], 'postgres', null]) {
+      expect((await admin.patch(`/agents/${agent.id}`, { services })).status).toBe(400);
+      expect((await admin.post('/agents', { name: 'Invalid services', credentialId: agent.credentialId, dockerfile: DEFAULT_AGENT_DOCKERFILE, services })).status).toBe(400);
+    }
+    expect((await admin.get(`/agents/${agent.id}`)).body.agent.services).toEqual(['postgres', 'redis']);
+  });
+
   it('rejects Dockerfiles not based on the Base Image', async () => {
     const admin = await app.admin();
     const credential = await createCredential(admin);
@@ -87,7 +124,7 @@ describe('agents', () => {
     const { agent } = await createAgent(app, admin);
     const before = app.runtime.containers.get(agent.id)!.spec.image;
     app.runtime.scriptBuild({ fail: 'apt-get: package not found' });
-    await admin.patch(`/agents/${agent.id}`, { dockerfile: `${DEFAULT_AGENT_DOCKERFILE}RUN false\n` });
+    await admin.patch(`/agents/${agent.id}`, { services: ['mysql'] });
     await app.settle();
     expect(app.runtime.containers.get(agent.id)!.spec.image).toBe(before);
     expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'build_failed', containerState: 'running' });
@@ -104,7 +141,7 @@ describe('agents', () => {
     runner.accept(start.jobId);
     await runner.drain();
 
-    await admin.post(`/agents/${agent.id}/rebuild`);
+    await admin.patch(`/agents/${agent.id}`, { services: ['mysql', 'mailpit', 'rustfs'] });
     await app.settle();
     expect(app.runtime.containers.get(agent.id)!.spec.image).toBe(oldImage);
     expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ recreatePending: true, state: 'working' });
@@ -158,10 +195,10 @@ describe('agents', () => {
 
   it('duplicates an Agent with the same environment', async () => {
     const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { body: { model: 'opus', systemPrompt: 'Be terse.' }, connect: false });
+    const { agent } = await createAgent(app, admin, { body: { model: 'opus', systemPrompt: 'Be terse.', services: ['mysql', 'rustfs'] }, connect: false });
     const res = await admin.post(`/agents/${agent.id}/duplicate`, {});
     expect(res.status).toBe(201);
-    expect(res.body.agent).toMatchObject({ name: `${agent.name} (copy)`, model: 'opus', systemPrompt: 'Be terse.', dockerfile: agent.dockerfile });
+    expect(res.body.agent).toMatchObject({ name: `${agent.name} (copy)`, model: 'opus', systemPrompt: 'Be terse.', dockerfile: agent.dockerfile, services: ['mysql', 'rustfs'] });
     await app.settle();
     expect(app.runtime.containers.has(res.body.agent.id)).toBe(true);
   });

@@ -175,6 +175,11 @@ test('creates and rotates write-only credentials, configures an agent and reads 
 
   await page.getByRole('link', { name: 'Agents', exact: true }).click();
   await page.getByRole('button', { name: 'New agent' }).click();
+  await expect(page.getByRole('checkbox', { name: 'PostgreSQL', exact: true })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Redis', exact: true })).toBeChecked();
+  for (const name of ['MySQL', 'Mailpit', 'RustFS']) {
+    await expect(page.getByRole('checkbox', { name, exact: true })).not.toBeChecked();
+  }
   await page.getByLabel('Agent name').fill('Release agent');
   await page.getByLabel('Credential', { exact: true }).selectOption({ label: 'Release credential · …4321' });
   await page.getByRole('button', { name: 'Create agent' }).click();
@@ -185,6 +190,11 @@ test('creates and rotates write-only credentials, configures an agent and reads 
   await page.getByRole('tab', { name: 'Container logs' }).click();
   await expect(page.getByRole('tabpanel', { name: 'Container logs' })).toContainText('runner started');
   await page.getByRole('tab', { name: 'Configuration' }).click();
+  await page.getByRole('checkbox', { name: 'PostgreSQL', exact: true }).uncheck();
+  await page.getByRole('checkbox', { name: 'Redis', exact: true }).uncheck();
+  for (const name of ['MySQL', 'Mailpit', 'RustFS']) {
+    await page.getByRole('checkbox', { name, exact: true }).check();
+  }
   await page.getByLabel('Model', { exact: true }).fill('claude-sonnet-5-5');
   await page.getByLabel('Effort').selectOption('high');
   await page.getByRole('button', { name: 'Save agent', exact: true }).click();
@@ -192,8 +202,17 @@ test('creates and rotates write-only credentials, configures an agent and reads 
   await page.reload();
   await page.getByRole('tab', { name: 'Configuration' }).click();
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('claude-sonnet-5-5');
+  await expect(page.getByRole('checkbox', { name: 'PostgreSQL', exact: true })).not.toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Redis', exact: true })).not.toBeChecked();
+  for (const name of ['MySQL', 'Mailpit', 'RustFS']) {
+    await expect(page.getByRole('checkbox', { name, exact: true })).toBeChecked();
+  }
   await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Release agent (copy)' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Configuration' }).click();
+  for (const name of ['MySQL', 'Mailpit', 'RustFS']) {
+    await expect(page.getByRole('checkbox', { name, exact: true })).toBeChecked();
+  }
   await page.goto('/admin/credentials');
   await expect(credential.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
   await expect(credential).toContainText('Release agent (copy)');

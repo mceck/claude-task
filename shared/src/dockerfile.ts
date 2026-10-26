@@ -1,4 +1,6 @@
 // Agent Dockerfile rules, checked on save (backend) and while editing (frontend).
+import { AGENT_SERVICES } from './agents';
+import type { AgentService } from './agents';
 
 export const BASE_IMAGE = 'claude-task/agent-base';
 
@@ -46,15 +48,18 @@ export function checkAgentDockerfile(dockerfile: string): { ok: true; fromIndex:
   return { ok: true, fromIndex };
 }
 
-/** Points the first FROM at the given base image tag, keeping everything else as written. */
-export function pinAgentBase(dockerfile: string, tag: string): string {
-  let done = false;
-  return dockerfile
-    .split(/\r?\n/)
-    .map((line) => {
-      if (done || !/^\s*FROM\s/i.test(line)) return line;
-      done = true;
-      return line.replace(/claude-task\/agent-base\S*/, `${BASE_IMAGE}:${tag}`);
-    })
-    .join('\n');
+/** Pins the first FROM and optionally installs services before the custom instructions. */
+export function pinAgentBase(dockerfile: string, tag: string, services?: AgentService[]): string {
+  const lines = dockerfile.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^\s*FROM\s/i.test(line));
+  if (start < 0) return dockerfile;
+  let end = start;
+  while (lines[end]!.trimEnd().endsWith('\\') && end < lines.length - 1) end++;
+  let from = lines.slice(start, end + 1).join('\n').replace(/claude-task\/agent-base[^\s\\]*/, `${BASE_IMAGE}:${tag}`);
+  if (services !== undefined) {
+    const selected = AGENT_SERVICES.filter((service) => services.includes(service)).join(' ');
+    from += `\nUSER root\nRUN /usr/local/bin/claude-task-install-services${selected ? ` ${selected}` : ''}\nENV CLAUDE_TASK_SERVICES="${selected}"\nUSER agent`;
+  }
+  lines.splice(start, end - start + 1, from);
+  return lines.join('\n');
 }

@@ -46,17 +46,36 @@ container recreation. Agent home volumes survive recreation.
 
 ## Agent development environment
 
-The Base Image includes mise, PostgreSQL 16 and Redis. The entrypoint starts both
-services as the non-root `agent` user before starting the runner. They listen only
-on `127.0.0.1`, with no host ports published:
+In **Agents → Configuration → Services**, select the development services to install
+and start in that Agent Container. PostgreSQL 16 and Redis are checked by default,
+including for existing Agents. MySQL 8.0, Mailpit and RustFS are optional; all services
+can also be unchecked. Duplicating an Agent copies its selection.
+
+The Base Image includes mise and the service installation/startup scripts. The backend
+installs only the selected services before the Agent's custom Dockerfile instructions,
+and the entrypoint starts them as the non-root `agent` user before starting the runner.
+They listen only on `127.0.0.1`, with no host ports published:
 
 - PostgreSQL: `postgresql://agent@127.0.0.1:5432/agent`, local trust authentication.
   The `agent` role is a development superuser and can create project/test databases.
 - Redis: `redis://127.0.0.1:6379`, no password, append-only persistence enabled.
+- MySQL: `mysql://agent@127.0.0.1:3306/agent`, no password. The `agent` user can create
+  project/test databases. This is MySQL, rather than MariaDB.
+- Mailpit: SMTP at `127.0.0.1:1025`, web UI/API at `http://127.0.0.1:8025`.
+  Messages persist in its SQLite database. Binary version: 1.32.0
+  ([runtime options](https://mailpit.axllent.org/docs/configuration/runtime-options/)).
+- RustFS: S3 API at `http://127.0.0.1:9000`, console at `http://127.0.0.1:9001`;
+  local development access/secret keys: `rustfsadmin` / `rustfsadmin`. Binary version:
+  1.0.4 ([console configuration](https://docs.rustfs.com/en/administration/console)).
+
+Changing the selection rebuilds the Agent image automatically. A failed build keeps
+the previous container and its services running. A successful build waits until the
+Agent is idle before recreating its container, unless an Admin forces recreation.
 
 Service data and logs live in `~/.local/share/claude-task/` in the persistent Agent
 Volume. Each agent has its own services; tasks assigned to that agent share them.
-Use separate database names and Redis key namespaces/databases for separate projects.
+Disabling a service preserves its data; re-enabling it reuses that data.
+Use separate database names, Redis key namespaces/databases and S3 buckets for separate projects.
 
 For a newly cloned git worktree or a new conversation, the runner executes
 `mise install --yes` when it finds `.tool-versions` or a standard mise TOML config
@@ -171,6 +190,13 @@ restart and container recreation with the same home volume, and a real
 `mise install --yes` from `.tool-versions` (Node 22.16.0), usable from both plain
 processes and `bash -lc`. The runner suite covers installation before project setup,
 skipping installation on resume, and retrying a failed installation and pending setup.
+
+The configurable-services update passed a Docker smoke check on 2026-10-26 for
+empty/default/all-service selections, absence of unselected binaries, non-root startup,
+loopback-only listeners, PostgreSQL/MySQL writes, Redis reads/writes, SMTP delivery and
+Mailpit API reads, and signed S3 bucket/object operations against RustFS. All five
+services retained their data after restart and after recreating the container with
+services disabled and subsequently re-enabled, using the same Agent Volume.
 
 ## Remaining real-CLI acceptance
 
