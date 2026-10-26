@@ -6,6 +6,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY shared/package.json shared/
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
+COPY patches patches
 RUN pnpm install --frozen-lockfile
 COPY shared shared
 COPY backend backend

@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { api, del, errorMessage, post } from '../api/client';
 import { keys, useMe, useMcpServers, usePlugins, useSkills } from '../api/queries';
@@ -47,154 +48,161 @@ function ExtensionCatalog() {
       <ErrorText>
         {error || (skills.error && errorMessage(skills.error)) || (mcp.error && errorMessage(mcp.error)) || (plugins.error && errorMessage(plugins.error))}
       </ErrorText>
-      <section className="space-y-4">
-        <h2 className="text-lg font-medium">Skills</h2>
-        <form
-          className="space-y-3 rounded-xl border p-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(() => post('/skills/import', { source, skills: names.trim() ? names.split(/[,\s]+/).filter(Boolean) : ['*'] }));
-          }}
-        >
-          <Field label="Skill source" hint="Same source formats as skills add: owner/repo, repository URL or a link to a skill directory.">
-            <Input
-              aria-label="Skill source"
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              placeholder="vercel-labs/agent-skills"
-              required
-            />
-          </Field>
-          <Field label="Skill names" hint="Comma-separated names; leave empty to import all skills from the source.">
-            <Input aria-label="Skill names" value={names} onChange={(e) => setNames(e.target.value)} placeholder="web-design-guidelines" />
-          </Field>
-          <p className="text-xs text-muted-foreground">
-            Imports include scripts and supporting files. Reimporting updates assigned agents before their next job.
-          </p>
-          <Button disabled={busy}>{busy ? 'Working…' : 'Import skills'}</Button>
-        </form>
-        {skills.data?.map((skill) => (
-          <article key={skill.id} className="flex items-start gap-3 rounded-lg border p-4">
-            <div className="min-w-0 flex-1">
-              <h3 className="font-medium">/{skill.name}</h3>
-              <p className="text-sm text-muted-foreground">{skill.description}</p>
-              <p className="mt-1 break-all text-xs text-muted-foreground">
-                {skill.source} · {skill.fileCount} files{!skill.userInvocable && ' · Hidden from slash commands'}
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => void act(() => post('/skills/import', { source: skill.source, skills: [skill.name] }))}
-            >
-              Reimport
-            </Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => void act(() => del(`/skills/${skill.id}`))}>
-              Delete
-            </Button>
-          </article>
-        ))}
-      </section>
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">MCP servers</h2>
-          <Button variant="outline" onClick={() => setEditing(null)}>
-            Add MCP server
-          </Button>
-        </div>
-        {editing !== undefined && (
-          <McpEditor
-            key={editing?.id ?? 'new'}
-            server={editing}
-            onCancel={() => setEditing(undefined)}
-            onSave={async (body) => {
-              const result = saveMcpServerBody.safeParse(body);
-              if (!result.success) throw new Error(result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
-              await api(editing ? 'PUT' : 'POST', editing ? `/mcp-servers/${editing.id}` : '/mcp-servers', result.data);
-              await refresh();
-              setEditing(undefined);
+      <Tabs defaultValue="skills">
+        <TabsList className="mb-4" aria-label="Extension categories">
+          <TabsTrigger value="skills">Skills</TabsTrigger>
+          <TabsTrigger value="plugins">Plugins</TabsTrigger>
+          <TabsTrigger value="mcp">MCP</TabsTrigger>
+        </TabsList>
+        <TabsContent value="skills" className="space-y-4">
+          <h2 className="text-lg font-medium">Skills</h2>
+          <form
+            className="space-y-3 rounded-xl border p-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void act(() => post('/skills/import', { source, skills: names.trim() ? names.split(/[,\s]+/).filter(Boolean) : ['*'] }));
             }}
-          />
-        )}
-        {mcp.data?.map((server) => (
-          <article key={server.id} className="flex items-center gap-3 rounded-lg border p-4">
-            <div className="flex-1">
-              <h3 className="font-medium">
-                {server.name} <span className="text-xs text-muted-foreground">{server.type}</span>
-              </h3>
-              <p className="text-sm text-muted-foreground">{server.description}</p>
-              <p className="break-all text-xs text-muted-foreground">
-                {server.type === 'stdio' ? [server.command, ...server.args].join(' ') : server.url}
-              </p>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => setEditing(server)}>
-              Edit
-            </Button>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(() => del(`/mcp-servers/${server.id}`))}>
-              Delete
-            </Button>
-          </article>
-        ))}
-      </section>
-      <section className="space-y-4">
-        <h2 className="text-lg font-medium">Plugins</h2>
-        <form
-          className="space-y-3 rounded-xl border p-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const result = savePluginBody.safeParse(plugin);
-            if (!result.success) return setError(result.error.issues.map((i) => i.message).join('; '));
-            void act(async () => {
-              await post('/plugins', result.data);
-              setPlugin({ name: '', source: '', description: '' });
-            });
-          }}
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Plugin" hint="The plugin's name, or plugin@marketplace for a marketplace Claude Code already knows.">
+          >
+            <Field label="Skill source" hint="Same source formats as skills add: owner/repo, repository URL or a link to a skill directory.">
               <Input
-                aria-label="Plugin name"
-                value={plugin.name}
-                onChange={(e) => setPlugin({ ...plugin, name: e.target.value })}
-                placeholder="superpowers@anthropic-plugin-directory"
+                aria-label="Skill source"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                placeholder="vercel-labs/agent-skills"
                 required
               />
             </Field>
-            <Field label="Marketplace source" hint="owner/repo, HTTPS or Git SSH URL. Leave empty with plugin@marketplace.">
-              <Input
-                aria-label="Marketplace source"
-                value={plugin.source}
-                onChange={(e) => setPlugin({ ...plugin, source: e.target.value })}
-                placeholder="anthropics/claude-plugins-official"
-              />
+            <Field label="Skill names" hint="Comma-separated names; leave empty to import all skills from the source.">
+              <Input aria-label="Skill names" value={names} onChange={(e) => setNames(e.target.value)} placeholder="web-design-guidelines" />
             </Field>
-          </div>
-          <Field label="Description">
-            <Input aria-label="Plugin description" value={plugin.description} onChange={(e) => setPlugin({ ...plugin, description: e.target.value })} />
-          </Field>
-          <p className="text-xs text-muted-foreground">
-            Agents install plugins with claude plugin install, from public marketplaces, before their next job. Update installs the marketplace’s
-            latest version on every assigned agent.
-          </p>
-          <Button disabled={busy}>{busy ? 'Working…' : 'Add plugin'}</Button>
-        </form>
-        {plugins.data?.map((item) => (
-          <article key={item.id} className="flex items-start gap-3 rounded-lg border p-4">
-            <div className="min-w-0 flex-1">
-              <h3 className="font-medium">{item.name}</h3>
-              {item.description && <p className="text-sm text-muted-foreground">{item.description}</p>}
-              {item.source && <p className="mt-1 break-all text-xs text-muted-foreground">{item.source}</p>}
+            <p className="text-xs text-muted-foreground">
+              Imports include scripts and supporting files. Reimporting updates assigned agents before their next job.
+            </p>
+            <Button disabled={busy}>{busy ? 'Working…' : 'Import skills'}</Button>
+          </form>
+          {skills.data?.map((skill) => (
+            <article key={skill.id} className="flex items-start gap-3 rounded-lg border p-4">
+              <div className="min-w-0 flex-1">
+                <h3 className="font-medium">/{skill.name}</h3>
+                <p className="text-sm text-muted-foreground">{skill.description}</p>
+                <p className="mt-1 break-all text-xs text-muted-foreground">
+                  {skill.source} · {skill.fileCount} files{!skill.userInvocable && ' · Hidden from slash commands'}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => void act(() => post('/skills/import', { source: skill.source, skills: [skill.name] }))}
+              >
+                Reimport
+              </Button>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void act(() => del(`/skills/${skill.id}`))}>
+                Delete
+              </Button>
+            </article>
+          ))}
+        </TabsContent>
+        <TabsContent value="plugins" className="space-y-4">
+          <h2 className="text-lg font-medium">Plugins</h2>
+          <form
+            className="space-y-3 rounded-xl border p-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const result = savePluginBody.safeParse(plugin);
+              if (!result.success) return setError(result.error.issues.map((i) => i.message).join('; '));
+              void act(async () => {
+                await post('/plugins', result.data);
+                setPlugin({ name: '', source: '', description: '' });
+              });
+            }}
+          >
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Plugin" hint="The plugin's name, or plugin@marketplace for a marketplace Claude Code already knows.">
+                <Input
+                  aria-label="Plugin name"
+                  value={plugin.name}
+                  onChange={(e) => setPlugin({ ...plugin, name: e.target.value })}
+                  placeholder="superpowers@anthropic-plugin-directory"
+                  required
+                />
+              </Field>
+              <Field label="Marketplace source" hint="owner/repo, HTTPS or Git SSH URL. Leave empty with plugin@marketplace.">
+                <Input
+                  aria-label="Marketplace source"
+                  value={plugin.source}
+                  onChange={(e) => setPlugin({ ...plugin, source: e.target.value })}
+                  placeholder="anthropics/claude-plugins-official"
+                />
+              </Field>
             </div>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => void act(() => post(`/plugins/${item.id}/update`, {}))}>
-              Update
+            <Field label="Description">
+              <Input aria-label="Plugin description" value={plugin.description} onChange={(e) => setPlugin({ ...plugin, description: e.target.value })} />
+            </Field>
+            <p className="text-xs text-muted-foreground">
+              Agents install plugins with claude plugin install, from public marketplaces, before their next job. Update installs the marketplace’s
+              latest version on every assigned agent.
+            </p>
+            <Button disabled={busy}>{busy ? 'Working…' : 'Add plugin'}</Button>
+          </form>
+          {plugins.data?.map((item) => (
+            <article key={item.id} className="flex items-start gap-3 rounded-lg border p-4">
+              <div className="min-w-0 flex-1">
+                <h3 className="font-medium">{item.name}</h3>
+                {item.description && <p className="text-sm text-muted-foreground">{item.description}</p>}
+                {item.source && <p className="mt-1 break-all text-xs text-muted-foreground">{item.source}</p>}
+              </div>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => void act(() => post(`/plugins/${item.id}/update`, {}))}>
+                Update
+              </Button>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void act(() => del(`/plugins/${item.id}`))}>
+                Delete
+              </Button>
+            </article>
+          ))}
+        </TabsContent>
+        <TabsContent value="mcp" className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-medium">MCP servers</h2>
+            <Button variant="outline" onClick={() => setEditing(null)}>
+              Add MCP server
             </Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => void act(() => del(`/plugins/${item.id}`))}>
-              Delete
-            </Button>
-          </article>
-        ))}
-      </section>
+          </div>
+          {editing !== undefined && (
+            <McpEditor
+              key={editing?.id ?? 'new'}
+              server={editing}
+              onCancel={() => setEditing(undefined)}
+              onSave={async (body) => {
+                const result = saveMcpServerBody.safeParse(body);
+                if (!result.success) throw new Error(result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+                await api(editing ? 'PUT' : 'POST', editing ? `/mcp-servers/${editing.id}` : '/mcp-servers', result.data);
+                await refresh();
+                setEditing(undefined);
+              }}
+            />
+          )}
+          {mcp.data?.map((server) => (
+            <article key={server.id} className="flex items-center gap-3 rounded-lg border p-4">
+              <div className="flex-1">
+                <h3 className="font-medium">
+                  {server.name} <span className="text-xs text-muted-foreground">{server.type}</span>
+                </h3>
+                <p className="text-sm text-muted-foreground">{server.description}</p>
+                <p className="break-all text-xs text-muted-foreground">
+                  {server.type === 'stdio' ? [server.command, ...server.args].join(' ') : server.url}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setEditing(server)}>
+                Edit
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(() => del(`/mcp-servers/${server.id}`))}>
+                Delete
+              </Button>
+            </article>
+          ))}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

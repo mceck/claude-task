@@ -73,24 +73,30 @@ test('completes assigned skills in the chat with keyboard, click, and Escape', a
   await assigned;
   await page.reload();
   const composer = page.getByRole('textbox', { name: 'Comment', exact: true });
+  const box = composer.locator('xpath=ancestor::div[@data-internal]');
+  await expect(composer).toBeVisible();
+  const height = (await box.boundingBox())!.height;
   await composer.fill('/');
   await expect(page.getByRole('listbox', { name: 'Chat commands' })).toBeVisible();
+  // The suggestions overlay the conversation above the composer, which keeps its shape.
+  expect((await box.boundingBox())!.height).toBe(height);
+  expect((await page.getByRole('listbox', { name: 'Chat commands' }).boundingBox())!.y).toBeLessThan((await box.boundingBox())!.y);
   await composer.press('ArrowDown');
   await composer.press('Enter');
-  await expect(composer).toHaveValue('/release ');
+  await expect(composer).toHaveText('/release ');
   await composer.fill('Please /rev');
   await page.getByRole('option', { name: /^\/review/ }).click();
-  await expect(composer).toHaveValue('Please /review ');
+  await expect(composer).toHaveText('Please /review ');
   await composer.fill('/re');
   await composer.press('Escape');
   await expect(page.getByRole('listbox', { name: 'Chat commands' })).toBeHidden();
-  await expect(composer).toHaveValue('/re');
+  await expect(composer).toHaveText('/re');
   await composer.fill('src/re');
   await expect(page.getByRole('listbox', { name: 'Chat commands' })).toBeHidden();
   await composer.fill('/comp');
   await expect(page.getByRole('option', { name: /^\/compact/ })).toBeVisible();
   await composer.press('Tab');
-  await expect(composer).toHaveValue('/compact ');
+  await expect(composer).toHaveText('/compact ');
   await composer.fill('/review authentication');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
   await expect(page.getByRole('list', { name: 'Timeline' }).getByText('/review authentication', { exact: true })).toBeVisible();
@@ -99,6 +105,7 @@ test('completes assigned skills in the chat with keyboard, click, and Escape', a
 test('manages MCP servers without exposing saved secrets', async ({ page }) => {
   await login(page.request);
   await page.goto('/admin/extensions');
+  await page.getByRole('tab', { name: 'MCP', exact: true }).click();
   await page.getByRole('button', { name: 'Add MCP server', exact: true }).click();
   const name = `search-${Date.now()}`;
   await page.getByLabel('MCP server name').fill(name);
@@ -125,6 +132,7 @@ test('adds a marketplace plugin to the catalog and assigns it to an agent', asyn
   const agent = await seedAgent(page.request, 'Plugin agent');
   const name = `design-${Date.now()}`;
   await page.goto('/admin/extensions');
+  await page.getByRole('tab', { name: 'Plugins', exact: true }).click();
   await page.getByLabel('Plugin name').fill(name);
   await page.getByRole('button', { name: 'Add plugin', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('plugin@marketplace');
@@ -143,6 +151,7 @@ test('adds a marketplace plugin to the catalog and assigns it to an agent', asyn
   expect(saved.pluginIds).toHaveLength(1);
 
   await page.goto('/admin/extensions');
+  await page.getByRole('tab', { name: 'Plugins', exact: true }).click();
   await plugin.getByRole('button', { name: 'Delete', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Unassign this plugin');
   await expect(plugin).toBeVisible();
@@ -198,7 +207,6 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await page.goto(`/t/${task.key}`);
   await assignAndStart(page, agent.name);
   await expect(page.getByLabel('Session: running')).toBeVisible();
-  await page.getByRole('button', { name: 'Expand activity' }).click();
   const job = await jobStart(page.request, agent.id, task.id);
   const s = new Stream(job.sessionId);
   await replay(page.request, agent.id, job.jobId, [s.delta('Checking the redirect now.')]);
@@ -228,12 +236,11 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await replay(page.request, agent.id, job.jobId, [s.text('Stopped after checking logout.'), s.result()]);
   await expect(page.getByLabel('Turn summary')).toContainText('Turn finished');
   await replay(page.request, agent.id, job.jobId, [], true);
-  await expect(page.getByRole('dialog').getByLabel('Session: waiting for messages')).toBeVisible();
-  await page.getByRole('button', { name: 'Exit full screen' }).click();
+  await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('textbox', { name: 'editable markdown', exact: true }).fill('Include the logout flow.');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('textbox', { name: 'editable markdown', exact: true }).press('Escape');
   await expect(page.getByRole('button', { name: 'Notify agent' })).toBeVisible();
   await page.getByRole('button', { name: 'Notify agent' }).click();
   await expect(page.getByRole('button', { name: 'Notify agent' })).toHaveCount(0);

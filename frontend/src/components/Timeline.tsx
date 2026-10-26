@@ -3,7 +3,7 @@ import type { Agent, AgentItem, Attachment, Comment, GitProviderKind, Tag, Prior
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRightLeft, Bot, ChevronDown, ChevronUp, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,7 +16,9 @@ import { putTimelineItem } from '../lib/cache';
 import { AgentItemView, LiveTurnView } from './AgentTimeline';
 import { AgentAvatar, DeliveryBadge } from './agents';
 import { ErrorText, Loading, Time, useConfirm, UserAvatar } from './common';
-import { Markdown, MarkdownEditor } from './Markdown';
+import { Markdown } from './Markdown';
+
+const CommentEditor = lazy(() => import('./RichMarkdownEditor').then((m) => ({ default: m.CommentEditor })));
 
 interface Lookups {
   statuses: Status[];
@@ -170,7 +172,9 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
         {editing ? (
           <div className="space-y-2">
             <div className="rounded-lg border p-2">
-              <MarkdownEditor label="Edit comment" value={draft} onChange={setDraft} autoFocus />
+              <Suspense fallback={<Markdown source={draft} className="min-h-16" />}>
+                <CommentEditor taskId={comment.taskId} label="Edit comment" initialValue={draft} onChange={setDraft} autoFocus />
+              </Suspense>
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>

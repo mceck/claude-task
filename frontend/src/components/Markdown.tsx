@@ -18,6 +18,16 @@ export function Markdown({ source, className }: { source: string; className?: st
   );
 }
 
+/** The description laid out like the editor (toolbar row, then the text), while it loads or when it can't parse it. */
+export function RichMarkdownView({ source, placeholder }: { source: string; placeholder?: string }) {
+  return (
+    <div className="rich-editor">
+      <div className="rich-editor-toolbar-space" />
+      {source ? <Markdown source={source} /> : <p className="text-sm text-muted-foreground">{placeholder}</p>}
+    </div>
+  );
+}
+
 interface EditorProps {
   value: string;
   onChange: (value: string) => void;

@@ -91,6 +91,8 @@ export function useTask(idOrKey: string | undefined) {
   return useQuery({
     queryKey: keys.task(idOrKey ?? ''),
     queryFn: () => get<{ task: Task }>(`/tasks/${encodeURIComponent(idOrKey!)}`).then((r) => r.task),
+    // A refetch started before a WebSocket update can land after it: never go back to an older version.
+    structuralSharing: (old, next) => ((old as Task | undefined)?.version ?? -1) > (next as Task).version ? (old as Task) : (next as Task),
     enabled: !!idOrKey,
     retry: (count, err) => (err as { status?: number }).status !== 404 && count < 2,
   });

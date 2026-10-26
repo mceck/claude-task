@@ -1,0 +1,14 @@
+diff --git a/dist/plugins/markdown-shortcut/index.js b/dist/plugins/markdown-shortcut/index.js
+index 64707d0ce47c7fc8ef1a439c143b9f719b35d8dc..8a5758bbc7b9b4831030d49eb4ca466a3b30346d 100644
+--- a/dist/plugins/markdown-shortcut/index.js
++++ b/dist/plugins/markdown-shortcut/index.js
+@@ -102,7 +102,8 @@ function pickTransformersForActivePlugins(pluginIds, allowedHeadingLevels) {
+       ...CODE,
+       dependencies: [CodeBlockNode],
+       replace: (parentNode, _children, match) => {
+-        const codeBlockNode = $createCodeBlockNode({ code: "", language: match[1] ?? "", meta: "" });
++        // Lexical 0.48 captures the fence first and the language second.
++        const codeBlockNode = $createCodeBlockNode({ code: "", language: match[2] ?? "", meta: "" });
+         parentNode.selectPrevious();
+         parentNode.replace(codeBlockNode);
+         setTimeout(() => {

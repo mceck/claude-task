@@ -91,8 +91,13 @@ test('posts a comment and an internal note, seen live elsewhere', async ({ brows
   await pageB.goto(`/t/${task.key}`);
   await expect(pageB.getByRole('list', { name: 'Timeline' })).toBeVisible();
 
-  await pageA.getByRole('textbox', { name: 'Comment', exact: true }).fill('This is **important**');
-  await pageA.getByRole('textbox', { name: 'Comment', exact: true }).press('ControlOrMeta+Enter');
+  // One WYSIWYG editor: no Write/Preview tabs.
+  await expect(pageA.getByRole('textbox', { name: 'Comment', exact: true })).toBeVisible();
+  await expect(pageA.getByRole('button', { name: /^(write|preview)$/i })).toHaveCount(0);
+  // Markdown typed in the editor becomes formatting, and Enter sends.
+  await pageA.getByRole('textbox', { name: 'Comment', exact: true }).click();
+  await pageA.keyboard.type('This is **important**');
+  await pageA.getByRole('textbox', { name: 'Comment', exact: true }).press('Enter');
   const comment = pageA.getByRole('listitem', { name: 'Comment' });
   await expect(comment.locator('strong')).toHaveText('important');
 
@@ -105,6 +110,25 @@ test('posts a comment and an internal note, seen live elsewhere', async ({ brows
 
   await expect(pageB.getByRole('listitem', { name: 'Comment' }).locator('strong')).toHaveText('important', { timeout: 1000 });
   await expect(pageB.getByRole('listitem', { name: 'Internal note' })).toContainText('Only for us', { timeout: 1000 });
+
+  // Editing a comment uses the same editor.
+  await comment.getByRole('button', { name: 'Comment actions' }).click();
+  await pageA.getByRole('menuitem', { name: 'Edit' }).click();
+  const edit = pageA.getByRole('textbox', { name: 'Edit comment', exact: true });
+  await expect(edit).toBeFocused();
+  await pageA.keyboard.type(' Really.');
+  await pageA.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(comment).toContainText('This is important Really.');
+
+  // Pasted files become attachments of the comment, not part of its text.
+  await pageA.getByRole('switch', { name: 'Internal note' }).click();
+  await pageA.getByRole('textbox', { name: 'Comment', exact: true }).evaluate((el) => {
+    const data = new DataTransfer();
+    data.items.add(new File(['notes'], 'notes.txt', { type: 'text/plain' }));
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await expect(pageA.getByLabel('Files to attach')).toContainText('notes.txt');
+  await expect(pageA.getByRole('textbox', { name: 'Comment', exact: true })).toHaveText('');
   await a.close();
   await b.close();
 });
@@ -204,74 +228,213 @@ function e2eDatabaseUrl(): string {
   return url.toString();
 }
 
-for (const view of ['page', 'board panel'] as const) {
-  test(`expands task activity from the ${view}, preserves drafts and receives live comments`, async ({ page }, testInfo) => {
+for (const view of ['page', 'board dialog'] as const) {
+  test(`shows the task from the ${view} with swappable activity and details panels, preserving drafts and receiving live comments`, async ({ page }, testInfo) => {
     await login(page.request);
     const project = await createProject(page.request);
-    const task = await createTask(page.request, project, 'Discuss in full screen', 'Todo', {
-      description: 'Task details before the conversation.\n\n'.repeat(40),
+    const task = await createTask(page.request, project, 'Discuss in the activity', 'Todo', {
+      description: 'Task details beside the conversation.\n\n'.repeat(40),
     });
-    await page.request.post(`/api/v1/tasks/${task.id}/comments`, {
-      headers: { 'x-claude-task': '1' },
-      data: { body: 'The conversation so far.\n\n' + 'Earlier discussion.\n\n'.repeat(40) },
-    });
+    for (const body of ['Earlier discussion.\n\n'.repeat(40), 'The conversation so far.']) {
+      await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers: { 'x-claude-task': '1' }, data: { body } });
+    }
     await page.goto(view === 'page' ? `/t/${task.key}` : `/p/${project.key}?task=${task.key}`);
-    const composer = page.getByRole('textbox', { name: 'Comment', exact: true });
-    const details = page.getByLabel('Task details', { exact: true });
-    await expect(page.getByRole('textbox', { name: 'Title', exact: true })).toBeInViewport();
-    await expect(composer).toHaveCount(0);
-    await details.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    const scope = view === 'page' ? page.locator('body') : page.getByRole('dialog', { name: task.key });
+    const composer = scope.getByRole('textbox', { name: 'Comment', exact: true });
+    const details = scope.getByRole('region', { name: 'Task details' });
+    const activity = scope.getByRole('region', { name: 'Task activity' });
+
+    // Activity first, scrolled to the latest comment, with the details in the sidebar.
+    await expect(scope.getByRole('textbox', { name: 'Title', exact: true })).toHaveValue('Discuss in the activity');
     await expect(composer).toBeInViewport({ ratio: 1 });
-    await expect(page.getByRole('button', { name: 'Comment', exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(scope.getByText('The conversation so far.')).toBeInViewport();
+    await expect(details).toBeVisible();
+    await expect(details).toContainText('Task details beside the conversation.');
+    expect((await details.boundingBox())!.x).toBeGreaterThan((await activity.boundingBox())!.x);
+
     await composer.fill('Keep this draft.');
-    await composer.evaluate(async (element) => {
-      const dock = element.closest('[data-slot="composer-dock"]')!;
-      await Promise.all(dock.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => {})));
-    });
-    const dockedY = (await composer.boundingBox())!.y;
-    await details.evaluate((element) => { element.scrollTop -= 100; });
-    await expect(composer).toBeInViewport({ ratio: 1 });
-    expect(Math.abs((await composer.boundingBox())!.y - dockedY)).toBeLessThan(1);
-    await details.evaluate((element) => { element.scrollTop = 0; });
-    await expect(composer).toHaveCount(0);
-    await details.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-    await expect(composer).toHaveValue('Keep this draft.');
-    await page.getByRole('switch', { name: 'Internal note', exact: true }).click();
-    await page.getByLabel('Attach files', { exact: true }).setInputFiles({ name: 'draft.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment.') });
-    await page.getByRole('button', { name: 'Expand activity' }).click();
-    const chat = page.getByRole('dialog', { name: `${task.key} Activity` });
-    await expect(chat).toBeVisible();
-    await expect(chat.getByRole('textbox', { name: 'Comment', exact: true })).toHaveValue('Keep this draft.');
-    await expect(chat.getByRole('switch', { name: 'Internal note', exact: true })).toBeChecked();
-    await expect(chat.getByLabel('Files to attach')).toContainText('draft.txt');
-    await expect(page.getByRole('textbox', { name: 'Comment', exact: true })).toHaveCount(1);
-    const box = (await chat.boundingBox())!;
-    const viewport = page.viewportSize()!;
-    expect(Math.abs(box.x)).toBeLessThan(1);
-    expect(Math.abs(box.y)).toBeLessThan(1);
-    expect(Math.abs(box.width - viewport.width)).toBeLessThan(1);
-    expect(Math.abs(box.height - viewport.height)).toBeLessThan(1);
-    await expect(chat.getByRole('button', { name: 'Add note' })).toBeInViewport();
+    await scope.getByRole('switch', { name: 'Internal note', exact: true }).click();
+    await scope.getByLabel('Attach files', { exact: true }).setInputFiles({ name: 'draft.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment.') });
+    if (view === 'board dialog') {
+      // Escape inside a field never closes the task.
+      await composer.press('Escape');
+      await expect(scope).toBeVisible();
+    }
 
-    await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers: { 'x-claude-task': '1' }, data: { body: 'A new comment while reading full screen.' } });
-    await expect(chat.getByRole('listitem', { name: 'Comment', exact: true }).last()).toContainText('A new comment while reading full screen.');
-    await expect(chat.getByRole('listitem', { name: 'Comment', exact: true }).last()).toBeInViewport();
-    await chat.getByRole('button', { name: 'Exit full screen' }).click();
-    await expect(chat).toHaveCount(0);
-    await expect(page.getByRole('textbox', { name: 'Comment', exact: true })).toHaveValue('Keep this draft.');
-    await expect(page.getByLabel('Files to attach')).toContainText('draft.txt');
-    await page.getByRole('button', { name: 'Expand activity' }).click();
-    await page.keyboard.press('Escape');
-    await expect(chat).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Expand activity' })).toBeFocused();
+    await scope.getByRole('button', { name: 'Hide details' }).click();
+    await expect(details).toBeHidden();
+    await scope.getByRole('button', { name: 'Show details' }).click();
+    await expect(details).toBeVisible();
 
-    await page.getByRole('button', { name: 'Expand activity' }).click();
-    if (view === 'page') await page.setViewportSize({ width: 390, height: 844 });
-    await expect(chat.getByRole('button', { name: 'Add note' })).toBeInViewport();
-    await chat.getByRole('button', { name: 'Add note' }).click();
-    await expect(chat.getByRole('listitem', { name: 'Internal note' })).toContainText('Keep this draft.');
-    await expect(chat.getByRole('listitem', { name: 'Internal note' })).toContainText('draft.txt');
-    await expect(chat.getByRole('textbox', { name: 'Comment', exact: true })).toHaveValue('');
-    await page.screenshot({ path: testInfo.outputPath('task-activity-fullscreen.png') });
+    // Details first: the activity moves to the sidebar, keeping the draft.
+    await scope.getByRole('button', { name: 'Focus details' }).click();
+    await expect(scope.getByRole('button', { name: 'Focus details' })).toHaveAttribute('aria-pressed', 'true');
+    expect((await activity.boundingBox())!.x).toBeGreaterThan((await details.boundingBox())!.x);
+    await scope.getByRole('button', { name: 'Hide activity' }).click();
+    await expect(activity).toBeHidden();
+    await scope.getByRole('button', { name: 'Show activity' }).click();
+    await expect(activity).toBeVisible();
+    await scope.getByRole('button', { name: 'Focus activity' }).click();
+    await expect(composer).toHaveText('Keep this draft.');
+    await expect(scope.getByRole('switch', { name: 'Internal note', exact: true })).toBeChecked();
+    await expect(scope.getByLabel('Files to attach')).toContainText('draft.txt');
+
+    await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers: { 'x-claude-task': '1' }, data: { body: 'A new comment while reading.' } });
+    await expect(scope.getByRole('listitem', { name: 'Comment', exact: true }).last()).toContainText('A new comment while reading.');
+    await expect(scope.getByRole('listitem', { name: 'Comment', exact: true }).last()).toBeInViewport();
+
+    // The board dialog takes the whole screen on phones.
+    if (view === 'board dialog') {
+      await page.setViewportSize({ width: 390, height: 844 });
+      // On narrow screens the sidebar overlays the main panel.
+      await scope.getByRole('button', { name: 'Hide details' }).click();
+    }
+    await expect(scope.getByRole('button', { name: 'Add note' })).toBeInViewport();
+    await scope.getByRole('button', { name: 'Add note' }).click();
+    await expect(scope.getByRole('listitem', { name: 'Internal note' })).toContainText('Keep this draft.');
+    await expect(scope.getByRole('listitem', { name: 'Internal note' })).toContainText('draft.txt');
+    await expect(composer).toHaveText('');
+    await page.screenshot({ path: testInfo.outputPath('task-view.png') });
+
+    // The layout is a per-browser preference.
+    await scope.getByRole('button', { name: 'Focus details' }).click();
+    // The phone check above already collapsed the sidebar.
+    if (view === 'page') await scope.getByRole('button', { name: 'Hide activity' }).click();
+    await page.reload();
+    await expect(scope.getByRole('button', { name: 'Focus details' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(activity).toBeHidden();
+    await expect(details).toBeVisible();
+
+    if (view === 'board dialog') {
+      await details.click({ position: { x: 4, y: 4 } });
+      await page.keyboard.press('Escape');
+      await expect(scope).toHaveCount(0);
+      await expect(page).not.toHaveURL(/task=/);
+    }
   });
 }
+
+test('edits the description in place where it was clicked and saves it once when the edit ends', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Describe me', 'Todo', {
+    description: 'First paragraph.\n\n' + 'Filler paragraph.\n\n'.repeat(30) + 'Last paragraph.',
+  });
+  await page.goto(`/t/${task.key}`);
+  const description = page.getByRole('region', { name: 'Description', exact: true });
+  const editor = description.getByRole('textbox', { name: 'editable markdown', exact: true });
+  const toolbar = description.getByRole('toolbar');
+  // The editor also shows the description, read-only until clicked.
+  await expect(editor).toHaveAttribute('contenteditable', 'false');
+  await expect(toolbar).toBeHidden();
+  const first = description.locator('p', { hasText: 'First paragraph.' });
+  const before = (await first.boundingBox())!;
+
+  await first.click();
+  await expect(editor).toBeFocused();
+  await expect(toolbar).toBeVisible();
+  await expect(description.getByRole('button', { name: /^(Save|Cancel)$/ })).toHaveCount(0);
+  // Starting to edit moves nothing.
+  expect(Math.abs((await first.boundingBox())!.y - before.y)).toBeLessThan(1);
+
+  // The caret starts in the clicked paragraph.
+  await page.keyboard.press('End');
+  await page.keyboard.type(' Edited.');
+  const last = description.locator('p', { hasText: 'Last paragraph.' });
+  await last.click();
+  // Editing far down a long description, the toolbar stays at the top of the panel.
+  await expect(toolbar).toBeInViewport();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' Twice.');
+  // No toolbar button for code blocks: the markdown shortcut makes them.
+  await expect(toolbar.getByRole('button', { name: /insert code block/i })).toHaveCount(0);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('```ts ');
+  await expect(description.locator('.cm-editor')).toBeVisible();
+  await page.keyboard.type('const done = true;');
+  await expect(page.getByText('updated the description')).toHaveCount(0);
+
+  // Leaving the editor saves once and keeps the scroll position.
+  const details = page.getByRole('region', { name: 'Task details' });
+  const scrollTop = await details.evaluate((el) => el.scrollTop);
+  expect(scrollTop).toBeGreaterThan(0);
+  await page.getByLabel('Task conversation').click({ position: { x: 4, y: 4 } });
+  await expect(toolbar).toBeHidden();
+  await expect(editor).toHaveAttribute('contenteditable', 'false');
+  expect(Math.abs((await details.evaluate((el) => el.scrollTop)) - scrollTop)).toBeLessThan(1);
+  await expect(description).toContainText('First paragraph. Edited.');
+  await expect(description).toContainText('Last paragraph. Twice.');
+  await expect.poll(async () => (await (await page.request.get(`/api/v1/tasks/${task.id}`)).json()).task.description).toContain('```ts\nconst done = true;\n```');
+  await expect(page.getByText('updated the description')).toHaveCount(1);
+
+  // Opening and leaving without changes saves nothing.
+  await first.click();
+  await expect(editor).toBeFocused();
+  await editor.press('Escape');
+  await expect(toolbar).toBeHidden();
+  await page.reload();
+  await expect(description).toContainText('Last paragraph. Twice.');
+  await expect(page.getByText('updated the description')).toHaveCount(1);
+});
+
+test('inserts an image into the description from a dialog above the board’s task dialog', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Add a screenshot', 'Todo', { description: 'See below.' });
+  await page.goto(`/p/${project.key}?task=${task.key}`);
+  const taskDialog = page.getByRole('dialog', { name: task.key });
+  const description = taskDialog.getByRole('region', { name: 'Description', exact: true });
+  await description.locator('p', { hasText: 'See below.' }).click();
+  await page.keyboard.press('End');
+  await description.getByRole('button', { name: 'Insert image' }).click();
+
+  const imageDialog = page.getByRole('dialog', { name: 'Insert image' });
+  await expect(imageDialog).toBeVisible();
+  await expect(imageDialog.getByLabel('Upload an image')).toBeAttached();
+  await imageDialog.getByLabel('Image URL').fill('https://example.com/screenshot.png');
+  await imageDialog.getByLabel('Alt text').fill('The broken page');
+  await imageDialog.getByRole('button', { name: 'Insert' }).click();
+  await expect(imageDialog).toHaveCount(0);
+
+  // Still editing: the dialog was part of the edit.
+  await expect(description.getByRole('toolbar')).toBeVisible();
+  await expect(description.getByRole('img', { name: 'The broken page' })).toBeVisible();
+  await taskDialog.getByLabel('Task conversation').click({ position: { x: 4, y: 4 } });
+  await expect(description.getByRole('toolbar')).toBeHidden();
+  await expect
+    .poll(async () => (await (await page.request.get(`/api/v1/tasks/${task.id}`)).json()).task.description)
+    .toContain('![The broken page](https://example.com/screenshot.png)');
+  await expect(taskDialog).toBeVisible();
+});
+
+test('makes inline code from one line and a code block from several', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Format code', 'Todo', { description: 'npm install\n\nnpm test\n\nThen deploy.' });
+  await page.goto(`/t/${task.key}`);
+  const description = page.getByRole('region', { name: 'Description', exact: true });
+  const code = description.getByRole('toolbar').getByRole('radio', { name: /^Code/ });
+
+  const first = description.locator('p', { hasText: 'npm install' });
+  const second = description.locator('p', { hasText: 'npm test' });
+  await first.click();
+  await expect(code).toBeVisible();
+  // Drag across both lines.
+  const from = (await first.boundingBox())!;
+  const to = (await second.locator('span').boundingBox())!;
+  await page.mouse.move(from.x + 1, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width - 1, to.y + to.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await code.click();
+  await expect(description.locator('.cm-editor')).toBeVisible();
+  // The new code block takes the caret.
+  await expect(description.locator('.cm-content')).toBeFocused();
+
+  await description.locator('p', { hasText: 'Then deploy.' }).dblclick({ position: { x: 50, y: 8 } });
+  await code.click();
+  await page.getByLabel('Task conversation').click({ position: { x: 4, y: 4 } });
+  await expect
+    .poll(async () => (await (await page.request.get(`/api/v1/tasks/${task.id}`)).json()).task.description)
+    .toMatch(/^```\nnpm install\nnpm test\n```\n\n.*`deploy`/s);
+});

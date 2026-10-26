@@ -2,17 +2,20 @@ import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES, chatCommands, skillToken } 
 import type { ChatCommand, Comment } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, FileText, Lock, Paperclip, X } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
-import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react';
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
+import type { ClipboardEvent, DragEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
 import { putTimelineItem } from '../lib/cache';
 import { useAgent } from '../api/queries';
 import { ErrorText, Kbd } from './common';
-import { MarkdownEditor } from './Markdown';
+import type { CommandToken, CommentEditorHandle } from './RichMarkdownEditor';
+
+const CommentEditor = lazy(() => import('./RichMarkdownEditor').then((m) => ({ default: m.CommentEditor })));
 
 /** Kept by the conversation view so expanding it preserves text, notes and attachments. */
 export function useCommentDraft() {
@@ -41,32 +44,32 @@ export function Composer({
   const fileInput = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
   const agent = useAgent(agentId ?? undefined);
-  const textarea = useRef<HTMLTextAreaElement>(null);
+  const editor = useRef<CommentEditorHandle>(null);
   const listId = useId();
-  const [caret, setCaret] = useState(0),
-    [active, setActive] = useState(0),
-    [dismissed, setDismissed] = useState('');
-  const token = !internal && dismissed !== `${body}@${caret}` ? skillToken(body, caret) : null;
+  const [token, setToken] = useState<CommandToken | null>(null);
+  const [active, setActive] = useState(0);
+  // Escape hides the suggestions for this token only; typing on shows them again.
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const tokenKey = token && `${token.query}|${token.atStart}|${body}`;
   const available = commands ?? (agentId ? chatCommands(null, agent.data?.skillCommands ?? []) : []);
-  const suggestions = token
-    ? available.filter((s) => s.name.toLowerCase().startsWith(token.query) && (token.start === 0 || s.kind === 'skill'))
-    : [];
+  const suggestions =
+    token && !internal && dismissed !== tokenKey
+      ? available.filter((s) => s.name.toLowerCase().startsWith(token.query) && (token.atStart || s.kind === 'skill'))
+      : [];
   const selected = Math.min(active, suggestions.length - 1);
   useEffect(() => {
     document.getElementById(`${listId}-${selected}`)?.scrollIntoView({ block: 'nearest' });
   }, [listId, selected]);
   const chooseSkill = (name: string) => {
-    if (!token) return;
-    const suffix = /^[a-zA-Z0-9_:-]*/.exec(body.slice(caret))![0].length;
-    const next = `${body.slice(0, token.start)}/${name} ${body.slice(caret + suffix)}`;
-    const position = token.start + name.length + 2;
-    setBody(next);
-    setCaret(position);
+    editor.current?.chooseCommand(name);
     setActive(0);
-    requestAnimationFrame(() => {
-      textarea.current?.focus();
-      textarea.current?.setSelectionRange(position, position);
-    });
+  };
+  const onCommandKey = (key: 'ArrowUp' | 'ArrowDown' | 'Enter' | 'Tab' | 'Escape') => {
+    if (suggestions.length === 0) return false;
+    if (key === 'ArrowDown' || key === 'ArrowUp') setActive((selected + (key === 'ArrowDown' ? 1 : -1) + suggestions.length) % suggestions.length);
+    else if (key === 'Escape') setDismissed(tokenKey);
+    else chooseSkill(suggestions[selected]!.name);
+    return true;
   };
 
   const addFiles = (incoming: File[]) => {
@@ -93,6 +96,7 @@ export function Composer({
       }
       const { comment } = await post<{ comment: Comment }>(`/tasks/${taskId}/comments`, payload);
       putTimelineItem(qc, taskId, { type: 'comment', id: comment.id, createdAt: comment.createdAt, comment });
+      editor.current?.clear();
       setBody('');
       setFiles([]);
     } catch (err) {
@@ -102,34 +106,12 @@ export function Composer({
     }
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (suggestions.length && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        setActive((selected + (e.key === 'ArrowDown' ? 1 : -1) + suggestions.length) % suggestions.length);
-        return;
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        chooseSkill(suggestions[selected]!.name);
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        setDismissed(`${body}@${caret}`);
-        return;
-      }
-    }
-    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void submit();
-    }
-  };
-  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+  // Files become attachments of the comment, so they're caught before the editor would embed them.
+  const onPaste = (e: ClipboardEvent<HTMLDivElement>) => {
     const pasted = [...e.clipboardData.files];
     if (pasted.length > 0) {
       e.preventDefault();
+      e.stopPropagation();
       addFiles(
         pasted.map((f, i) =>
           f.name && f.name !== 'image.png'
@@ -139,58 +121,138 @@ export function Composer({
       );
     }
   };
-  const onDrop = (e: DragEvent<HTMLTextAreaElement>) => {
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
     setDragOver(false);
     if (e.dataTransfer.files.length > 0) {
       e.preventDefault();
+      e.stopPropagation();
       addFiles([...e.dataTransfer.files]);
     }
   };
 
   const empty = !body.trim() && files.length === 0;
 
+  const placeholder = internal ? 'Write an internal note…' : 'Leave a comment… Markdown, drop or paste files.';
+
   return (
-    <div
-      data-internal={internal}
-      onDragOver={(e) => (e.preventDefault(), setDragOver(true))}
-      onDragLeave={() => setDragOver(false)}
-      className={cn(
-        'rounded-xl border bg-background/50 p-3 transition-colors focus-within:border-ring/60 dark:bg-input/10',
-        internal && 'border-amber-500/40 bg-amber-500/5 focus-within:border-amber-500/60 dark:bg-amber-500/5',
-        dragOver && 'border-dashed border-primary',
-      )}
-    >
-      {internal && (
-        <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-amber-500">
-          <Lock className="size-3" /> Internal note: only people see this, never the agent.
-        </p>
-      )}
-      <MarkdownEditor
-        inputRef={textarea}
-        onCaretChange={(position) => {
-          setCaret(position);
-          setActive(0);
-        }}
-        onSelect={(e) => {
-          const position = e.currentTarget.selectionStart === e.currentTarget.selectionEnd ? e.currentTarget.selectionStart : -1;
-          if (position !== caret) {
-            setCaret(position);
-            setActive(0);
-          }
-        }}
-        ariaControls={suggestions.length ? listId : undefined}
-        ariaActiveDescendant={suggestions.length ? `${listId}-${selected}` : undefined}
-        label="Comment"
-        value={body}
-        onChange={setBody}
-        rows={3}
-        placeholder={internal ? 'Write an internal note…' : 'Leave a comment… Markdown, drop or paste files.'}
-        onKeyDown={onKeyDown}
-        onPaste={onPaste}
-        onDrop={onDrop}
-      />
-      {suggestions.length > 0 && (
-        <ul id={listId} role="listbox" aria-label="Chat commands" className="my-2 max-h-60 overflow-auto rounded-lg border bg-popover p-1">
+    <Popover open={suggestions.length > 0}>
+      <PopoverAnchor asChild>
+        <div
+          data-internal={internal}
+          onDragOver={(e) => (e.preventDefault(), setDragOver(true))}
+          onDragLeave={() => setDragOver(false)}
+          onPasteCapture={onPaste}
+          onDropCapture={onDrop}
+          className={cn(
+            'rounded-xl border bg-background/50 p-3 transition-colors focus-within:border-ring/60 dark:bg-input/10',
+            internal && 'border-amber-500/40 bg-amber-500/5 focus-within:border-amber-500/60 dark:bg-amber-500/5',
+            dragOver && 'border-dashed border-primary',
+          )}
+        >
+          {internal && (
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-amber-500">
+              <Lock className="size-3" /> Internal note: only people see this, never the agent.
+            </p>
+          )}
+          <Suspense
+            fallback={
+              <div className="rich-editor">
+                <div className="rich-editor-toolbar-space" />
+                <p className="min-h-16 text-sm text-muted-foreground">{placeholder}</p>
+              </div>
+            }
+          >
+            <CommentEditor
+              handle={editor}
+              taskId={taskId}
+              label="Comment"
+              placeholder={placeholder}
+              initialValue={body}
+              onChange={setBody}
+              onSubmit={() => void submit()}
+              onCommandToken={(next) => {
+                if (next?.query !== token?.query || next?.atStart !== token?.atStart) setActive(0);
+                setToken(next);
+              }}
+              onCommandKey={onCommandKey}
+              ariaControls={suggestions.length ? listId : undefined}
+              ariaActiveDescendant={suggestions.length ? `${listId}-${selected}` : undefined}
+            />
+          </Suspense>
+          {files.length > 0 && (
+            <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Files to attach">
+              {files.map((f, i) => (
+                <li key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded-md border bg-muted/50 py-0.5 pr-1 pl-2 text-xs">
+                  <FileText className="size-3 text-muted-foreground" />
+                  {f.name}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${f.name}`}
+                    onClick={() => setFiles(files.filter((_, j) => j !== i))}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <ErrorText>{error}</ErrorText>
+          <div className="mt-2 flex items-center gap-3 border-t pt-2">
+            <div className="flex items-center gap-2">
+              <Switch
+                id={`internal-${taskId}`}
+                size="sm"
+                checked={internal}
+                onCheckedChange={setInternal}
+                className="data-[state=checked]:bg-amber-500"
+              />
+              <Label htmlFor={`internal-${taskId}`} className={cn('text-xs', internal ? 'text-amber-500' : 'text-muted-foreground')}>
+                Internal note
+              </Label>
+            </div>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              className="hidden"
+              aria-label="Attach files"
+              onChange={(e) => {
+                addFiles([...(e.target.files ?? [])]);
+                e.target.value = '';
+              }}
+            />
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => fileInput.current?.click()}>
+              <Paperclip /> Attach
+            </Button>
+            <span className="ml-auto hidden items-center gap-1 text-[11px] text-muted-foreground sm:flex">
+              <Kbd>⇧↵</Kbd> new line
+            </span>
+            <Button
+              size="sm"
+              onClick={submit}
+              disabled={busy || empty}
+              className={cn(internal && 'bg-amber-500 text-black hover:bg-amber-500/85')}
+            >
+              {internal ? 'Add note' : 'Comment'}
+              <ArrowUp />
+            </Button>
+          </div>
+        </div>
+      </PopoverAnchor>
+      {/* Above the composer, over the conversation, so the box keeps its shape. */}
+      <PopoverContent
+        side="top"
+        align="start"
+        sideOffset={6}
+        className="w-(--radix-popper-anchor-width) max-w-xl p-1"
+        // The caret stays in the editor, which drives the list with its keys.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
+        <ul id={listId} role="listbox" aria-label="Chat commands" className="max-h-60 overflow-auto">
           {suggestions.map((skill, i) => (
             <li key={skill.name}>
               <button
@@ -199,8 +261,9 @@ export function Composer({
                 role="option"
                 aria-selected={i === selected}
                 onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
                 onClick={() => chooseSkill(skill.name)}
-                className={cn('w-full rounded px-3 py-2 text-left text-sm', i === selected && 'bg-accent')}
+                className={cn('w-full rounded-md px-3 py-2 text-left text-sm', i === selected && 'bg-accent')}
               >
                 <span className="font-medium">/{skill.name}</span>
                 <span className="ml-2 text-xs text-muted-foreground">
@@ -211,67 +274,7 @@ export function Composer({
             </li>
           ))}
         </ul>
-      )}
-      {files.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Files to attach">
-          {files.map((f, i) => (
-            <li key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded-md border bg-muted/50 py-0.5 pr-1 pl-2 text-xs">
-              <FileText className="size-3 text-muted-foreground" />
-              {f.name}
-              <button
-                type="button"
-                aria-label={`Remove ${f.name}`}
-                onClick={() => setFiles(files.filter((_, j) => j !== i))}
-                className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <X className="size-3" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <ErrorText>{error}</ErrorText>
-      <div className="mt-2 flex items-center gap-3 border-t pt-2">
-        <div className="flex items-center gap-2">
-          <Switch
-            id={`internal-${taskId}`}
-            size="sm"
-            checked={internal}
-            onCheckedChange={setInternal}
-            className="data-[state=checked]:bg-amber-500"
-          />
-          <Label htmlFor={`internal-${taskId}`} className={cn('text-xs', internal ? 'text-amber-500' : 'text-muted-foreground')}>
-            Internal note
-          </Label>
-        </div>
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          className="hidden"
-          aria-label="Attach files"
-          onChange={(e) => {
-            addFiles([...(e.target.files ?? [])]);
-            e.target.value = '';
-          }}
-        />
-        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => fileInput.current?.click()}>
-          <Paperclip /> Attach
-        </Button>
-        <span className="ml-auto hidden items-center gap-1 text-[11px] text-muted-foreground sm:flex">
-          <Kbd>↵</Kbd> send · <Kbd>⇧</Kbd>
-          <Kbd>↵</Kbd> new line
-        </span>
-        <Button
-          size="sm"
-          onClick={submit}
-          disabled={busy || empty}
-          className={cn(internal && 'bg-amber-500 text-black hover:bg-amber-500/85')}
-        >
-          {internal ? 'Add note' : 'Comment'}
-          <ArrowUp />
-        </Button>
-      </div>
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }

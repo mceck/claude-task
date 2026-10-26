@@ -25,6 +25,7 @@ import { Link, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Label as FieldLabel } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -115,11 +116,20 @@ export function BoardPage() {
           />
         )}
       </div>
-      {openTask && (
-        <aside className="flex min-h-0 w-[min(720px,50vw)] shrink-0 flex-col border-l bg-card shadow-2xl shadow-black/30 animate-in slide-in-from-right-8 fade-in-0 duration-200">
-          <TaskDetail key={openTask} taskKey={openTask} onClose={() => setParam('task', null)} />
-        </aside>
-      )}
+      <Dialog open={!!openTask} onOpenChange={(open) => !open && setParam('task', null)}>
+        <DialogContent
+          showCloseButton={false}
+          aria-describedby={undefined}
+          className="inset-0 flex h-dvh w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-card p-0 shadow-2xl shadow-black/40 sm:inset-4 sm:h-auto sm:w-auto sm:max-w-none sm:rounded-xl lg:inset-x-8 lg:inset-y-6"
+          // Escape belongs to the field being edited (title, comment, description), not to the dialog.
+          onEscapeKeyDown={(event) => {
+            if ((event.target as HTMLElement | null)?.closest('input, textarea, [contenteditable="true"]')) event.preventDefault();
+          }}
+        >
+          <DialogTitle className="sr-only">{openTask}</DialogTitle>
+          {openTask && <TaskDetail key={openTask} taskKey={openTask} onClose={() => setParam('task', null)} />}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -2,23 +2,24 @@ import { BranchLink, PullRequestBadge } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { Expand, Link2, MoreHorizontal, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { Expand, FileText, Link2, MessagesSquare, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { ApiError, del, errorMessage, patch, post } from '../api/client';
 import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
 import { removeCard, setTask, toCard, upsertCard } from '../lib/cache';
 import { useTopic } from '../lib/realtime';
 import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
-import { Markdown } from './Markdown';
+import { RichMarkdownView } from './Markdown';
 
+// It also shows the description, so it loads with the task: editing then starts without a swap.
 const RichMarkdownEditor = lazy(() => import('./RichMarkdownEditor'));
 
 /** Colors handed to tags created inline, cycling so neighbours differ. */
@@ -41,6 +42,8 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const qc = useQueryClient();
   const navigate = useNavigate();
   const confirm = useConfirm();
+  const layout = useTaskLayout();
+  const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
   useTopic(task ? taskTopic(task.id) : null);
   useTopic(AGENTS_TOPIC);
 
@@ -127,15 +130,70 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     toast.success('Link copied');
   };
 
+  const asideName = layout.focus === 'activity' ? 'details' : 'activity';
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b px-5">
-        <Link to={`/p/${projectKey}`} className="text-sm text-muted-foreground hover:text-foreground">
-          {projectKey}
-        </Link>
-        <span className="text-muted-foreground/50">/</span>
-        <span className="font-mono text-sm font-medium">{task.key}</span>
-        <div className="ml-auto flex items-center gap-1">
+      <div className="flex shrink-0 flex-wrap items-start gap-x-4 gap-y-2 border-b px-5 py-3">
+        <div className="min-w-0 flex-1 basis-64">
+          <div className="flex items-center gap-2 text-xs">
+            <Link to={`/p/${projectKey}`} className="text-muted-foreground hover:text-foreground">
+              {projectKey}
+            </Link>
+            <span className="text-muted-foreground/50">/</span>
+            <span className="font-mono font-medium">{task.key}</span>
+          </div>
+          <Title title={task.title} onSave={(title) => save({ title })} />
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          {session.data && (
+            <div className="mr-2 flex flex-wrap items-center gap-2">
+              <SessionChip session={session.data} />
+              {session.data.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
+              {task.agentId && session.data.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
+              {session.data.unseenChanges && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button size="xs" variant="outline" className="border-amber-500/40 text-amber-500" onClick={() => sessionAction('notify')}>Notify agent</Button>
+                  </TooltipTrigger>
+                  <TooltipContent>The agent hasn’t seen the latest task changes</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          )}
+          <div role="group" aria-label="Layout" className="flex items-center rounded-md border p-0.5">
+            {FOCUS_OPTIONS.map(({ focus, label, icon }) => (
+              <Tooltip key={focus}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={layout.focus === focus ? 'secondary' : 'ghost'}
+                    size="icon-xs"
+                    aria-label={label}
+                    aria-pressed={layout.focus === focus}
+                    onClick={() => layout.setFocus(focus)}
+                  >
+                    {icon}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{label}</TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`${layout.sidebarOpen ? 'Hide' : 'Show'} ${asideName}`}
+                aria-expanded={layout.sidebarOpen}
+                aria-controls={`${task.key}-${asideName}`}
+                onClick={layout.toggleSidebar}
+              >
+                {layout.sidebarOpen ? <PanelRightClose /> : <PanelRightOpen />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{`${layout.sidebarOpen ? 'Hide' : 'Show'} ${asideName}`}</TooltipContent>
+          </Tooltip>
           {onClose && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -168,136 +226,216 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
         </div>
       </div>
 
-      <TaskActivity task={task} statuses={statuses} tags={tags} users={people} session={session.data} onSessionAction={sessionAction}>
-        <Title title={task.title} onSave={(title) => save({ title })} />
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        <Panel id={`${task.key}-activity`} main={layout.focus === 'activity'} open={layout.sidebarOpen} wide>
+          <TaskActivity task={task} statuses={statuses} tags={tags} users={people} session={session.data} />
+        </Panel>
+        <Panel id={`${task.key}-details`} main={layout.focus === 'details'} open={layout.sidebarOpen} className={cn(layout.focus === 'details' && 'order-first')}>
+          <section aria-label="Task details" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className={cn('space-y-6', layout.focus === 'details' ? 'mx-auto w-full max-w-3xl px-6 py-6' : 'p-5')}>
+              <div className="grid grid-cols-[6.5rem_1fr] items-center gap-x-4 gap-y-2.5 rounded-xl border bg-muted/20 p-4 text-sm">
+                <PropLabel>Status</PropLabel>
+                <Select value={task.statusId} onValueChange={moveTo}>
+                  <SelectTrigger size="sm" aria-label="Status" className="w-fit min-w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statuses.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        <StatusDot color={s.color} className="size-2" /> {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-        <div className="grid grid-cols-[7.5rem_1fr] items-center gap-x-4 gap-y-2.5 rounded-xl border bg-muted/20 p-4 text-sm">
-          <PropLabel>Status</PropLabel>
-          <Select value={task.statusId} onValueChange={moveTo}>
-            <SelectTrigger size="sm" aria-label="Status" className="w-fit min-w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {statuses.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  <StatusDot color={s.color} className="size-2" /> {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                <PropLabel>Priority</PropLabel>
+                <Select value={task.priority} onValueChange={(p) => save({ priority: p as Priority })}>
+                  <SelectTrigger size="sm" aria-label="Priority" className="w-fit min-w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRIORITIES.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        <PriorityIcon priority={p} /> {PRIORITY_STYLE[p].label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-          <PropLabel>Priority</PropLabel>
-          <Select value={task.priority} onValueChange={(p) => save({ priority: p as Priority })}>
-            <SelectTrigger size="sm" aria-label="Priority" className="w-fit min-w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PRIORITIES.map((p) => (
-                <SelectItem key={p} value={p}>
-                  <PriorityIcon priority={p} /> {PRIORITY_STYLE[p].label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                <PropLabel>Assignees</PropLabel>
+                <MultiPick
+                  label="Assignees"
+                  highlight={false}
+                  options={people
+                    .filter((u) => u.active || task.assigneeIds.includes(u.id))
+                    .map((u) => ({ value: u.id, label: u.displayName, icon: <UserAvatar user={u} size="xs" /> }))}
+                  selected={task.assigneeIds}
+                  onChange={(assigneeIds) => save({ assigneeIds })}
+                  trigger={
+                    <button type="button" aria-label="Assign" className="flex min-h-7 w-fit flex-wrap items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
+                      {task.assigneeIds.length === 0 && <span className="text-muted-foreground">Unassigned</span>}
+                      {task.assigneeIds.map((id) => {
+                        const u = people.find((p) => p.id === id);
+                        return (
+                          <span key={id} className="flex items-center gap-1.5">
+                            <UserAvatar user={u ?? { id, displayName: '?' }} size="xs" /> {u?.displayName}
+                          </span>
+                        );
+                      })}
+                      <Plus className="size-3.5 text-muted-foreground" />
+                    </button>
+                  }
+                />
 
-          <PropLabel>Assignees</PropLabel>
-          <MultiPick
-            label="Assignees"
-            highlight={false}
-            options={people
-              .filter((u) => u.active || task.assigneeIds.includes(u.id))
-              .map((u) => ({ value: u.id, label: u.displayName, icon: <UserAvatar user={u} size="xs" /> }))}
-            selected={task.assigneeIds}
-            onChange={(assigneeIds) => save({ assigneeIds })}
-            trigger={
-              <button type="button" aria-label="Assign" className="flex min-h-7 w-fit flex-wrap items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                {task.assigneeIds.length === 0 && <span className="text-muted-foreground">Unassigned</span>}
-                {task.assigneeIds.map((id) => {
-                  const u = people.find((p) => p.id === id);
-                  return (
-                    <span key={id} className="flex items-center gap-1.5">
-                      <UserAvatar user={u ?? { id, displayName: '?' }} size="xs" /> {u?.displayName}
-                    </span>
-                  );
-                })}
-                <Plus className="size-3.5 text-muted-foreground" />
-              </button>
-            }
-          />
+                <PropLabel>Agent</PropLabel>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={task.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
+                    <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No agent</SelectItem>
+                      {(agents.data ?? []).filter((a) => a.enabled || a.id === task.agentId).map((a) => (
+                        <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-          <PropLabel>Agent</PropLabel>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={task.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
-              <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No agent</SelectItem>
-                {(agents.data ?? []).filter((a) => a.enabled || a.id === task.agentId).map((a) => (
-                  <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {session.data && <SessionChip session={session.data} />}
-            {session.data?.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
-            {task.agentId && session.data?.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
-          </div>
+                <PropLabel>Tags</PropLabel>
+                <MultiPick
+                  label="Tags"
+                  createNoun="tag"
+                  onCreate={async (name) => {
+                    try {
+                      const { tag } = await post<{ tag: Tag }>(`/projects/${task.projectId}/tags`, { name, color: nextTagColor(tags.length) });
+                      // The WebSocket event updates the project's tag list; select the new tag right away.
+                      await save({ tagIds: [...task.tagIds, tag.id] });
+                    } catch (err) {
+                      toast.error('Couldn’t create the tag', { description: errorMessage(err) });
+                    }
+                  }}
+                  highlight={false}
+                  options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
+                  selected={task.tagIds}
+                  onChange={(tagIds) => save({ tagIds })}
+                  trigger={
+                    <button type="button" aria-label="Edit tags" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
+                      {task.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
+                      {task.tagIds.map((id) => {
+                        const l = tags.find((x) => x.id === id);
+                        return l ? <TagChip key={id} name={l.name} color={l.color} /> : null;
+                      })}
+                      <Plus className="size-3.5 text-muted-foreground" />
+                    </button>
+                  }
+                />
 
-          <PropLabel>Tags</PropLabel>
-          <MultiPick
-            label="Tags"
-            createNoun="tag"
-            onCreate={async (name) => {
-              try {
-                const { tag } = await post<{ tag: Tag }>(`/projects/${task.projectId}/tags`, { name, color: nextTagColor(tags.length) });
-                // The WebSocket event updates the project's tag list; select the new tag right away.
-                await save({ tagIds: [...task.tagIds, tag.id] });
-              } catch (err) {
-                toast.error('Couldn’t create the tag', { description: errorMessage(err) });
-              }
-            }}
-            highlight={false}
-            options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
-            selected={task.tagIds}
-            onChange={(tagIds) => save({ tagIds })}
-            trigger={
-              <button type="button" aria-label="Edit tags" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                {task.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
-                {task.tagIds.map((id) => {
-                  const l = tags.find((x) => x.id === id);
-                  return l ? <TagChip key={id} name={l.name} color={l.color} /> : null;
-                })}
-                <Plus className="size-3.5 text-muted-foreground" />
-              </button>
-            }
-          />
+                <PropLabel>Created</PropLabel>
+                <span className="flex items-center gap-2 px-1.5 text-muted-foreground">
+                  <UserAvatar name={task.createdBy.displayName} user={task.createdBy.id ? { id: task.createdBy.id, displayName: task.createdBy.displayName } : undefined} size="xs" />
+                  <span className="text-foreground">{task.createdBy.displayName}</span> · <Time iso={task.createdAt} />
+                </span>
+                <PropLabel>Updated</PropLabel>
+                <span className="px-1.5 text-muted-foreground">
+                  <Time iso={task.updatedAt} />
+                </span>
+              </div>
 
-          <PropLabel>Created</PropLabel>
-          <span className="flex items-center gap-2 px-1.5 text-muted-foreground">
-            <UserAvatar name={task.createdBy.displayName} user={task.createdBy.id ? { id: task.createdBy.id, displayName: task.createdBy.displayName } : undefined} size="xs" />
-            <span className="text-foreground">{task.createdBy.displayName}</span> · <Time iso={task.createdAt} />
-          </span>
-          <PropLabel>Updated</PropLabel>
-          <span className="px-1.5 text-muted-foreground">
-            <Time iso={task.updatedAt} />
-          </span>
-        </div>
-
-        {(task.branchName || task.pullRequest) && <section aria-label="Task code" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
-          {task.branchName && task.branchUrl && <BranchLink name={task.branchName} url={task.branchUrl} />}
-          {task.pullRequest && <PullRequestBadge pr={task.pullRequest} />}
-        </section>}
-        <Description taskId={task.id} description={task.description} onSave={(description) => save({ description })} />
-
-        {session.data?.unseenChanges && (
-          <div role="status" className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-            <span className="flex-1">The agent hasn’t seen the latest task changes.</span>
-            <Button size="sm" variant="outline" onClick={() => sessionAction('notify')}>Notify agent</Button>
-          </div>
-        )}
-
-        <Separator />
-      </TaskActivity>
+              {(task.branchName || task.pullRequest) && <section aria-label="Task code" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+                {task.branchName && task.branchUrl && <BranchLink name={task.branchName} url={task.branchUrl} />}
+                {task.pullRequest && <PullRequestBadge pr={task.pullRequest} />}
+              </section>}
+              <Description taskId={task.id} description={task.description} onSave={(description) => save({ description })} overlayContainer={overlay} />
+            </div>
+          </section>
+        </Panel>
+      </div>
+      {/* The description editor's popups, above both panels and inside the board's task dialog. */}
+      <div ref={setOverlay} />
     </div>
   );
+}
+
+/**
+ * A Task panel, either the main area or the right sidebar. Both panels stay mounted with the same structure,
+ * so drafts, open editors and scroll survive swapping and collapsing.
+ * The sidebar slides its width on wide screens and overlays from the right on narrow ones; its content keeps
+ * a fixed width meanwhile, so it doesn't reflow. Visibility flips at the end of closing, keeping it out of the tab order.
+ */
+function Panel({ id, main, open, wide, className, children }: { id: string; main: boolean; open: boolean; wide?: boolean; className?: string; children: ReactNode }) {
+  const closed = !main && !open;
+  return (
+    <div
+      id={id}
+      aria-hidden={closed}
+      inert={closed}
+      className={cn(
+        'flex min-h-0',
+        main
+          ? 'min-w-0 flex-1'
+          : cn(
+              'shrink-0 overflow-hidden transition-[width,translate,visibility] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+              'max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-10 max-lg:w-full sm:max-lg:w-96',
+              open ? (wide ? 'lg:w-[30rem]' : 'lg:w-96') : 'invisible max-lg:translate-x-full lg:w-0',
+            ),
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          'flex min-h-0 flex-col',
+          main ? 'min-w-0 flex-1' : cn('w-full shrink-0 border-l bg-card max-lg:shadow-2xl sm:w-96', wide && 'lg:w-[30rem]'),
+        )}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** Which panel takes the main area; the other one sits in the collapsible right sidebar. */
+type Focus = 'activity' | 'details';
+const FOCUS_OPTIONS: { focus: Focus; label: string; icon: ReactNode }[] = [
+  { focus: 'activity', label: 'Focus activity', icon: <MessagesSquare /> },
+  { focus: 'details', label: 'Focus details', icon: <FileText /> },
+];
+const FOCUS_KEY = 'task-layout';
+const SIDEBAR_KEY = 'task-sidebar';
+
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function store(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Only a per-browser convenience: the default layout is fine without it.
+  }
+}
+
+/** The viewer's layout preference, shared by every task. The sidebar starts open unless the screen is narrow. */
+function useTaskLayout() {
+  const [focus, setFocusState] = useState<Focus>(() => (readStored(FOCUS_KEY) === 'details' ? 'details' : 'activity'));
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    const stored = readStored(SIDEBAR_KEY);
+    return stored ? stored === 'open' : matchMedia('(min-width: 64rem)').matches;
+  });
+  return {
+    focus,
+    sidebarOpen,
+    setFocus: (next: Focus) => {
+      setFocusState(next);
+      store(FOCUS_KEY, next);
+    },
+    toggleSidebar: () => {
+      setSidebarOpen(!sidebarOpen);
+      store(SIDEBAR_KEY, sidebarOpen ? 'closed' : 'open');
+    },
+  };
 }
 
 function PropLabel({ children }: { children: ReactNode }) {
@@ -340,63 +478,132 @@ function Title({ title, onSave }: { title: string; onSave: (title: string) => Pr
         }
         if (e.key === 'Escape') setDraft(title);
       }}
-      className="field-sizing-content w-full resize-none rounded-md bg-transparent px-1 -mx-1 text-xl leading-snug font-semibold tracking-tight outline-none hover:bg-muted/40 focus:bg-muted/40"
+      className="field-sizing-content w-full resize-none rounded-md bg-transparent px-1 -mx-1 text-lg leading-snug font-semibold tracking-tight outline-none hover:bg-muted/40 focus:bg-muted/40"
     />
   );
 }
 
-function Description({ taskId, description, onSave }: { taskId: string; description: string; onSave: (d: string) => Promise<boolean> }) {
-  const [editing, setEditing] = useState(false);
+const DESCRIPTION_PLACEHOLDER = 'Add a description… Markdown with checklists and code blocks is supported.';
+
+/**
+ * The description, edited in place: clicking the text makes it editable with the caret there, and the toolbar
+ * takes the heading's row. The edit is saved when it ends (clicking outside, Esc, or leaving the task), so each
+ * edit is one revision.
+ */
+function Description({ taskId, description, onSave, overlayContainer }: { taskId: string; description: string; onSave: (d: string) => Promise<boolean>; overlayContainer: HTMLElement | null }) {
+  const [editing, setEditing] = useState<{ caretAt?: { x: number; y: number } } | null>(null);
   const [draft, setDraft] = useState(description);
   const [stale, setStale] = useState(false);
+  const section = useRef<HTMLElement>(null);
+  // The latest values, for the document listener and for saving when the task closes mid-edit.
+  const latest = useRef({ draft, dirty: false, onSave, finishing: false });
+  latest.current.draft = draft;
+  latest.current.onSave = onSave;
 
-  if (!editing) {
-    return (
-      <section className="group space-y-2">
-        <div className="flex items-center">
+  const start = (caretAt?: { x: number; y: number }) => {
+    setDraft(description);
+    latest.current.dirty = false;
+    setStale(false);
+    setEditing({ caretAt });
+  };
+  const discard = () => {
+    latest.current.dirty = false;
+    setStale(false);
+    setEditing(null);
+  };
+  const finish = async () => {
+    const state = latest.current;
+    if (state.finishing) return;
+    state.finishing = true;
+    try {
+      // On a conflict the task is refreshed and the draft stays: finishing again saves it over the other change.
+      if (state.dirty && !(await state.onSave(state.draft))) return setStale(true);
+      discard();
+    } finally {
+      state.finishing = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!editing) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Element;
+      // The editor's own popups (image and link dialogs, block type menu…) are portaled outside the section.
+      if (section.current?.contains(target) || target.closest('.mdxeditor-popup-container, .mdxeditor-select-content, [data-radix-popper-content-wrapper], [data-editor-popup]')) return;
+      void finish();
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [editing]);
+  useEffect(
+    () => () => {
+      if (latest.current.dirty) void latest.current.onSave(latest.current.draft);
+    },
+    [],
+  );
+
+  return (
+    <section
+      ref={section}
+      aria-label="Description"
+      className="relative"
+      onKeyDown={(event) => {
+        if (editing && event.key === 'Escape' && section.current?.contains(event.target as Node)) {
+          event.preventDefault();
+          void finish();
+        }
+      }}
+    >
+      {!editing && (
+        // Over the toolbar's row, which stays reserved so the text never moves.
+        <div className="absolute inset-x-0 top-0 z-10 flex h-9 items-center">
           <h3 className="text-sm font-semibold">Description</h3>
-          <Button variant="ghost" size="xs" className="ml-auto text-muted-foreground" onClick={() => (setDraft(description), setStale(false), setEditing(true))}>
+          <Button variant="ghost" size="xs" className="ml-auto text-muted-foreground" onClick={() => start()}>
             <Pencil /> Edit
           </Button>
         </div>
-        {description ? (
-          <Markdown source={description} />
-        ) : (
-          <button
-            type="button"
-            onClick={() => (setDraft(''), setEditing(true))}
-            className="w-full rounded-lg border border-dashed p-4 text-left text-sm text-muted-foreground hover:border-foreground/20 hover:text-foreground"
-          >
-            Add a description… Markdown with checklists and code blocks is supported.
-          </button>
-        )}
-      </section>
-    );
-  }
-  return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold">Description</h3>
-      <Suspense fallback={<div className="h-48 animate-pulse rounded-lg border bg-muted/30" />}>
-        <RichMarkdownEditor taskId={taskId} label="Description" value={draft} onChange={setDraft} autoFocus />
-      </Suspense>
-      {stale && (
-        <p className="text-xs text-amber-500">The task changed while you were editing. Your draft is kept: review the description above and save again.</p>
       )}
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
-          Cancel
-        </Button>
-        <Button
-          size="sm"
-          onClick={async () => {
-            // On a conflict the draft stays here, so it can be re-applied by hand.
-            if (await onSave(draft)) setEditing(false);
-            else setStale(true);
-          }}
-        >
-          Save
-        </Button>
+      <div
+        className={cn(!editing && 'cursor-text')}
+        onClick={(event) => {
+          if (editing) return;
+          const target = event.target as Element;
+          const link = target.closest('a');
+          if (link) {
+            event.preventDefault();
+            window.open(link.href, '_blank', 'noopener,noreferrer');
+            return;
+          }
+          // Checkboxes keep working, and selecting text to copy it doesn't start an edit.
+          if (target.closest('button, input, label') || getSelection()?.toString()) return;
+          start({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        <Suspense fallback={<RichMarkdownView source={description} placeholder={DESCRIPTION_PLACEHOLDER} />}>
+          <RichMarkdownEditor
+            taskId={taskId}
+            label="Description"
+            value={editing ? draft : description}
+            onChange={(md) => {
+              latest.current.dirty = true;
+              setDraft(md);
+            }}
+            readOnly={!editing}
+            overlayContainer={overlayContainer}
+            caretAt={editing?.caretAt}
+            placeholder={DESCRIPTION_PLACEHOLDER}
+          />
+        </Suspense>
       </div>
+      {stale && (
+        <p role="status" className="mt-2 text-xs text-amber-500">
+          Someone else changed the description while you were editing. Your draft is kept: click outside to save it over theirs, or{' '}
+          <button type="button" className="underline underline-offset-2 hover:text-amber-400" onClick={discard}>
+            discard your changes
+          </button>
+          .
+        </p>
+      )}
     </section>
   );
 }

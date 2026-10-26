@@ -217,3 +217,86 @@
 .markdown hr {
   @apply border-border;
 }
+
+/* The description editor shows the description too: no frame or padding of its own, and a toolbar row
+   reserved above the text even while read-only, so starting to edit doesn't move anything. */
+/* The toolbar wraps on narrow panels; being mounted (invisible) while read-only, it reserves its own height. */
+.rich-editor .mdxeditor-toolbar,
+.rich-editor-toolbar-space {
+  @apply mb-2 min-h-9 shrink-0;
+}
+/* Sticky: while editing a long description the toolbar stays at the top of the scrolling panel. Opaque, so
+   the text scrolls under it. */
+.rich-editor .mdxeditor-toolbar {
+  @apply sticky top-0 z-10 w-auto flex-wrap overflow-visible rounded-lg border bg-[color-mix(in_oklch,var(--muted)_40%,var(--card))] p-1 text-foreground;
+}
+/* MDXEditor keeps a white page background in its dark theme too (menus, dialogs, the block type select). */
+.rich-editor .mdxeditor,
+div.mdxeditor-popup-container {
+  --basePageBg: var(--popover);
+}
+.rich-editor[data-readonly] .mdxeditor-toolbar {
+  @apply invisible;
+}
+.rich-editor [class*='_placeholder_'] {
+  @apply p-0 text-sm text-muted-foreground;
+}
+/* Above the task panels (MDXEditor's own stylesheet loads later, hence the extra specificity). */
+div.mdxeditor-popup-container {
+  @apply z-50;
+}
+
+/* Code blocks in the description editor: framed like `.markdown pre`. The language picker covers the first
+   line's end, so it shows on hover (or while it has the focus itself), not while typing in the block. */
+.rich-editor [class*='_codeMirrorWrapper_'] {
+  @apply mb-0 rounded-lg border bg-muted/60 p-3;
+}
+.rich-editor [class*='_codeMirrorToolbar_'] {
+  @apply top-1.5 right-1.5 items-center gap-1 rounded-md bg-popover p-0.5 opacity-0 shadow-sm transition-opacity;
+}
+.rich-editor [class*='_codeMirrorWrapper_']:hover [class*='_codeMirrorToolbar_'],
+.rich-editor [class*='_codeMirrorToolbar_']:focus-within {
+  @apply opacity-100;
+}
+.rich-editor[data-readonly] [class*='_codeMirrorToolbar_'] {
+  @apply hidden;
+}
+.rich-editor [class*='_codeMirrorToolbar_'] button {
+  @apply flex h-7 items-center rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground;
+}
+.rich-editor [class*='_codeMirrorToolbar_'] svg {
+  @apply size-4;
+}
+
+/* Syntax colors for code blocks. */
+:root {
+  --code-keyword: oklch(0.5 0.2 295);
+  --code-string: oklch(0.5 0.13 150);
+  --code-number: oklch(0.55 0.14 60);
+  --code-function: oklch(0.5 0.17 255);
+  --code-type: oklch(0.52 0.1 200);
+  --code-property: oklch(0.45 0.08 275);
+}
+.dark {
+  --code-keyword: oklch(0.78 0.12 295);
+  --code-string: oklch(0.8 0.12 150);
+  --code-number: oklch(0.83 0.11 75);
+  --code-function: oklch(0.78 0.11 250);
+  --code-type: oklch(0.82 0.09 200);
+  --code-property: oklch(0.85 0.04 275);
+}
+
+/* Comments get a lighter, smaller toolbar than descriptions: just the buttons, in the composer's flow.
+   Pulled left so the first icon's glyph lines up with the text (group margin, button padding, icon inset). */
+.rich-editor-comment .mdxeditor-toolbar {
+  @apply static -ml-3 mb-1 min-h-0 gap-0.5 border-0 bg-transparent p-0;
+}
+.rich-editor-comment .mdxeditor-toolbar :is(button, [role='radio']) {
+  @apply p-[3px];
+}
+.rich-editor-comment .mdxeditor-toolbar svg {
+  @apply size-4;
+}
+.rich-editor-comment .mdxeditor-toolbar [role='separator'] {
+  @apply mx-1 my-0 h-3.5;
+}
