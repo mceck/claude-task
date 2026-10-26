@@ -6,7 +6,7 @@ Self-hosted kanban board (ClickUp-style) where tasks are worked by Claude Code a
 
 - `CONTEXT.md`: the domain glossary. Use its terms in code, UI and docs (Session/Job/Turn, Comment vs Message, Status vs column, etc.). If you need a new concept, add it there first.
 - `docs/spec/`: feature specs, each with `status:` frontmatter (`to-do` → `in-progress` → `done`). Update the status when you start or finish one.
-  - 01 core board · 02 agents & runtime · 03 git integration
+  - 01 core board · 02 agents & runtime · 03 git integration · 04 flutter app · 05 GitLab & git proxy
 - `docs/adr/`: architectural decisions (`NNNN-slug.md`, `status:` frontmatter). Don't contradict an accepted ADR silently: write a new one that supersedes it.
 
 ## Stack & layout

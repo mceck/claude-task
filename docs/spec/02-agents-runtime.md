@@ -174,7 +174,7 @@ If (1) fails, fall back to: comments for the running task are held until the `re
 ### Base image
 
 - The backend ships the base image's Dockerfile and builds it locally at startup through the Docker socket whenever `claude-task/agent-base:<platform-version>` is missing. It also tags it `claude-task/agent-base:latest`. No registry.
-- Contents: Debian slim, git, ca-certificates, curl, the `claude` CLI at the version pinned in backend config (`CLAUDE_CODE_VERSION`), the runner binary, the git credential helper (Spec 03), a non-root user `agent` (uid 1000) with home `/home/agent`, `DISABLE_AUTOUPDATER=1`, entrypoint = runner, user = agent.
+- Contents: Debian slim, git, ca-certificates, curl, the `claude` CLI at the version pinned in backend config (`CLAUDE_CODE_VERSION`), the runner binary, the git credential helper (Spec 03; since Spec 05 it serves the Job token for the Git Proxy), a non-root user `agent` (uid 1000) with home `/home/agent`, `DISABLE_AUTOUPDATER=1`, entrypoint = runner, user = agent.
 - Agent Dockerfiles must have `claude-task/agent-base` (any tag or no tag) as their first `FROM`. The backend validates this on save and always builds against the current platform version by passing it as the resolved base. Agent Dockerfiles may switch to root for installs but must end as `USER agent` (validated by inspecting the built image config; a failure fails the build).
 - Upgrading `CLAUDE_CODE_VERSION` or the runner changes the platform version: the base image is rebuilt, then every agent image is rebuilt and recreated following the "wait for idle" rule.
 
@@ -215,7 +215,6 @@ Runner → backend:
 - `job.result` {jobId, seq} (the runner saw a `result` line; sent after the corresponding `job.event`)
 - `job.exited` {jobId, exitCode, signal}
 - `job.failed` {jobId, stage ∈ {worktree, setup, spawn}, message}
-- `git.token_request` {requestId, repository} (Spec 03)
 - `pong`
 
 Backend → runner:
@@ -226,8 +225,9 @@ Backend → runner:
 - `job.cancel` {jobId}: interrupt, close stdin, SIGTERM after 10 s, SIGKILL after 20 s
 - `worktree.remove` {projectId, taskId}: remove the worktree directory (never the branch)
 - `ack` {jobId, seq}
-- `git.token_response` {requestId, token, expiresAt} | {requestId, error}
 - `ping`
+
+Spec 03 added `git.token_request` / `git.token` for Git credentials. [Spec 05](05-gitlab-and-git-proxy.md) removes them: git goes through the backend's Git Proxy, authenticated with the job token.
 
 ### Queue & dispatch
 
@@ -327,7 +327,7 @@ Backend → runner:
   - Covers: credentials/secrets write-only behavior, agent CRUD and permission enforcement, enqueue rules (inject vs queue vs merge), dispatcher one-job-at-a-time, end-of-turn → `job.end` → late comments queued, every lifecycle rule in the table, crash recovery, queue reordering/removal, the event projection end to end (timeline items and broadcasts from fixtures), MCP tools via a real MCP client over HTTP with job tokens (scope and closed-status rejection), Notify agent diff and `last_seen_task_version`, reconciler decisions against the fake runtime.
 - **Projection unit tests**: the projection function gets exhaustive table-driven tests over recorded fixtures (text/tool interleaving, subagents, errors, compaction, partial deltas). It's a pure function, so this is a legitimate deep-module seam.
 - **Seam 2 — runner as a black box**: the Go runner binary started as a subprocess against a **fake backend** (test WebSocket server) and a **fake `claude` executable** (a small Go test program that reads stream-json from stdin and emits scripted responses, records its argv/env/cwd, honors interrupt, and can be told to hang or crash). Covers: argument and env composition, new vs resume, mid-turn `job.input` reaching stdin, `job.end` closing stdin, cancel escalation (interrupt → TERM → KILL), event seq/ack/resend after a backend disconnect, single-job enforcement, worktree setup and setup script output/failure (with a local bare git repo as remote, see Spec 03), attachments fetched to the right paths.
-- **Seam 3 — opt-in end-to-end smoke** (manual or a dedicated CI job with credentials): real Docker, real base image, real `claude`, a throwaway GitHub repo. Scenarios: assign → agent replies and moves the task to review; comment mid-run is taken into account in the same turn; Stop; container kill mid-turn → resume. The spike's recorded fixtures come from here.
+- **Seam 3 — opt-in end-to-end smoke** (manual or a dedicated CI job with credentials): real Docker, real base image, real `claude`, a throwaway GitHub repo (Spec 05 adds a throwaway GitLab project). Scenarios: assign → agent replies and moves the task to review; comment mid-run is taken into account in the same turn; Stop; container kill mid-turn → resume. The spike's recorded fixtures come from here.
 - **Frontend**: Playwright against the backend + fake runner driven by fixtures: streaming agent message appears live, activity group expands, Stop sends interrupt, delivery badges move from queued to delivered, Notify agent banner.
 - **Prior art**: the Spec 01 test harness (DB setup, API helpers, WebSocket test client) is extended with fake-runner and fake-runtime helpers.
 
@@ -358,7 +358,7 @@ Backend → runner:
 - Running agents on multiple hosts or Kubernetes (the `AgentRuntime` interface allows it later).
 - Parallel jobs within one agent. Throughput comes from duplicating agents.
 - Interactive permission approval from the UI (no `canUseTool` host). Permission mode is fixed per agent.
-- Guardrail hooks (explicitly not wanted). Branch protection is handled on the Git side (Spec 03).
+- Guardrail hooks (explicitly not wanted). Base Branch protection is handled on the Git side: by the Git Proxy's Push Policy (Spec 05, ADR 0006), with provider-side protection as optional extra.
 - Agents assigning tasks to other agents, or closing tasks.
 - Automatic status-driven behavior (e.g. auto-starting on "Todo", auto-closing on PR merge).
 - Exposing a live terminal into the agent container.

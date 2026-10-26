@@ -9,4 +9,4 @@ The original idea was to collect agent output through Claude Code hooks and post
 ## Consequences
 
 - The platform configures no hooks at all. Repositories can still bring their own in `.claude/settings.json`, and they run normally.
-- Since there are no `PreToolUse` guardrails either (agents default to `bypassPermissions`), protecting the base branch is GitHub's job (a ruleset or branch protection), not the agent's.
+- Since there are no `PreToolUse` guardrails either (agents default to `bypassPermissions`), protecting the base branch is GitHub's job (a ruleset or branch protection), not the agent's. *Superseded by [ADR 0006](0006-backend-git-proxy-and-git-connections.md): the backend's Git Proxy now rejects pushes to anything but the Task Branch, and provider-side protection is informational.*

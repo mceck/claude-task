@@ -4,6 +4,8 @@ status: done
 
 # Spec 03 — Git Integration: repositories, task branches, worktrees, pull requests
 
+> **Partly superseded by [Spec 05](05-gitlab-and-git-proxy.md) and [ADR 0006](../adr/0006-backend-git-proxy-and-git-connections.md).** The single GitHub App configuration becomes a list of Git Connections (GitHub and GitLab). Container tokens and `git.token_request` are replaced by the backend Git Proxy authenticated with the Job token. Base-branch protection becomes informational because the proxy's Push Policy blocks pushes to anything but the Task Branch. Sections affected are marked below. Task Branch naming, Worktree layout and preparation, `open_pull_request` and PR polling still apply, for every provider.
+
 Implemented across backend, runner/helper and frontend. See
 [configuration and verification](../git-integration.md). Local API, GitHub HTTP
 contract, runner/helper subprocess and browser checks pass. The live GitHub
@@ -29,6 +31,8 @@ Inside an agent's container, each project's repository is cloned once, and each 
 
 Since the agents run without guardrail hooks, protecting the base branch from direct pushes is the job of a **GitHub ruleset/branch protection**. The app checks for it and warns when it's missing.
 
+*Superseded (Spec 05): containers no longer receive installation tokens. Git goes through the backend's Git Proxy, which pushes only the Task Branch. The protection check is informational.*
+
 ## User Stories
 
 1. As an admin, I want to configure the GitHub App credentials (App ID, private key) once for the whole installation, so that projects can link repositories.
@@ -52,6 +56,8 @@ Since the agents run without guardrail hooks, protecting the base branch from di
 19. As a member, I want PR state on the board to update within a few minutes of changes on GitHub, so that I can see what got merged without opening GitHub.
 20. As an admin, I want worktrees removed when tasks close, while repositories and branches stay, so that agent volumes don't grow forever.
 
+*Stories 1–2 are generalized to Git Connections, stories 6–7 to an informational status without warnings, and stories 13–14 are met by the Git Proxy (Spec 05).*
+
 ## Implementation Decisions
 
 ### GitProvider interface
@@ -69,6 +75,8 @@ A deep module, the only place that knows about GitHub. Operations:
 The MVP implementation is **GitHub App**: JWT signed with the App private key → installation lookup per repository → installation access tokens with `repositories` limited to the one repo and `permissions` limited to `contents: write` (for the container). PR operations use separate installation tokens with `pull_requests: write` that never leave the backend. Tokens are cached in the backend until 5 minutes before expiry.
 
 Configuration: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from backend env (or the admin settings page, stored encrypted like other secrets). No webhooks in the MVP, so the backend doesn't need to be publicly reachable.
+
+*Superseded (Spec 05): the interface is bound to one Git Connection and resolved per Project. `issueRepositoryToken` becomes the backend-only `gitUpstream`, and `listInstallations` becomes `describeAccess`. GitHub App credentials become one or more GitHub connections (env defines `env-github`). Container tokens aren't used anymore.*
 
 ### Data model additions
 
@@ -98,6 +106,8 @@ Configuration: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from backend env (or
 
 ### Credential helper
 
+*Superseded (Spec 05): the clone URL is the backend Git Proxy. The helper is configured for every host and returns the current Job's token only for that Job's proxy URL, answered locally by the Runner. `git.token_request` and the token caches are removed.*
+
 - A small binary in the base image (part of the runner project) configured globally in the base image's git config as the credential helper for `https://github.com`.
 - On `get`, it connects to the runner over a Unix socket in the agent's home (not reachable from outside the container) and asks for credentials for the requested host/path. The runner forwards `git.token_request` {repository} to the backend over the Runner Protocol.
 - The backend grants a token only if the agent has a job in `running`/`finishing` and the requested repository is the repository of that job's project. Otherwise it returns an error and git fails with a clear message ("no active task for this repository").
@@ -106,6 +116,8 @@ Configuration: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from backend env (or
 - Remotes in clones never contain credentials.
 
 ### Base-branch protection check
+
+*Superseded (Spec 05): the check is informational only, shown in Repository settings with re-check. There is no banner or board icon. The Git Proxy's Push Policy is the guard.*
 
 - Runs when a repository is linked, when the base branch changes, on demand from project settings, and daily.
 - If unprotected: a warning banner on project settings and a small warning icon on the project's board header, linking to the repository's branch rules page with a short explanation ("agents run without guardrails; require pull requests on `<base>` and don't grant the App bypass"). Never blocking.
@@ -123,7 +135,7 @@ Configuration: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from backend env (or
 
 ### UI
 
-- Admin settings: GitHub App configuration and the list of installations/accessible repositories.
+- Admin settings: GitHub App configuration and the list of installations/accessible repositories. *(Spec 05: a "Git" page listing Git Connections.)*
 - Project settings, "Repository" tab: repository picker (searchable), base branch field (validated against the repo's branches), protection status with re-check, change-repository action (disabled with explanation when sessions are open).
 - Task view: branch link (GitHub tree URL) and PR link with state badge. Card: PR badge.
 
@@ -136,7 +148,11 @@ Configuration: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from backend env (or
 - **Seam 3 e2e smoke** (Spec 02) includes push and PR creation against a throwaway repository.
 - **Prior art**: the Spec 01/02 harness. The fake GitProvider is shared with Spec 02 tests.
 
+*Spec 05 replaces the credential-helper token tests with Git Proxy tests (real `git` against the backend, with a local `git http-backend` upstream) and Runner tests of the Job-token helper.*
+
 ## Acceptance Criteria
+
+*Criteria 2, 5 and 6 are restated by Spec 05: informational protection; no provider token in the container; proxy access only for the active Job.*
 
 1. With the GitHub App configured, admins see installations and accessible repositories. Members can link one to a project, and the base branch defaults to the repo default.
 2. Linking a repository whose base branch isn't protected shows the warning. Fixing it on GitHub and re-checking clears it.
@@ -151,7 +167,7 @@ Configuration: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from backend env (or
 
 ## Out of Scope
 
-- GitLab, Bitbucket, Gitea, or generic git remotes (the `GitProvider` interface leaves room for them).
+- GitLab, Bitbucket, Gitea, or generic git remotes (the `GitProvider` interface leaves room for them). *GitLab is added by Spec 05.*
 - Webhooks (PR state uses polling).
 - Commenting on PRs, reading review comments back into the task, CI status display.
 - Automatic PR creation or task status changes driven by PR events.
@@ -162,5 +178,6 @@ Configuration: `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` from backend env (or
 ## Further Notes
 
 - The GitHub App needs repository permissions: Contents (read/write), Pull requests (read/write), Metadata (read), and Administration (read) or equivalent access to read rulesets/branch protection for the protection check. If administration read isn't granted, the check reports "unknown" with the same warning style.
-- Installation tokens can't be restricted by branch, which is why base-branch protection on GitHub is the actual guardrail. Without hooks, the agent is told in its system prompt to push only its task branch, but nothing technical stops it inside the container.
+- Installation tokens can't be restricted by branch, which is why base-branch protection on GitHub is the actual guardrail. Without hooks, the agent is told in its system prompt to push only its task branch, but nothing technical stops it inside the container. *Superseded (ADR 0006): the Git Proxy enforces it.*
+- The GitHub App's Administration: read permission becomes optional with Spec 05 (needed only for the informational protection status).
 - Agent commit emails don't match GitHub accounts, so commits show the agent name without a GitHub avatar, which makes them easy to tell apart from human commits.

@@ -138,7 +138,7 @@ Session behavior, optimistic concurrency and the Internal Note delivery rule.
 The React frontend remains available. No Flutter browser target, Kanban view,
 voice channels, direct messages, multiple concurrent installations/accounts,
 offline Task mutations or automatic offline sends are required by this version.
-Agent/Credential administration, container builds, GitHub installation setup and
+Agent/Credential administration, container builds, Git Connection setup and
 project secrets stay in the existing web administration interface. Reading a
 Task in React need not update the new Flutter read position in this version.
 

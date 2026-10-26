@@ -170,14 +170,26 @@ _Avoid_: cancel, kill (those end the Job)
 ### Git integration
 
 **Repository**:
-The code repository linked to one Project. Several Projects may link the same Repository.
+The code repository linked to one Project, on GitHub or GitLab, reached through one Git Connection. Several Projects may link the same Repository.
 _Avoid_: repo (in user-facing copy)
 
+**Git Connection**:
+A configured access to one code host: a GitHub App, or a GitLab instance with a token. There can be several Git Connections of any provider. Each Repository is reached through exactly one of them.
+_Avoid_: integration, provider (the provider is the kind of a Git Connection: GitHub or GitLab)
+
 **GitHub App Installation**:
-An organization's or user's grant allowing the platform's GitHub App to access selected Repositories.
+An organization's or user's grant allowing a GitHub Git Connection's App to access selected Repositories.
+
+**Git Proxy**:
+The backend endpoint that Agent Containers use as their git remote. It admits only the active Job's Repository and forwards traffic to the provider with the Git Connection's credential, which never leaves the backend.
+_Avoid_: mirror, gateway
+
+**Push Policy**:
+The Git Proxy's rule that an Agent may push only its own Task Branch (force pushes included), never other branches, tags or deletions.
 
 **Pull Request**:
-A request to review and merge a Task Branch into its Project's Base Branch. Its state is independent of the Task's Status.
+A request to review and merge a Task Branch into its Project's Base Branch, called a merge request on GitLab. Its state is independent of the Task's Status.
+_Avoid_: merge request (except in GitLab-facing UI copy)
 
 **Base Branch Protection**:
-Repository rules requiring pull requests and preventing the GitHub App from bypassing that requirement with direct pushes.
+The provider-side rules that prevent the Git Connection's credential from pushing directly to the Base Branch. It's informational: the Push Policy already blocks Agents.
