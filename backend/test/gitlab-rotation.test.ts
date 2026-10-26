@@ -1,6 +1,8 @@
 // GitLab tokens saved from the UI are rotated before they expire, one rotation at a time
 // (rotating an already-revoked token makes GitLab revoke the whole token family).
+import { eq, sql } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
+import { gitConnections } from '../src/db/schema';
 import { cachedProviderFactory, rotateExpiringTokens } from '../src/git/connections';
 import { useTestApp } from './helpers/app';
 import { startFakeGitLab } from './helpers/fake-gitlab';
@@ -38,6 +40,25 @@ describe('GitLab token rotation', () => {
     expect(gitlab.requests.at(-1)!.token).toBe('glpat-rotated-1');
     await rotateExpiringTokens(app.server.ctx);
     expect(gitlab.state.rotations).toBe(1);
+  });
+
+  it('keeps the token an admin saves while a rotation is in flight, and renaming keeps the token details', async () => {
+    const { gitlab, admin, connection: created, find } = await connection();
+    gitlab.state.tokens.set('glpat-admin-chosen-0042', { scopes: ['api', 'write_repository'], expires_at: day(200), revoked: false });
+    const renamed = await admin.patch(`/git/connections/${created.id}`, { name: 'GitLab EU' });
+    expect(renamed.body.connection).toMatchObject({ name: 'GitLab EU', expiresAt: created.expiresAt, access: created.access });
+
+    // A rotation holds the connection's lock and is about to store its token.
+    const { db, config } = app.server.ctx;
+    let saved!: Promise<{ status: number }>;
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${created.id}`}))`);
+      saved = admin.patch(`/git/connections/${created.id}`, { token: 'glpat-admin-chosen-0042' });
+      await new Promise((r) => setTimeout(r, 300));
+      await tx.update(gitConnections).set({ secretCiphertext: config.secrets.encrypt('glpat-rotated-9'), secretLast4: 'ed-9' }).where(eq(gitConnections.id, created.id));
+    });
+    expect((await saved).status).toBe(200);
+    expect((await find()).secretLast4).toBe('0042');
   });
 
   it('leaves tokens with a distant expiry alone', async () => {

@@ -266,23 +266,32 @@ export async function updateConnection(ctx: AppContext, id: string, body: Update
     const identity = await identify(ctx, draftRecord({ ...current, appId, secret, secretLast4: body.token ? last4(body.token) : current.secretLast4 }));
     if (current.provider === 'gitlab') config = gitlabConfig(current.baseUrl!, identity.expiresAt, identity.access[0]?.label ?? null);
   }
-  await ctx.db
-    .update(gitConnections)
-    .set({
-      name: body.name ?? current.name,
-      config,
-      ...(credentialChanged
-        ? { secretCiphertext: ctx.config.secrets.encrypt(secret), secretLast4: body.token ? last4(body.token) : current.secretLast4, rotationError: null }
-        : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(gitConnections.id, id));
+  // Under the rotation's lock, so a rotation in flight can't overwrite what the admin saves.
+  await ctx.db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${id}`}))`);
+    await tx
+      .update(gitConnections)
+      .set({
+        ...(body.name ? { name: body.name } : {}),
+        ...(credentialChanged
+          ? {
+              config,
+              secretCiphertext: ctx.config.secrets.encrypt(secret),
+              secretLast4: body.token ? last4(body.token) : current.secretLast4,
+              rotationError: null,
+            }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(gitConnections.id, id));
+  });
   return describe(ctx, await ctx.git.get(id));
 }
 
 export async function deleteConnection(ctx: AppContext, id: string): Promise<void> {
   await getStored(ctx, id);
   await ctx.db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${id}`}))`);
     await tx.execute(sql`lock table ${projects} in share mode`);
     if ((await linkedProjects(tx, id)) > 0) throw conflict('Projects still link repositories of this connection. Link them elsewhere first.');
     await tx.delete(gitConnections).where(eq(gitConnections.id, id));

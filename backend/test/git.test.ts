@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { generateKeyPairSync } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -123,6 +124,22 @@ describe('Git integration through the public API', () => {
     expect((await admin.get(`/tasks/${task.id}`)).body.task.pullRequest).toMatchObject({ provider: 'gitlab', number: 1 });
     expect((await timeline(admin, task.id)).some((i) => i.type === 'comment' && i.comment.body.startsWith('Merge request [!1]'))).toBe(true);
     await client.close();
+  });
+
+  it('never links a repository of a Git Connection deleted meanwhile', async () => {
+    const admin = await app.admin();
+    const gitlab = (await admin.post('/git/connections', { provider: 'gitlab', name: 'GitLab', token: 'glpat-x' })).body.connection;
+    const bundle = await createProject(admin);
+    let linked!: Promise<{ status: number }>;
+    // The deletion holds the connection's lock while the link runs its provider checks.
+    await app.server.ctx.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${gitlab.id}`}))`);
+      linked = admin.put(`/projects/${bundle.project.id}/repository`, { connectionId: gitlab.id, providerRepoId: '101' });
+      await new Promise((r) => setTimeout(r, 300));
+      await tx.execute(sql`delete from git_connections where id = ${gitlab.id}::uuid`);
+    });
+    expect((await linked).status).toBe(400);
+    expect((await admin.get(`/projects/${bundle.project.id}/repository`)).body.repository).toBeNull();
   });
 
   it('links accessible repositories as a member, defaults and validates the base branch, and rechecks protection', async () => {

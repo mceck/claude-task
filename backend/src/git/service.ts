@@ -33,6 +33,9 @@ export async function linkRepository(ctx: AppContext, projectId: string, body: R
   if (!(await git.branchExists(repo, baseBranch))) throw badRequest(`The base branch "${baseBranch}" does not exist in this repository`);
   const protection = await git.checkBaseBranchProtection(repo, baseBranch);
   await transact(ctx, async (tx, after) => {
+    // The connection's lock orders this against its deletion, which must see the link (or vice versa).
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${connection.id}`}))`);
+    if (!(await ctx.git.find(connection.id, tx))) throw badRequest('Choose a repository of an existing Git Connection');
     const p = await getProject(tx, projectId, { lock: true });
     const changed = p.repository?.connectionId !== repo.connectionId || p.repository?.providerRepoId !== repo.providerRepoId;
     if (changed && (await repositorySettings(tx, p.id)).hasOpenSessions)
