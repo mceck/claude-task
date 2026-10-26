@@ -83,7 +83,7 @@ function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
       </NavLink>
       <NavLink to="/agents" className={navItem}><Bot className="size-4" /> Agents</NavLink>
       {isAdmin && <NavLink to="/admin/credentials" className={navItem}><KeyRound className="size-4" /> Credentials</NavLink>}
-      {isAdmin && <NavLink to="/admin/github" className={navItem}><GitBranch className="size-4" /> GitHub</NavLink>}
+      {isAdmin && <NavLink to="/admin/git" className={navItem}><GitBranch className="size-4" /> Git</NavLink>}
       {isAdmin && (
         <NavLink to="/admin/users" className={navItem}>
           <Users className="size-4" /> Users

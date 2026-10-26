@@ -1,24 +1,29 @@
-import { githubAppBody, repositoryBody } from '@claude-task/shared';
+import { createGitConnectionBody, repositoryBody, updateGitConnectionBody } from '@claude-task/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../context';
 import { parse } from '../errors';
-import { githubSettings, saveGitHubSettings } from './configuration';
+import { createConnection, deleteConnection, listConnections, listRepositoryGroups, updateConnection } from './connections';
 import { linkRepository, recheckProtection, repositorySettings } from './service';
 
 const params = z.object({ id: z.string().min(1).max(64) });
 export function gitRoutes(app: FastifyInstance, ctx: AppContext) {
   const admin = { config: { auth: 'admin' as const } };
-  app.get('/git/github', admin, async () => ({ settings: await githubSettings(ctx.db, ctx.config) }));
-  app.put('/git/github', admin, async (request) => {
-    await saveGitHubSettings(ctx.db, ctx.config, parse(githubAppBody, request.body));
-    return { settings: await githubSettings(ctx.db, ctx.config) };
+  app.get('/git/connections', admin, async () => ({ connections: await listConnections(ctx) }));
+  app.post('/git/connections', admin, async (request, reply) => {
+    const connection = await createConnection(ctx, parse(createGitConnectionBody, request.body));
+    return reply.status(201).send({ connection });
   });
-  app.get('/git/installations', admin, async () => ({ installations: await ctx.git.listInstallations() }));
-  app.get('/git/repositories', async () => ({
-    configured: await ctx.git.isConfigured(),
-    repositories: (await ctx.git.isConfigured()) ? await ctx.git.listAccessibleRepositories() : [],
-  }));
+  app.patch('/git/connections/:id', admin, async (request) => {
+    const { id } = parse(params, request.params);
+    return { connection: await updateConnection(ctx, id, parse(updateGitConnectionBody, request.body)) };
+  });
+  app.delete('/git/connections/:id', admin, async (request, reply) => {
+    const { id } = parse(params, request.params);
+    await deleteConnection(ctx, id);
+    return reply.status(204).send();
+  });
+  app.get('/git/repositories', async () => ({ groups: await listRepositoryGroups(ctx) }));
   app.get('/projects/:id/repository', async (request) => {
     const { id } = parse(params, request.params);
     return repositorySettings(ctx.db, id);

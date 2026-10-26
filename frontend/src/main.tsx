@@ -1,8 +1,8 @@
-import { GitHubPage } from './pages/GitHubPage';
+import { GitConnectionsPage } from './pages/GitConnectionsPage';
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createBrowserRouter, RouterProvider } from 'react-router';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ThemeProvider } from '@/lib/theme';
@@ -54,7 +54,8 @@ const router = createBrowserRouter([
       { path: '/agents', element: <AgentsPage /> },
       { path: '/agents/:agentId', element: <AgentPage /> },
       { path: '/admin/credentials', element: <CredentialsPage /> },
-      { path: '/admin/github', element: <GitHubPage /> },
+      { path: '/admin/git', element: <GitConnectionsPage /> },
+      { path: '/admin/github', element: <Navigate to="/admin/git" replace /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,22 +30,41 @@ func SocketPath(home string) string {
 	}
 	return filepath.Join(home, ".git-credentials.sock")
 }
-func Repository(req Request) (string, error) {
-	if req.Protocol != "https" || !strings.EqualFold(req.Host, "github.com") {
-		return "", fmt.Errorf("no active task for this repository")
+
+// Valid rejects requests that can never match a Git Proxy URL, before contacting the Runner.
+// git must send the path (`credential.useHttpPath=true`).
+func Valid(req Request) error {
+	invalid := fmt.Errorf("no active task for this repository")
+	if (req.Protocol != "http" && req.Protocol != "https") || req.Host == "" || req.Path == "" {
+		return invalid
 	}
-	path := strings.TrimSuffix(strings.TrimPrefix(req.Path, "/"), ".git")
-	parts := strings.Split(path, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", fmt.Errorf("no active task for this repository")
-	}
-	for _, part := range parts {
-		if part == "." || part == ".." || strings.ContainsAny(part, "\\\r\n\t %:@?#") {
-			return "", fmt.Errorf("no active task for this repository")
+	for _, value := range []string{req.Host, req.Path} {
+		if strings.ContainsFunc(value, func(c rune) bool { return c < 0x20 || c == 0x7f || c == '\\' }) {
+			return invalid
 		}
 	}
-	return strings.ToLower(path), nil
+	for _, part := range strings.Split(req.Path, "/") {
+		if part == "." || part == ".." {
+			return invalid
+		}
+	}
+	return nil
 }
+
+// Matches reports whether a helper request is for exactly this clone URL
+// (same scheme, host and port; same path, ignoring the leading slash and a trailing ".git").
+func Matches(cloneURL string, req Request) bool {
+	if Valid(req) != nil {
+		return false
+	}
+	u, err := url.Parse(cloneURL)
+	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Scheme != req.Protocol || !strings.EqualFold(u.Host, req.Host) {
+		return false
+	}
+	trim := func(p string) string { return strings.TrimSuffix(strings.TrimPrefix(p, "/"), ".git") }
+	return trim(u.Path) != "" && trim(u.Path) == trim(req.Path)
+}
+
 func Get(socket string, req Request) (Response, error) {
 	conn, err := net.DialTimeout("unix", socket, 3*time.Second)
 	if err != nil {

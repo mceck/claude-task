@@ -1,4 +1,3 @@
-import { repositoryToken } from '../git/service';
 // The backend side of the Runner Protocol: every message is processed exactly once and in
 // order (per-Job seq), inside a transaction that locks task → agent → session → job.
 import type { JobFailureStage, RunnerJobMessage, RunnerToBackend } from '@claude-task/shared';
@@ -25,28 +24,6 @@ const appendCapped = (column: typeof jobs.setupOutput | typeof jobs.stderr, chun
 export async function handleRunnerMessage(ctx: AppContext, agentId: string, msg: RunnerToBackend): Promise<void> {
   if (msg.type === 'hello') return handleHello(ctx, agentId, msg);
   if (msg.type === 'pong') return;
-  if (msg.type === 'git.token_request') {
-    if (
-      typeof msg.requestId !== 'string' ||
-      msg.requestId.length > 100 ||
-      typeof msg.repository !== 'string' ||
-      msg.repository.length > 300 ||
-      typeof msg.jobId !== 'string'
-    )
-      return;
-    try {
-      const value = await repositoryToken(ctx, agentId, msg.jobId, msg.repository);
-      ctx.runners.send(agentId, { type: 'git.token', requestId: msg.requestId, jobId: msg.jobId, ...value });
-    } catch {
-      ctx.runners.send(agentId, {
-        type: 'git.token',
-        requestId: msg.requestId,
-        jobId: msg.jobId,
-        error: 'No active task for this repository, or GitHub could not issue a token. Check the GitHub App configuration.',
-      });
-    }
-    return;
-  }
   if (typeof msg.jobId === 'string' && typeof msg.seq === 'number') return handleJobMessage(ctx, agentId, msg);
   ctx.log.warn({ agentId, type: (msg as { type?: string }).type }, 'unknown runner message');
 }

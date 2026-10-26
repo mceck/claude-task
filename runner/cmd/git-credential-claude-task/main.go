@@ -26,7 +26,7 @@ func main() {
 		}
 	}
 	req := credentials.Request{Protocol: values["protocol"], Host: values["host"], Path: values["path"]}
-	if _, err := credentials.Repository(req); err != nil {
+	if err := credentials.Valid(req); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

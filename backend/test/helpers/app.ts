@@ -42,7 +42,10 @@ export interface TestApp {
   admin(): Promise<ApiClient>;
   /** The in-memory Docker stand-in. */
   runtime: FakeRuntime;
+  /** Behind every GitHub connection; `env-github` exists unless the config removes it. */
   git: FakeGitProvider;
+  /** Behind every GitLab connection. */
+  gitlab: FakeGitProvider;
   /** Waits until the backend's background work (dispatch, builds, publishing) is done. */
   settle(): Promise<void>;
 }
@@ -50,6 +53,8 @@ export interface TestApp {
 export interface TestAppOptions {
   push?: import('../../src/notifications/transport').PushTransport;
   config?: Partial<Config>;
+  /** Real providers instead of the fakes (provider HTTP contracts). */
+  git?: import('../../src/git/connections').ProviderFactory;
   /** Keep data between tests in the file (default: truncate before each test). */
   keepData?: boolean;
 }
@@ -86,11 +91,15 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
         reconcileIntervalMs: 60 * 60_000,
         runnerReconnectTimeoutMs: 5 * 60_000,
       },
+      github: { appId: '1', privateKey: 'unused by the fake provider' },
+      gitlabAllowHttp: true,
       ...options.config,
     };
     t.runtime = new FakeRuntime();
     t.git = new FakeGitProvider();
-    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false, runtime: t.runtime, git: t.git, push: options.push });
+    t.gitlab = new FakeGitProvider('gitlab', '');
+    const git = options.git ?? FakeGitProvider.factory(() => ({ github: t.git, gitlab: t.gitlab }));
+    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false, runtime: t.runtime, git, push: options.push });
     await server.app.listen({ host: '127.0.0.1', port: 0 });
     const address = server.app.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');
@@ -116,7 +125,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       await t.server.ctx.scheduler.settle();
       await t.server.ctx.gitSync.settle();
       t.git = new FakeGitProvider();
-      t.server.ctx.git = t.git;
+      t.gitlab = new FakeGitProvider('gitlab', '');
       t.runtime.containers.clear();
       t.runtime.onContainerCreated = null;
       await truncateAll(t.server);

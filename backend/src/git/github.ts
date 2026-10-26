@@ -1,8 +1,8 @@
 import { createHash, createSign } from 'node:crypto';
-import type { BranchProtection, GitInstallation, Repository, RepositoryRef } from '@claude-task/shared';
-import type { GitHubCredentials } from './configuration';
+import type { BranchProtection, GitAccess, Repository, RepositoryRef } from '@claude-task/shared';
+import type { GitHubCredentials } from './connections';
 import { GitProviderError } from './provider';
-import type { GitProvider, PullRequestInput, RepositoryToken } from './provider';
+import type { GitIdentity, GitProvider, GitUpstream, PullRequestInput } from './provider';
 
 type Repo = { id: number; name: string; owner: { login: string }; default_branch: string; private: boolean; clone_url: string; html_url: string };
 type Installation = { id: number; account: { login: string; html_url: string }; suspended_at?: string | null };
@@ -10,7 +10,9 @@ type PR = { number: number; html_url: string; state: 'open' | 'closed'; merged_a
 type Rule = { type: string; ruleset_id: number };
 type Ruleset = { bypass_actors?: { actor_id: number; actor_type: string; bypass_mode: string }[] };
 const repoPath = (ref: RepositoryRef) => `/repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.name)}`;
-const serializeRepo = (r: Repo): Repository => ({
+type RepositoryToken = { token: string; expiresAt: string };
+const serializeRepo = (connectionId: string, r: Repo): Repository => ({
+  connectionId,
   provider: 'github',
   providerRepoId: String(r.id),
   owner: r.owner.login,
@@ -20,23 +22,22 @@ const serializeRepo = (r: Repo): Repository => ({
   cloneUrl: r.clone_url,
   webUrl: r.html_url,
 });
-const serializePR = (p: PR) => ({ number: p.number, url: p.html_url, state: p.merged || p.merged_at ? ('merged' as const) : p.state, draft: p.draft });
+const serializePR = (p: PR) => ({ provider: 'github' as const, number: p.number, url: p.html_url, state: p.merged || p.merged_at ? ('merged' as const) : p.state, draft: p.draft });
 
 /** GitHub App authentication, scoped token caches, REST API and protection interpretation. */
 export class GitHubProvider implements GitProvider {
+  readonly kind = 'github' as const;
   private fingerprint = '';
   private readonly tokens = new Map<string, RepositoryToken>();
   constructor(
+    private readonly connectionId: string,
     private readonly readConfig: () => Promise<GitHubCredentials | null>,
     private readonly apiUrl = 'https://api.github.com',
   ) {}
 
-  async isConfigured() {
-    return !!(await this.readConfig());
-  }
   private async config(): Promise<GitHubCredentials> {
     const value = await this.readConfig();
-    if (!value) throw new GitProviderError('Configure the GitHub App in GitHub settings before linking a repository', 409);
+    if (!value) throw new GitProviderError('This GitHub connection has no App credentials', 409);
     const fingerprint = createHash('sha256').update(value.appId).update(value.privateKey).digest('hex');
     if (fingerprint !== this.fingerprint) {
       this.tokens.clear();
@@ -108,21 +109,23 @@ export class GitHubProvider implements GitProvider {
   private async auth(ref: RepositoryRef, permissions: Record<string, string>) {
     return (await this.token(await this.installation(ref), permissions, ref.providerRepoId)).token;
   }
-  async listInstallations(): Promise<GitInstallation[]> {
-    return (await this.pages<Installation>('/app/installations', await this.jwt()))
-      .filter((i) => !i.suspended_at)
-      .map((i) => ({ id: String(i.id), account: i.account.login, url: i.account.html_url }));
+  private async installations() {
+    return (await this.pages<Installation>('/app/installations', await this.jwt())).filter((i) => !i.suspended_at);
+  }
+  async validate(): Promise<GitIdentity> {
+    const access: GitAccess[] = (await this.installations()).map((i) => ({ label: i.account.login, url: i.account.html_url }));
+    return { access, expiresAt: null };
   }
   async listAccessibleRepositories(): Promise<Repository[]> {
     const repos: Repository[] = [];
-    for (const i of await this.listInstallations()) {
-      const auth = (await this.token(Number(i.id), { metadata: 'read' })).token;
-      repos.push(...(await this.pages<Repo>('/installation/repositories', auth, 'repositories')).map(serializeRepo));
+    for (const i of await this.installations()) {
+      const auth = (await this.token(i.id, { metadata: 'read' })).token;
+      repos.push(...(await this.pages<Repo>('/installation/repositories', auth, 'repositories')).map((r) => serializeRepo(this.connectionId, r)));
     }
     return repos.sort((a, b) => `${a.owner}/${a.name}`.localeCompare(`${b.owner}/${b.name}`));
   }
   async getRepository(ref: RepositoryRef): Promise<Repository> {
-    const r = serializeRepo(await this.request<Repo>(repoPath(ref), await this.auth(ref, { contents: 'read' })));
+    const r = serializeRepo(this.connectionId, await this.request<Repo>(repoPath(ref), await this.auth(ref, { contents: 'read' })));
     if (r.providerRepoId !== ref.providerRepoId) throw new GitProviderError('The repository identity changed. Select it again.', 409);
     return r;
   }
@@ -135,8 +138,10 @@ export class GitHubProvider implements GitProvider {
       throw err;
     }
   }
-  async issueRepositoryToken(ref: RepositoryRef): Promise<RepositoryToken> {
-    return this.token(await this.installation(ref), { contents: 'write' }, ref.providerRepoId);
+  /** Contents: write on exactly this repository, for the Git Proxy only. */
+  async gitUpstream(repository: Repository): Promise<GitUpstream> {
+    const { token } = await this.token(await this.installation(repository), { contents: 'write' }, repository.providerRepoId);
+    return { url: repository.cloneUrl, username: 'x-access-token', password: token };
   }
   branchWebUrl(ref: RepositoryRef, branch: string) {
     return `https://github.com/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.name)}/tree/${branch.split('/').map(encodeURIComponent).join('/')}`;
@@ -144,7 +149,7 @@ export class GitHubProvider implements GitProvider {
   async checkBaseBranchProtection(ref: RepositoryRef, branch: string): Promise<BranchProtection> {
     const result: BranchProtection = {
       protected: null,
-      details: 'Protection could not be verified. Grant Administration: read and check the App bypass rules.',
+      details: 'Protection could not be verified. Grant the App Administration: read to see it.',
       settingsUrl: `https://github.com/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.name)}/settings/rules`,
       checkedAt: new Date().toISOString(),
     };
@@ -174,7 +179,7 @@ export class GitHubProvider implements GitProvider {
       } catch (err) {
         if (!(err instanceof GitProviderError && err.status === 404)) throw err;
       }
-      return { ...result, protected: false, details: 'Require pull requests on this base branch and do not grant the App direct-push bypass.' };
+      return { ...result, protected: false, details: 'GitHub would let this App push directly to the base branch. Require pull requests without App bypass for a second line of defense.' };
     } catch {
       return result;
     }

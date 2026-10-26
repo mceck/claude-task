@@ -313,11 +313,30 @@ export interface ProjectBundle {
 }
 
 // Git Integration
-export const githubAppBody = z.strictObject({
-  appId: z.string().trim().regex(/^[0-9]+$/).max(30),
-  privateKey: z.string().trim().min(1).max(20000).optional(),
+const connectionName = z.string().trim().min(1).max(80);
+const githubAppId = z.string().trim().regex(/^[0-9]+$/).max(30);
+const githubPrivateKey = z.string().trim().min(1).max(20000);
+const gitlabToken = z.string().trim().min(1).max(500);
+export const createGitConnectionBody = z.discriminatedUnion('provider', [
+  z.strictObject({ provider: z.literal('github'), name: connectionName, appId: githubAppId, privateKey: githubPrivateKey }),
+  z.strictObject({
+    provider: z.literal('gitlab'),
+    name: connectionName,
+    baseUrl: z.string().trim().max(500).default('https://gitlab.com'),
+    token: gitlabToken,
+  }),
+]);
+export type CreateGitConnectionBody = z.infer<typeof createGitConnectionBody>;
+/** Omitted secrets keep their current value. Provider and GitLab URL never change. */
+export const updateGitConnectionBody = z.strictObject({
+  name: connectionName.optional(),
+  appId: githubAppId.optional(),
+  privateKey: githubPrivateKey.optional(),
+  token: gitlabToken.optional(),
 });
+export type UpdateGitConnectionBody = z.infer<typeof updateGitConnectionBody>;
 export const repositoryBody = z.strictObject({
+  connectionId: z.string().min(1).max(64),
   providerRepoId: z.string().regex(/^[0-9]+$/).max(30),
   baseBranch: z.string().trim().min(1).max(250).optional(),
 });

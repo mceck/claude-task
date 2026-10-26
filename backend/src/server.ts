@@ -1,10 +1,9 @@
 import { FirebasePushTransport } from './notifications/transport';
 import type { PushTransport } from './notifications/transport';
 import { PushDispatcher } from './notifications/dispatcher';
-import { GitHubProvider } from './git/github';
-import { readGitHubConfig } from './git/configuration';
+import { GitConnections, cachedProviderFactory } from './git/connections';
+import type { ProviderFactory } from './git/connections';
 import { GitSync } from './git/sync';
-import type { GitProvider } from './git/provider';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app';
@@ -32,7 +31,7 @@ export interface Server {
 /** Migrates the database, bootstraps the first admin and builds the app (not listening yet). */
 export async function createServer(
   config: Config,
-  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean; git?: GitProvider; push?: PushTransport } = {},
+  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean; git?: ProviderFactory; push?: PushTransport } = {},
 ): Promise<Server> {
   const { db, pool } = createDb(config.databaseUrl);
   try {
@@ -41,7 +40,7 @@ export async function createServer(
       config,
       db,
       push: overrides.push ?? new FirebasePushTransport(config.push?.serviceAccountFile),
-      git: overrides.git ?? new GitHubProvider(() => readGitHubConfig(db, config)),
+      git: new GitConnections(db, config, overrides.git ?? cachedProviderFactory()),
       hub: new RealtimeHub(),
       blobs: overrides.blobs ?? new FsBlobStore(path.join(config.dataDir, 'blobs')),
       runtime:

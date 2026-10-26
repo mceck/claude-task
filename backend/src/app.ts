@@ -1,5 +1,6 @@
 import { notificationRoutes } from './notifications/routes';
 import { gitRoutes } from './git/routes';
+import { gitProxyRoutes } from './git/proxy';
 import { GitProviderError } from './git/provider';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
-import { API_PREFIX } from '@claude-task/shared';
+import { API_PREFIX, GIT_PROXY_PATH } from '@claude-task/shared';
 import Fastify from 'fastify';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { installGuard } from './auth/guard';
@@ -83,6 +84,8 @@ export async function buildApp(
     },
     { prefix: API_PREFIX },
   );
+  // Outside the API: no Login cookies or CSRF, only Basic auth with a Job token.
+  await app.register(async (git) => gitProxyRoutes(git, ctx), { prefix: GIT_PROXY_PATH });
 
   const staticDir = ctx.config.staticDir ? path.resolve(ctx.config.staticDir) : null;
   if (staticDir && existsSync(path.join(staticDir, 'index.html'))) {

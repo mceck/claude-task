@@ -12,7 +12,7 @@ Self-hosted kanban board (ClickUp-style) where tasks are worked by Claude Code a
 ## Stack & layout
 
 pnpm monorepo:
-- `backend`: Node + TypeScript, Fastify, PostgreSQL via Drizzle (migrations run on startup), dockerode on the host's mounted `/var/run/docker.sock`, MCP server (Streamable HTTP) for agent Task Tools.
+- `backend`: Node + TypeScript, Fastify, PostgreSQL via Drizzle (migrations run on startup), dockerode on the host's mounted `/var/run/docker.sock`, MCP server (Streamable HTTP) for agent Task Tools, Git Proxy (smart HTTP) to GitHub/GitLab Git Connections.
 - `frontend`: React + Vite, TanStack Query, dnd-kit, a single WebSocket for live updates. UI kit: shadcn/ui (Radix base, `src/components/ui/`, add components with `pnpm dlx shadcn@latest add <name>` from `frontend/`), Tailwind v4 tokens in `src/index.css`, dark theme by default.
 - `shared`: TS types for API payloads, real-time events and the runner protocol. It's the single source of truth.
 - `runner`: Go static binary (plus git credential helper), baked into the Base Image `claude-task/agent-base`, built locally by the backend.
@@ -40,7 +40,7 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 - **The `claude` version is pinned centrally** (`CLAUDE_CODE_VERSION`, auto-updater off). The stream-json format is a contract.
 - **Secrets** (Credentials, project secret env) are encrypted at rest (`SECRETS_MASTER_KEY`), write-only in the API (last4 only), never logged, and sent per Job, never as container env.
 - **The agent user is non-root** (`bypassPermissions` refuses root). Agent Dockerfiles must start `FROM claude-task/agent-base` and end as `USER agent`.
-- **Git tokens are short-lived**, limited to a single repository, and issued only for the Agent's active Job. Base-branch protection is enforced on GitHub, not in the container.
+- **Agents reach git only through the Git Proxy** with their Job token, valid only for that Job's Repository while the Job is active (ADR 0006). Provider credentials (Git Connections) never leave the backend. The proxy's Push Policy (only the Task Branch, no deletions or tags) keeps Agents off the Base Branch; provider-side protection is informational.
 - **Internal Notes are never delivered** to an Agent.
 
 ## Testing

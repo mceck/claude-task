@@ -15,7 +15,8 @@ const config = loadConfig();
 config.loginRateLimit.max = 1000;
 const runtime = new FakeRuntime();
 const git = new FakeGitProvider();
-const server = await createServer(config, { runtime, git });
+const gitlab = new FakeGitProvider('gitlab', '');
+const server = await createServer(config, { runtime, git: FakeGitProvider.factory(() => ({ github: git, gitlab })) });
 const runners = new Map<string, { socket: WebSocket; received: BackendToRunner[]; seqs: Map<string, number> }>();
 runtime.onContainerCreated = (agentId, spec) => {
   const socket = new WebSocket(`ws://127.0.0.1:${config.port}${RUNNER_WS_PATH}`, { headers: { authorization: `Bearer ${spec.env.CLAUDE_TASK_RUNNER_TOKEN}` } });

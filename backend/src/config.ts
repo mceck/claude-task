@@ -17,7 +17,12 @@ export interface Config {
   agents: AgentsConfig;
   webUrl?: string;
   push?: { serviceAccountFile: string };
+  /** The `env-github` Git Connection. */
   github?: { appId: string; privateKey: string } | null;
+  /** The `env-gitlab` Git Connection. */
+  gitlab?: { baseUrl: string; token: string } | null;
+  /** Accept `http://` GitLab URLs (tests, local development). */
+  gitlabAllowHttp?: boolean;
 }
 
 export interface AgentsConfig {
@@ -68,6 +73,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY
         ? { appId: env.GITHUB_APP_ID.trim(), privateKey: env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, '\n') }
         : null,
+    gitlab: env.GITLAB_TOKEN?.trim() ? { baseUrl: env.GITLAB_URL?.trim() || 'https://gitlab.com', token: env.GITLAB_TOKEN.trim() } : null,
+    gitlabAllowHttp: bool(env.GITLAB_ALLOW_HTTP, false),
     agents: {
       runtime: env.AGENT_RUNTIME === 'fake' ? 'fake' : 'docker',
       dockerSocket: env.DOCKER_SOCKET ?? '/var/run/docker.sock',

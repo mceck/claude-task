@@ -29,6 +29,8 @@ services:
       APP_URL: ${APP_URL:-http://localhost:3000}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITLAB_URL: ${GITLAB_URL:-https://gitlab.com}
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
       AGENT_COMMIT_EMAIL_DOMAIN: ${AGENT_COMMIT_EMAIL_DOMAIN:-agents.claude-task.local}
       AGENT_BACKEND_URL: http://app:3000
       AGENT_NETWORK: claude-task-agents

@@ -1,5 +1,5 @@
-import { projectTopic, taskTopic, taskKey } from '@claude-task/shared';
-import type { Actor, PullRequest, RepositorySettings } from '@claude-task/shared';
+import { projectTopic, pullRequestNoun, pullRequestRef, taskTopic, taskKey } from '@claude-task/shared';
+import type { Actor, PullRequest, RepositoryBody, RepositorySettings } from '@claude-task/shared';
 import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { AfterCommit, AppContext } from '../context';
 import { transact } from '../context';
@@ -21,17 +21,20 @@ export async function repositorySettings(db: Executor, projectId: string): Promi
   return { repository: p.repository, hasOpenSessions: !!open };
 }
 
-export async function linkRepository(ctx: AppContext, projectId: string, body: { providerRepoId: string; baseBranch?: string }): Promise<void> {
-  const available = await ctx.git.listAccessibleRepositories();
+export async function linkRepository(ctx: AppContext, projectId: string, body: RepositoryBody): Promise<void> {
+  const connection = await ctx.git.find(body.connectionId);
+  if (!connection) throw badRequest('Choose a repository of an existing Git Connection');
+  const git = ctx.git.providerFor(connection);
+  const available = await git.listAccessibleRepositories();
   const ref = available.find((r) => r.providerRepoId === body.providerRepoId);
-  if (!ref) throw badRequest('Choose a repository accessible to the GitHub App');
-  const repo = await ctx.git.getRepository(ref);
+  if (!ref) throw badRequest('Choose a repository accessible to this Git Connection');
+  const repo = await git.getRepository(ref);
   const baseBranch = body.baseBranch ?? repo.defaultBranch;
-  if (!(await ctx.git.branchExists(repo, baseBranch))) throw badRequest(`The base branch "${baseBranch}" does not exist in this repository`);
-  const protection = await ctx.git.checkBaseBranchProtection(repo, baseBranch);
+  if (!(await git.branchExists(repo, baseBranch))) throw badRequest(`The base branch "${baseBranch}" does not exist in this repository`);
+  const protection = await git.checkBaseBranchProtection(repo, baseBranch);
   await transact(ctx, async (tx, after) => {
     const p = await getProject(tx, projectId, { lock: true });
-    const changed = p.repository?.providerRepoId !== repo.providerRepoId;
+    const changed = p.repository?.connectionId !== repo.connectionId || p.repository?.providerRepoId !== repo.providerRepoId;
     if (changed && (await repositorySettings(tx, p.id)).hasOpenSessions)
       throw conflict('Unassigning only pauses sessions. Close every non-closed session before changing the repository.');
     const [updated] = await tx
@@ -56,10 +59,16 @@ export async function linkRepository(ctx: AppContext, projectId: string, body: {
 export async function recheckProtection(ctx: AppContext, projectId: string): Promise<void> {
   const p = await getProject(ctx.db, projectId);
   if (!p.repository) throw conflict('Link a repository first');
-  const repository = { ...p.repository, protection: await ctx.git.checkBaseBranchProtection(p.repository, p.repository.baseBranch) };
+  const git = await ctx.git.provider(p.repository.connectionId);
+  const repository = { ...p.repository, protection: await git.checkBaseBranchProtection(p.repository, p.repository.baseBranch) };
   await transact(ctx, async (tx, after) => {
     const current = await getProject(tx, p.id, { lock: true });
-    if (current.repository?.providerRepoId !== repository.providerRepoId || current.repository.baseBranch !== repository.baseBranch) return;
+    if (
+      current.repository?.connectionId !== repository.connectionId ||
+      current.repository.providerRepoId !== repository.providerRepoId ||
+      current.repository.baseBranch !== repository.baseBranch
+    )
+      return;
     const [updated] = await tx.update(projects).set({ repository }).where(eq(projects.id, p.id)).returning();
     after.emit(projectTopic(p.id), { type: 'project.updated', project: serializeProject(updated!) });
   });
@@ -67,7 +76,7 @@ export async function recheckProtection(ctx: AppContext, projectId: string): Pro
 
 export async function recordPullRequest(tx: Executor, after: AfterCommit, task: TaskRow, pullRequest: PullRequest, actor: Actor): Promise<void> {
   const before = task.pullRequest;
-  const changed = !before || ['number', 'url', 'state', 'draft'].some((key) => before[key as keyof PullRequest] !== pullRequest[key as keyof PullRequest]);
+  const changed = !before || ['provider', 'number', 'url', 'state', 'draft'].some((key) => before[key as keyof PullRequest] !== pullRequest[key as keyof PullRequest]);
   await tx
     .update(tasks)
     .set({ pullRequest, ...(changed ? { version: task.version + 1, updatedAt: new Date() } : {}) })
@@ -106,12 +115,13 @@ export async function openPullRequest(
       .where(and(eq(jobs.id, scope.jobId), eq(jobs.agentId, scope.agentId), inArray(jobs.state, ['running', 'finishing'])));
     if (!job) throw conflict('The job is no longer active');
     if (!p.repository || !task.branchName) throw conflict('This task has no repository and task branch yet');
-    if (!(await ctx.git.branchExists(p.repository, task.branchName))) throw badRequest(`Push the branch \`${task.branchName}\` before opening a pull request.`);
+    const git = await ctx.git.provider(p.repository.connectionId);
+    if (!(await git.branchExists(p.repository, task.branchName))) throw badRequest(`Push the branch \`${task.branchName}\` before opening a pull request.`);
     const key = taskKey(p.key, task.number);
     const taskUrl = `${ctx.config.webUrl ?? 'http://localhost:3000'}/t/${key}`;
     const body = `${input.body.trim()}\n\n---\nTask: [${key}](${taskUrl}) · Agent: ${scope.actor.displayName.replace(/[\r\n]/g, ' ')}`;
     const pr = {
-      ...(await ctx.git.upsertPullRequest(p.repository, {
+      ...(await git.upsertPullRequest(p.repository, {
         head: task.branchName,
         base: p.repository.baseBranch,
         title: input.title,
@@ -127,7 +137,7 @@ export async function openPullRequest(
         taskId: task.id,
         kind: 'system',
         authorType: 'system',
-        body: `Pull request [#${pr.number}](${pr.url}) ${task.pullRequest?.number === pr.number ? 'updated' : 'opened'}.`,
+        body: `${capitalize(pullRequestNoun(pr.provider))} [${pullRequestRef(pr)}](${pr.url}) ${task.pullRequest?.number === pr.number && task.pullRequest.provider === pr.provider ? 'updated' : 'opened'}.`,
         createdAt: sql`clock_timestamp()`,
       })
       .returning();
@@ -136,20 +146,4 @@ export async function openPullRequest(
   });
 }
 
-/** Only the Agent's accepted active Job may request its own repository token. */
-export async function repositoryToken(ctx: AppContext, agentId: string, jobId: string, repository: string) {
-  const active = async () =>
-    (
-      await ctx.db
-        .select({ repository: projects.repository })
-        .from(jobs)
-        .innerJoin(tasks, eq(tasks.id, jobs.taskId))
-        .innerJoin(projects, eq(projects.id, tasks.projectId))
-        .where(and(eq(jobs.id, jobId), eq(jobs.agentId, agentId), inArray(jobs.state, ['running', 'finishing'])))
-    )[0]?.repository;
-  const repo = await active();
-  if (!repo || repository.toLowerCase() !== `${repo.owner}/${repo.name}`.toLowerCase()) throw conflict('No active task for this repository');
-  const token = await ctx.git.issueRepositoryToken(repo);
-  if ((await active())?.providerRepoId !== repo.providerRepoId) throw conflict('No active task for this repository');
-  return token;
-}
+const capitalize = (text: string) => text[0]!.toUpperCase() + text.slice(1);

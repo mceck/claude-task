@@ -1,6 +1,6 @@
 import type { PushTransport } from './notifications/transport';
 import type { PushDispatcher } from './notifications/dispatcher';
-import type { GitProvider } from './git/provider';
+import type { GitConnections } from './git/connections';
 import type { GitSync } from './git/sync';
 import type { RealtimeEvent, Topic } from '@claude-task/shared';
 import type { FastifyBaseLogger } from 'fastify';
@@ -20,7 +20,8 @@ export interface AppContext {
   hub: RealtimeHub;
   blobs: BlobStore;
   runtime: AgentRuntime;
-  git: GitProvider;
+  /** Git Connections and their providers. */
+  git: GitConnections;
   gitSync: GitSync;
   /** Connected Runners, one per Agent. */
   runners: RunnerHub;

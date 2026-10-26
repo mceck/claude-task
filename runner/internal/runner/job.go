@@ -36,7 +36,6 @@ type job struct {
 	stdin               *os.File
 	cancelled           bool
 	exited              chan struct{}
-	gitToken            *gitToken
 	remoteBranchMissing bool
 	reqSeq              int
 }

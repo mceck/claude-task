@@ -23,8 +23,10 @@ RUN curl -fsSL https://claude.ai/install.sh -o /tmp/install.sh \
  && claude --version
 COPY --from=runner /out/claude-task-runner /usr/local/bin/claude-task-runner
 COPY --from=runner /out/git-credential-claude-task /usr/local/bin/git-credential-claude-task
-RUN git config --system credential.https://github.com.helper /usr/local/bin/git-credential-claude-task \
- && git config --system credential.https://github.com.useHttpPath true
+# The Git Proxy host is runtime configuration, so the helper serves every host and denies
+# anything but the current Job's clone URL.
+RUN git config --system credential.helper /usr/local/bin/git-credential-claude-task \
+ && git config --system credential.useHttpPath true
 # bypassPermissions refuses to run as root, hence a fixed non-root user.
 RUN if getent passwd 1000 > /dev/null; then \
       usermod --login agent --home /home/agent --move-home --shell /bin/bash --groups '' "$(getent passwd 1000 | cut -d: -f1)"; \

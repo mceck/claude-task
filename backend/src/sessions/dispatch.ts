@@ -1,6 +1,6 @@
 import { gitSlug, taskBranch } from '../git/branches';
 // The dispatcher: turns the first Queue Entry of an idle Agent into a Job (one at a time).
-import { MCP_PATH, RUNNER_WS_PATH } from '@claude-task/shared';
+import { GIT_PROXY_PATH, MCP_PATH, RUNNER_WS_PATH } from '@claude-task/shared';
 import type { JobStartMessage } from '@claude-task/shared';
 import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
@@ -14,6 +14,7 @@ import { REASSIGNED_MESSAGE, RESUME_MESSAGE, renderComments, renderTaskFiles, st
 import type { CommentRow, MessageParts } from './messages';
 
 export const runnerWsUrl = (backendUrl: string) => `${backendUrl.replace(/^http/, 'ws')}${RUNNER_WS_PATH}`;
+export const gitProxyUrl = (backendUrl: string, projectId: string) => `${backendUrl}${GIT_PROXY_PATH}/${projectId}.git`;
 
 /** Dispatches the next Job for the Agent if it can take one. Returns whether it did. */
 export async function dispatchNext(ctx: AppContext, agentId: string): Promise<boolean> {
@@ -44,11 +45,12 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     const snapshot = await taskSnapshot(tx, task!.id);
     const repository = project!.repository;
     const branch = repository ? (task!.branchName ?? taskBranch(snapshot.key, snapshot.title)) : null;
-    const branchExists = repository && branch ? await ctx.git.branchExists(repository, branch) : false;
-    if (repository && branch) {
+    const git = repository ? await ctx.git.provider(repository.connectionId) : null;
+    const branchExists = git && repository && branch ? await git.branchExists(repository, branch) : false;
+    if (git && repository && branch) {
       await tx
         .update(tasks)
-        .set({ branchName: branch, branchUrl: ctx.git.branchWebUrl(repository, branch) })
+        .set({ branchName: branch, branchUrl: git.branchWebUrl(repository, branch) })
         .where(eq(tasks.id, task!.id));
     }
 
@@ -117,7 +119,10 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
       git:
         repository && branch
           ? {
-              cloneUrl: repository.cloneUrl,
+              // Agents reach git only through the Git Proxy, with their Job token (ADR 0006).
+              cloneUrl: gitProxyUrl(ctx.config.agents.backendUrl, project!.id),
+              token: jobToken.token,
+              repositoryId: `${repository.connectionId}/${repository.providerRepoId}`,
               baseBranch: repository.baseBranch,
               taskBranch: branch,
               branchExists,

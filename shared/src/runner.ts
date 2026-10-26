@@ -3,11 +3,13 @@
 // runner (runner/internal/protocol) mirrors these shapes.
 import type { PermissionMode } from './agents';
 
-export const RUNNER_PROTOCOL_VERSION = 1;
+export const RUNNER_PROTOCOL_VERSION = 2;
 /** WebSocket path, authenticated with `Authorization: Bearer <runner token>`. */
 export const RUNNER_WS_PATH = '/api/v1/runner';
 /** Attachment downloads for the Runner, same bearer token: `${RUNNER_ATTACHMENTS_PATH}/<attachmentId>`. */
 export const RUNNER_ATTACHMENTS_PATH = '/api/v1/runner/attachments';
+/** Git Proxy (smart HTTP): `${GIT_PROXY_PATH}/<projectId>.git`, Basic auth with the Job token as password. */
+export const GIT_PROXY_PATH = '/git';
 /** Streamable HTTP MCP endpoint for Task Tools, authenticated with the Job token. */
 export const MCP_PATH = '/api/v1/mcp';
 
@@ -23,8 +25,16 @@ export interface AttachmentToFetch {
 
 /** The repository to prepare the Worktree from (Spec 03). Null when the Project has none. */
 export interface GitSpec {
-  /** HTTPS clone URL without credentials (a file URL in tests). */
+  /** The Git Proxy URL of the Project, without credentials (a file URL in tests). */
   cloneUrl: string;
+  /** Git Proxy password for `cloneUrl`: the Job token. Served only by the credential helper. */
+  token: string;
+  /**
+   * Stable identity of the Repository behind `cloneUrl` (`<connectionId>/<providerRepoId>`): the
+   * proxy URL stays the same when a Project changes Repository, so the bare clone is kept or
+   * discarded by this, not by the URL.
+   */
+  repositoryId: string;
   baseBranch: string;
   taskBranch: string;
   /** Hint only: whether `origin/<taskBranch>` is expected to exist. */
@@ -75,7 +85,6 @@ export interface JobStartMessage {
 }
 
 export type BackendToRunner =
-  | { type: 'git.token'; requestId: string; jobId: string; token?: string; expiresAt?: string; error?: string }
   | JobStartMessage
   /** Write a user message to stdin (attachments are fetched first). */
   | { type: 'job.input'; jobId: string; message: InputBlock[]; attachmentsToFetch: AttachmentToFetch[] }
@@ -112,7 +121,6 @@ export type RunnerJobMessage =
   | { type: 'job.failed'; jobId: string; seq: number; stage: JobFailureStage; message: string };
 
 export type RunnerToBackend =
-  | { type: 'git.token_request'; requestId: string; jobId: string; repository: string }
   | {
       type: 'hello';
       protocolVersion: number;

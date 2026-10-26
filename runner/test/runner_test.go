@@ -13,7 +13,7 @@ func TestHelloAndArgumentsForANewSession(t *testing.T) {
 	b := newBackend(t)
 	home := startRunner(t, b)
 	hello := b.waitHello(1)
-	if hello.str("claudeVersion") != "9.9.9" || hello["activeJobId"] != nil || hello.num("protocolVersion") != 1 {
+	if hello.str("claudeVersion") != "9.9.9" || hello["activeJobId"] != nil || hello.num("protocolVersion") != 2 {
 		t.Fatalf("unexpected hello %v", hello)
 	}
 

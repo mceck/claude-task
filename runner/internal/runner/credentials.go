@@ -2,24 +2,16 @@ package runner
 
 import (
 	"claude-task/runner/internal/credentials"
-	"claude-task/runner/internal/protocol"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
-
-type gitToken struct {
-	value   string
-	expires time.Time
-}
 
 func (r *Runner) serveCredentials(ctx context.Context) error {
 	path := credentials.SocketPath(r.cfg.Home)
@@ -56,81 +48,27 @@ func (r *Runner) serveCredentials(ctx context.Context) error {
 				if json.NewDecoder(io.LimitReader(conn, 4096)).Decode(&request) != nil {
 					return
 				}
-				response := r.credential(ctx, request)
+				response := r.credential(request)
 				json.NewEncoder(conn).Encode(response)
 			}()
 		}
 	}()
 	return nil
 }
-func (r *Runner) credential(ctx context.Context, request credentials.Request) credentials.Response {
-	denied := func(message string) credentials.Response { return credentials.Response{Error: message} }
-	repository, err := credentials.Repository(request)
-	if err != nil {
-		return denied("no active task for this repository")
-	}
-	// Serialize cache refreshes, without blocking the WebSocket reader that delivers the reply.
-	r.tokenMu.Lock()
-	defer r.tokenMu.Unlock()
-	r.mu.Lock()
-	j := r.current
-	if j == nil || j.finished || j.start.Git == nil {
-		r.mu.Unlock()
-		return denied("no active task for this repository")
-	}
-	remote, err := url.Parse(j.start.Git.CloneURL)
-	expected := ""
-	if err == nil {
-		expected = strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(remote.Path, "/"), ".git"))
-	}
-	if err != nil || remote.Scheme != "https" || !strings.EqualFold(remote.Host, "github.com") || expected != repository {
-		r.mu.Unlock()
-		return denied("no active task for this repository")
-	}
-	if j.gitToken != nil && j.gitToken.expires.After(time.Now().Add(5*time.Minute)) {
-		value := j.gitToken.value
-		r.mu.Unlock()
-		return credentials.Response{Username: "x-access-token", Password: value}
-	}
-	if r.conn == nil {
-		r.mu.Unlock()
-		return denied("backend disconnected; cannot obtain Git credentials")
-	}
-	r.tokenSeq++
-	id := fmt.Sprintf("git-%d", r.tokenSeq)
-	reply := make(chan *protocol.Incoming, 1)
-	r.tokenWaiters[id] = reply
-	r.mu.Unlock()
-	defer func() { r.mu.Lock(); delete(r.tokenWaiters, id); r.mu.Unlock() }()
-	r.sendNow(map[string]string{"type": "git.token_request", "requestId": id, "jobId": j.id, "repository": repository})
-	select {
-	case <-ctx.Done():
-		return denied("Runner is shutting down")
-	case <-time.After(35 * time.Second):
-		return denied("Git credential request timed out; try again")
-	case message := <-reply:
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if r.current != j || j.finished || message.JobID != j.id {
-			return denied("no active task for this repository")
-		}
-		expiry, err := time.Parse(time.RFC3339, message.ExpiresAt)
-		if message.Error != "" || message.Token == "" || err != nil || !expiry.After(time.Now()) {
-			return denied("Git credentials were refused; check the active task and GitHub App configuration")
-		}
-		j.gitToken = &gitToken{value: message.Token, expires: expiry}
-		return credentials.Response{Username: "x-access-token", Password: message.Token}
-	}
-}
-func (r *Runner) receiveGitToken(m *protocol.Incoming) {
+
+// credential serves the current Job's token, only for that Job's Git Proxy URL.
+func (r *Runner) credential(request credentials.Request) credentials.Response {
+	denied := credentials.Response{Error: "no active task for this repository"}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if waiter := r.tokenWaiters[m.RequestID]; waiter != nil {
-		select {
-		case waiter <- m:
-		default:
-		}
+	j := r.current
+	if j == nil || j.finished || j.start.Git == nil || j.start.Git.Token == "" {
+		return denied
 	}
+	if !credentials.Matches(j.start.Git.CloneURL, request) {
+		return denied
+	}
+	return credentials.Response{Username: "claude-task", Password: j.start.Git.Token}
 }
 func (r *Runner) startCredentialServer(ctx context.Context) bool {
 	if err := r.serveCredentials(ctx); err != nil {

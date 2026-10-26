@@ -48,8 +48,8 @@ func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) (bo
 	git := func(dir string, args ...string) error { return runGit(out, dir, args...) }
 
 	// A Project may change repository only with every Session closed. Discard the old
-	// bare clone rather than reusing its local branch tips with a different origin.
-	if old, err := exec.Command("git", "-C", repo, "config", "--get", "remote.origin.url").Output(); err == nil && strings.TrimSpace(string(old)) != g.CloneURL {
+	// bare clone rather than reusing its local branch tips with a different repository.
+	if staleClone(repo, g) {
 		if err := os.RemoveAll(repo); err != nil {
 			return false, err
 		}
@@ -67,6 +67,11 @@ func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) (bo
 		}
 	} else if err := git(repo, "remote", "set-url", "origin", g.CloneURL); err != nil {
 		return false, err
+	}
+	if g.RepositoryID != "" {
+		if err := git(repo, "config", "claude-task.repository", g.RepositoryID); err != nil {
+			return false, err
+		}
 	}
 	if err := git(repo, "fetch", "--prune", "origin"); err != nil {
 		return false, err
@@ -92,6 +97,22 @@ func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) (bo
 		return false, err
 	}
 	return created, nil
+}
+
+// staleClone reports whether the bare clone belongs to another Repository. A clone made
+// before identities were recorded is adopted: its origin may move to the Git Proxy URL,
+// and its Worktrees must survive that.
+func staleClone(repo string, g *protocol.GitSpec) bool {
+	config := func(key string) (string, bool) {
+		out, err := exec.Command("git", "-C", repo, "config", "--get", key).Output()
+		return strings.TrimSpace(string(out)), err == nil
+	}
+	if g.RepositoryID != "" {
+		recorded, ok := config("claude-task.repository")
+		return ok && recorded != g.RepositoryID
+	}
+	old, ok := config("remote.origin.url")
+	return ok && old != g.CloneURL
 }
 
 func createWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) error {

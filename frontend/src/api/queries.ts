@@ -171,15 +171,12 @@ export function useAgentSettings(projectId: string) {
 }
 
 // Git Integration
-export function useRepositories() {
-  return useQuery({ queryKey: ['git-repositories'], queryFn: () => get<{ configured: boolean; repositories: import('@claude-task/shared').Repository[] }>('/git/repositories') });
+export function useRepositoryGroups() {
+  return useQuery({ queryKey: ['git-repositories'], queryFn: () => get<{ groups: import('@claude-task/shared').RepositoryGroup[] }>('/git/repositories').then((r) => r.groups) });
 }
 export function useRepositorySettings(projectId: string) {
   return useQuery({ queryKey: ['repository-settings', projectId], queryFn: () => get<import('@claude-task/shared').RepositorySettings>(`/projects/${projectId}/repository`) });
 }
-export function useGitHubSettings(enabled: boolean) {
-  return useQuery({ queryKey: ['github-settings'], queryFn: () => get<{ settings: import('@claude-task/shared').GitHubAppSettings }>('/git/github').then((r) => r.settings), enabled });
-}
-export function useGitInstallations(enabled: boolean) {
-  return useQuery({ queryKey: ['git-installations'], queryFn: () => get<{ installations: import('@claude-task/shared').GitInstallation[] }>('/git/installations').then((r) => r.installations), enabled });
+export function useGitConnections(enabled: boolean) {
+  return useQuery({ queryKey: ['git-connections'], queryFn: () => get<{ connections: import('@claude-task/shared').GitConnection[] }>('/git/connections').then((r) => r.connections), enabled });
 }

@@ -15,7 +15,7 @@ describe('Git integration through the public API', () => {
   async function setup() {
     const admin = await app.admin();
     const bundle = await createProject(admin);
-    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { providerRepoId: '1' })).status).toBe(200);
+    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { connectionId: 'env-github', providerRepoId: '1' })).status).toBe(200);
     const { agent, runner } = await createAgent(app, admin, { name: 'Adà Developer' });
     const task = await createTask(admin, bundle.project.id, { title: 'Fix café login / redirect!' });
     return { admin, bundle, agent, runner, task };
@@ -39,55 +39,130 @@ describe('Git integration through the public API', () => {
     return { error: result.isError === true, text: (result.content as { text: string }[])[0]!.text };
   }
 
-  it('keeps App keys write-only and lets only admins configure the App and list installations', async () => {
+  it('manages Git Connections as admins only, with write-only secrets and read-only environment connections', async () => {
     const admin = await app.admin();
     const member = (await createUser(app, admin)).client;
-    expect((await member.get('/git/github')).status).toBe(403);
-    expect((await member.put('/git/github', { appId: '123', privateKey })).status).toBe(403);
-    expect((await admin.put('/git/github', { appId: '123', privateKey: 'invalid key' })).status).toBe(400);
-    const saved = await admin.put('/git/github', { appId: '123', privateKey });
-    expect(saved.body.settings).toEqual({ appId: '123', configured: true, privateKeyConfigured: true, source: 'database' });
-    expect(JSON.stringify((await admin.get('/git/github')).body)).not.toContain('PRIVATE KEY');
-    expect((await admin.put('/git/github', { appId: '123' })).status).toBe(200);
-    expect((await admin.get('/git/installations')).body.installations[0].account).toBe('acme');
-    expect((await member.get('/git/installations')).status).toBe(403);
-    expect((await member.get('/git/repositories')).body.repositories).toHaveLength(2);
+    expect((await member.get('/git/connections')).status).toBe(403);
+    expect((await member.post('/git/connections', { provider: 'gitlab', name: 'GitLab', token: 'glpat-secret' })).status).toBe(403);
+    expect((await admin.post('/git/connections', { provider: 'github', name: 'Bad', appId: '123', privateKey: 'invalid key' })).status).toBe(400);
+    const github = await admin.post('/git/connections', { provider: 'github', name: 'Acme App', appId: '123', privateKey });
+    expect(github.status).toBe(201);
+    expect(github.body.connection).toMatchObject({ provider: 'github', name: 'Acme App', host: 'github.com', source: 'database', appId: '123', secretLast4: null });
+    const gitlab = await admin.post('/git/connections', { provider: 'gitlab', name: 'Self-managed', baseUrl: 'https://gitlab.example.com/', token: 'glpat-supersecret-9876' });
+    expect(gitlab.body.connection).toMatchObject({
+      provider: 'gitlab',
+      host: 'gitlab.example.com',
+      baseUrl: 'https://gitlab.example.com',
+      secretLast4: '9876',
+      access: [{ label: 'claude-task-bot' }],
+      health: { state: 'ok' },
+    });
+    expect(gitlab.body.connection.expiresAt).toBeTruthy();
+    const listed = (await admin.get('/git/connections')).body.connections;
+    expect(listed.map((c: { id: string }) => c.id)).toEqual(['env-github', github.body.connection.id, gitlab.body.connection.id]);
+    expect(listed[0]).toMatchObject({ source: 'environment', appId: '1' });
+    const raw = JSON.stringify(listed);
+    expect(raw).not.toContain('PRIVATE KEY');
+    expect(raw).not.toContain('supersecret');
+    expect((await admin.patch('/git/connections/env-github', { name: 'Renamed' })).status).toBe(409);
+    expect((await admin.delete('/git/connections/env-github')).status).toBe(409);
+    expect((await admin.patch(`/git/connections/${gitlab.body.connection.id}`, { name: 'GitLab EU' })).body.connection).toMatchObject({ name: 'GitLab EU', secretLast4: '9876' });
+    expect((await admin.patch(`/git/connections/${gitlab.body.connection.id}`, { token: 'glpat-rotated-1111' })).body.connection.secretLast4).toBe('1111');
+    expect((await admin.patch(`/git/connections/${github.body.connection.id}`, { token: 'nope' })).status).toBe(400);
+    expect((await admin.post('/git/connections', { provider: 'gitlab', name: 'Plain', baseUrl: 'ftp://gitlab.example.com', token: 't' })).status).toBe(400);
+    app.gitlab.invalid = 'The GitLab token needs the write_repository scope';
+    const refused = await admin.post('/git/connections', { provider: 'gitlab', name: 'Weak', token: 'glpat-weak' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error.message).toContain('write_repository');
+    expect((await admin.get('/git/connections')).body.connections.find((c: { id: string }) => c.id === gitlab.body.connection.id).health).toMatchObject({
+      state: 'error',
+      message: expect.stringContaining('write_repository'),
+    });
+    expect((await admin.delete(`/git/connections/${github.body.connection.id}`)).status).toBe(204);
+    expect((await admin.get('/git/connections')).body.connections).toHaveLength(2);
+  });
+
+  it('lists repositories grouped by connection, and a broken connection does not hide the others', async () => {
+    const admin = await app.admin();
+    const member = (await createUser(app, admin)).client;
+    const gitlab = (await admin.post('/git/connections', { provider: 'gitlab', name: 'GitLab', token: 'glpat-x' })).body.connection;
+    let groups = (await member.get('/git/repositories')).body.groups;
+    expect(groups.map((g: { connection: { id: string } }) => g.connection.id)).toEqual(['env-github', gitlab.id]);
+    expect(groups[1].repositories.map((r: { owner: string; name: string; connectionId: string }) => [r.owner, r.name, r.connectionId])).toContainEqual([
+      'acme/platform',
+      'service',
+      gitlab.id,
+    ]);
+    app.git.unreachable = 'GitHub could not be reached. Try again later.';
+    groups = (await member.get('/git/repositories')).body.groups;
+    expect(groups[0]).toMatchObject({ repositories: [], error: 'GitHub could not be reached. Try again later.' });
+    expect(groups[1].repositories).toHaveLength(2);
+  });
+
+  it('links GitLab repositories in nested groups and opens merge requests with GitLab vocabulary', async () => {
+    const admin = await app.admin();
+    const gitlab = (await admin.post('/git/connections', { provider: 'gitlab', name: 'GitLab', token: 'glpat-x' })).body.connection;
+    const bundle = await createProject(admin);
+    const linked = await admin.put(`/projects/${bundle.project.id}/repository`, { connectionId: gitlab.id, providerRepoId: '101' });
+    expect(linked.body.repository).toMatchObject({ connectionId: gitlab.id, provider: 'gitlab', owner: 'acme/platform', name: 'service', baseBranch: 'main' });
+    expect((await admin.delete(`/git/connections/${gitlab.id}`)).status).toBe(409);
+    const { agent, runner } = await createAgent(app, admin);
+    const task = await createTask(admin, bundle.project.id, { title: 'Ship it' });
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    expect(start.git).toMatchObject({ repositoryId: `${gitlab.id}/101`, cloneUrl: `http://backend.test/git/${bundle.project.id}.git` });
+    runner.accept(start.jobId);
+    await runner.play(start.jobId, [new Stream(start.sessionId).init()]);
+    expect((await admin.get(`/tasks/${task.id}`)).body.task.branchUrl).toContain(`/acme/platform/service/-/tree/${start.git!.taskBranch}`);
+    app.gitlab.branches.get('101')!.add(start.git!.taskBranch);
+    const client = await clientFor(start);
+    const mr = JSON.parse((await callPR(client, 'Body', true)).text);
+    expect(mr).toMatchObject({ number: 1, draft: true });
+    expect((await admin.get(`/tasks/${task.id}`)).body.task.pullRequest).toMatchObject({ provider: 'gitlab', number: 1 });
+    expect((await timeline(admin, task.id)).some((i) => i.type === 'comment' && i.comment.body.startsWith('Merge request [!1]'))).toBe(true);
+    await client.close();
   });
 
   it('links accessible repositories as a member, defaults and validates the base branch, and rechecks protection', async () => {
     const admin = await app.admin();
     const member = (await createUser(app, admin)).client;
     const { project } = await createProject(admin);
-    expect((await member.put(`/projects/${project.id}/repository`, { providerRepoId: '999' })).status).toBe(400);
-    expect((await member.put(`/projects/${project.id}/repository`, { providerRepoId: '1', baseBranch: 'missing' })).status).toBe(400);
+    expect((await member.put(`/projects/${project.id}/repository`, { connectionId: 'env-github', providerRepoId: '999' })).status).toBe(400);
+    expect((await member.put(`/projects/${project.id}/repository`, { connectionId: 'missing', providerRepoId: '1' })).status).toBe(400);
+    expect((await member.put(`/projects/${project.id}/repository`, { connectionId: 'env-github', providerRepoId: '1', baseBranch: 'missing' })).status).toBe(400);
     app.git.protection.set('1', false);
-    const linked = await member.put(`/projects/${project.id}/repository`, { providerRepoId: '1' });
+    const linked = await member.put(`/projects/${project.id}/repository`, { connectionId: 'env-github', providerRepoId: '1' });
     expect(linked.body.repository).toMatchObject({ owner: 'acme', name: 'example', baseBranch: 'main', protection: { protected: false } });
     expect((await member.get(`/projects/${project.id}`)).body.project.repository.baseBranch).toBe('main');
     app.git.protection.set('1', true);
     expect((await member.post(`/projects/${project.id}/repository/check-protection`)).body.repository.protection.protected).toBe(true);
     app.git.branches.get('1')!.add('develop');
-    expect((await member.put(`/projects/${project.id}/repository`, { providerRepoId: '1', baseBranch: 'develop' })).body.repository.baseBranch).toBe('develop');
+    expect((await member.put(`/projects/${project.id}/repository`, { connectionId: 'env-github', providerRepoId: '1', baseBranch: 'develop' })).body.repository.baseBranch).toBe('develop');
   });
 
   it('blocks repository changes for non-closed sessions, including paused ones; allows changes after close', async () => {
     const { admin, bundle, agent, runner, task } = await setup();
     await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
-    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { providerRepoId: '2' })).status).toBe(409);
+    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { connectionId: 'env-github', providerRepoId: '2' })).status).toBe(409);
+    const gitlab = (await admin.post('/git/connections', { provider: 'gitlab', name: 'GitLab', token: 'glpat-x' })).body.connection;
+    // Same provider repository id, another connection: still a different Repository.
+    app.gitlab.addRepository('1', 'acme', 'example');
+    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { connectionId: gitlab.id, providerRepoId: '1' })).status).toBe(409);
     await assignAgent(admin, task.id, null);
     await runner.exit(start.jobId);
     expect((await admin.get(`/projects/${bundle.project.id}/repository`)).body.hasOpenSessions).toBe(true);
-    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { providerRepoId: '2' })).status).toBe(409);
+    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { connectionId: 'env-github', providerRepoId: '2' })).status).toBe(409);
     await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
-    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { providerRepoId: '2' })).status).toBe(200);
+    expect((await admin.put(`/projects/${bundle.project.id}/repository`, { connectionId: 'env-github', providerRepoId: '2' })).status).toBe(200);
   });
 
   it('dispatches stable ASCII task branches and worktree/commit configuration, preserving names across renames and reassignment', async () => {
     const { admin, bundle, agent, runner, task, start } = await running();
     const branch = `task/${task.key.toLowerCase()}-fix-cafe-login-redirect`;
     expect(start.git).toMatchObject({
-      cloneUrl: 'https://github.com/acme/example.git',
+      cloneUrl: `http://backend.test/git/${bundle.project.id}.git`,
+      repositoryId: 'env-github/1',
       baseBranch: 'main',
       taskBranch: branch,
       branchExists: false,
@@ -121,30 +196,6 @@ describe('Git integration through the public API', () => {
     await admin.patch(`/tasks/${task.id}`, { version: current.version, title });
     await assignAndStart(admin, task.id, agent.id);
     expect((await runner.next('job.start')).git!.taskBranch).toBe(`task/${task.key.toLowerCase()}${suffix}`);
-  });
-
-  it('grants tokens only for the accepted active job and its single repository, including while finishing', async () => {
-    const { admin, agent, runner, task } = await setup();
-    const request = async (id: string, jobId: string, repository: string) => {
-      runner.send({ type: 'git.token_request', requestId: id, jobId, repository });
-      return runner.next('git.token', (m) => m.requestId === id);
-    };
-    expect((await request('idle', '00000000-0000-0000-0000-000000000000', 'acme/example')).error).toBeTruthy();
-    await assignAndStart(admin, task.id, agent.id);
-    const start = await runner.next('job.start');
-    expect((await request('dispatched', start.jobId, 'acme/example')).error).toBeTruthy();
-    runner.accept(start.jobId);
-    await runner.drain();
-    const granted = await request('running', start.jobId, 'ACME/EXAMPLE');
-    expect(granted.token).toContain('fake-git-token-1-');
-    expect((await request('other-repository', start.jobId, 'acme/other')).error).toBeTruthy();
-    expect((await request('path-traversal', start.jobId, 'acme/example/../other')).error).toBeTruthy();
-    await runner.play(start.jobId, [new Stream().result()]);
-    expect((await request('finishing', start.jobId, 'acme/example')).token).toBeTruthy();
-    await runner.exit(start.jobId);
-    expect((await request('finished', start.jobId, 'acme/example')).error).toBeTruthy();
-    for (const path of [`/tasks/${task.id}`, `/agents/${agent.id}/jobs`, `/agents/${agent.id}/logs`])
-      expect(JSON.stringify((await admin.get(path)).body)).not.toContain(granted.token);
   });
 
   it('opens and updates PRs through MCP, adds the task footer, records the agent Revision, and creates a new PR after closure', async () => {

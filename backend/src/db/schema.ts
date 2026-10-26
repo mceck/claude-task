@@ -33,7 +33,7 @@ import {
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest } from '@claude-task/shared';
+import type { AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -540,13 +540,24 @@ export const rateLimitObservations = pgTable(
   (t) => [index('rate_limit_observations_credential_idx').on(t.credentialId, t.observedAt)],
 );
 
-/** Singleton write-only GitHub App credentials; environment configuration takes precedence. */
-export const gitSettings = pgTable('git_settings', {
-  id: text('id').primaryKey(),
-  appId: text('app_id').notNull(),
-  privateKeyCiphertext: text('private_key_ciphertext').notNull(),
+/** Git Connections stored from the UI. Environment connections (`env-github`, `env-gitlab`) aren't stored. */
+export const gitConnections = pgTable('git_connections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  provider: text('provider').$type<GitProviderKind>().notNull(),
+  name: text('name').notNull(),
+  /** GitHub: `{ appId }`. GitLab: `{ baseUrl, userId, username, expiresAt }` (identity cached from the token). */
+  config: jsonb('config').$type<GitConnectionConfig>().notNull(),
+  /** Write-only: a GitHub App private key or a GitLab token. */
+  secretCiphertext: text('secret_ciphertext').notNull(),
+  secretLast4: text('secret_last4'),
+  /** The last automatic token rotation failure, cleared by a successful one or a new token. */
+  rotationError: text('rotation_error'),
+  createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+export type GitConnectionConfig =
+  | { appId: string }
+  | { baseUrl: string; userId: number | null; username: string | null; expiresAt: string | null };
 
 /** Explicit preferences survive automatic-follow triggers. */
 export const taskPreferences = pgTable('task_preferences', {

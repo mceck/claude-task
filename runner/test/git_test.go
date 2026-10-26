@@ -236,6 +236,77 @@ func TestChangingARepositoryDoesNotReuseOldBranchCommits(t *testing.T) {
 	}
 }
 
+func TestMovingOriginToTheGitProxyKeepsClonesAndWorktrees(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	// A clone made before the Git Proxy: direct origin URL, no recorded identity.
+	runJob(t, b, "j1", "worktrees/proj/T-1", o.spec("task/t-1"), "")
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("uncommitted"), 0o644)
+	head := gitIn(t, home, wt, "rev-parse", "HEAD")
+
+	// The same Repository through another URL (the proxy), now with its identity.
+	alias := filepath.Join(t.TempDir(), "proxy.git")
+	if err := os.Symlink(o.bare, alias); err != nil {
+		t.Fatal(err)
+	}
+	spec := o.spec("task/t-1")
+	spec["cloneUrl"] = "file://" + alias
+	spec["repositoryId"] = "conn-1/42"
+	runJob(t, b, "j2", "worktrees/proj/T-1", spec, "touch setup-ran")
+	if data, _ := os.ReadFile(filepath.Join(wt, "wip.txt")); string(data) != "uncommitted" {
+		t.Fatal("uncommitted work lost when origin moved")
+	}
+	if _, err := os.Stat(filepath.Join(wt, "setup-ran")); err == nil {
+		t.Fatal("the existing worktree was recreated")
+	}
+	if gitIn(t, home, wt, "rev-parse", "HEAD") != head {
+		t.Fatal("worktree HEAD changed")
+	}
+	repo := filepath.Join(home, "repos/proj.git")
+	if gitIn(t, home, repo, "config", "--get", "remote.origin.url") != "file://"+alias {
+		t.Fatal("origin wasn't rewritten")
+	}
+	if gitIn(t, home, repo, "config", "--get", "claude-task.repository") != "conn-1/42" {
+		t.Fatal("repository identity not recorded")
+	}
+}
+
+func TestChangingTheRepositoryBehindTheSameProxyURL(t *testing.T) {
+	first := newOrigin(t)
+	second := newOrigin(t)
+	second.commit("different.txt", "different repository", "new repository")
+	gitIn(t, second.home, second.seed, "push", "--quiet", "origin", "main")
+	// One proxy URL per Project, whatever Repository is behind it.
+	proxy := filepath.Join(t.TempDir(), "proxy.git")
+	link := func(target string) {
+		os.Remove(proxy)
+		if err := os.Symlink(target, proxy); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := func(o *origin, id string) msg {
+		s := o.spec("task/t-1")
+		s["cloneUrl"] = "file://" + proxy
+		s["repositoryId"] = id
+		return s
+	}
+	b := newBackend(t)
+	home := startRunner(t, b)
+	link(first.bare)
+	runJob(t, b, "j1", "worktrees/proj/T-1", spec(first, "conn-1/1"), "")
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	link(second.bare)
+	runJob(t, b, "j2", "worktrees/proj/T-1", spec(second, "conn-1/2"), "")
+	if _, err := os.Stat(filepath.Join(wt, "different.txt")); err != nil {
+		t.Fatal("worktree still belongs to the previous repository")
+	}
+	if gitIn(t, home, wt, "rev-parse", "HEAD") != gitIn(t, second.home, second.bare, "rev-parse", "main") {
+		t.Fatal("old local task branch was reused for the new repository")
+	}
+}
+
 // Exercise the real runner/worktree flow with a local stand-in for the network
 // installer. The project setup must observe the files produced by mise.
 func TestMiseInstallBeforeProjectSetup(t *testing.T) {

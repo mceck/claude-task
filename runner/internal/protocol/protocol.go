@@ -3,7 +3,7 @@ package protocol
 
 import "encoding/json"
 
-const Version = 1
+const Version = 2
 
 type GitSpec struct {
 	CloneURL     string `json:"cloneUrl"`
@@ -13,6 +13,11 @@ type GitSpec struct {
 	RepoPath     string `json:"repoPath"`
 	CommitName   string `json:"commitName"`
 	CommitEmail  string `json:"commitEmail"`
+	// Token is the Git Proxy password (the Job token); the credential helper serves it.
+	Token string `json:"token"`
+	// RepositoryID identifies the linked Repository. The Git Proxy URL is the same for every
+	// Repository of a Project, so a change is detected by this, not by the URL.
+	RepositoryID string `json:"repositoryId"`
 }
 
 type ClaudeArgs struct {
@@ -30,10 +35,6 @@ type Attachment struct {
 
 // Incoming is any backend → runner message; only the fields of its type are set.
 type Incoming struct {
-	RequestID          string            `json:"requestId"`
-	Token              string            `json:"token"`
-	ExpiresAt          string            `json:"expiresAt"`
-	Error              string            `json:"error"`
 	Type               string            `json:"type"`
 	JobID              string            `json:"jobId"`
 	Seq                int64             `json:"seq"`

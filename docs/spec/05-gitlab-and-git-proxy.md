@@ -1,8 +1,18 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Spec 05 — GitLab support, Git Connections and the backend git proxy
+
+Implemented across backend, runner/helper, Base Image and frontend; see
+[configuration and verification](../git-integration.md). Verified on 2026-10-26 with:
+- the workspace typecheck;
+- the backend suite: the Git Proxy driven by the real `git` CLI against a `git http-backend` upstream, plus the GitHub/GitLab adapter and token-rotation tests;
+- the Runner black-box tests;
+- the Playwright Git flows;
+- a Base Image build.
+
+The live GitHub/GitLab contract tests and the real Docker/Claude push smoke are opt-in and were not run (no dedicated credentials).
 
 ## ADRs
 
@@ -134,7 +144,7 @@ New glossary terms (CONTEXT.md): **Git Connection**, **Git Proxy**. **Pull Reque
 
 ### Runner, credential helper and Base Image
 
-- `job.start.git.cloneUrl` becomes the proxy URL: `<AGENT_BACKEND_URL>/git/<projectId>.git`. The Runner already rewrites `remote.origin.url` of an existing bare clone at every Job, so existing clones and Worktrees migrate in place. Paths and Worktree state are unchanged.
+- `job.start.git.cloneUrl` becomes the proxy URL: `<AGENT_BACKEND_URL>/git/<projectId>.git`, with `git.token` (the Job token, the proxy password) and `git.repositoryId` (`<connectionId>/<providerRepoId>`). The proxy URL is the same whatever Repository the Project links, so the Runner records `repositoryId` in the bare clone (`claude-task.repository`) and discards the clone only when a different identity is recorded. A clone without a recorded identity (made before this change) is adopted: its origin is rewritten to the proxy URL and its Worktrees are kept. Paths and Worktree state are unchanged. The Runner Protocol version becomes 2.
 - The credential helper protocol (Unix socket, mode 0600) is unchanged for the helper itself. The Runner answers locally: for a `get` whose protocol, host, port and path match the current Job's `cloneUrl`, it returns username `claude-task` and the Job's token as password. Anything else, or no current Job, is denied. There is no backend round trip, token cache or expiry handling anymore.
 - `git.token_request` and `git.token` are removed from the Runner Protocol (shared types and both sides). The `https` + `github.com` checks are removed. `http` is accepted only when the Job's `cloneUrl` is itself `http`.
 - Base Image git config: the helper is configured globally (`credential.helper`, `credential.useHttpPath=true`) instead of only for github.com, because the backend host is runtime configuration. The helper's denial makes git fall back to its normal behavior for other hosts. Public repositories needing no auth are unaffected.

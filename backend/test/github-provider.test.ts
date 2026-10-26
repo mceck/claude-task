@@ -6,7 +6,7 @@ import { GitHubProvider } from '../src/git/github';
 
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const privateKey = keys.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
-const ref = { provider: 'github' as const, providerRepoId: '42', owner: 'acme', name: 'example' };
+const ref = { connectionId: 'c1', provider: 'github' as const, providerRepoId: '42', owner: 'acme', name: 'example' };
 const repo = {
   id: 42,
   owner: { login: 'acme' },
@@ -49,15 +49,20 @@ async function harness(overrides: (req: Request) => { status?: number; body: unk
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   stop = () => new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   const port = (server.address() as { port: number }).port;
-  const provider = new GitHubProvider(async () => ({ appId: '123', privateKey }), `http://127.0.0.1:${port}`);
+  const provider = new GitHubProvider('c1', async () => ({ appId: '123', privateKey }), `http://127.0.0.1:${port}`);
   return { provider, requests };
 }
 
 describe('GitHub App provider HTTP contract', () => {
+  it('validates through the installations list', async () => {
+    const { provider } = await harness();
+    expect(await provider.validate()).toEqual({ access: [{ label: 'acme', url: 'https://github.com/acme' }], expiresAt: null });
+  });
   it('signs App JWTs and lists installations/repositories without requesting write permissions', async () => {
     const { provider, requests } = await harness();
     expect(await provider.listAccessibleRepositories()).toEqual([
       {
+        connectionId: 'c1',
         provider: 'github',
         providerRepoId: '42',
         owner: 'acme',
@@ -74,15 +79,17 @@ describe('GitHub App provider HTTP contract', () => {
     expect(verify('RSA-SHA256', Buffer.from(`${head}.${payload}`), keys.publicKey, Buffer.from(signature!, 'base64url'))).toBe(true);
     expect(requests.find((r) => r.path.endsWith('/access_tokens'))!.body).toEqual({ permissions: { metadata: 'read' } });
   });
-  it('limits container tokens to one repository and contents:write, caches them and refreshes before expiry', async () => {
+  it('gives the Git Proxy tokens limited to one repository and contents:write, cached and refreshed before expiry', async () => {
     const { provider, requests } = await harness();
-    const first = await provider.issueRepositoryToken(ref);
-    expect((await provider.issueRepositoryToken(ref)).token).toBe(first.token);
+    const repository = { ...ref, defaultBranch: 'main', private: true, cloneUrl: repo.clone_url, webUrl: repo.html_url };
+    const first = await provider.gitUpstream(repository);
+    expect(first).toMatchObject({ url: repo.clone_url, username: 'x-access-token' });
+    expect((await provider.gitUpstream(repository)).password).toBe(first.password);
     const issued = () => requests.filter((r) => r.path.endsWith('/access_tokens'));
     expect(issued()).toHaveLength(1);
     expect(issued()[0]!.body).toEqual({ permissions: { contents: 'write' }, repository_ids: [42] });
     const time = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 56 * 60000);
-    expect((await provider.issueRepositoryToken(ref)).token).not.toBe(first.token);
+    expect((await provider.gitUpstream(repository)).password).not.toBe(first.password);
     expect(issued()).toHaveLength(2);
     time.mockRestore();
   });
@@ -124,7 +131,7 @@ describe('GitHub App provider HTTP contract', () => {
         return { body: { number: 5, html_url: 'https://github.com/acme/example/pull/5', state: 'closed', draft: false, merged_at: '2026-10-25T00:00:00Z' } };
     });
     const pr = await provider.upsertPullRequest(ref, { head: 'task/api-1-hello', base: 'main', title: 'Fix', body: 'Details', draft: false });
-    expect(pr.state).toBe('merged');
+    expect(pr).toMatchObject({ provider: 'github', state: 'merged' });
     expect(requests.find((r) => r.method === 'PATCH')!.body).toEqual({ title: 'Fix', body: 'Details' });
     expect(requests.find((r) => r.path.endsWith('/access_tokens'))!.body).toEqual({
       repository_ids: [42],

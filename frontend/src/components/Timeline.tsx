@@ -1,5 +1,5 @@
-import { PRIORITIES } from '@claude-task/shared';
-import type { Agent, AgentItem, Attachment, Comment, Tag, Priority, Revision, RevisionChange, Status, User } from '@claude-task/shared';
+import { PRIORITIES, pullRequestNoun, pullRequestRef } from '@claude-task/shared';
+import type { Agent, AgentItem, Attachment, Comment, GitProviderKind, Tag, Priority, Revision, RevisionChange, Status, User } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRightLeft, Bot, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { del, errorMessage, patch } from '../api/client';
+import { withProvider } from './Git';
 import { useAgents, useMe, useTimeline } from '../api/queries';
 import { putTimelineItem } from '../lib/cache';
 import { AgentItemView, LiveTurnView } from './AgentTimeline';
@@ -301,8 +302,10 @@ export function describeChange(c: RevisionChange, { statuses, tags, users, agent
         .join(' and ');
     }
     case 'pullRequest': {
-      const pr = c.after as { number: number; state: string; draft: boolean } | null;
-      return pr ? `updated pull request #${pr.number} (${pr.state === 'open' && pr.draft ? 'draft' : pr.state})` : 'removed the pull request link';
+      const after = c.after as { number: number; state: string; draft: boolean; provider?: GitProviderKind } | null;
+      if (!after) return `removed the ${pullRequestNoun(withProvider((c.before as { number: number; provider?: GitProviderKind } | null) ?? { number: 0 }).provider)} link`;
+      const pr = withProvider(after);
+      return `updated ${pullRequestNoun(pr.provider)} ${pullRequestRef(pr)} (${pr.state === 'open' && pr.draft ? 'draft' : pr.state})`;
     }
     case 'agentId': {
       const agent = (id: unknown) => agents.find((a) => a.id === id)?.name ?? 'a deleted agent';

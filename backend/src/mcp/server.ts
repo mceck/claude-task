@@ -130,7 +130,7 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
   );
 
   server.registerTool('open_pull_request', {
-    description: 'Open or update a pull request from your task branch. Commit and push the branch first. Never changes the task status.',
+    description: 'Open or update a pull request (a merge request on GitLab) from your task branch. Commit and push the branch first. Never changes the task status.',
     inputSchema: { title: z.string().trim().min(1).max(500), body: z.string().max(100000), draft: z.boolean().optional() },
   }, (args) => run(() => openPullRequest(ctx, scope, args)));
   return server;
