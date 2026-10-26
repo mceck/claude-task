@@ -452,10 +452,14 @@ describe('Stop, Retry and failures', () => {
     runner.accept(start.jobId);
     runner.sendJob({ type: 'job.stderr', jobId: start.jobId, chunk: 'panic: out of memory\n' });
     const s = new Stream();
-    await runner.play(start.jobId, [s.init()]);
+    await runner.play(start.jobId, [s.init(), s.toolUse('t1', 'Bash', { command: 'npm install' })]);
     await runner.exit(start.jobId, 137, 'SIGKILL');
-    const system = comments(await timeline(admin, task.id)).filter((c) => c.kind === 'system');
+    const items = await timeline(admin, task.id);
+    const system = comments(items).filter((c) => c.kind === 'system');
     expect(system.at(-1)!.body).toContain('stopped unexpectedly (signal SIGKILL)');
+    // The call that was running when it died doesn't stay "running" on the Timeline.
+    const activity = items.find((i) => i.type === 'agent' && i.item.payload.kind === 'activity');
+    expect(activity).toMatchObject({ item: { payload: { entries: [{ status: 'interrupted' }] } } });
     expect(await getSession(admin, task.id)).toMatchObject({ state: 'idle', lastJob: { state: 'failed' } });
   });
 });

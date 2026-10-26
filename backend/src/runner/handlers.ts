@@ -10,7 +10,7 @@ import { agents, comments, jobs, sessionEvents, sessions, tasks } from '../db/sc
 import { ACTIVE_JOB_STATES, getAgentRow } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
 import { applyProjection } from '../projection/apply';
-import { initialProjection, project } from '../projection/projector';
+import { endJob, initialProjection, project } from '../projection/projector';
 import type { ProjectionState } from '../projection/projector';
 import { attachComments, enqueue } from '../sessions/queue';
 
@@ -154,10 +154,12 @@ async function processJobMessage(
       const prev = (job.projection as ProjectionState | null) ?? initialProjection();
       const result = project(prev, parsed, { jobId: job.id, credentialName, receivedAt: stored.receivedAt.toISOString() });
       await applyProjection(tx, after, job, agent.credentialId, result.mutations, result.broadcasts);
-      await tx
-        .update(jobs)
-        .set({ projection: result.state as unknown as Record<string, unknown> })
-        .where(eq(jobs.id, job.id));
+      if (result.state !== prev) {
+        await tx
+          .update(jobs)
+          .set({ projection: result.state as unknown as Record<string, unknown> })
+          .where(eq(jobs.id, job.id));
+      }
       if (!agent.lastActivityAt || Date.now() - agent.lastActivityAt.getTime() > ACTIVITY_TOUCH_MS) {
         await tx.update(agents).set({ lastActivityAt: new Date() }).where(eq(agents.id, agent.id));
       }
@@ -177,6 +179,7 @@ async function processJobMessage(
       return;
 
     case 'job.exited': {
+      await settleProjection(tx, after, job);
       const crashed = job.state !== 'finishing' && !job.cancelRequested && msg.exitCode !== 0;
       const missing = /No conversation found/i.test(job.stderr);
       // `claude` created the session before dying without output: resume it from now on.
@@ -284,6 +287,7 @@ async function failJob(
  * it's interrupted, and the Session resumes from the front of the Queue.
  */
 export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow): Promise<void> {
+  await settleProjection(tx, after, job);
   await tx.update(jobs).set({ state: 'interrupted', finishedAt: new Date() }).where(eq(jobs.id, job.id));
   const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
   if (session?.state === 'running') {
@@ -303,6 +307,18 @@ export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow):
     ctx.scheduler.publishJob(job.id);
     ctx.scheduler.publishTask(job.taskId);
   });
+}
+
+/** The Job is over: its tool calls still waiting for a result never get one. */
+async function settleProjection(tx: Executor, after: AfterCommit, job: JobRow): Promise<void> {
+  if (!job.projection) return;
+  const result = endJob(job.projection as unknown as ProjectionState);
+  if (result.mutations.length === 0) return;
+  await applyProjection(tx, after, job, '', result.mutations, result.broadcasts);
+  await tx
+    .update(jobs)
+    .set({ projection: result.state as unknown as Record<string, unknown> })
+    .where(eq(jobs.id, job.id));
 }
 
 /** Puts a Job's Messages back in a Queue Entry at the front (they become `queued` again). */

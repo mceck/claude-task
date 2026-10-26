@@ -5,6 +5,7 @@ import {
   Brain,
   ChevronRight,
   CircleCheck,
+  CircleSlash,
   CircleX,
   FilePen,
   FileText,
@@ -173,6 +174,8 @@ function EntryView({ entry }: { entry: ActivityEntry }) {
         {entry.outcome && <span className={cn('shrink-0 font-mono text-[10px]', entry.status === 'error' ? 'text-red-400' : 'opacity-70')}>{entry.outcome}</span>}
         {entry.status === 'pending' ? (
           <Loader2 className="size-3 shrink-0 animate-spin" />
+        ) : entry.status === 'interrupted' ? (
+          <CircleSlash aria-label="interrupted" className="size-3 shrink-0 opacity-70" />
         ) : entry.status === 'error' ? (
           <CircleX aria-label="failed" className="size-3 shrink-0 text-red-400" />
         ) : (
