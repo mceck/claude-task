@@ -31,6 +31,9 @@ class Conversation extends StatefulWidget {
 class _ConversationState extends State<Conversation> {
   final _scroll = ScrollController();
   bool _atBottom = true, _loadingOlder = false, _readPending = false;
+
+  /// Hides Revisions (field changes), leaving only the conversation.
+  bool _hideChanges = true;
   String? _readId;
   String _stamp = '';
 
@@ -130,6 +133,7 @@ class _ConversationState extends State<Conversation> {
     if (_seen == null && c.timeline.isNotEmpty) {
       _seen = {for (final e in c.timeline) e.id};
     }
+    final rows = _rows(c);
     final live =
         c.liveThinking.isNotEmpty ||
         c.liveText.isNotEmpty ||
@@ -171,19 +175,19 @@ class _ConversationState extends State<Conversation> {
                         controller: _scroll,
                         reverse: true,
                         padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                        itemCount: c.timeline.length + 2,
+                        itemCount: rows.length + 2,
                         // Entries keep their element (open sections, loaded
                         // images, measured heights) when newer ones arrive.
                         findChildIndexCallback: (key) {
                           if (key is! ValueKey<String>) return null;
-                          final i = c.timeline.indexWhere(
-                            (e) => e.id == key.value,
+                          final i = rows.indexWhere(
+                            (r) => r.entry.id == key.value,
                           );
-                          return i < 0 ? null : c.timeline.length - i;
+                          return i < 0 ? null : rows.length - i;
                         },
                         itemBuilder: (context, index) {
                           if (index == 0) return _LiveTail(controller: c);
-                          if (index == c.timeline.length + 1) {
+                          if (index == rows.length + 1) {
                             return c.nextCursor == null
                                 ? const SizedBox(height: 12)
                                 : Center(
@@ -202,9 +206,9 @@ class _ConversationState extends State<Conversation> {
                                     ),
                                   );
                           }
-                          final i = c.timeline.length - index;
-                          final entry = c.timeline[i];
-                          final previous = i > 0 ? c.timeline[i - 1] : null;
+                          final i = rows.length - index;
+                          final entry = rows[i].entry;
+                          final previous = i > 0 ? rows[i - 1].entry : null;
                           final newDay =
                               previous == null ||
                               !_sameDay(previous.createdAt, entry.createdAt);
@@ -226,6 +230,7 @@ class _ConversationState extends State<Conversation> {
                                 TimelineTile(
                                   entry: entry,
                                   controller: c,
+                                  count: rows[i].count,
                                   grouped:
                                       !newDay && _continues(previous, entry),
                                 ),
@@ -234,6 +239,14 @@ class _ConversationState extends State<Conversation> {
                           );
                         },
                       ),
+              ),
+              Positioned(
+                top: 8,
+                right: 12,
+                child: _ChangesToggle(
+                  hidden: _hideChanges,
+                  onChanged: (v) => setState(() => _hideChanges = v),
+                ),
               ),
               Positioned(
                 bottom: 14,
@@ -300,6 +313,29 @@ class _ConversationState extends State<Conversation> {
   }
 
   /// Consecutive Comments by the same author within a few minutes share a header.
+  /// The Timeline as shown: Revisions hidden, or identical consecutive ones
+  /// by the same actor folded into the latest with a count.
+  List<({TimelineEntry entry, int count})> _rows(TaskController c) {
+    final rows = <({TimelineEntry entry, int count})>[];
+    String? lastText;
+    for (final e in c.timeline) {
+      if (e.type != 'revision') {
+        rows.add((entry: e, count: 1));
+        lastText = null;
+        continue;
+      }
+      if (_hideChanges) continue;
+      final text = revisionText(e, c);
+      if (lastText == text && rows.last.entry.author == e.author) {
+        rows[rows.length - 1] = (entry: e, count: rows.last.count + 1);
+      } else {
+        rows.add((entry: e, count: 1));
+      }
+      lastText = text;
+    }
+    return rows;
+  }
+
   static bool _continues(TimelineEntry? previous, TimelineEntry entry) =>
       previous != null &&
       previous.type == 'comment' &&
@@ -755,27 +791,71 @@ class _LiveTail extends StatelessWidget {
   }
 }
 
+/// A Revision's changes in words.
+String revisionText(TimelineEntry e, TaskController c) {
+  final described = [
+    for (final change in objects(e.content['changes']))
+      describeChange(change, c),
+  ];
+  return described.length < 2
+      ? described.join()
+      : '${described.take(described.length - 1).join(', ')} and ${described.last}';
+}
+
+/// Small overlay badge over the Timeline's top corner; it never takes a band of the chat.
+class _ChangesToggle extends StatelessWidget {
+  final bool hidden;
+  final ValueChanged<bool> onChanged;
+  const _ChangesToggle({required this.hidden, required this.onChanged});
+  @override
+  Widget build(BuildContext context) => Pressable(
+    key: const Key('hide-changes'),
+    onTap: () => onChanged(!hidden),
+    color: Palette.raised.withValues(alpha: .92),
+    border: Border.all(color: Palette.borderStrong),
+    borderRadius: BorderRadius.circular(99),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          hidden ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+          size: 12,
+          color: hidden ? Palette.fgMuted : Palette.fgSubtle,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          'Changes',
+          style: TextStyle(
+            fontSize: 11,
+            color: hidden ? Palette.fgMuted : Palette.fgSubtle,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class TimelineTile extends StatelessWidget {
   final TimelineEntry entry;
   final TaskController controller;
   final bool grouped;
+
+  /// How many identical Revisions this tile stands for.
+  final int count;
   const TimelineTile({
     super.key,
     required this.entry,
     required this.controller,
     this.grouped = false,
+    this.count = 1,
   });
   @override
   Widget build(BuildContext context) {
     final e = entry;
     if (e.type == 'revision') {
       final changes = objects(e.content['changes']);
-      final described = [
-        for (final c in changes) describeChange(c, controller),
-      ];
-      final text = described.length < 2
-          ? described.join()
-          : '${described.take(described.length - 1).join(', ')} and ${described.last}';
+      final text = revisionText(e, controller);
       return _Meta(
         icon: changeIcon(changes.firstOrNull?['field'] as String?),
         ringed: true,
@@ -790,6 +870,7 @@ class TimelineTile extends StatelessWidget {
                 ),
               ),
               TextSpan(text: ' $text'),
+              if (count > 1) TextSpan(text: ' ×$count'),
               TextSpan(text: ' · ${_CommentView._time(e.createdAt)}'),
             ],
           ),

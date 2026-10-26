@@ -1,5 +1,5 @@
 import { PRIORITIES, pullRequestNoun, pullRequestRef } from '@claude-task/shared';
-import type { Agent, AgentItem, Attachment, Comment, GitProviderKind, Tag, Priority, Revision, RevisionChange, Status, User } from '@claude-task/shared';
+import type { Agent, AgentItem, Attachment, Comment, GitProviderKind, Tag, Priority, Revision, RevisionChange, Status, TimelineItem, User } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRightLeft, Bot, ChevronDown, ChevronUp, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -18,6 +18,12 @@ import { AgentAvatar, DeliveryBadge } from './agents';
 import { ErrorText, Loading, Time, useConfirm, UserAvatar } from './common';
 import { Markdown } from './Markdown';
 
+interface Row {
+  item: TimelineItem;
+  /** How many identical Revisions this row stands for. */
+  count: number;
+}
+
 const CommentEditor = lazy(() => import('./RichMarkdownEditor').then((m) => ({ default: m.CommentEditor })));
 
 interface Lookups {
@@ -28,13 +34,14 @@ interface Lookups {
 }
 
 /** Comments and field changes of a Task, oldest first, with older pages loaded on demand. */
-export function Timeline({ taskId, ...rest }: { taskId: string } & Lookups) {
+export function Timeline({ taskId, hideChanges, ...rest }: { taskId: string; hideChanges: boolean } & Lookups) {
   const timeline = useTimeline(taskId);
   const agents = useAgents();
   const lookups = { ...rest, agents: agents.data ?? [] };
   if (timeline.isPending) return <Loading />;
   if (timeline.error) return <ErrorText>{errorMessage(timeline.error)}</ErrorText>;
   const items = timeline.data.pages.flatMap((p) => p.items).reverse();
+  const rows = fold(items, hideChanges, lookups);
 
   return (
     <ol aria-label="Timeline" className="relative space-y-3 before:absolute before:top-2 before:bottom-2 before:left-[15px] before:w-px before:bg-border">
@@ -46,18 +53,41 @@ export function Timeline({ taskId, ...rest }: { taskId: string } & Lookups) {
         </li>
       )}
       {items.length === 0 && <li className="relative pl-10 text-sm text-muted-foreground">No activity yet.</li>}
-      {items.map((item) =>
+      {rows.map(({ item, count }) =>
         item.type === 'comment' ? (
           <CommentItem key={item.id} comment={item.comment} taskId={taskId} agents={lookups.agents} />
         ) : item.type === 'agent' ? (
           <AgentItemView key={item.id} item={item.item as AgentItem} />
         ) : (
-          <RevisionItem key={item.id} revision={item.revision} {...lookups} />
+          <RevisionItem key={item.id} revision={item.revision} count={count} {...lookups} />
         ),
       )}
       <LiveTurnView taskId={taskId} />
     </ol>
   );
+}
+
+/** The Timeline as shown: Revisions hidden, or identical consecutive ones by the same actor folded into the latest. */
+function fold(items: TimelineItem[], hideChanges: boolean, lookups: Lookups): Row[] {
+  const rows: Row[] = [];
+  let lastText: string | null = null;
+  for (const item of items) {
+    if (item.type !== 'revision') {
+      rows.push({ item, count: 1 });
+      lastText = null;
+      continue;
+    }
+    if (hideChanges) continue;
+    const text = revisionText(item.revision, lookups);
+    const last = rows[rows.length - 1];
+    if (lastText === text && last?.item.type === 'revision' && last.item.revision.actor.id === item.revision.actor.id) {
+      rows[rows.length - 1] = { item, count: last.count + 1 };
+    } else {
+      rows.push({ item, count: 1 });
+    }
+    lastText = text;
+  }
+  return rows;
 }
 
 function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: string; agents: Agent[] }) {
@@ -296,7 +326,7 @@ const FIELD_ICON: Record<RevisionChange['field'], LucideIcon> = {
   pullRequest: ArrowRightLeft,
 };
 
-function RevisionItem({ revision, ...lookups }: { revision: Revision } & Lookups) {
+function RevisionItem({ revision, count, ...lookups }: { revision: Revision; count: number } & Lookups) {
   const Icon = FIELD_ICON[revision.changes[0]?.field ?? 'title'];
   return (
     <li className="relative flex items-start gap-3 pl-1.5 text-xs text-muted-foreground">
@@ -305,16 +335,16 @@ function RevisionItem({ revision, ...lookups }: { revision: Revision } & Lookups
       </span>
       <span className="pt-0.5 leading-relaxed">
         <span className="font-medium text-foreground/90">{revision.actor.displayName}</span>{' '}
-        {revision.changes.map((c, i) => (
-          <span key={c.field}>
-            {i > 0 && (i === revision.changes.length - 1 ? ' and ' : ', ')}
-            {describeChange(c, lookups)}
-          </span>
-        ))}{' '}
-        · <Time iso={revision.createdAt} />
+        {revisionText(revision, lookups)}
+        {count > 1 && ` ×${count}`} · <Time iso={revision.createdAt} />
       </span>
     </li>
   );
+}
+
+function revisionText(revision: Revision, lookups: Lookups): string {
+  const parts = revision.changes.map((c) => describeChange(c, lookups));
+  return parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
 export function describeChange(c: RevisionChange, { statuses, tags, users, agents = [] }: Lookups): string {

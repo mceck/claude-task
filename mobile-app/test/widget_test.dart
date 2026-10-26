@@ -132,6 +132,12 @@ void main() {
         revisionData('revision-1', [
           {'field': 'statusId', 'before': 'status-1', 'after': 'status-2'},
         ], position: '2'),
+        revisionData('revision-2', [
+          {'field': 'description', 'before': 'a', 'after': 'b'},
+        ], position: '3'),
+        revisionData('revision-3', [
+          {'field': 'description', 'before': 'b', 'after': 'c'},
+        ], position: '4'),
       ];
       h.api.session = {
         'state': 'idle',
@@ -143,10 +149,17 @@ void main() {
       await h.openTask();
       await tester.pumpWidget(TaskApp(controller: h.controller));
       await tester.pumpAndSettle();
+      // Changes are hidden by default.
+      expect(find.textContaining('moved it from Open to Closed'), findsNothing);
+      await tester.tap(find.byKey(const Key('hide-changes')));
+      await tester.pumpAndSettle();
       expect(
         find.textContaining('moved it from Open to Closed'),
         findsOneWidget,
       );
+      // Identical consecutive changes fold into one line.
+      expect(find.textContaining('updated the description'), findsOneWidget);
+      expect(find.textContaining('×2'), findsOneWidget);
       expect(find.text('waiting for messages'), findsOneWidget);
       await tester.tap(find.byKey(const Key('session-notify')));
       await tester.pumpAndSettle();

@@ -2,7 +2,7 @@ import { BranchLink, PullRequestBadge } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { Expand, FileText, Link2, MessagesSquare, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Expand, Eye, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
@@ -43,6 +43,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const navigate = useNavigate();
   const confirm = useConfirm();
   const layout = useTaskLayout();
+  const [hideChanges, setHideChanges] = useState(true);
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
   useTopic(task ? taskTopic(task.id) : null);
   useTopic(AGENTS_TOPIC);
@@ -146,8 +147,18 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
           <Title title={task.title} onSave={(title) => save({ title })} />
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1">
-          {session.data && (
-            <div className="mr-2 flex flex-wrap items-center gap-2">
+          <div className="mr-2 flex flex-wrap items-center gap-2">
+            <Button
+              size="xs"
+              variant="ghost"
+              className="text-muted-foreground"
+              aria-label="Hide changes"
+              aria-pressed={hideChanges}
+              onClick={() => setHideChanges((v) => !v)}
+            >
+              {hideChanges ? <EyeOff /> : <Eye />} Changes
+            </Button>
+            {session.data && <>
               <SessionChip session={session.data} />
               {session.data.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
               {task.agentId && session.data.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
@@ -159,8 +170,8 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                   <TooltipContent>The agent hasn’t seen the latest task changes</TooltipContent>
                 </Tooltip>
               )}
-            </div>
-          )}
+            </>}
+          </div>
           <div role="group" aria-label="Layout" className="flex items-center rounded-md border p-0.5">
             {FOCUS_OPTIONS.map(({ focus, label, icon }) => (
               <Tooltip key={focus}>
@@ -228,7 +239,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <Panel id={`${task.key}-activity`} main={layout.focus === 'activity'} open={layout.sidebarOpen} wide>
-          <TaskActivity task={task} statuses={statuses} tags={tags} users={people} session={session.data} />
+          <TaskActivity task={task} statuses={statuses} tags={tags} users={people} session={session.data} hideChanges={hideChanges} />
         </Panel>
         <Panel id={`${task.key}-details`} main={layout.focus === 'details'} open={layout.sidebarOpen} className={cn(layout.focus === 'details' && 'order-first')}>
           <section aria-label="Task details" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">

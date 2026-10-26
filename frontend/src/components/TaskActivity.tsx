@@ -12,10 +12,12 @@ interface Props {
   session: TaskSession | null | undefined;
   /** Shown just above the composer, e.g. the "agent hasn't seen the changes" notice. */
   notice?: ReactNode;
+  /** Leaves field changes off the Timeline. */
+  hideChanges: boolean;
 }
 
 /** The Task's conversation: the Timeline, following new output while at the bottom, with the composer docked below. */
-export function TaskActivity({ task, statuses, tags, users, session, notice }: Props) {
+export function TaskActivity({ task, statuses, tags, users, session, notice, hideChanges }: Props) {
   const draft = useCommentDraft();
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -43,7 +45,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice }: P
         }}
       >
         <div ref={content} className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
-          <Timeline taskId={task.id} statuses={statuses} tags={tags} users={users} />
+          <Timeline taskId={task.id} hideChanges={hideChanges} statuses={statuses} tags={tags} users={users} />
         </div>
       </div>
       <div className="shrink-0 border-t bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
