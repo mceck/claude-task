@@ -1,8 +1,8 @@
-import type { McpServer, McpValue, SaveMcpServerBody, Skill } from '@claude-task/shared';
+import type { McpServer, McpValue, Plugin, SaveMcpServerBody, Skill } from '@claude-task/shared';
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentMcpServers, agents, agentSkills, mcpServers, skills } from '../../db/schema';
+import { agentMcpServers, agentPlugins, agents, agentSkills, mcpServers, plugins, skills } from '../../db/schema';
 import type { StoredMcpValue } from '../../db/schema';
 import { badRequest } from '../../errors';
 import { last4 } from '../../secrets';
@@ -18,6 +18,9 @@ function publicValues(values: Record<string, StoredMcpValue>): Record<string, Mc
 }
 export function serializeMcp(row: typeof mcpServers.$inferSelect): McpServer {
   return { ...row, headers: publicValues(row.headers), env: publicValues(row.env), updatedAt: row.updatedAt.toISOString() };
+}
+export function serializePlugin(row: typeof plugins.$inferSelect): Plugin {
+  return { ...row, updatedAt: row.updatedAt.toISOString() };
 }
 export function storeMcpValues(
   ctx: AppContext,
@@ -53,9 +56,20 @@ export async function agentExtensions(db: Executor, agentId: string) {
     .innerJoin(mcpServers, eq(mcpServers.id, agentMcpServers.mcpServerId))
     .where(eq(agentMcpServers.agentId, agentId))
     .orderBy(asc(mcpServers.name));
-  return { skills: skillRows.map((r) => r.skill), mcpServers: serverRows.map((r) => r.server) };
+  const pluginRows = await db
+    .select({ plugin: plugins })
+    .from(agentPlugins)
+    .innerJoin(plugins, eq(plugins.id, agentPlugins.pluginId))
+    .where(eq(agentPlugins.agentId, agentId))
+    .orderBy(asc(plugins.name), asc(plugins.source));
+  return { skills: skillRows.map((r) => r.skill), mcpServers: serverRows.map((r) => r.server), plugins: pluginRows.map((r) => r.plugin) };
 }
-export async function setAssignments(db: Executor, agentId: string, skillIds?: string[], mcpServerIds?: string[]): Promise<void> {
+export interface Assignments {
+  skillIds?: string[];
+  mcpServerIds?: string[];
+  pluginIds?: string[];
+}
+export async function setAssignments(db: Executor, agentId: string, { skillIds, mcpServerIds, pluginIds }: Assignments): Promise<void> {
   if (skillIds !== undefined) {
     await db.delete(agentSkills).where(eq(agentSkills.agentId, agentId));
     if (skillIds.length) await db.insert(agentSkills).values(skillIds.map((skillId) => ({ agentId, skillId })));
@@ -64,7 +78,11 @@ export async function setAssignments(db: Executor, agentId: string, skillIds?: s
     await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, agentId));
     if (mcpServerIds.length) await db.insert(agentMcpServers).values(mcpServerIds.map((mcpServerId) => ({ agentId, mcpServerId })));
   }
-  if (skillIds !== undefined || mcpServerIds !== undefined) await invalidateExtensions(db, [agentId]);
+  if (pluginIds !== undefined) {
+    await db.delete(agentPlugins).where(eq(agentPlugins.agentId, agentId));
+    if (pluginIds.length) await db.insert(agentPlugins).values(pluginIds.map((pluginId) => ({ agentId, pluginId })));
+  }
+  if (skillIds !== undefined || mcpServerIds !== undefined || pluginIds !== undefined) await invalidateExtensions(db, [agentId]);
 }
 export async function invalidateExtensions(db: Executor, ids: string[]): Promise<void> {
   if (ids.length)

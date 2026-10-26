@@ -70,9 +70,9 @@ such as `pnpm install` or `bundle install` in the project setup script. Tool ins
 persist in the Agent Volume, and mise shims are on `PATH` for the runner, Claude and
 login shells, including when reusing a pre-existing home volume.
 
-## Shared skills and MCP servers
+## Shared skills, MCP servers and plugins
 
-Admins manage the catalog in **Skills & MCP**, then select entries in each Agent's
+Admins manage the catalog in **Extensions**, then select entries in each Agent's
 configuration. Skill import uses the pinned `skills` CLI (`skills add <source>
 --skill <names> --agent claude-code --copy --yes`) in a temporary project. Sources
 accept `owner/repo`, HTTPS repository/directory links and SSH Git URLs, as supported
@@ -103,6 +103,30 @@ always added by the platform. Install stdio servers and their runtimes in the
 Agent's Dockerfile; commands execute inside the Agent container. Running Jobs keep
 their original MCP configuration. Assigned catalog entries must be unassigned before
 they can be deleted. Duplicating an Agent copies its catalog assignments.
+
+Plugins are installed the normal Claude Code way, in user scope inside the Agent
+Container, so the platform stores only where each one comes from: a plugin name with
+a marketplace source (`owner/repo`, HTTPS or Git SSH URL), or `plugin@marketplace`
+for a marketplace the CLI already knows, such as `anthropic-plugin-directory`. The
+same synchronization step as skills runs, as the `agent` user and without a shell:
+`claude plugin install <name> [--marketplace <source>] --json` for each assigned
+plugin, then `claude plugin marketplace update` and `claude plugin update` (best
+effort: an unreachable marketplace keeps the installed version), then `claude plugin
+uninstall` for plugins the platform installed earlier and are no longer assigned.
+The platform's installs are recorded in
+`~/.local/share/claude-task/plugins.json`; plugins installed by hand are never
+uninstalled. **Update** in the catalog synchronizes every assigned Agent again,
+which installs the marketplace's latest version. Install failures (unknown plugin,
+unreachable marketplace) appear as the Agent's extension error and hold dispatch
+until a later synchronization succeeds.
+
+Marketplace sources must be public: inside the container git authenticates only
+through the Git Proxy for the active Job, which is not available while plugins
+synchronize. Plugins whose marketplace declares an install command are refused,
+because nobody can confirm it. Plugin options (`userConfig`) are not managed; a
+plugin that needs secrets should get them another way (e.g. an MCP catalog entry).
+Plugin hooks run like any hook from installed plugins: the platform still configures
+none and the Timeline is still projected from the stdout stream.
 
 Web and mobile comment composers complete `/` commands for the assigned Agent,
 with filtering and descriptions. Skills with `user-invocable: false` stay hidden.

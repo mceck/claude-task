@@ -120,6 +120,34 @@ test('manages MCP servers without exposing saved secrets', async ({ page }) => {
   await expect(server).toBeHidden();
 });
 
+test('adds a marketplace plugin to the catalog and assigns it to an agent', async ({ page }) => {
+  await login(page.request);
+  const agent = await seedAgent(page.request, 'Plugin agent');
+  const name = `design-${Date.now()}`;
+  await page.goto('/admin/extensions');
+  await page.getByLabel('Plugin name').fill(name);
+  await page.getByRole('button', { name: 'Add plugin', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('plugin@marketplace');
+  await page.getByLabel('Marketplace source').fill('anthropics/claude-plugins-official');
+  await page.getByLabel('Plugin description').fill('Design workflows');
+  await page.getByRole('button', { name: 'Add plugin', exact: true }).click();
+  const plugin = page.locator('article').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  await expect(plugin).toContainText('anthropics/claude-plugins-official');
+
+  await page.goto(`/agents/${agent.id}`);
+  await page.getByRole('tab', { name: 'Configuration' }).click();
+  await page.getByRole('checkbox', { name: new RegExp(`^${name}`) }).check();
+  await page.getByRole('button', { name: 'Save agent', exact: true }).click();
+  await expect(page.getByText('Agent saved', { exact: true })).toBeVisible();
+  const saved = (await (await page.request.get(`/api/v1/agents/${agent.id}`)).json()).agent;
+  expect(saved.pluginIds).toHaveLength(1);
+
+  await page.goto('/admin/extensions');
+  await plugin.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Unassign this plugin');
+  await expect(plugin).toBeVisible();
+});
+
 test('creates and rotates write-only credentials, configures an agent and reads build/container logs', async ({ page }) => {
   await login(page.request);
   await page.goto('/admin/credentials');

@@ -168,138 +168,134 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="space-y-6 px-6 py-5">
-          <Title title={task.title} onSave={(title) => save({ title })} />
+      <TaskActivity task={task} statuses={statuses} tags={tags} users={people} session={session.data} onSessionAction={sessionAction}>
+        <Title title={task.title} onSave={(title) => save({ title })} />
 
-          <div className="grid grid-cols-[7.5rem_1fr] items-center gap-x-4 gap-y-2.5 rounded-xl border bg-muted/20 p-4 text-sm">
-            <PropLabel>Status</PropLabel>
-            <Select value={task.statusId} onValueChange={moveTo}>
-              <SelectTrigger size="sm" aria-label="Status" className="w-fit min-w-40">
-                <SelectValue />
-              </SelectTrigger>
+        <div className="grid grid-cols-[7.5rem_1fr] items-center gap-x-4 gap-y-2.5 rounded-xl border bg-muted/20 p-4 text-sm">
+          <PropLabel>Status</PropLabel>
+          <Select value={task.statusId} onValueChange={moveTo}>
+            <SelectTrigger size="sm" aria-label="Status" className="w-fit min-w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {statuses.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  <StatusDot color={s.color} className="size-2" /> {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <PropLabel>Priority</PropLabel>
+          <Select value={task.priority} onValueChange={(p) => save({ priority: p as Priority })}>
+            <SelectTrigger size="sm" aria-label="Priority" className="w-fit min-w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PRIORITIES.map((p) => (
+                <SelectItem key={p} value={p}>
+                  <PriorityIcon priority={p} /> {PRIORITY_STYLE[p].label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <PropLabel>Assignees</PropLabel>
+          <MultiPick
+            label="Assignees"
+            highlight={false}
+            options={people
+              .filter((u) => u.active || task.assigneeIds.includes(u.id))
+              .map((u) => ({ value: u.id, label: u.displayName, icon: <UserAvatar user={u} size="xs" /> }))}
+            selected={task.assigneeIds}
+            onChange={(assigneeIds) => save({ assigneeIds })}
+            trigger={
+              <button type="button" aria-label="Assign" className="flex min-h-7 w-fit flex-wrap items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
+                {task.assigneeIds.length === 0 && <span className="text-muted-foreground">Unassigned</span>}
+                {task.assigneeIds.map((id) => {
+                  const u = people.find((p) => p.id === id);
+                  return (
+                    <span key={id} className="flex items-center gap-1.5">
+                      <UserAvatar user={u ?? { id, displayName: '?' }} size="xs" /> {u?.displayName}
+                    </span>
+                  );
+                })}
+                <Plus className="size-3.5 text-muted-foreground" />
+              </button>
+            }
+          />
+
+          <PropLabel>Agent</PropLabel>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={task.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
+              <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {statuses.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    <StatusDot color={s.color} className="size-2" /> {s.name}
-                  </SelectItem>
+                <SelectItem value="none">No agent</SelectItem>
+                {(agents.data ?? []).filter((a) => a.enabled || a.id === task.agentId).map((a) => (
+                  <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-
-            <PropLabel>Priority</PropLabel>
-            <Select value={task.priority} onValueChange={(p) => save({ priority: p as Priority })}>
-              <SelectTrigger size="sm" aria-label="Priority" className="w-fit min-w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PRIORITIES.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    <PriorityIcon priority={p} /> {PRIORITY_STYLE[p].label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <PropLabel>Assignees</PropLabel>
-            <MultiPick
-              label="Assignees"
-              highlight={false}
-              options={people
-                .filter((u) => u.active || task.assigneeIds.includes(u.id))
-                .map((u) => ({ value: u.id, label: u.displayName, icon: <UserAvatar user={u} size="xs" /> }))}
-              selected={task.assigneeIds}
-              onChange={(assigneeIds) => save({ assigneeIds })}
-              trigger={
-                <button type="button" aria-label="Assign" className="flex min-h-7 w-fit flex-wrap items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                  {task.assigneeIds.length === 0 && <span className="text-muted-foreground">Unassigned</span>}
-                  {task.assigneeIds.map((id) => {
-                    const u = people.find((p) => p.id === id);
-                    return (
-                      <span key={id} className="flex items-center gap-1.5">
-                        <UserAvatar user={u ?? { id, displayName: '?' }} size="xs" /> {u?.displayName}
-                      </span>
-                    );
-                  })}
-                  <Plus className="size-3.5 text-muted-foreground" />
-                </button>
-              }
-            />
-
-            <PropLabel>Agent</PropLabel>
-            <div className="flex flex-wrap items-center gap-2">
-              <Select value={task.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
-                <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No agent</SelectItem>
-                  {(agents.data ?? []).filter((a) => a.enabled || a.id === task.agentId).map((a) => (
-                    <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {session.data && <SessionChip session={session.data} />}
-              {session.data?.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
-              {task.agentId && session.data?.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
-            </div>
-
-            <PropLabel>Tags</PropLabel>
-            <MultiPick
-              label="Tags"
-              createNoun="tag"
-              onCreate={async (name) => {
-                try {
-                  const { tag } = await post<{ tag: Tag }>(`/projects/${task.projectId}/tags`, { name, color: nextTagColor(tags.length) });
-                  // The WebSocket event updates the project's tag list; select the new tag right away.
-                  await save({ tagIds: [...task.tagIds, tag.id] });
-                } catch (err) {
-                  toast.error('Couldn’t create the tag', { description: errorMessage(err) });
-                }
-              }}
-              highlight={false}
-              options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
-              selected={task.tagIds}
-              onChange={(tagIds) => save({ tagIds })}
-              trigger={
-                <button type="button" aria-label="Edit tags" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                  {task.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
-                  {task.tagIds.map((id) => {
-                    const l = tags.find((x) => x.id === id);
-                    return l ? <TagChip key={id} name={l.name} color={l.color} /> : null;
-                  })}
-                  <Plus className="size-3.5 text-muted-foreground" />
-                </button>
-              }
-            />
-
-            <PropLabel>Created</PropLabel>
-            <span className="flex items-center gap-2 px-1.5 text-muted-foreground">
-              <UserAvatar name={task.createdBy.displayName} user={task.createdBy.id ? { id: task.createdBy.id, displayName: task.createdBy.displayName } : undefined} size="xs" />
-              <span className="text-foreground">{task.createdBy.displayName}</span> · <Time iso={task.createdAt} />
-            </span>
-            <PropLabel>Updated</PropLabel>
-            <span className="px-1.5 text-muted-foreground">
-              <Time iso={task.updatedAt} />
-            </span>
+            {session.data && <SessionChip session={session.data} />}
+            {session.data?.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
+            {task.agentId && session.data?.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
           </div>
 
-          {(task.branchName || task.pullRequest) && <section aria-label="Task code" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
-            {task.branchName && task.branchUrl && <BranchLink name={task.branchName} url={task.branchUrl} />}
-            {task.pullRequest && <PullRequestBadge pr={task.pullRequest} />}
-          </section>}
-          <Description taskId={task.id} description={task.description} onSave={(description) => save({ description })} />
+          <PropLabel>Tags</PropLabel>
+          <MultiPick
+            label="Tags"
+            createNoun="tag"
+            onCreate={async (name) => {
+              try {
+                const { tag } = await post<{ tag: Tag }>(`/projects/${task.projectId}/tags`, { name, color: nextTagColor(tags.length) });
+                // The WebSocket event updates the project's tag list; select the new tag right away.
+                await save({ tagIds: [...task.tagIds, tag.id] });
+              } catch (err) {
+                toast.error('Couldn’t create the tag', { description: errorMessage(err) });
+              }
+            }}
+            highlight={false}
+            options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
+            selected={task.tagIds}
+            onChange={(tagIds) => save({ tagIds })}
+            trigger={
+              <button type="button" aria-label="Edit tags" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
+                {task.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
+                {task.tagIds.map((id) => {
+                  const l = tags.find((x) => x.id === id);
+                  return l ? <TagChip key={id} name={l.name} color={l.color} /> : null;
+                })}
+                <Plus className="size-3.5 text-muted-foreground" />
+              </button>
+            }
+          />
 
-          {session.data?.unseenChanges && (
-            <div role="status" className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-              <span className="flex-1">The agent hasn’t seen the latest task changes.</span>
-              <Button size="sm" variant="outline" onClick={() => sessionAction('notify')}>Notify agent</Button>
-            </div>
-          )}
-
-          <Separator />
-
-          <TaskActivity task={task} statuses={statuses} tags={tags} users={people} session={session.data} onSessionAction={sessionAction} />
+          <PropLabel>Created</PropLabel>
+          <span className="flex items-center gap-2 px-1.5 text-muted-foreground">
+            <UserAvatar name={task.createdBy.displayName} user={task.createdBy.id ? { id: task.createdBy.id, displayName: task.createdBy.displayName } : undefined} size="xs" />
+            <span className="text-foreground">{task.createdBy.displayName}</span> · <Time iso={task.createdAt} />
+          </span>
+          <PropLabel>Updated</PropLabel>
+          <span className="px-1.5 text-muted-foreground">
+            <Time iso={task.updatedAt} />
+          </span>
         </div>
-      </div>
+
+        {(task.branchName || task.pullRequest) && <section aria-label="Task code" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+          {task.branchName && task.branchUrl && <BranchLink name={task.branchName} url={task.branchUrl} />}
+          {task.pullRequest && <PullRequestBadge pr={task.pullRequest} />}
+        </section>}
+        <Description taskId={task.id} description={task.description} onSave={(description) => save({ description })} />
+
+        {session.data?.unseenChanges && (
+          <div role="status" className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+            <span className="flex-1">The agent hasn’t seen the latest task changes.</span>
+            <Button size="sm" variant="outline" onClick={() => sessionAction('notify')}>Notify agent</Button>
+          </div>
+        )}
+
+        <Separator />
+      </TaskActivity>
     </div>
   );
 }

@@ -374,6 +374,13 @@ export const mcpServers = pgTable('mcp_servers', {
   env: jsonb('env').$type<Record<string, StoredMcpValue>>().notNull().default({}),
   updatedAt: updatedAt(),
 });
+export const plugins = pgTable('plugins', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  source: text('source').notNull().default(''),
+  description: text('description').notNull().default(''),
+  updatedAt: updatedAt(),
+}, (t) => [uniqueIndex('plugins_source_name_idx').on(t.source, t.name)]);
 export const agentSkills = pgTable('agent_skills', {
   agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
   skillId: uuid('skill_id').notNull().references(() => skills.id, { onDelete: 'restrict' }),
@@ -382,6 +389,10 @@ export const agentMcpServers = pgTable('agent_mcp_servers', {
   agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
   mcpServerId: uuid('mcp_server_id').notNull().references(() => mcpServers.id, { onDelete: 'restrict' }),
 }, (t) => [primaryKey({ columns: [t.agentId, t.mcpServerId] })]);
+export const agentPlugins = pgTable('agent_plugins', {
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
+  pluginId: uuid('plugin_id').notNull().references(() => plugins.id, { onDelete: 'restrict' }),
+}, (t) => [primaryKey({ columns: [t.agentId, t.pluginId] })]);
 
 export const projectEnvVars = pgTable(
   'project_env_vars',

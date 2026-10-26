@@ -16,6 +16,13 @@ export class FakeRuntime implements AgentRuntime {
   async configureSkills(agentId: string, revision: number, skills: import('@claude-task/shared').InstalledSkill[]): Promise<void> {
     this.configuredSkills.set(agentId, { revision, skills });
   }
+  readonly configuredPlugins = new Map<string, import('@claude-task/shared').InstalledPlugin[]>();
+  /** The next plugin synchronizations fail with this message while it's set. */
+  pluginFailure: string | null = null;
+  async configurePlugins(agentId: string, plugins: import('@claude-task/shared').InstalledPlugin[]): Promise<void> {
+    if (this.pluginFailure) throw new Error(this.pluginFailure);
+    this.configuredPlugins.set(agentId, plugins);
+  }
   readonly containers = new Map<string, FakeContainer>();
   readonly removed: string[] = [];
   /** Next builds' outcomes, consumed in order; default success. */

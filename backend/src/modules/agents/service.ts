@@ -3,7 +3,7 @@ import type { Agent, AgentRef, AgentState, AgentBuild, Job, QueueEntryKind, Task
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentBuilds, agentMcpServers, agents, agentSkills, credentials, jobs, projects, queueEntries, skills, tasks, turns } from '../../db/schema';
+import { agentBuilds, agentMcpServers, agentPlugins, agents, agentSkills, credentials, jobs, projects, queueEntries, skills, tasks, turns } from '../../db/schema';
 import { notFound } from '../../errors';
 
 export type AgentRow = typeof agents.$inferSelect;
@@ -70,6 +70,7 @@ export async function loadAgents(db: Executor, isConnected: (agentId: string) =>
   const assignedSkills = await db.select({ agentId: agentSkills.agentId, id: skills.id, name: skills.name, description: skills.description, userInvocable: skills.userInvocable })
     .from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId)).where(inArray(agentSkills.agentId, agentIds)).orderBy(asc(skills.name));
   const assignedMcp = await db.select().from(agentMcpServers).where(inArray(agentMcpServers.agentId, agentIds));
+  const assignedPlugins = await db.select().from(agentPlugins).where(inArray(agentPlugins.agentId, agentIds));
 
   return rows.map(({ agent: a, credentialName }) => {
     const job = active.find((j) => j.agentId === a.id);
@@ -79,6 +80,7 @@ export async function loadAgents(db: Executor, isConnected: (agentId: string) =>
       ...agentRef(a),
       skillIds: assignedSkills.filter((s) => s.agentId === a.id).map((s) => s.id),
       mcpServerIds: assignedMcp.filter((s) => s.agentId === a.id).map((s) => s.mcpServerId),
+      pluginIds: assignedPlugins.filter((p) => p.agentId === a.id).map((p) => p.pluginId),
       skillCommands: assignedSkills.filter((s) => s.agentId === a.id && s.userInvocable).map(({ name, description }) => ({ name, description })),
       extensionsPending: a.extensionsRevision !== a.configuredExtensionsRevision,
       extensionsError: a.extensionsError,

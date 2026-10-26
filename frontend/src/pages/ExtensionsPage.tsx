@@ -1,4 +1,4 @@
-import { saveMcpServerBody } from '@claude-task/shared';
+import { saveMcpServerBody, savePluginBody } from '@claude-task/shared';
 import type { McpServer, SaveMcpServerBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { api, del, errorMessage, post } from '../api/client';
-import { keys, useMe, useMcpServers, useSkills } from '../api/queries';
+import { keys, useMe, useMcpServers, usePlugins, useSkills } from '../api/queries';
 import { Field } from '../components/AgentForm';
 import { ErrorText, Loading } from '../components/common';
 
@@ -17,13 +17,15 @@ export function ExtensionsPage() {
 function ExtensionCatalog() {
   const skills = useSkills(),
     mcp = useMcpServers(),
+    plugins = usePlugins(),
     qc = useQueryClient();
   const [source, setSource] = useState('');
   const [names, setNames] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<McpServer | null | undefined>(undefined);
-  const refresh = () => Promise.all([keys.skills, keys.mcpServers, keys.agents].map((queryKey) => qc.invalidateQueries({ queryKey })));
+  const [plugin, setPlugin] = useState({ name: '', source: '', description: '' });
+  const refresh = () => Promise.all([keys.skills, keys.mcpServers, keys.plugins, keys.agents].map((queryKey) => qc.invalidateQueries({ queryKey })));
   const act = async (work: () => Promise<unknown>) => {
     setBusy(true);
     setError('');
@@ -39,10 +41,12 @@ function ExtensionCatalog() {
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-8 py-8">
       <header>
-        <h1 className="text-2xl font-semibold">Skills & MCP</h1>
+        <h1 className="text-2xl font-semibold">Extensions</h1>
         <p className="text-sm text-muted-foreground">Shared catalog. Assign entries in each agent’s configuration.</p>
       </header>
-      <ErrorText>{error || (skills.error && errorMessage(skills.error)) || (mcp.error && errorMessage(mcp.error))}</ErrorText>
+      <ErrorText>
+        {error || (skills.error && errorMessage(skills.error)) || (mcp.error && errorMessage(mcp.error)) || (plugins.error && errorMessage(plugins.error))}
+      </ErrorText>
       <section className="space-y-4">
         <h2 className="text-lg font-medium">Skills</h2>
         <form
@@ -128,6 +132,64 @@ function ExtensionCatalog() {
               Edit
             </Button>
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(() => del(`/mcp-servers/${server.id}`))}>
+              Delete
+            </Button>
+          </article>
+        ))}
+      </section>
+      <section className="space-y-4">
+        <h2 className="text-lg font-medium">Plugins</h2>
+        <form
+          className="space-y-3 rounded-xl border p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const result = savePluginBody.safeParse(plugin);
+            if (!result.success) return setError(result.error.issues.map((i) => i.message).join('; '));
+            void act(async () => {
+              await post('/plugins', result.data);
+              setPlugin({ name: '', source: '', description: '' });
+            });
+          }}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Plugin" hint="The plugin's name, or plugin@marketplace for a marketplace Claude Code already knows.">
+              <Input
+                aria-label="Plugin name"
+                value={plugin.name}
+                onChange={(e) => setPlugin({ ...plugin, name: e.target.value })}
+                placeholder="superpowers@anthropic-plugin-directory"
+                required
+              />
+            </Field>
+            <Field label="Marketplace source" hint="owner/repo, HTTPS or Git SSH URL. Leave empty with plugin@marketplace.">
+              <Input
+                aria-label="Marketplace source"
+                value={plugin.source}
+                onChange={(e) => setPlugin({ ...plugin, source: e.target.value })}
+                placeholder="anthropics/claude-plugins-official"
+              />
+            </Field>
+          </div>
+          <Field label="Description">
+            <Input aria-label="Plugin description" value={plugin.description} onChange={(e) => setPlugin({ ...plugin, description: e.target.value })} />
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            Agents install plugins with claude plugin install, from public marketplaces, before their next job. Update installs the marketplace’s
+            latest version on every assigned agent.
+          </p>
+          <Button disabled={busy}>{busy ? 'Working…' : 'Add plugin'}</Button>
+        </form>
+        {plugins.data?.map((item) => (
+          <article key={item.id} className="flex items-start gap-3 rounded-lg border p-4">
+            <div className="min-w-0 flex-1">
+              <h3 className="font-medium">{item.name}</h3>
+              {item.description && <p className="text-sm text-muted-foreground">{item.description}</p>}
+              {item.source && <p className="mt-1 break-all text-xs text-muted-foreground">{item.source}</p>}
+            </div>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => void act(() => post(`/plugins/${item.id}/update`, {}))}>
+              Update
+            </Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => void act(() => del(`/plugins/${item.id}`))}>
               Delete
             </Button>
           </article>

@@ -24,6 +24,11 @@ export interface BuildResult {
 export interface AgentRuntime {
   /** Synchronizes platform-managed ~/.claude/skills entries; preserves all other home files. */
   configureSkills(agentId: string, revision: number, skills: import('@claude-task/shared').InstalledSkill[]): Promise<void>;
+  /**
+   * Installs (and updates) these plugins with the container's `claude plugin` and uninstalls the
+   * ones the platform installed before; plugins installed by hand are left alone.
+   */
+  configurePlugins(agentId: string, plugins: import('@claude-task/shared').InstalledPlugin[]): Promise<void>;
   /** Base Image version: changes with the pinned Claude Code version and the Runner. */
   readonly baseVersion: string;
   /** Builds `claude-task/agent-base:<baseVersion>` if it's missing. */

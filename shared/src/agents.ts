@@ -51,6 +51,7 @@ export interface AgentRef {
 export interface Agent extends AgentRef {
   skillIds: string[];
   mcpServerIds: string[];
+  pluginIds: string[];
   skillCommands: import('./extensions').SkillCommand[];
   extensionsPending: boolean;
   extensionsError: string | null;

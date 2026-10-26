@@ -116,7 +116,7 @@ export function BoardPage() {
         )}
       </div>
       {openTask && (
-        <aside className="flex w-[min(720px,50vw)] shrink-0 flex-col border-l bg-card shadow-2xl shadow-black/30 animate-in slide-in-from-right-8 fade-in-0 duration-200">
+        <aside className="flex min-h-0 w-[min(720px,50vw)] shrink-0 flex-col border-l bg-card shadow-2xl shadow-black/30 animate-in slide-in-from-right-8 fade-in-0 duration-200">
           <TaskDetail key={openTask} taskKey={openTask} onClose={() => setParam('task', null)} />
         </aside>
       )}

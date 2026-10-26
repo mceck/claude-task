@@ -135,6 +135,9 @@ A Project-defined script that prepares a newly created Worktree (e.g. installing
 **Agent Instructions**:
 Guidance given to every Agent working on a Project, on top of the repository's own conventions.
 
+**Plugin**:
+A Claude Code plugin from a marketplace, kept in the platform's catalog and installed into the Agent Containers of the Agents it's assigned to. Unlike a catalog Skill, the platform stores only where to install it from, not its files.
+
 **Task Tools**:
 The actions an Agent can take on Tasks from inside its Session: reading, editing and moving its own Task, reading other Tasks in the Project, creating new ones, and opening a pull request.
 

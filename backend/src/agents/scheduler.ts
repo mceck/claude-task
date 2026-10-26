@@ -260,10 +260,11 @@ export class Scheduler {
         try {
           const extensions = await agentExtensions(tx, agentId);
           await runtime.configureSkills(agentId, current.extensionsRevision, extensions.skills.map(({ name, files }) => ({ name, files })));
+          await runtime.configurePlugins(agentId, extensions.plugins.map(({ name, source }) => ({ name, source })));
           await tx.update(agents).set({ configuredExtensionsRevision: current.extensionsRevision, extensionsError: null }).where(eq(agents.id, agentId));
           return true;
         } catch (err) {
-          await tx.update(agents).set({ extensionsError: (err instanceof Error ? err.message : 'Could not configure skills').slice(0, 2000) }).where(eq(agents.id, agentId));
+          await tx.update(agents).set({ extensionsError: (err instanceof Error ? err.message : 'Could not configure skills and plugins').slice(0, 2000) }).where(eq(agents.id, agentId));
           return false;
         }
       });

@@ -37,6 +37,7 @@ const UNIQUE_MESSAGES: Record<string, string> = {
   credentials_name_unique: 'A credential with this name already exists',
   agents_name_unique: 'An agent with this name already exists',
   project_env_vars_name_unique: 'This variable already exists in the project',
+  plugins_source_name_idx: 'This plugin is already in the catalog',
 };
 
 /** Turns Postgres constraint errors into client errors; returns null for anything else. */

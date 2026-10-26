@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BASE_IMAGE } from '@claude-task/shared';
+import type { InstalledPlugin } from '@claude-task/shared';
 import Docker from 'dockerode';
 import { pack } from 'tar-stream';
 import type { AgentsConfig } from '../config';
@@ -106,6 +107,44 @@ export class DockerRuntime implements AgentRuntime {
     if (result.ExitCode !== 0) throw new Error(demux(Buffer.concat(chunks)).trim() || 'Could not configure agent skills');
   }
 
+  async configurePlugins(agentId: string, plugins: InstalledPlugin[]): Promise<void> {
+    const container = this.docker.getContainer(containerName(agentId));
+    // Arguments go straight to `claude` (no shell), so names and sources can't inject anything.
+    const claude = async (...args: string[]) => {
+      const { stdout, stderr } = await execIn(container, ['claude', 'plugin', ...args]);
+      const line = stdout.trim().split('\n').pop() ?? '';
+      try {
+        return JSON.parse(line) as { outcome?: string; pluginId?: string; message?: string; failureCode?: string };
+      } catch {
+        throw new Error(`claude plugin ${args[0]} failed: ${(stderr || stdout).trim().slice(0, 500) || 'no output'}`);
+      }
+    };
+    const state = await execIn(container, ['cat', PLUGIN_STATE]);
+    let managed: string[] = state.exitCode === 0 ? parseIds(state.stdout) : [];
+    const listed = await execIn(container, ['claude', 'plugin', 'list', '--json']);
+    if (listed.exitCode !== 0) throw new Error(`claude plugin list failed: ${(listed.stderr || listed.stdout).trim().slice(0, 500)}`);
+    const unmanaged = new Set(parseIds(listed.stdout, 'id').filter((id) => !managed.includes(id)));
+    const wanted = new Set<string>();
+    try {
+      for (const plugin of plugins) {
+        const result = await claude('install', plugin.name, ...(plugin.source ? ['--marketplace', plugin.source] : []), '--json');
+        if (result.outcome !== 'ok' || !result.pluginId) throw new Error(`Plugin ${plugin.name}: ${result.message ?? 'install failed'}`);
+        wanted.add(result.pluginId);
+        if (!unmanaged.has(result.pluginId) && !managed.includes(result.pluginId)) managed.push(result.pluginId);
+      }
+      // Best effort: an unreachable marketplace keeps the installed version.
+      for (const marketplace of new Set([...wanted].map((id) => id.slice(id.indexOf('@') + 1)))) await claude('marketplace', 'update', marketplace, '--json').catch(() => {});
+      for (const id of wanted) await claude('update', id, '--json').catch(() => {});
+      for (const id of managed.filter((id) => !wanted.has(id))) {
+        const result = await claude('uninstall', id, '--json');
+        if (result.outcome !== 'ok' && result.failureCode !== 'not_installed') throw new Error(`Plugin ${id}: ${result.message ?? 'uninstall failed'}`);
+        managed = managed.filter((m) => m !== id);
+      }
+    } finally {
+      await container.putArchive(await stateArchive(managed), { path: AGENT_HOME });
+    }
+  }
+
   async removeAgent(agentId: string): Promise<void> {
     await this.removeContainer(agentId);
     await this.pruneImages(agentId, null);
@@ -184,6 +223,77 @@ function ignore(status: number) {
 }
 
 /** Docker multiplexes stdout and stderr in 8-byte-header frames when there's no TTY. */
+/** The plugin IDs the platform installed, so it never uninstalls one installed by hand. */
+const PLUGIN_STATE_DIR = '.local/share/claude-task';
+const PLUGIN_STATE = `${AGENT_HOME}/${PLUGIN_STATE_DIR}/plugins.json`;
+const PLUGIN_COMMAND_TIMEOUT_MS = 5 * 60_000;
+
+function parseIds(json: string, key?: string): string[] {
+  try {
+    const value = JSON.parse(json) as unknown;
+    if (!Array.isArray(value)) return [];
+    return value.map((v) => (key ? (v as Record<string, unknown>)?.[key] : v)).filter((v): v is string => typeof v === 'string');
+  } catch {
+    return [];
+  }
+}
+
+async function stateArchive(ids: string[]): Promise<Buffer> {
+  const tar = pack();
+  const chunks: Buffer[] = [];
+  tar.on('data', (chunk) => chunks.push(Buffer.from(chunk as Uint8Array)));
+  const done = new Promise<void>((resolve, reject) => {
+    tar.on('end', resolve);
+    tar.on('error', reject);
+  });
+  const parts = PLUGIN_STATE_DIR.split('/');
+  for (let i = 1; i <= parts.length; i++) tar.entry({ name: parts.slice(0, i).join('/'), type: 'directory', uid: 1000, gid: 1000, mode: 0o755 });
+  tar.entry({ name: `${PLUGIN_STATE_DIR}/plugins.json`, uid: 1000, gid: 1000, mode: 0o644 }, JSON.stringify(ids));
+  tar.finalize();
+  await done;
+  return Buffer.concat(chunks);
+}
+
+/** Runs a command as the agent user, without a shell; stdout and stderr stay apart. */
+async function execIn(container: Docker.Container, cmd: string[]): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const exec = await container.exec({
+    Cmd: cmd,
+    User: 'agent',
+    WorkingDir: AGENT_HOME,
+    Env: [`HOME=${AGENT_HOME}`, 'GIT_TERMINAL_PROMPT=0'],
+    AttachStdout: true,
+    AttachStderr: true,
+  });
+  const run = async () => {
+    const stream = await exec.start({ hijack: true, stdin: false });
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    return demuxStreams(Buffer.concat(chunks));
+  };
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${cmd.slice(0, 3).join(' ')} timed out`)), PLUGIN_COMMAND_TIMEOUT_MS);
+  });
+  try {
+    const output = await Promise.race([run(), timeout]);
+    return { exitCode: (await exec.inspect()).ExitCode, ...output };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function demuxStreams(buf: Buffer): { stdout: string; stderr: string } {
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  let i = 0;
+  while (i + 8 <= buf.length) {
+    const size = buf.readUInt32BE(i + 4);
+    (buf[i] === 2 ? err : out).push(buf.subarray(i + 8, i + 8 + size));
+    i += 8 + size;
+  }
+  return i === 0 ? { stdout: buf.toString('utf8'), stderr: '' } : { stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') };
+}
+
 function demux(buf: Buffer): string {
   const out: Buffer[] = [];
   let i = 0;

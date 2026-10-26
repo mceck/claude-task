@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { useCredentials, useMcpServers } from '../api/queries';
+import { useCredentials, useMcpServers, usePlugins } from '../api/queries';
 import { AgentAvatar } from './agents';
 import { AgentSkillSelector } from './AgentSkillSelector';
 import { api, del, errorMessage } from '../api/client';
@@ -91,8 +91,10 @@ function DockerfileEditor({ value, onChange }: { value: string; onChange: (s: st
 export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: CreateAgentBody, avatar: AvatarChange) => Promise<void> }) {
   const credentials = useCredentials();
   const mcpServers = useMcpServers();
+  const plugins = usePlugins();
   const [skillIds, setSkillIds] = useState(agent?.skillIds ?? []);
   const [mcpServerIds, setMcpServerIds] = useState(agent?.mcpServerIds ?? []);
+  const [pluginIds, setPluginIds] = useState(agent?.pluginIds ?? []);
   const [name, setName] = useState(agent?.name ?? '');
   const [emoji, setEmoji] = useState(agent?.avatarEmoji ?? '🤖');
   const [color, setColor] = useState(agent?.avatarColor ?? '#6366f1');
@@ -120,6 +122,7 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
       await onSave({
         skillIds,
         mcpServerIds,
+        pluginIds,
         name,
         avatarEmoji: emoji,
         avatarColor: color,
@@ -267,6 +270,18 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
           </label>
         ))}
         <Link to="/admin/extensions" className="text-xs underline">Manage shared skills and MCP servers</Link>
+      </fieldset>
+      <fieldset className="space-y-2 rounded-lg border p-3">
+        <legend className="px-1 text-sm font-medium">Plugins</legend>
+        {plugins.isPending && <p className="text-xs text-muted-foreground">Loading…</p>}
+        {plugins.error && <p role="alert" className="text-sm text-destructive">{errorMessage(plugins.error)}</p>}
+        {plugins.data?.map((item) => (
+          <label key={item.id} className="flex items-start gap-2 text-sm">
+            <input type="checkbox" checked={pluginIds.includes(item.id)} onChange={(e) => setPluginIds(e.target.checked ? [...pluginIds, item.id] : pluginIds.filter((id) => id !== item.id))} />
+            <span><b>{item.name}</b><span className="block text-xs text-muted-foreground">{item.description || item.source}</span></span>
+          </label>
+        ))}
+        <Link to="/admin/extensions" className="text-xs underline">Manage shared plugins</Link>
       </fieldset>
       <div className="space-y-1.5">
         <Label>Dockerfile</Label>

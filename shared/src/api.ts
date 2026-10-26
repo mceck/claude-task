@@ -211,6 +211,7 @@ export type UpdateCredentialBody = z.infer<typeof updateCredentialBody>;
 const agentFields = {
   skillIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate skill'),
   mcpServerIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate MCP server'),
+  pluginIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate plugin'),
   name,
   avatarEmoji: z.string().trim().min(1).max(16),
   avatarColor: color,
@@ -231,6 +232,7 @@ export const createAgentBody = z.strictObject({
   ...agentFields,
   skillIds: agentFields.skillIds.default([]),
   mcpServerIds: agentFields.mcpServerIds.default([]),
+  pluginIds: agentFields.pluginIds.default([]),
   avatarEmoji: agentFields.avatarEmoji.default('🤖'),
   avatarColor: agentFields.avatarColor.default('#6366f1'),
   description: agentFields.description.default(''),
@@ -247,6 +249,7 @@ export type CreateAgentBody = z.input<typeof createAgentBody>;
 export const updateAgentBody = z.strictObject({
   skillIds: agentFields.skillIds.optional(),
   mcpServerIds: agentFields.mcpServerIds.optional(),
+  pluginIds: agentFields.pluginIds.optional(),
   name: agentFields.name.optional(),
   avatarEmoji: agentFields.avatarEmoji.optional(),
   avatarColor: agentFields.avatarColor.optional(),

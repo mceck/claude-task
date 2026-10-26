@@ -82,7 +82,7 @@ function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
         <FolderKanban className="size-4" /> Projects
       </NavLink>
       <NavLink to="/agents" className={navItem}><Bot className="size-4" /> Agents</NavLink>
-      {isAdmin && <NavLink to="/admin/extensions" className={navItem}><Bot className="size-4" /> Skills & MCP</NavLink>}
+      {isAdmin && <NavLink to="/admin/extensions" className={navItem}><Bot className="size-4" /> Extensions</NavLink>}
       {isAdmin && <NavLink to="/admin/credentials" className={navItem}><KeyRound className="size-4" /> Credentials</NavLink>}
       {isAdmin && <NavLink to="/admin/git" className={navItem}><GitBranch className="size-4" /> Git</NavLink>}
       {isAdmin && (

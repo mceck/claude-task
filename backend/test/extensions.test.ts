@@ -158,3 +158,92 @@ describe('shared skills and MCP catalog', () => {
     expect(await app.server.ctx.db.select().from(skills)).toHaveLength(1);
   });
 });
+
+describe('plugin catalog', () => {
+  const app = useTestApp();
+  afterEach(() => vi.restoreAllMocks());
+
+  it('validates entries, keeps duplicates out and restricts catalog changes to admins', async () => {
+    const admin = await app.admin();
+    const { client: member } = await createUser(app, admin);
+    const fromSource = await admin.post('/plugins', { name: 'frontend-design', source: 'anthropics/claude-plugins-official', description: 'UI work' });
+    expect(fromSource.status).toBe(201);
+    expect(fromSource.body.plugin).toMatchObject({ name: 'frontend-design', source: 'anthropics/claude-plugins-official', description: 'UI work' });
+    expect((await admin.post('/plugins', { name: 'superpowers@anthropic-plugin-directory' })).status).toBe(201);
+    expect((await admin.post('/plugins', { name: 'frontend-design', source: 'anthropics/claude-plugins-official' })).status).toBe(409);
+    for (const body of [
+      { name: 'frontend-design' },
+      { name: 'frontend-design@market', source: 'org/market' },
+      { name: '--scope', source: 'org/market' },
+      { name: 'a@b@c' },
+      { name: 'tool', source: '../private' },
+      { name: 'tool', source: 'https://user:pass@example.com/market.git' },
+      { name: 'tool', source: '--marketplace' },
+    ])
+      expect((await admin.post('/plugins', body)).status, JSON.stringify(body)).toBe(400);
+    const id = fromSource.body.plugin.id;
+    expect((await member.get('/plugins')).body.plugins.map((p: { name: string }) => p.name)).toEqual(['frontend-design', 'superpowers@anthropic-plugin-directory']);
+    for (const response of await Promise.all([
+      member.post('/plugins', { name: 'other', source: 'org/market' }),
+      member.put(`/plugins/${id}`, { name: 'other', source: 'org/market' }),
+      member.post(`/plugins/${id}/update`, {}),
+      member.delete(`/plugins/${id}`),
+    ]))
+      expect(response.status).toBe(403);
+    const edited = await admin.put(`/plugins/${id}`, { name: 'frontend-design', source: 'anthropics/claude-plugins-official', description: 'Edited' });
+    expect(edited.body.plugin.description).toBe('Edited');
+    expect((await admin.delete(`/plugins/${id}`)).status).toBe(204);
+    expect((await admin.delete(`/plugins/${id}`)).status).toBe(404);
+  });
+
+  it('installs assigned plugins without recreating the container, resynchronizes on update and copies them on duplication', async () => {
+    const admin = await app.admin();
+    const a = (await admin.post('/plugins', { name: 'frontend-design', source: 'anthropics/claude-plugins-official' })).body.plugin;
+    const b = (await admin.post('/plugins', { name: 'superpowers@anthropic-plugin-directory' })).body.plugin;
+    const { agent } = await createAgent(app, admin, { body: { pluginIds: [a.id, b.id] }, connect: false });
+    expect(agent.pluginIds.sort()).toEqual([a.id, b.id].sort());
+    expect(app.runtime.configuredPlugins.get(agent.id)).toEqual([
+      { name: 'frontend-design', source: 'anthropics/claude-plugins-official' },
+      { name: 'superpowers@anthropic-plugin-directory', source: '' },
+    ]);
+    const container = app.runtime.containers.get(agent.id);
+    await admin.patch(`/agents/${agent.id}`, { pluginIds: [b.id] });
+    await app.settle();
+    expect(app.runtime.containers.get(agent.id)).toBe(container);
+    expect(app.runtime.configuredPlugins.get(agent.id)).toEqual([{ name: 'superpowers@anthropic-plugin-directory', source: '' }]);
+
+    const sync = vi.spyOn(app.runtime, 'configurePlugins');
+    expect((await admin.post(`/plugins/${b.id}/update`, {})).status).toBe(204);
+    await app.settle();
+    expect(sync).toHaveBeenCalledWith(agent.id, [{ name: 'superpowers@anthropic-plugin-directory', source: '' }]);
+    expect((await admin.post(`/plugins/${a.id}/update`, {})).status).toBe(204);
+    await app.settle();
+    expect(sync).toHaveBeenCalledTimes(1);
+
+    const copy = await admin.post(`/agents/${agent.id}/duplicate`, {});
+    expect(copy.body.agent.pluginIds).toEqual([b.id]);
+    expect((await admin.delete(`/plugins/${b.id}`)).status).toBe(409);
+    expect((await admin.patch(`/agents/${agent.id}`, { pluginIds: [randomUUID()] })).status).toBe(400);
+  });
+
+  it('holds dispatch while plugins fail to install and shows the error on the agent', async () => {
+    const admin = await app.admin();
+    const plugin = (await admin.post('/plugins', { name: 'missing', source: 'org/market' })).body.plugin;
+    const { agent, runner } = await createAgent(app, admin);
+    app.runtime.pluginFailure = 'Plugin missing: Plugin "missing" not found in marketplace "market".';
+    await admin.patch(`/agents/${agent.id}`, { pluginIds: [plugin.id] });
+    await app.settle();
+    const failed = (await admin.get(`/agents/${agent.id}`)).body.agent;
+    expect(failed).toMatchObject({ extensionsPending: true, extensionsError: app.runtime.pluginFailure });
+    const { project } = await createProject(admin);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    await app.settle();
+    expect(runner.messages('job.start')).toHaveLength(0);
+
+    app.runtime.pluginFailure = null;
+    await app.server.ctx.scheduler.reconcile(agent.id);
+    await runner.next('job.start');
+    expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ extensionsPending: false, extensionsError: null });
+  });
+});

@@ -42,6 +42,7 @@ export const keys = {
   credentials: ['credentials'] as const,
   skills: ['skills'] as const,
   mcpServers: ['mcp-servers'] as const,
+  plugins: ['plugins'] as const,
   agentSettings: (projectId: string) => ['agent-settings', projectId] as const,
 };
 
@@ -159,6 +160,9 @@ export function useCredentials(enabled = true) {
 
 export function useSkills() {
   return useQuery({ queryKey: keys.skills, queryFn: () => get<{ skills: import('@claude-task/shared').Skill[] }>('/skills').then((r) => r.skills) });
+}
+export function usePlugins() {
+  return useQuery({ queryKey: keys.plugins, queryFn: () => get<{ plugins: import('@claude-task/shared').Plugin[] }>('/plugins').then((r) => r.plugins) });
 }
 export function useMcpServers() {
   return useQuery({ queryKey: keys.mcpServers, queryFn: () => get<{ mcpServers: import('@claude-task/shared').McpServer[] }>('/mcp-servers').then((r) => r.mcpServers) });

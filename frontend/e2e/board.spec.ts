@@ -208,13 +208,34 @@ for (const view of ['page', 'board panel'] as const) {
   test(`expands task activity from the ${view}, preserves drafts and receives live comments`, async ({ page }, testInfo) => {
     await login(page.request);
     const project = await createProject(page.request);
-    const task = await createTask(page.request, project, 'Discuss in full screen');
+    const task = await createTask(page.request, project, 'Discuss in full screen', 'Todo', {
+      description: 'Task details before the conversation.\n\n'.repeat(40),
+    });
     await page.request.post(`/api/v1/tasks/${task.id}/comments`, {
       headers: { 'x-claude-task': '1' },
       data: { body: 'The conversation so far.\n\n' + 'Earlier discussion.\n\n'.repeat(40) },
     });
     await page.goto(view === 'page' ? `/t/${task.key}` : `/p/${project.key}?task=${task.key}`);
-    await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Keep this draft.');
+    const composer = page.getByRole('textbox', { name: 'Comment', exact: true });
+    const details = page.getByLabel('Task details', { exact: true });
+    await expect(page.getByRole('textbox', { name: 'Title', exact: true })).toBeInViewport();
+    await expect(composer).toHaveCount(0);
+    await details.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('button', { name: 'Comment', exact: true })).toBeInViewport({ ratio: 1 });
+    await composer.fill('Keep this draft.');
+    await composer.evaluate(async (element) => {
+      const dock = element.closest('[data-slot="composer-dock"]')!;
+      await Promise.all(dock.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => {})));
+    });
+    const dockedY = (await composer.boundingBox())!.y;
+    await details.evaluate((element) => { element.scrollTop -= 100; });
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    expect(Math.abs((await composer.boundingBox())!.y - dockedY)).toBeLessThan(1);
+    await details.evaluate((element) => { element.scrollTop = 0; });
+    await expect(composer).toHaveCount(0);
+    await details.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await expect(composer).toHaveValue('Keep this draft.');
     await page.getByRole('switch', { name: 'Internal note', exact: true }).click();
     await page.getByLabel('Attach files', { exact: true }).setInputFiles({ name: 'draft.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this attachment.') });
     await page.getByRole('button', { name: 'Expand activity' }).click();

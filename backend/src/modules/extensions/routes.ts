@@ -1,12 +1,12 @@
-import { importSkillsBody, saveMcpServerBody } from '@claude-task/shared';
+import { importSkillsBody, saveMcpServerBody, savePluginBody } from '@claude-task/shared';
 import { asc, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../../context';
-import { agentMcpServers, agentSkills, mcpServers, skills } from '../../db/schema';
+import { agentMcpServers, agentPlugins, agentSkills, mcpServers, plugins, skills } from '../../db/schema';
 import { badRequest, conflict, notFound, parse } from '../../errors';
 import { importSkills } from './import-skills';
-import { invalidateExtensions, serializeMcp, serializeSkill, storeMcpValues } from './service';
+import { invalidateExtensions, serializeMcp, serializePlugin, serializeSkill, storeMcpValues } from './service';
 
 const params = z.object({ id: z.uuid() });
 export function extensionRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -113,6 +113,53 @@ export function extensionRoutes(app: FastifyInstance, ctx: AppContext): void {
       const [assigned] = await tx.select().from(agentMcpServers).where(eq(agentMcpServers.mcpServerId, id));
       if (assigned) throw conflict('Unassign this MCP server from all agents before deleting it');
       if (!(await tx.delete(mcpServers).where(eq(mcpServers.id, id)).returning()).length) throw notFound('MCP server');
+    });
+    return reply.status(204).send();
+  });
+
+  app.get('/plugins', async () => ({ plugins: (await ctx.db.select().from(plugins).orderBy(asc(plugins.name), asc(plugins.source))).map(serializePlugin) }));
+  app.post('/plugins', admin, async (request, reply) => {
+    const body = parse(savePluginBody, request.body);
+    const [row] = await ctx.db.insert(plugins).values(body).returning();
+    return reply.status(201).send({ plugin: serializePlugin(row!) });
+  });
+  app.put('/plugins/:id', admin, async (request) => {
+    const { id } = parse(params, request.params);
+    const body = parse(savePluginBody, request.body);
+    const result = await ctx.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(plugins)
+        .set({ ...body, updatedAt: new Date() })
+        .where(eq(plugins.id, id))
+        .returning();
+      if (!row) throw notFound('Plugin');
+      const assigned = await tx.select({ id: agentPlugins.agentId }).from(agentPlugins).where(eq(agentPlugins.pluginId, id));
+      const ids = assigned.map((r) => r.id);
+      await invalidateExtensions(tx, ids);
+      return { row, ids };
+    });
+    sync(result.ids);
+    return { plugin: serializePlugin(result.row) };
+  });
+  /** Synchronizing installs the marketplace's latest version, so updating just synchronizes the assigned Agents again. */
+  app.post('/plugins/:id/update', admin, async (request, reply) => {
+    const { id } = parse(params, request.params);
+    const ids = await ctx.db.transaction(async (tx) => {
+      const [row] = await tx.select({ id: plugins.id }).from(plugins).where(eq(plugins.id, id));
+      if (!row) throw notFound('Plugin');
+      const assigned = await tx.select({ id: agentPlugins.agentId }).from(agentPlugins).where(eq(agentPlugins.pluginId, id));
+      await invalidateExtensions(tx, assigned.map((r) => r.id));
+      return assigned.map((r) => r.id);
+    });
+    sync(ids);
+    return reply.status(204).send();
+  });
+  app.delete('/plugins/:id', admin, async (request, reply) => {
+    const { id } = parse(params, request.params);
+    await ctx.db.transaction(async (tx) => {
+      const [assigned] = await tx.select().from(agentPlugins).where(eq(agentPlugins.pluginId, id));
+      if (assigned) throw conflict('Unassign this plugin from all agents before deleting it');
+      if (!(await tx.delete(plugins).where(eq(plugins.id, id)).returning()).length) throw notFound('Plugin');
     });
     return reply.status(204).send();
   });

@@ -58,10 +58,10 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(createAgentBody, request.body);
     assertDockerfile(body.dockerfile);
     await assertCredential(ctx.db, body.credentialId);
-    const { skillIds, mcpServerIds, ...fields } = body;
+    const { skillIds, mcpServerIds, pluginIds, ...fields } = body;
     const row = await ctx.db.transaction(async (tx) => {
       const [created] = await tx.insert(agents).values(fields).returning();
-      await setAssignments(tx, created!.id, skillIds, mcpServerIds);
+      await setAssignments(tx, created!.id, { skillIds, mcpServerIds, pluginIds });
       return created!;
     });
     ctx.scheduler.build(row.id);
@@ -74,11 +74,11 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (body.dockerfile !== undefined) assertDockerfile(body.dockerfile);
     if (body.credentialId !== undefined) await assertCredential(ctx.db, body.credentialId);
     const before = await getAgentRow(ctx.db, id);
-    const { skillIds, mcpServerIds, ...fields } = body;
+    const { skillIds, mcpServerIds, pluginIds, ...fields } = body;
     await ctx.db.transaction(async (tx) => {
       await getAgentRow(tx, id, { lock: true });
       await tx.update(agents).set({ ...fields, updatedAt: new Date() }).where(eq(agents.id, id));
-      await setAssignments(tx, id, skillIds, mcpServerIds);
+      await setAssignments(tx, id, { skillIds, mcpServerIds, pluginIds });
     });
     if (body.dockerfile !== undefined && body.dockerfile !== before.dockerfile) ctx.scheduler.build(id);
     else void ctx.scheduler.reconcile(id).then(() => ctx.scheduler.kick(id), () => {});
@@ -181,7 +181,11 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
       })
       .returning();
     const extensions = await agentExtensions(ctx.db, source.id);
-    await setAssignments(ctx.db, row!.id, extensions.skills.map((s) => s.id), extensions.mcpServers.map((s) => s.id));
+    await setAssignments(ctx.db, row!.id, {
+      skillIds: extensions.skills.map((s) => s.id),
+      mcpServerIds: extensions.mcpServers.map((s) => s.id),
+      pluginIds: extensions.plugins.map((p) => p.id),
+    });
     ctx.scheduler.build(row!.id);
     return reply.status(201).send({ agent: await loadAgent(ctx.db, connected, row!.id) });
   });

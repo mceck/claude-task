@@ -45,6 +45,37 @@ export const importSkillsBody = z.strictObject({
 });
 export type ImportSkillsBody = z.input<typeof importSkillsBody>;
 
+/** Plugins install from remote marketplaces only: a local path would point into the Agent Container. */
+const REMOTE_SOURCE = /^(?:https:\/\/[^\s@]+|git@[A-Za-z0-9.-]+:[^\s]+|[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*)$/;
+const PLUGIN_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
+export const savePluginBody = z
+  .strictObject({
+    /** `plugin` with a marketplace source, or `plugin@marketplace` for a marketplace Claude Code already knows. */
+    name: z.string().trim().max(130),
+    source: z.string().trim().max(2000).default(''),
+    description: z.string().max(2000).default(''),
+  })
+  .superRefine((v, ctx) => {
+    const [plugin, marketplace, ...rest] = v.name.split('@');
+    const valid = PLUGIN_NAME.test(plugin!) && !rest.length && (marketplace === undefined ? !!v.source : PLUGIN_NAME.test(marketplace) && !v.source);
+    if (!valid) ctx.addIssue({ code: 'custom', path: ['name'], message: 'Use plugin with a marketplace source, or plugin@marketplace without one' });
+    if (v.source && !REMOTE_SOURCE.test(v.source))
+      ctx.addIssue({ code: 'custom', path: ['source'], message: 'Use owner/repo, an HTTPS URL without credentials or a Git SSH URL' });
+  });
+export type SavePluginBody = z.input<typeof savePluginBody>;
+export interface Plugin {
+  id: string;
+  name: string;
+  /** The marketplace it installs from; empty when `name` is `plugin@marketplace`. */
+  source: string;
+  description: string;
+  updatedAt: string;
+}
+export interface InstalledPlugin {
+  name: string;
+  source: string;
+}
+
 /** A null secret value on update retains the existing value of that key. */
 export const mcpValueBody = z.strictObject({ value: z.string().max(16_000).nullable(), secret: z.boolean().default(false) });
 export interface McpValue {
