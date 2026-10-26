@@ -63,9 +63,41 @@ class Md extends StatelessWidget {
     selectable: selectable,
     styleSheet: markdownStyle(context, size: size),
     onTapLink: (_, href, _) => onLink?.call(href),
-    imageBuilder: (uri, title, alt) => Text(
-      alt ?? 'External image · open the link to view',
-      style: const TextStyle(color: Palette.fgMuted, fontSize: 13),
+    imageBuilder: (uri, title, alt) => Semantics(
+      link: true,
+      child: InkWell(
+        onTap: onLink == null ? null : () => onLink!(uri.toString()),
+        borderRadius: BorderRadius.circular(Radii.sm),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Palette.sidebar,
+            borderRadius: BorderRadius.circular(Radii.sm),
+            border: Border.all(color: Palette.border),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.image_outlined,
+                size: 18,
+                color: Palette.primarySoft,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  alt == null || alt.isEmpty ? 'Linked image' : alt,
+                  style: const TextStyle(color: Palette.fgMuted, fontSize: 13),
+                ),
+              ),
+              const Icon(
+                Icons.open_in_new_rounded,
+                size: 14,
+                color: Palette.fgSubtle,
+              ),
+            ],
+          ),
+        ),
+      ),
     ),
   );
 }

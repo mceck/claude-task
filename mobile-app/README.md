@@ -28,6 +28,7 @@ flutter analyze
 flutter test
 # Builds and launches the native application; uses fake API data with real native storage plugins.
 flutter test integration_test/native_smoke_test.dart -d macos
+flutter test integration_test/task_description_test.dart -d macos
 flutter build macos --debug
 ```
 
@@ -40,6 +41,16 @@ pnpm test
 ```
 
 The integration smoke has a separate Keychain service and temporary cache, so it does not use the normal app profile.
+
+## Task description editor
+
+Create Task and Edit Task use a native Fleather editor with the app's graphite theme, terracotta selection and Geist typography. The formatting toolbar scrolls horizontally on phones; Write, Markdown and Preview share the same description. The backend continues to receive a Markdown string.
+
+The visual editor supports headings 1–6, bold, italic, strikethrough, inline code, links, bullet/numbered lists, nested lists, checklists, simple quotes and dividers. Code blocks have a language field and a dedicated editor; tables have an editable Markdown block. Image URLs are retained, including existing alt text and titles, and displayed as linked cards without automatically fetching remote images. Uploading new attachments is outside this field.
+
+Opening a description, changing the selection or switching modes does not rewrite its source. After a visual edit, Markdown spacing and delimiters may be normalized. Structures the visual document cannot represent (for example nested blockquotes, hard line breaks, titled links, inline images and multi-paragraph list items) open in Markdown mode with Preview available, preserving the original content. `markdown_document_test.dart` checks parsing and serialization against rendered Markdown; editor tests cover formatting, undo/redo, dialogs and real task form submissions. Layout goldens cover phone and desktop forms, with additional keyboard-inset checks.
+
+Fleather is pinned to 1.26.0 for the current Flutter toolchain. AppFlowy Editor 6.2 was evaluated but requires `file_picker ^10.2.0`, conflicting with the app's existing `^13.2.0`; no dependency override or downgrade was introduced.
 
 ## Local conversations and drafts
 

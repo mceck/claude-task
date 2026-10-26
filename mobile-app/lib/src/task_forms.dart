@@ -4,6 +4,7 @@ import 'app.dart';
 import 'controller.dart';
 import 'models.dart';
 import 'ui/markdown.dart';
+import 'ui/markdown_editor.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 
@@ -115,6 +116,7 @@ Future<void> showCreateTask(BuildContext context, TaskController c) async {
   await showAppSheet<void>(
     context,
     dismissible: false,
+    maxWidth: 680,
     builder: (sheet) => StatefulBuilder(
       builder: (context, set) {
         final agent = agents.byId(agentId);
@@ -153,15 +155,7 @@ Future<void> showCreateTask(BuildContext context, TaskController c) async {
                 ),
                 const SizedBox(height: 16),
                 const FieldLabel('Description', hint: 'Markdown'),
-                TextField(
-                  controller: description,
-                  minLines: 3,
-                  maxLines: 7,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(
-                    hintText: 'Add context, acceptance criteria, links…',
-                  ),
-                ),
+                MarkdownEditor(controller: description, enabled: !saving),
                 const SizedBox(height: 16),
                 const FieldLabel('Agent', hint: 'optional'),
                 _SelectField(
@@ -770,6 +764,7 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
   String? error;
   await showAppSheet<void>(
     context,
+    maxWidth: 680,
     builder: (sheet) => StatefulBuilder(
       builder: (context, set) => SheetScaffold(
         title: 'Edit Task',
@@ -796,7 +791,7 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
             ),
             const SizedBox(height: 16),
             const FieldLabel('Description', hint: 'Markdown'),
-            TextField(controller: description, minLines: 4, maxLines: 10),
+            MarkdownEditor(controller: description, enabled: !saving),
             if (c.tags.isNotEmpty) ...[
               const SizedBox(height: 22),
               const SectionLabel('Tags'),
