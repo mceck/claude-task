@@ -40,7 +40,12 @@ export function Timeline({ taskId, hideChanges, ...rest }: { taskId: string; hid
   const lookups = { ...rest, agents: agents.data ?? [] };
   if (timeline.isPending) return <Loading />;
   if (timeline.error) return <ErrorText>{errorMessage(timeline.error)}</ErrorText>;
-  const items = timeline.data.pages.flatMap((p) => p.items).reverse();
+  // An item can sit on two pages when it moved across a page boundary between fetches.
+  const seen = new Set<string>();
+  const items = timeline.data.pages
+    .flatMap((p) => p.items)
+    .filter((i) => !seen.has(i.id) && !!seen.add(i.id))
+    .reverse();
   const rows = fold(items, hideChanges, lookups);
 
   return (

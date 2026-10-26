@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
 import { putTimelineItem } from '../lib/cache';
+import { commentDrafts } from '../lib/drafts';
 import { useAgent } from '../api/queries';
 import { ErrorText, Kbd } from './common';
 import type { CommandToken, CommentEditorHandle } from './RichMarkdownEditor';
@@ -18,12 +19,16 @@ import type { CommandToken, CommentEditorHandle } from './RichMarkdownEditor';
 const CommentEditor = lazy(() => import('./RichMarkdownEditor').then((m) => ({ default: m.CommentEditor })));
 
 /** Kept by the conversation view so expanding it preserves text, notes and attachments. */
-export function useCommentDraft() {
-  const [body, setBody] = useState('');
-  const [internal, setInternal] = useState(false);
-  const [files, setFiles] = useState<File[]>([]);
+export function useCommentDraft(taskId: string) {
+  const [body, setBody] = useState(() => commentDrafts.get(taskId)?.body ?? '');
+  const [internal, setInternal] = useState(() => commentDrafts.get(taskId)?.internal ?? false);
+  const [files, setFiles] = useState<File[]>(() => commentDrafts.get(taskId)?.files ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (body.trim() || files.length > 0) commentDrafts.set(taskId, { body, internal, files });
+    else commentDrafts.delete(taskId);
+  }, [taskId, body, internal, files]);
   return { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy };
 }
 
@@ -36,10 +41,12 @@ export function Composer({
   taskId: string;
   agentId?: string | null;
   commands?: ChatCommand[];
-  draft?: ReturnType<typeof useCommentDraft>;
+  draft: ReturnType<typeof useCommentDraft>;
 }) {
-  const localDraft = useCommentDraft();
-  const { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy } = draft ?? localDraft;
+  const { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy } = draft;
+  // What the editor holds now, which can be ahead of `body` in a send started a few renders ago.
+  const latestBody = useRef(body);
+  latestBody.current = body;
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
@@ -96,9 +103,15 @@ export function Composer({
       }
       const { comment } = await post<{ comment: Comment }>(`/tasks/${taskId}/comments`, payload);
       putTimelineItem(qc, taskId, { type: 'comment', id: comment.id, createdAt: comment.createdAt, comment });
-      editor.current?.clear();
-      setBody('');
-      setFiles([]);
+      // Only what was sent goes: text typed or files added while sending stay. Text that changed what was
+      // sent is kept whole, rather than guessing which part is new.
+      const now = latestBody.current;
+      if (now === body || now.startsWith(body)) {
+        const rest = now.slice(body.length).trimStart();
+        editor.current?.setValue(rest);
+        setBody(rest);
+      }
+      setFiles((current) => current.filter((f) => !files.includes(f)));
     } catch (err) {
       setError(errorMessage(err));
     } finally {

@@ -32,8 +32,19 @@ function isClosedStatus(qc: QueryClient, projectId: string, statusId: string): b
   return findBundle(qc, projectId)?.statuses.find((s) => s.id === statusId)?.category === 'closed';
 }
 
-/** Puts the card in every cached Board list of its project (or takes it out of the ones hiding closed). */
+/** The newest version of the Task in any cached Board list or Task view, so older answers can't replace it. */
+function cachedVersion(qc: QueryClient, card: TaskCard): number {
+  const lists = qc.getQueriesData<TaskCard[]>({ queryKey: keys.tasks(card.projectId) }).flatMap(([, list]) => list ?? []);
+  const views = qc.getQueriesData<Task>({ queryKey: ['task'] }).flatMap(([, t]) => (t ? [t] : []));
+  return Math.max(-1, ...[...lists, ...views].filter((t) => t.id === card.id).map((t) => t.version));
+}
+
+/**
+ * Puts the card in every cached Board list of its project (or takes it out of the ones hiding closed).
+ * A card older than what's cached is ignored: HTTP answers can arrive after newer real-time events.
+ */
 export function upsertCard(qc: QueryClient, card: TaskCard): void {
+  if (card.version < cachedVersion(qc, card)) return;
   const closed = isClosedStatus(qc, card.projectId, card.statusId);
   for (const [key] of qc.getQueriesData<TaskCard[]>({ queryKey: keys.tasks(card.projectId) })) {
     const { includeClosed } = (key as BoardKey)[2];
@@ -50,11 +61,23 @@ export function removeCard(qc: QueryClient, projectId: string, taskId: string): 
   qc.setQueriesData<TaskCard[]>({ queryKey: keys.tasks(projectId) }, (list) => list?.filter((t) => t.id !== taskId));
 }
 
+/** Replaces the cached Task unless the cache already has a newer version. */
 export function setTask(qc: QueryClient, task: Task): void {
-  qc.setQueriesData<Task>({ queryKey: ['task'] }, (t) => (t && t.id === task.id ? task : t));
+  qc.setQueriesData<Task>({ queryKey: ['task'] }, (t) => (t && t.id === task.id && t.version <= task.version ? task : t));
 }
 
-/** Adds a new item at the newest end of the Timeline, or replaces it if present. */
+/** Whether `a` comes before `b` on the Timeline, newest first: the server's order (time, then kind and id). */
+function newerThan(a: TimelineItem, b: TimelineItem): boolean {
+  const at = Date.parse(a.createdAt);
+  const bt = Date.parse(b.createdAt);
+  if (at !== bt) return at > bt;
+  return a.type !== b.type ? a.type > b.type : a.id > b.id;
+}
+
+/**
+ * Replaces the item on the Timeline, or puts it in its place by time: events don't arrive in the order things
+ * happened. An item older than everything loaded is left for "Load older activity" to bring.
+ */
 export function putTimelineItem(qc: QueryClient, taskId: string, item: TimelineItem): void {
   qc.setQueryData<Timeline>(keys.timeline(taskId), (data) => {
     if (!data) return data;
@@ -65,9 +88,17 @@ export function putTimelineItem(qc: QueryClient, taskId: string, item: TimelineI
         pages: data.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === item.id ? item : i)) })),
       };
     }
-    const [first, ...rest] = data.pages;
-    if (!first) return data;
-    return { ...data, pages: [{ ...first, items: [item, ...first.items] }, ...rest] };
+    const insert = (n: number, at: number) => ({
+      ...data,
+      pages: data.pages.map((p, i) => (i === n ? { ...p, items: [...p.items.slice(0, at), item, ...p.items.slice(at)] } : p)),
+    });
+    for (const [n, page] of data.pages.entries()) {
+      const at = page.items.findIndex((i) => newerThan(item, i));
+      if (at >= 0) return insert(n, at);
+    }
+    const last = data.pages.length - 1;
+    if (last < 0 || data.pages[last]!.nextCursor) return data;
+    return insert(last, data.pages[last]!.items.length);
   });
 }
 

@@ -480,7 +480,7 @@ export interface CommandToken {
 }
 
 export interface CommentEditorHandle {
-  clear(): void;
+  setValue(markdown: string): void;
   focus(): void;
   /** Replaces the `/command` being typed with the chosen one. */
   chooseCommand(name: string): void;
@@ -623,9 +623,12 @@ export function CommentEditor({
     }
   }, [ariaControls, ariaActiveDescendant]);
   useImperativeHandle(handle, () => ({
-    clear: () => {
-      if (failed) setFallbackValue('');
-      else editor.current?.setMarkdown('');
+    setValue: (markdown) => {
+      if (failed) return setFallbackValue(markdown);
+      const typing = !!root.current?.contains(document.activeElement);
+      editor.current?.setMarkdown(markdown);
+      // Someone typing goes on at the end of the text.
+      if (typing) lexical.current?.update(() => $getRoot().selectEnd());
     },
     focus: () => editor.current?.focus(undefined, { defaultSelection: 'rootEnd' }),
     chooseCommand: (name) => {

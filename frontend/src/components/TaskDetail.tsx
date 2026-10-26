@@ -45,6 +45,9 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const layout = useTaskLayout();
   const [hideChanges, setHideChanges] = useState(true);
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
+  const saves = useRef({ queue: Promise.resolve<unknown>(undefined), version: -1, count: 0, owners: new Map<string, number>() });
+  // Values of saves still queued or in flight, shown over the Task meanwhile.
+  const [pending, setPending] = useState<Fields>({});
   useTopic(task ? taskTopic(task.id) : null);
   useTopic(AGENTS_TOPIC);
 
@@ -63,6 +66,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
       </div>
     );
   }
+  const shown = { ...task, ...pending };
   const statuses = [...(bundle.data?.statuses ?? [])].sort((a, b) => a.position - b.position);
   const tags = bundle.data?.tags ?? [];
   const people = users.data ?? [];
@@ -83,20 +87,39 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     upsertCard(qc, toCard(t));
   };
 
-  /** Patches against the version we have; on 409 shows what changed instead of overwriting. */
-  const save = async (fields: Fields): Promise<boolean> => {
-    try {
-      applied((await patch<{ task: Task }>(`/tasks/${task.id}`, { version: task.version, ...fields })).task);
-      return true;
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        applied((err.body as ConflictResponse).task);
-        toast.warning('Someone else changed this task', { description: 'It has been refreshed and your change was not saved.' });
-      } else {
-        toast.error('Couldn’t save', { description: errorMessage(err) });
+  /**
+   * Patches against the version the user saw; on 409 shows what changed instead of overwriting. Saves run one
+   * at a time, each also counting our previous one as seen, so quick repeated edits don't conflict with each other.
+   */
+  const save = (fields: Fields): Promise<boolean> => {
+    const state = saves.current;
+    const id = ++state.count;
+    const seen = task.version;
+    for (const field of Object.keys(fields)) state.owners.set(field, id);
+    setPending((p) => ({ ...p, ...fields }));
+    const run = state.queue.then(async () => {
+      try {
+        const { task: saved } = await patch<{ task: Task }>(`/tasks/${task.id}`, { version: Math.max(seen, state.version), ...fields });
+        state.version = saved.version;
+        applied(saved);
+        return true;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          applied((err.body as ConflictResponse).task);
+          toast.warning('Someone else changed this task', { description: 'It has been refreshed and your change was not saved.' });
+        } else {
+          toast.error('Couldn’t save', { description: errorMessage(err) });
+        }
+        return false;
+      } finally {
+        // A field edited again meanwhile stays pending until that later save is done.
+        const done = Object.keys(fields).filter((field) => state.owners.get(field) === id);
+        for (const field of done) state.owners.delete(field);
+        setPending((p) => Object.fromEntries(Object.entries(p).filter(([field]) => !done.includes(field))));
       }
-      return false;
-    }
+    });
+    state.queue = run;
+    return run;
   };
 
   const moveTo = async (statusId: string) => {
@@ -144,7 +167,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
             <span className="text-muted-foreground/50">/</span>
             <span className="font-mono font-medium">{task.key}</span>
           </div>
-          <Title title={task.title} onSave={(title) => save({ title })} />
+          <Title title={shown.title} onSave={(title) => save({ title })} />
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1">
           <div className="mr-2 flex flex-wrap items-center gap-2">
@@ -260,7 +283,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                 </Select>
 
                 <PropLabel>Priority</PropLabel>
-                <Select value={task.priority} onValueChange={(p) => save({ priority: p as Priority })}>
+                <Select value={shown.priority} onValueChange={(p) => save({ priority: p as Priority })}>
                   <SelectTrigger size="sm" aria-label="Priority" className="w-fit min-w-40">
                     <SelectValue />
                   </SelectTrigger>
@@ -278,14 +301,14 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                   label="Assignees"
                   highlight={false}
                   options={people
-                    .filter((u) => u.active || task.assigneeIds.includes(u.id))
+                    .filter((u) => u.active || shown.assigneeIds.includes(u.id))
                     .map((u) => ({ value: u.id, label: u.displayName, icon: <UserAvatar user={u} size="xs" /> }))}
-                  selected={task.assigneeIds}
+                  selected={shown.assigneeIds}
                   onChange={(assigneeIds) => save({ assigneeIds })}
                   trigger={
                     <button type="button" aria-label="Assign" className="flex min-h-7 w-fit flex-wrap items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                      {task.assigneeIds.length === 0 && <span className="text-muted-foreground">Unassigned</span>}
-                      {task.assigneeIds.map((id) => {
+                      {shown.assigneeIds.length === 0 && <span className="text-muted-foreground">Unassigned</span>}
+                      {shown.assigneeIds.map((id) => {
                         const u = people.find((p) => p.id === id);
                         return (
                           <span key={id} className="flex items-center gap-1.5">
@@ -300,11 +323,11 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
 
                 <PropLabel>Agent</PropLabel>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Select value={task.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
+                  <Select value={shown.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
                     <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">No agent</SelectItem>
-                      {(agents.data ?? []).filter((a) => a.enabled || a.id === task.agentId).map((a) => (
+                      {(agents.data ?? []).filter((a) => a.enabled || a.id === shown.agentId).map((a) => (
                         <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'}</SelectItem>
                       ))}
                     </SelectContent>
@@ -319,19 +342,19 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                     try {
                       const { tag } = await post<{ tag: Tag }>(`/projects/${task.projectId}/tags`, { name, color: nextTagColor(tags.length) });
                       // The WebSocket event updates the project's tag list; select the new tag right away.
-                      await save({ tagIds: [...task.tagIds, tag.id] });
+                      await save({ tagIds: [...shown.tagIds, tag.id] });
                     } catch (err) {
                       toast.error('Couldn’t create the tag', { description: errorMessage(err) });
                     }
                   }}
                   highlight={false}
                   options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
-                  selected={task.tagIds}
+                  selected={shown.tagIds}
                   onChange={(tagIds) => save({ tagIds })}
                   trigger={
                     <button type="button" aria-label="Edit tags" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                      {task.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
-                      {task.tagIds.map((id) => {
+                      {shown.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
+                      {shown.tagIds.map((id) => {
                         const l = tags.find((x) => x.id === id);
                         return l ? <TagChip key={id} name={l.name} color={l.color} /> : null;
                       })}
@@ -355,7 +378,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                 {task.branchName && task.branchUrl && <BranchLink name={task.branchName} url={task.branchUrl} />}
                 {task.pullRequest && <PullRequestBadge pr={task.pullRequest} />}
               </section>}
-              <Description taskId={task.id} description={task.description} onSave={(description) => save({ description })} overlayContainer={overlay} />
+              <Description taskId={task.id} description={shown.description} onSave={(description) => save({ description })} overlayContainer={overlay} />
             </div>
           </section>
         </Panel>

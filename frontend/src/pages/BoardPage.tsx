@@ -225,7 +225,6 @@ function Board({ projectId, columns, cards, filter, tags, users, selectedKey, on
   };
 
   const moveCard = async (card: TaskCard, statusId: string, after?: TaskCard, before?: TaskCard) => {
-    const snapshot = qc.getQueriesData<TaskCard[]>({ queryKey: keys.tasks(projectId) });
     let position = card.position;
     try {
       position = generateKeyBetween(after?.position ?? null, before?.position ?? null);
@@ -238,7 +237,11 @@ function Board({ projectId, columns, cards, filter, tags, users, selectedKey, on
       const { task } = await post<{ task: Task }>(`/tasks/${card.id}/move`, body);
       upsertCard(qc, toCard(task));
     } catch (err) {
-      for (const [key, data] of snapshot) qc.setQueryData(key, data);
+      // Only this card goes back (unless newer news of it arrived), keeping other changes made meanwhile;
+      // then the server's answer settles whether the move happened after all.
+      upsertCard(qc, card);
+      void qc.invalidateQueries({ queryKey: keys.tasks(projectId) });
+      void qc.invalidateQueries({ queryKey: ['task'], predicate: (q) => (q.state.data as Task | undefined)?.id === card.id });
       toast.error(`Couldn’t move ${card.key}`, { description: errorMessage(err) });
     }
   };
