@@ -394,7 +394,7 @@ describe('Stop, Retry and failures', () => {
     expect((await admin.post(`/tasks/${task.id}/session/stop`)).status).toBe(200);
     await runner.next('job.interrupt', (m) => m.jobId === start.jobId);
     const s = new Stream(start.sessionId);
-    await runner.play(start.jobId, [s.result({ subtype: 'error_during_execution', isError: true, result: 'Interrupted' })]);
+    await runner.play(start.jobId, [{ ...s.result({ subtype: 'error_during_execution', isError: true }), result: undefined, terminal_reason: 'aborted_tools', errors: ['[ede_diagnostic] result_type=user'] }]);
     await runner.next('job.end');
     await runner.exit(start.jobId);
 

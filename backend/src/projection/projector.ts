@@ -287,7 +287,10 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     const costUsd = total === null ? null : Math.max(0, total - s.costSoFar);
     if (total !== null) s.costSoFar = Math.max(s.costSoFar, total);
     const subtype = String(e.subtype ?? 'unknown');
-    const isError = e.is_error === true || subtype !== 'success';
+    // A Stop (control-request interrupt) ends the Turn with `error_during_execution` and
+    // `terminal_reason: aborted_*`: expected, not a failure to report (ADR 0005).
+    const aborted = typeof e.terminal_reason === 'string' && e.terminal_reason.startsWith('aborted');
+    const isError = !aborted && (e.is_error === true || subtype !== 'success');
     const summary: TurnSummary = {
       durationMs: Number(e.duration_ms ?? 0),
       toolCalls: s.toolCalls,

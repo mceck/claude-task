@@ -218,3 +218,39 @@ describe('stream projection', () => {
     expect(timeline(mutations)).toContain('summary: success 0 tools');
   });
 });
+
+describe('recorded streams (ADR 0005 spike)', () => {
+  const load = (name: string) =>
+    readFileSync(path.join(import.meta.dirname, `fixtures/streams/${name}.jsonl`), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+
+  it('a Stop is an expected end of Turn, not an error', () => {
+    const { mutations } = replay(load('interrupt-control-request'));
+    const lines = timeline(mutations);
+    expect(lines.some((l) => l.startsWith('system:'))).toBe(false);
+    expect(lines.filter((l) => l.startsWith('summary:'))).toEqual(['summary: error_during_execution 1 tools', 'summary: success 0 tools']);
+    expect(mutations.filter((m) => m.op === 'turn').map((m) => m.op === 'turn' && m.turn.isError)).toEqual([false, false]);
+  });
+
+  it('empty thinking blocks produce no Timeline item', () => {
+    const { mutations } = replay(load('thinking-redacted'));
+    expect(timeline(mutations).some((l) => l.startsWith('thinking:'))).toBe(false);
+  });
+
+  it('a message consumed mid-turn belongs to the same Turn', () => {
+    const { mutations } = replay(load('mid-turn-message'));
+    expect(timeline(mutations).filter((l) => l.startsWith('summary:'))).toEqual(['summary: success 3 tools']);
+  });
+
+  it('queued messages drained after stdin closes are one Turn each', () => {
+    const { mutations } = replay(load('stdin-close-queued'));
+    expect(timeline(mutations)).toEqual(['agent: ONE', 'summary: success 0 tools', 'agent: TWO', 'summary: success 0 tools', 'agent: THREE', 'summary: success 0 tools']);
+  });
+
+  it.each(['partial-messages', 'mcp-http-tool', 'resume-interrupted-turn'])('%s projects without throwing and ends with a summary', (name) => {
+    const { mutations } = replay(load(name));
+    expect(mutations.some((m) => m.op === 'item.create' && m.payload.kind === 'turn_summary')).toBe(true);
+  });
+});

@@ -156,8 +156,12 @@ func turn(m map[string]any, lines chan map[string]any) chan map[string]any {
 	result := map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": sessionID,
 		"duration_ms": time.Since(start).Milliseconds(), "num_turns": 1, "total_cost_usd": 0.001, "result": "Done: " + text}
 	if interrupted {
+		// Like the real CLI after a control-request interrupt: no `result` text.
+		delete(result, "result")
 		result["subtype"] = "error_during_execution"
 		result["is_error"] = true
+		result["terminal_reason"] = "aborted_tools"
+		result["errors"] = []string{"[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"}
 	} else {
 		assistant(msgID, map[string]any{"type": "text", "text": "Done: " + text})
 	}
