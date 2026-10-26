@@ -23,10 +23,12 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { useTaskSession } from '../api/queries';
 import { useLiveTurn } from '../lib/live';
-import { formatCost, formatDuration, formatTokens } from './agents';
+import { AgentAvatar, formatCost, formatDuration, formatTokens } from './agents';
 import { Time } from './common';
 import { Markdown } from './Markdown';
+import { CollapsibleBody } from './Timeline';
 
 export function toolIcon(name: string): LucideIcon {
   if (name === 'Bash') return Terminal;
@@ -229,6 +231,7 @@ function TurnSummaryView({ summary, at }: { summary: TurnSummary; at: string }) 
 /** What the running Turn is writing right now (not stored yet), retries and setup output. */
 export function LiveTurnView({ taskId }: { taskId: string }) {
   const live = useLiveTurn(taskId);
+  const session = useTaskSession(taskId);
   const [showSetup, setShowSetup] = useState(false);
   return (
     <>
@@ -258,12 +261,20 @@ export function LiveTurnView({ taskId }: { taskId: string }) {
       )}
       {live.text && (
         <li aria-label="Agent is writing" className="relative flex gap-3">
-          <span className="z-10 flex size-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/15 text-violet-400 ring-2 ring-background">
-            <Loader2 className="size-4 animate-spin" />
-          </span>
+          <div className="z-10 shrink-0">
+            {session.data?.agent ? (
+              <AgentAvatar agent={session.data.agent} size="md" />
+            ) : (
+              <span className="flex size-8 items-center justify-center rounded-lg bg-violet-500/15 text-violet-400 ring-2 ring-background">
+                <Loader2 className="size-4 animate-spin" />
+              </span>
+            )}
+          </div>
           <div className="min-w-0 flex-1 rounded-xl border border-dashed border-violet-500/30 bg-violet-500/[0.04] px-4 py-3">
-            <Markdown source={live.text} />
-            <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-violet-400 align-middle" />
+            <CollapsibleBody follow>
+              <Markdown source={live.text} />
+              <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-violet-400 align-middle" />
+            </CollapsibleBody>
           </div>
         </li>
       )}

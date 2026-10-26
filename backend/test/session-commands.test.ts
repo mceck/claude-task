@@ -59,14 +59,31 @@ describe('native commands in managed conversations', () => {
     expect(timeline.filter((i: { comment?: { body: string } }) => i.comment?.body === 'Command completed locally')).toHaveLength(1);
   });
 
-  it('runs a first slash command natively while supplying the Task context in the system prompt', async () => {
+  it('runs a first slash command natively, with the Task context in earlier blocks of the same message', async () => {
     const admin = await app.admin();
     const { agent, runner } = await createAgent(app, admin);
     const { project } = await createProject(admin);
     const task = await createTask(admin, project.id, { title: 'Initialize payment service' });
+    await admin.post(`/tasks/${task.id}/comments`, { body: 'Use the existing billing tables' });
     await assignAndStart(admin, task.id, agent.id, '/init');
     const start = await runner.next('job.start');
-    expect(start.initialMessage).toEqual([{ type: 'text', text: '/init' }]);
-    expect(start.claudeArgs.appendSystemPrompt).toContain('Initialize payment service');
+    const blocks = start.initialMessage as { type: string; text?: string }[];
+    expect(blocks.at(-1)).toEqual({ type: 'text', text: '/init' });
+    const context = JSON.stringify(blocks.slice(0, -1));
+    expect(context).toContain('Initialize payment service');
+    expect(context).toContain('Use the existing billing tables');
+    expect(context).not.toContain('/init');
+
+    // The system prompt carries no Task context, so it stays the same on every Job of the Session.
+    runner.accept(start.jobId);
+    const stream = new Stream();
+    await runner.play(start.jobId, [stream.init(), stream.text('CLAUDE.md created'), stream.result()]);
+    await runner.exit(start.jobId);
+    await app.settle();
+    await admin.post(`/tasks/${task.id}/comments`, { body: 'Now add the refunds endpoint' });
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(next.mode).toBe('resume');
+    expect(start.claudeArgs.appendSystemPrompt).not.toContain('Initialize payment service');
+    expect(next.claudeArgs.appendSystemPrompt).toBe(start.claudeArgs.appendSystemPrompt);
   });
 });

@@ -67,27 +67,27 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     const commandIndex = attached.findIndex((c) => c.kind === 'user' && !c.noticeMessage && commandName(c.body));
     const batch = commandIndex === 0 ? attached.slice(0, 1) : commandIndex > 0 ? attached.slice(0, commandIndex) : attached;
     const remaining = new Set(attached.slice(batch.length).map((c) => c.id));
-    let initialContext = '';
     let included: CommentRow[];
     let message: MessageParts;
     if (fresh) {
       included = (await conversation(tx, task!.id)).filter((c) => !remaining.has(c.id));
+      // `claude` runs the last text block as the input and keeps earlier blocks as context, so a
+      // first command (/init, a skill) stays native when the Task context comes before it.
+      const command = commandIndex === 0 ? batch[0]! : null;
       const previousAgent = await tx
         .select({ id: sessions.id })
         .from(sessions)
         .where(and(eq(sessions.taskId, task!.id), ne(sessions.agentId, agentId), eq(sessions.started, true)));
       const seenFiles = new Set<string>();
       const files = await renderTaskFiles(ctx, tx, task!.id, snapshot.description, seenFiles);
-      message = startMessage(snapshot, await renderComments(ctx, tx, included, seenFiles), { branch, previousAgent: previousAgent.length > 0, files });
+      const context = await renderComments(ctx, tx, included.filter((c) => c.id !== command?.id), seenFiles);
+      message = startMessage(snapshot, context, { branch, previousAgent: previousAgent.length > 0, files });
+      if (command) {
+        const input = await renderComments(ctx, tx, [command]);
+        message = { blocks: [...message.blocks, ...input.blocks], fetch: [...message.fetch, ...input.fetch] };
+      }
       // Notices made while the Session was pending are covered by the snapshot.
       included = [...included, ...batch.filter((c) => !included.some((i) => i.id === c.id))];
-      if (commandIndex === 0) {
-        // A first command still needs the Task context, without a text prefix that would
-        // turn /init (or a skill) into an ordinary prompt instead of a native command.
-        initialContext = '\n\nTask and conversation context for the requested command:\n' + message.blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-        const command = await renderComments(ctx, tx, batch);
-        message = { blocks: command.blocks, fetch: [...message.fetch, ...command.fetch] };
-      }
     } else {
       included = batch;
       message = await renderComments(ctx, tx, batch);
@@ -160,7 +160,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
           worktreePath: session!.worktreePath,
           branch,
           projectInstructions: project!.agentInstructions,
-          agentPrompt: agent.systemPrompt + initialContext,
+          agentPrompt: agent.systemPrompt,
         }),
         mcpConfig: JSON.stringify({
           mcpServers: {

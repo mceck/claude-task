@@ -1,9 +1,9 @@
 import { PRIORITIES, pullRequestNoun, pullRequestRef } from '@claude-task/shared';
 import type { Agent, AgentItem, Attachment, Comment, GitProviderKind, Tag, Priority, Revision, RevisionChange, Status, User } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, Bot, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
+import { ArrowRightLeft, Bot, ChevronDown, ChevronUp, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -182,11 +182,59 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
             </div>
           </div>
         ) : (
-          comment.body && <Markdown source={comment.body} />
+          comment.body && (
+            <CollapsibleBody>
+              <Markdown source={comment.body} />
+            </CollapsibleBody>
+          )
         )}
         {comment.attachments.length > 0 && <Attachments files={comment.attachments} />}
       </div>
     </li>
+  );
+}
+
+const COLLAPSED_MAX_HEIGHT = 320;
+
+/** Clamps long content to a max height with a fade and a toggle to expand it. With `follow` (streaming) the clamped box tails the newest content. */
+export function CollapsibleBody({ children, follow }: { children: React.ReactNode; follow?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setOverflowing(el.scrollHeight > COLLAPSED_MAX_HEIGHT + 40);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const clamped = overflowing && !expanded;
+  useEffect(() => {
+    const el = ref.current;
+    if (follow && clamped && el) el.scrollTop = el.scrollHeight;
+  });
+  return (
+    <div>
+      <div
+        ref={ref}
+        data-testid="comment-body"
+        className={cn('relative', clamped && 'overflow-hidden')}
+        style={clamped ? { maxHeight: COLLAPSED_MAX_HEIGHT } : undefined}
+      >
+        {children}
+        {clamped && !follow && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background to-transparent" />}
+      </div>
+      {overflowing && (
+        <Button variant="ghost" size="xs" className="mt-1 text-muted-foreground" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+          {expanded ? <ChevronUp /> : <ChevronDown />}
+          {expanded ? 'Show less' : 'Show more'}
+        </Button>
+      )}
+    </div>
   );
 }
 

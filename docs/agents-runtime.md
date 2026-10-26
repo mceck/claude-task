@@ -114,8 +114,11 @@ conversation or override Agent configuration are omitted. Native commands are
 suggested at the beginning of a message; skills can also be mentioned in a sentence.
 
 Native slash inputs run as standalone Jobs, in order with queued Comments. A first
-slash input gets the Task context through the system prompt so its command text
-reaches Claude unchanged. Local command output is shown in the Timeline once.
+slash input is the last text block of the Session's first Message, after the Task
+context blocks: `claude` runs the last text block as the input and keeps the earlier
+blocks as context. A text prefix in the same block, or context blocks after the
+command, turn it into an ordinary prompt. Local command output is shown in the
+Timeline once.
 The web menu supports arrows, Enter/Tab and Escape; mobile supports tap selection
 and preserves the surrounding draft and caret. Internal Notes do not offer commands.
 
