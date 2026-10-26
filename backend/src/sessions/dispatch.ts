@@ -13,7 +13,7 @@ import { agentExtensions, resolvedMcp } from '../modules/extensions/service';
 import type { GitProvider } from '../git/provider';
 import { systemComment } from '../runner/handlers';
 import { newToken } from '../secrets';
-import { REASSIGNED_MESSAGE, RESUME_MESSAGE, renderComments, renderTaskFiles, startMessage, systemPrompt, taskSnapshot } from './messages';
+import { REASSIGNED_MESSAGE, RESUME_MESSAGE, inlineBudget, renderComments, renderTaskFiles, startMessage, systemPrompt, taskSnapshot } from './messages';
 import type { CommentRow, MessageParts } from './messages';
 
 export const runnerWsUrl = (backendUrl: string) => `${backendUrl.replace(/^http/, 'ws')}${RUNNER_WS_PATH}`;
@@ -102,11 +102,13 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
         .from(sessions)
         .where(and(eq(sessions.taskId, task!.id), ne(sessions.agentId, agentId), eq(sessions.started, true)));
       const seenFiles = new Set<string>();
-      const files = await renderTaskFiles(ctx, tx, task!.id, snapshot.description, seenFiles);
-      const context = await renderComments(ctx, tx, included.filter((c) => c.id !== command?.id), seenFiles);
+      // One inline-image budget for the whole first Message.
+      const budget = inlineBudget();
+      const files = await renderTaskFiles(ctx, tx, task!.id, snapshot.description, seenFiles, budget);
+      const context = await renderComments(ctx, tx, included.filter((c) => c.id !== command?.id), seenFiles, budget);
       message = startMessage(snapshot, context, { branch, previousAgent: previousAgent.length > 0, files });
       if (command) {
-        const input = await renderComments(ctx, tx, [command]);
+        const input = await renderComments(ctx, tx, [command], seenFiles, budget);
         message = { blocks: [...message.blocks, ...input.blocks], fetch: [...message.fetch, ...input.fetch] };
       }
       // Notices made while the Session was pending are covered by the snapshot.

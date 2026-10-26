@@ -755,6 +755,23 @@ describe('Runner output and attachment isolation', () => {
     await runner.exit(start.jobId);
   });
 
+  it('keeps inline images within a budget so a message always fits the Runner connection', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAgent(admin, task.id, agent.id);
+    const form = new FormData();
+    form.set('body', 'Screenshots of every page');
+    for (let i = 0; i < 10; i++) form.append('files', new Blob([Buffer.alloc(5 * 1024 * 1024 - 1, i)], { type: 'image/png' }), `page-${i}.png`);
+    expect((await admin.request('POST', `/tasks/${task.id}/comments`, { form })).status).toBe(201);
+    const start = await runner.next('job.start', () => true, 10_000);
+    expect(JSON.stringify(start).length).toBeLessThan(32 * 1024 * 1024);
+    const inline = (start.initialMessage ?? []).filter((b) => b.type === 'image');
+    expect(inline.length).toBeGreaterThan(0);
+    // The rest reach the Worktree as files, newest-first preference aside.
+    expect(inline.length + start.attachmentsToFetch.length).toBe(10);
+    expect(texts(start.initialMessage)).toMatch(/Attached file: `\.claude-task\/attachments\/.+\/page-\d\.png`/);
+  });
+
   it('serves public comment attachments to the active runner and refuses internal note attachments', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
