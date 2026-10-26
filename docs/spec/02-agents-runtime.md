@@ -82,7 +82,7 @@ The agent's output is read from the `claude` stream and shown on the task's time
 28. As a member, I want to assign a task to an agent (at most one agent per task), so that the agent starts working on it.
 29. As a member, I want the agent to start working as soon as it's assigned, whatever the task's status, so that assignment alone is the trigger.
 30. As a member, I want to see the task's session state (`queued #N`, `running`, `waiting for messages`, `paused`, `closed`) on the task and on its card, so that I know what the agent is doing.
-31. As a member, I want the agent to receive the task's title, description, priority, labels, and all existing non-internal comments when its session starts, so that it has full context.
+31. As a member, I want the agent to receive the task's title, description, priority, tags, and all existing non-internal comments when its session starts, so that it has full context.
 32. As a member, I want to reassign a task to a different agent, so that a better-suited agent picks it up, starting a fresh session that receives the task, the full non-internal comment history (including the previous agent's messages), and the existing branch.
 33. As a member, I want to unassign the agent, so that the agent stops (it's interrupted if running) and the session pauses.
 34. As a member, I want reassigning a task to an agent that previously had a session on it to resume that same session, so that its memory isn't lost.
@@ -109,7 +109,7 @@ The agent's output is read from the `claude` stream and shown on the task's time
 ### Agent tools
 
 51. As an agent, I want a tool to read my task (fields, available statuses with categories, comments), so that I can refresh my context.
-52. As an agent, I want a tool to update my task's title, description, priority, and labels, so that I can keep the task accurate (e.g. tick checklist items).
+52. As an agent, I want a tool to update my task's title, description, priority, and tags, so that I can keep the task accurate (e.g. tick checklist items).
 53. As an agent, I want a tool to move my task to any status except `closed`-category ones, so that I can signal progress (e.g. Ready for Review).
 54. As an agent, I want read-only tools to list and read other tasks of the same project, so that I can understand related work.
 55. As an agent, I want a tool to create a new unassigned task in my project, so that I can report out-of-scope issues I discover.
@@ -152,7 +152,7 @@ If (1) fails, fall back to: comments for the running task are held until the `re
 ### Data model additions
 
 - **Credential**: id, name, kind ∈ {claude_oauth_token, anthropic_api_key}, encrypted secret, secret last4, timestamps.
-- **Agent**: id, name, avatar emoji, avatar color, description, dockerfile, credential id (required), model (nullable = CLI default), effort (nullable), permission mode ∈ {bypassPermissions, auto, acceptEdits, dontAsk} default bypassPermissions, system prompt (text), cpu limit, memory limit (MB), enabled, runner token hash, current image tag, image build state ∈ {none, building, built, failed}, container state (last observed), runner connection state, timestamps.
+- **Agent**: id, name, avatar emoji, avatar color, avatar image (optional, PNG/JPEG/GIF/WebP up to 2 MB; replaces emoji and color when set), description, dockerfile, credential id (required), model (nullable = CLI default), effort (nullable), permission mode ∈ {bypassPermissions, auto, acceptEdits, dontAsk} default bypassPermissions, system prompt (text), cpu limit, memory limit (MB), enabled, runner token hash, current image tag, image build state ∈ {none, building, built, failed}, container state (last observed), runner connection state, timestamps.
 - **AgentBuild**: id, agent id, dockerfile snapshot, base image version, status, log (text, capped), started/finished.
 - **Project** additions: setup script (text), agent instructions (text).
 - **ProjectEnvVar**: project id, name, value (plain or encrypted), secret flag. Secret values are write-only like credentials.
@@ -239,7 +239,7 @@ Backend → runner:
   - "Notify agent" behaves exactly like a comment whose body is generated (system-authored, see below).
 - **Dispatcher**: per agent, triggered on enqueue, job end, runner connect, and a periodic tick. When the agent is enabled, its runner is connected, its container is running with the current image, and it has no job in `dispatched/running/finishing`, take the first QueueEntry by position under a row lock (`FOR UPDATE SKIP LOCKED`), create a Job, build `job.start`, delete the entry, mark its comments `delivered`, and set the session to `running`.
 - **Initial message** content:
-  - kind `start` (new session): task snapshot (key, title, status, priority, labels, description) + all existing non-internal comments in order + the task branch name.
+  - kind `start` (new session): task snapshot (key, title, status, priority, tags, description) + all existing non-internal comments in order + the task branch name.
   - kind `start` for a reassigned task: same, including the previous agent's comments (without activity), plus a line stating that a previous agent worked on the existing branch.
   - kind `messages`: the merged pending comments.
   - kind `resume_interrupted`: the pending comments if any, otherwise a short system message ("The previous run was interrupted by a restart; continue where you left off.").
@@ -288,17 +288,17 @@ Backend → runner:
 
 - The backend exposes an MCP server over Streamable HTTP. Each `job.start` carries a **job token** (random, hashed in DB) scoped to (agent, task, session), valid until the job ends. Requests with an unknown or expired token get 401.
 - Tools (all mutations are recorded as Revisions with the agent as actor):
-  - `get_task(key?)`: default is the own task. Returns fields, the project's statuses with categories, labels, assignees, and non-internal comments (most recent 50; older ones on request with a cursor). Reading the own task sets `last_seen_task_version`.
-  - `list_tasks(status_category?, label?, text?, limit?)`: tasks of the same project, summary fields only.
-  - `update_task(title?, description?, priority?, labels?)`: own task only. Labels must exist in the project.
+  - `get_task(key?)`: default is the own task. Returns fields, the project's statuses with categories, tags, assignees, and non-internal comments (most recent 50; older ones on request with a cursor). Reading the own task sets `last_seen_task_version`.
+  - `list_tasks(status_category?, tag?, text?, limit?)`: tasks of the same project, summary fields only.
+  - `update_task(title?, description?, priority?, tags?)`: own task only. Tags must exist in the project.
   - `set_status(status_name)`: own task only. Rejects statuses whose category is `closed`.
-  - `create_task(title, description?, priority?, labels?)`: same project, first `open` status, no assignees, created_by = agent.
+  - `create_task(title, description?, priority?, tags?)`: same project, first `open` status, no assignees, created_by = agent.
   - `open_pull_request(title, body, draft?)`: defined in Spec 03.
 - Tool errors return MCP tool errors with clear messages, so the agent can correct itself.
 
 ### Notify agent of changes
 
-- A task "has unseen changes" when its current version is greater than the session's `last_seen_task_version` **and** at least one revision after it was made by a user (not the agent itself). Changes to assignees and status don't count (status doesn't drive the agent); title, description, priority, and labels do.
+- A task "has unseen changes" when its current version is greater than the session's `last_seen_task_version` **and** at least one revision after it was made by a user (not the agent itself). Changes to assignees and status don't count (status doesn't drive the agent); title, description, priority, and tags do.
 - The task view shows a banner with the **Notify agent** button. Clicking creates a system-authored message containing a field-by-field diff (unified diff for the description) of the revisions since `last_seen_task_version`, delivered like a comment (inject or queue). A system comment "Agent notified of task changes" goes on the timeline. On delivery, `last_seen_task_version` becomes the current version.
 
 ### Real-time additions

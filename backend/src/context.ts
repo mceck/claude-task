@@ -1,3 +1,5 @@
+import type { PushTransport } from './notifications/transport';
+import type { PushDispatcher } from './notifications/dispatcher';
 import type { GitProvider } from './git/provider';
 import type { GitSync } from './git/sync';
 import type { RealtimeEvent, Topic } from '@claude-task/shared';
@@ -12,6 +14,8 @@ import type { RunnerHub } from './runner/hub';
 
 export interface AppContext {
   config: Config;
+  push: PushTransport;
+  pushDispatcher: PushDispatcher;
   db: Db;
   hub: RealtimeHub;
   blobs: BlobStore;

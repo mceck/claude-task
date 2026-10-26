@@ -10,7 +10,7 @@ import type { Executor } from '../db/client';
 import { ACTIVE_JOB_STATES, desiredContainerSpec, getAgentRow } from '../modules/agents/service';
 import { credentialEnv } from '../modules/credentials/service';
 import { newToken } from '../secrets';
-import { REASSIGNED_MESSAGE, RESUME_MESSAGE, renderComments, startMessage, systemPrompt, taskSnapshot } from './messages';
+import { REASSIGNED_MESSAGE, RESUME_MESSAGE, renderComments, renderTaskFiles, startMessage, systemPrompt, taskSnapshot } from './messages';
 import type { CommentRow, MessageParts } from './messages';
 
 export const runnerWsUrl = (backendUrl: string) => `${backendUrl.replace(/^http/, 'ws')}${RUNNER_WS_PATH}`;
@@ -67,7 +67,9 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
         .select({ id: sessions.id })
         .from(sessions)
         .where(and(eq(sessions.taskId, task!.id), ne(sessions.agentId, agentId), eq(sessions.started, true)));
-      message = startMessage(snapshot, await renderComments(ctx, tx, included), { branch, previousAgent: previousAgent.length > 0 });
+      const seenFiles = new Set<string>();
+      const files = await renderTaskFiles(ctx, tx, task!.id, snapshot.description, seenFiles);
+      message = startMessage(snapshot, await renderComments(ctx, tx, included, seenFiles), { branch, previousAgent: previousAgent.length > 0, files });
       // Notices made while the Session was pending are covered by the snapshot.
       included = [...included, ...attached.filter((c) => !included.some((i) => i.id === c.id))];
     } else {

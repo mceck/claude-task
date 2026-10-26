@@ -3,16 +3,20 @@ import { CircleCheck, CircleDashed, CircleSlash, Clock } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
-/** An Agent's emoji on its color. */
+/** An Agent's uploaded image, or its emoji on its color. */
 export function AgentAvatar({ agent, size = 'sm', state, className }: { agent: AgentRef; size?: 'xs' | 'sm' | 'md' | 'lg'; state?: SessionState | AgentState | null; className?: string }) {
   const box = { xs: 'size-5 text-[11px]', sm: 'size-6 text-xs', md: 'size-8 text-base', lg: 'size-11 text-xl' }[size];
   return (
     <span title={agent.name} className={cn('relative inline-flex shrink-0', className)}>
       <span
-        className={cn('flex items-center justify-center rounded-lg ring-2 ring-background', box)}
-        style={{ background: `color-mix(in oklch, ${agent.avatarColor} 30%, transparent)`, boxShadow: `inset 0 0 0 1px color-mix(in oklch, ${agent.avatarColor} 55%, transparent)` }}
+        className={cn('flex items-center justify-center overflow-hidden rounded-lg ring-2 ring-background', box)}
+        style={agent.avatarImageUrl ? undefined : { background: `color-mix(in oklch, ${agent.avatarColor} 30%, transparent)`, boxShadow: `inset 0 0 0 1px color-mix(in oklch, ${agent.avatarColor} 55%, transparent)` }}
       >
-        <span aria-hidden>{agent.avatarEmoji}</span>
+        {agent.avatarImageUrl ? (
+          <img src={agent.avatarImageUrl} alt="" className="size-full object-cover" />
+        ) : (
+          <span aria-hidden>{agent.avatarEmoji}</span>
+        )}
       </span>
       {state && <StateDot state={state} className="absolute -right-0.5 -bottom-0.5" />}
     </span>

@@ -1,9 +1,9 @@
 import { BranchLink, PullRequestBadge } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, taskTopic } from '@claude-task/shared';
-import type { ConflictResponse, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
+import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Expand, Link2, MoreHorizontal, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { toast } from 'sonner';
@@ -16,8 +16,14 @@ import { ApiError, del, errorMessage, patch, post } from '../api/client';
 import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
 import { removeCard, setTask, toCard, upsertCard } from '../lib/cache';
 import { useTopic } from '../lib/realtime';
-import { LabelChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
-import { Markdown, MarkdownEditor } from './Markdown';
+import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
+import { Markdown } from './Markdown';
+
+const RichMarkdownEditor = lazy(() => import('./RichMarkdownEditor'));
+
+/** Colors handed to tags created inline, cycling so neighbours differ. */
+const TAG_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#0ea5e9', '#a855f7', '#ec4899', '#14b8a6'];
+const nextTagColor = (existing: number) => TAG_COLORS[existing % TAG_COLORS.length]!;
 import { MultiPick } from './MultiPick';
 import { TaskActivity } from './TaskActivity';
 import { AgentAvatar, SessionChip } from './agents';
@@ -54,7 +60,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     );
   }
   const statuses = [...(bundle.data?.statuses ?? [])].sort((a, b) => a.position - b.position);
-  const labels = bundle.data?.labels ?? [];
+  const tags = bundle.data?.tags ?? [];
   const people = users.data ?? [];
 
   const sessionAction = async (action: 'stop' | 'retry' | 'notify') => {
@@ -236,19 +242,29 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               {task.agentId && session.data?.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
             </div>
 
-            <PropLabel>Labels</PropLabel>
+            <PropLabel>Tags</PropLabel>
             <MultiPick
-              label="Labels"
+              label="Tags"
+              createNoun="tag"
+              onCreate={async (name) => {
+                try {
+                  const { tag } = await post<{ tag: Tag }>(`/projects/${task.projectId}/tags`, { name, color: nextTagColor(tags.length) });
+                  // The WebSocket event updates the project's tag list; select the new tag right away.
+                  await save({ tagIds: [...task.tagIds, tag.id] });
+                } catch (err) {
+                  toast.error('Couldn’t create the tag', { description: errorMessage(err) });
+                }
+              }}
               highlight={false}
-              options={labels.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
-              selected={task.labelIds}
-              onChange={(labelIds) => save({ labelIds })}
+              options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
+              selected={task.tagIds}
+              onChange={(tagIds) => save({ tagIds })}
               trigger={
-                <button type="button" aria-label="Edit labels" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                  {task.labelIds.length === 0 && <span className="text-muted-foreground">No labels</span>}
-                  {task.labelIds.map((id) => {
-                    const l = labels.find((x) => x.id === id);
-                    return l ? <LabelChip key={id} name={l.name} color={l.color} /> : null;
+                <button type="button" aria-label="Edit tags" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
+                  {task.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
+                  {task.tagIds.map((id) => {
+                    const l = tags.find((x) => x.id === id);
+                    return l ? <TagChip key={id} name={l.name} color={l.color} /> : null;
                   })}
                   <Plus className="size-3.5 text-muted-foreground" />
                 </button>
@@ -270,7 +286,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
             {task.branchName && task.branchUrl && <BranchLink name={task.branchName} url={task.branchUrl} />}
             {task.pullRequest && <PullRequestBadge pr={task.pullRequest} />}
           </section>}
-          <Description description={task.description} onSave={(description) => save({ description })} />
+          <Description taskId={task.id} description={task.description} onSave={(description) => save({ description })} />
 
           {session.data?.unseenChanges && (
             <div role="status" className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
@@ -281,7 +297,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
 
           <Separator />
 
-          <TaskActivity task={task} statuses={statuses} labels={labels} users={people} session={session.data} onSessionAction={sessionAction} />
+          <TaskActivity task={task} statuses={statuses} tags={tags} users={people} session={session.data} onSessionAction={sessionAction} />
         </div>
       </div>
     </div>
@@ -333,7 +349,7 @@ function Title({ title, onSave }: { title: string; onSave: (title: string) => Pr
   );
 }
 
-function Description({ description, onSave }: { description: string; onSave: (d: string) => Promise<boolean> }) {
+function Description({ taskId, description, onSave }: { taskId: string; description: string; onSave: (d: string) => Promise<boolean> }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(description);
   const [stale, setStale] = useState(false);
@@ -364,7 +380,9 @@ function Description({ description, onSave }: { description: string; onSave: (d:
   return (
     <section className="space-y-2">
       <h3 className="text-sm font-semibold">Description</h3>
-      <MarkdownEditor label="Description" layout="split" rows={12} value={draft} onChange={setDraft} autoFocus />
+      <Suspense fallback={<div className="h-48 animate-pulse rounded-lg border bg-muted/30" />}>
+        <RichMarkdownEditor taskId={taskId} label="Description" value={draft} onChange={setDraft} autoFocus />
+      </Suspense>
       {stale && (
         <p className="text-xs text-amber-500">The task changed while you were editing. Your draft is kept: review the description above and save again.</p>
       )}

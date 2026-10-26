@@ -43,7 +43,7 @@ export function ProjectsPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
-      <PageHeader title={archived ? 'Archived projects' : 'Projects'} description="Every project has its own board, statuses and labels.">
+      <PageHeader title={archived ? 'Archived projects' : 'Projects'} description="Every project has its own board, statuses and tags.">
         <div className="flex items-center gap-2">
           <Switch id="show-archived" checked={archived} onCheckedChange={setArchived} />
           <Label htmlFor="show-archived" className="text-muted-foreground">

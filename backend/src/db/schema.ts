@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import {
   bigint,
+  check,
   boolean,
   customType,
   doublePrecision,
@@ -122,8 +123,8 @@ export const statuses = pgTable(
   (t) => [uniqueIndex('statuses_name_unique').on(t.projectId, sql`lower(${t.name})`)],
 );
 
-export const labels = pgTable(
-  'labels',
+export const tags = pgTable(
+  'tags',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     projectId: uuid('project_id')
@@ -132,7 +133,7 @@ export const labels = pgTable(
     name: text('name').notNull(),
     color: text('color').notNull(),
   },
-  (t) => [uniqueIndex('labels_name_unique').on(t.projectId, sql`lower(${t.name})`)],
+  (t) => [uniqueIndex('tags_name_unique').on(t.projectId, sql`lower(${t.name})`)],
 );
 
 export const tasks = pgTable(
@@ -180,17 +181,17 @@ export const taskAssignees = pgTable(
   (t) => [primaryKey({ columns: [t.taskId, t.userId] }), index('task_assignees_user_idx').on(t.userId)],
 );
 
-export const taskLabels = pgTable(
-  'task_labels',
+export const taskTags = pgTable(
+  'task_tags',
   {
     taskId: uuid('task_id')
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
-    labelId: uuid('label_id')
+    tagId: uuid('tag_id')
       .notNull()
-      .references(() => labels.id, { onDelete: 'cascade' }),
+      .references(() => tags.id, { onDelete: 'cascade' }),
   },
-  (t) => [primaryKey({ columns: [t.taskId, t.labelId] }), index('task_labels_label_idx').on(t.labelId)],
+  (t) => [primaryKey({ columns: [t.taskId, t.tagId] }), index('task_tags_tag_idx').on(t.tagId)],
 );
 
 export const taskRevisions = pgTable(
@@ -247,9 +248,10 @@ export const attachments = pgTable(
   'attachments',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    commentId: uuid('comment_id')
-      .notNull()
-      .references(() => comments.id, { onDelete: 'cascade' }),
+    /** Set for files attached to a Comment. */
+    commentId: uuid('comment_id').references(() => comments.id, { onDelete: 'cascade' }),
+    /** Set for files embedded in a Task's description (no Comment). */
+    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
     blobId: text('blob_id').notNull(),
     filename: text('filename').notNull(),
     contentType: text('content_type').notNull(),
@@ -258,7 +260,11 @@ export const attachments = pgTable(
     position: integer('position').notNull().default(0),
     createdAt: createdAt(),
   },
-  (t) => [index('attachments_comment_idx').on(t.commentId)],
+  (t) => [
+    index('attachments_comment_idx').on(t.commentId),
+    index('attachments_task_idx').on(t.taskId),
+    check('attachments_owner_check', sql`(${t.commentId} is not null) <> (${t.taskId} is not null)`),
+  ],
 );
 
 // Agents (Spec 02)
@@ -285,6 +291,8 @@ export const agents = pgTable(
     name: text('name').notNull(),
     avatarEmoji: text('avatar_emoji').notNull(),
     avatarColor: text('avatar_color').notNull(),
+    /** BlobStore id of an uploaded image, shown instead of the emoji. */
+    avatarBlobId: text('avatar_blob_id'),
     description: text('description').notNull().default(''),
     dockerfile: text('dockerfile').notNull(),
     credentialId: uuid('credential_id')
@@ -539,3 +547,47 @@ export const gitSettings = pgTable('git_settings', {
   privateKeyCiphertext: text('private_key_ciphertext').notNull(),
   updatedAt: updatedAt(),
 });
+
+/** Explicit preferences survive automatic-follow triggers. */
+export const taskPreferences = pgTable('task_preferences', {
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  taskId: uuid('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  following: boolean('following').notNull().default(true),
+  muted: boolean('muted').notNull().default(false),
+  explicitFollow: boolean('explicit_follow').notNull().default(false),
+  readPosition: bigint('read_position', { mode: 'bigint' }).notNull().default(sql`0`),
+}, (t) => [primaryKey({ columns: [t.userId, t.taskId] })]);
+
+/** Persisted Timeline insert order, independent of timestamps and device clocks. */
+export const taskActivity = pgTable('task_activity', {
+  position: bigint('position', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+  taskId: uuid('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  itemId: uuid('item_id').notNull(),
+}, (t) => [uniqueIndex('task_activity_item_unique').on(t.taskId, t.itemId)]);
+
+export const pushDevices = pgTable('push_devices', {
+  id: uuid('id').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  loginId: text('login_id').notNull().references(() => logins.id, { onDelete: 'cascade' }),
+  platform: text('platform').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  tokenCiphertext: text('token_ciphertext').notNull(),
+  updatedAt: updatedAt(),
+}, (t) => [uniqueIndex('push_devices_token_unique').on(t.tokenHash), index('push_devices_user_idx').on(t.userId)]);
+
+export const notificationEvents = pgTable('notification_events', {
+  id: text('id').primaryKey(),
+  taskId: uuid('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(),
+  createdAt: createdAt(),
+});
+
+export const pushDeliveries = pgTable('push_deliveries', {
+  eventId: text('event_id').notNull().references(() => notificationEvents.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  deviceId: uuid('device_id').notNull().references(() => pushDevices.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (t) => [primaryKey({ columns: [t.eventId, t.userId, t.deviceId] }), index('push_deliveries_pending_idx').on(t.nextAttemptAt)]);

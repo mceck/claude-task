@@ -1,9 +1,10 @@
+import { autoFollow } from '../../notifications/preferences';
 import { API_PREFIX, projectTopic, taskTopic } from '@claude-task/shared';
 import type { Actor, Attachment, Comment, TimelineItem, TimelinePage } from '@claude-task/shared';
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentItems, attachments, comments, taskRevisions } from '../../db/schema';
+import { agentItems, attachments, comments, taskRevisions, tasks } from '../../db/schema';
 import { serializeAgentItem } from '../../projection/apply';
 import { badRequest, forbidden, notFound } from '../../errors';
 import type { UserRow } from '../../auth/logins';
@@ -117,6 +118,7 @@ export async function createUserComment(
   if (input.attachments.length > 0) {
     await tx.insert(attachments).values(input.attachments.map((a, position) => ({ ...a, position, commentId: row!.id })));
   }
+  if (author.type === 'user' && author.id) await autoFollow(tx, after, task.id, [author.id]);
   await deliverComment(tx, after, task, row!);
   const comment = await loadComment(tx, row!.id);
   after.emit(taskTopic(task.id), { type: 'comment.created', comment });
@@ -170,10 +172,38 @@ export async function getAttachment(db: Executor, id: string) {
   const [row] = await db
     .select({ attachment: attachments, deletedAt: comments.deletedAt })
     .from(attachments)
-    .innerJoin(comments, eq(comments.id, attachments.commentId))
+    .leftJoin(comments, eq(comments.id, attachments.commentId))
     .where(eq(attachments.id, id));
   if (!row || row.deletedAt) throw notFound('Attachment');
   return row.attachment;
+}
+
+/** Description uploads per Task; older ones the description no longer links to are removed first. */
+export const TASK_ATTACHMENT_LIMIT = 100;
+const ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/** Deletes the Task's description uploads that the current description does not link to and are past the grace period. Returns their blob ids. */
+export async function pruneTaskAttachments(db: Executor, taskId: string): Promise<string[]> {
+  const [task] = await db.select({ description: tasks.description }).from(tasks).where(eq(tasks.id, taskId));
+  const stale = await db
+    .select({ id: attachments.id, blobId: attachments.blobId })
+    .from(attachments)
+    .where(and(eq(attachments.taskId, taskId), isNotNull(attachments.taskId), lt(attachments.createdAt, new Date(Date.now() - ORPHAN_GRACE_MS))));
+  const orphans = stale.filter((a) => !(task?.description ?? '').includes(a.id));
+  if (orphans.length === 0) return [];
+  await db.delete(attachments).where(inArray(attachments.id, orphans.map((a) => a.id)));
+  return orphans.map((a) => a.blobId);
+}
+
+/** Stores files uploaded for a Task's description; the editor links them by URL. */
+export async function createTaskAttachments(db: Executor, taskId: string, files: NewAttachment[]): Promise<Attachment[]> {
+  const [{ count }] = (await db.execute<{ count: number }>(sql`select count(*)::int as count from attachments where task_id = ${taskId}::uuid`)).rows as [{ count: number }];
+  if (count + files.length > TASK_ATTACHMENT_LIMIT) throw badRequest(`A Task can hold at most ${TASK_ATTACHMENT_LIMIT} description files`);
+  const rows = await db
+    .insert(attachments)
+    .values(files.map((f, position) => ({ ...f, position, taskId })))
+    .returning();
+  return rows.map(serializeAttachment);
 }
 
 // Timeline
@@ -243,9 +273,15 @@ export async function loadTimeline(
     if (r.kind === 'agent') return { type: 'agent', id: r.id, createdAt: agentMap.get(r.id)!.createdAt, item: agentMap.get(r.id)! };
     return { type: 'revision', id: r.id, createdAt: revisionMap.get(r.id)!.createdAt, revision: revisionMap.get(r.id)! };
   });
+  const pageIds = items.map((i) => i.id);
+  const positions = pageIds.length
+    ? await db.execute<{ item_id: string; position: string }>(sql`select item_id, position::text from task_activity
+        where task_id = ${taskId} and item_id in (${sql.join(pageIds.map((id) => sql`${id}::uuid`), sql`, `)})`)
+    : { rows: [] };
+  const positionMap = new Map(positions.rows.map((r) => [r.item_id, r.position]));
   const last = rows[rows.length - 1];
   return {
-    items,
+    items: items.map((item) => ({ ...item, readPosition: positionMap.get(item.id) ?? '0' })),
     nextCursor: page.rows.length > opts.limit && last ? encodeCursor({ t: last.t, k: last.kind, id: last.id }) : null,
   };
 }

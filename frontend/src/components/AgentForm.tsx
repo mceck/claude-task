@@ -8,7 +8,26 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useCredentials } from '../api/queries';
-import { errorMessage } from '../api/client';
+import { AgentAvatar } from './agents';
+import { api, del, errorMessage } from '../api/client';
+
+/** What the form wants done with the Agent's image once the Agent is saved. */
+export type AvatarChange = { file: File } | { remove: true } | null;
+
+/** Uploads or removes the image; call after the Agent exists. */
+export async function applyAvatarChange(agentId: string, change: AvatarChange): Promise<void> {
+  if (!change) return;
+  if ('file' in change) {
+    const form = new FormData();
+    form.set('file', change.file);
+    await api('PUT', `/agents/${agentId}/avatar`, form);
+  } else {
+    await del(`/agents/${agentId}/avatar`);
+  }
+}
+
+const AVATAR_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp';
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
@@ -68,7 +87,7 @@ function DockerfileEditor({ value, onChange }: { value: string; onChange: (s: st
   );
 }
 
-export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: CreateAgentBody) => Promise<void> }) {
+export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: CreateAgentBody, avatar: AvatarChange) => Promise<void> }) {
   const credentials = useCredentials();
   const [name, setName] = useState(agent?.name ?? '');
   const [emoji, setEmoji] = useState(agent?.avatarEmoji ?? '🤖');
@@ -83,6 +102,8 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
   const [cpu, setCpu] = useState(agent?.cpuLimit?.toString() ?? '');
   const [memory, setMemory] = useState(agent?.memoryMb?.toString() ?? '');
   const [enabled, setEnabled] = useState(agent?.enabled ?? true);
+  const [avatar, setAvatar] = useState<AvatarChange>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const submit = async (event: FormEvent) => {
@@ -106,13 +127,32 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
         cpuLimit: cpu ? Number(cpu) : null,
         memoryMb: memory ? Number(memory) : null,
         enabled,
-      });
+      }, avatar);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setSaving(false);
     }
   };
+  const pickImage = (file: File | undefined) => {
+    if (!file) return;
+    if (!AVATAR_ACCEPT.split(',').includes(file.type)) return setError('The image must be a PNG, JPEG, GIF or WebP');
+    if (file.size > AVATAR_MAX_BYTES) return setError('The image must be at most 2 MB');
+    setError('');
+    setAvatar({ file });
+    setPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return URL.createObjectURL(file);
+    });
+  };
+  const clearImage = () => {
+    setPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return null;
+    });
+    setAvatar(agent?.avatarImageUrl ? { remove: true } : null);
+  };
+  const shownImage = avatar && 'remove' in avatar ? null : (preview ?? agent?.avatarImageUrl ?? null);
   const selectClass = 'h-9 w-full rounded-md border bg-background px-3 text-sm';
   return (
     <form onSubmit={submit} className="space-y-5">
@@ -126,6 +166,34 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
         <Field label="Color">
           <Input aria-label="Color" type="color" value={color} onChange={(e) => setColor(e.target.value)} />
         </Field>
+      </div>
+      <div className="flex items-center gap-3">
+        <AgentAvatar agent={{ id: agent?.id ?? '', name, avatarEmoji: emoji, avatarColor: color, avatarImageUrl: shownImage }} size="lg" />
+        <div className="space-y-1">
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm" asChild>
+              <label className="cursor-pointer">
+                {shownImage ? 'Replace image' : 'Upload image'}
+                <input
+                  aria-label="Avatar image"
+                  type="file"
+                  accept={AVATAR_ACCEPT}
+                  className="sr-only"
+                  onChange={(e) => {
+                    pickImage(e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </Button>
+            {shownImage && (
+              <Button type="button" variant="ghost" size="sm" onClick={clearImage}>
+                Remove image
+              </Button>
+            )}
+          </div>
+          <span className="block text-xs text-muted-foreground">An image replaces the emoji and color. PNG, JPEG, GIF or WebP, up to 2 MB.</span>
+        </div>
       </div>
       <Field label="Description">
         <Textarea aria-label="Agent description" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} />

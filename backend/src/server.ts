@@ -1,3 +1,6 @@
+import { FirebasePushTransport } from './notifications/transport';
+import type { PushTransport } from './notifications/transport';
+import { PushDispatcher } from './notifications/dispatcher';
 import { GitHubProvider } from './git/github';
 import { readGitHubConfig } from './git/configuration';
 import { GitSync } from './git/sync';
@@ -29,7 +32,7 @@ export interface Server {
 /** Migrates the database, bootstraps the first admin and builds the app (not listening yet). */
 export async function createServer(
   config: Config,
-  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean; git?: GitProvider } = {},
+  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean; git?: GitProvider; push?: PushTransport } = {},
 ): Promise<Server> {
   const { db, pool } = createDb(config.databaseUrl);
   try {
@@ -37,6 +40,7 @@ export async function createServer(
     const ctx = {
       config,
       db,
+      push: overrides.push ?? new FirebasePushTransport(config.push?.serviceAccountFile),
       git: overrides.git ?? new GitHubProvider(() => readGitHubConfig(db, config)),
       hub: new RealtimeHub(),
       blobs: overrides.blobs ?? new FsBlobStore(path.join(config.dataDir, 'blobs')),
@@ -45,12 +49,14 @@ export async function createServer(
         (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents)),
       runners: new RunnerHub(() => ctx.log),
     } as AppContext;
+    ctx.pushDispatcher = new PushDispatcher(ctx);
     ctx.scheduler = new Scheduler(ctx);
     ctx.gitSync = new GitSync(ctx);
     const app = await buildApp(ctx, { logger: overrides.logger });
     ctx.log = app.log;
     await resetInterruptedBuilds(db);
     if (overrides.startScheduler !== false) {
+      ctx.pushDispatcher.start();
       ctx.scheduler.start();
       ctx.gitSync.start();
     }
@@ -64,6 +70,9 @@ export async function createServer(
       ctx,
       async close() {
         clearInterval(purge);
+        ctx.pushDispatcher.stop();
+        await ctx.pushDispatcher.settle();
+        await ctx.push.close?.();
         ctx.scheduler.stop();
         ctx.gitSync.stop();
         await ctx.gitSync.settle();

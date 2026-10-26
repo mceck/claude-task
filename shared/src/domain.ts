@@ -61,7 +61,7 @@ export interface Status {
   position: number;
 }
 
-export interface Label {
+export interface Tag {
   id: string;
   projectId: string;
   name: string;
@@ -81,7 +81,7 @@ export interface TaskCard {
   statusId: string;
   priority: Priority;
   position: string;
-  labelIds: string[];
+  tagIds: string[];
   assigneeIds: string[];
   commentCount: number;
   /** The assigned Agent, if any. */
@@ -103,7 +103,7 @@ export const REVISION_FIELDS = [
   'description',
   'statusId',
   'priority',
-  'labelIds',
+  'tagIds',
   'assigneeIds',
   'agentId',
   'pullRequest',
@@ -127,7 +127,8 @@ export interface Revision {
 
 export interface Attachment {
   id: string;
-  commentId: string;
+  /** Null for files embedded in a task description. */
+  commentId: string | null;
   filename: string;
   contentType: string;
   size: number;
@@ -162,10 +163,11 @@ export interface AgentItem {
   updatedAt: string;
 }
 
-export type TimelineItem =
+export type TimelineItem = (
   | { type: 'comment'; id: string; createdAt: string; comment: Comment }
   | { type: 'revision'; id: string; createdAt: string; revision: Revision }
-  | { type: 'agent'; id: string; createdAt: string; item: AgentItem };
+  | { type: 'agent'; id: string; createdAt: string; item: AgentItem }
+) & { /** Persisted read position, supplied by Timeline HTTP responses. */ readPosition?: string };
 
 export interface TimelinePage {
   /** Newest first. */

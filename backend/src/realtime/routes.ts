@@ -39,7 +39,7 @@ export function realtimeRoutes(app: FastifyInstance, ctx: AppContext): void {
         } catch {
           return socket.send(JSON.stringify({ type: 'error', message: 'invalid JSON' }));
         }
-        const topics = Array.isArray(msg?.topics) ? msg.topics.filter(isTopic).slice(0, 100) : [];
+        const topics = Array.isArray(msg?.topics) ? msg.topics.filter(isTopic).filter((t) => !t.startsWith('user:') || t === `user:${user.id}`).slice(0, 100) : [];
         // Every user may see every project, so any well-formed topic is allowed.
         if (msg?.type === 'subscribe') {
           ctx.hub.subscribe(socket, topics);

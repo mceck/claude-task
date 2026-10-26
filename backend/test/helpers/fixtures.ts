@@ -1,5 +1,5 @@
 import { DEFAULT_AGENT_DOCKERFILE } from '@claude-task/shared';
-import type { Agent, Comment, Credential, Label, Priority, ProjectBundle, Role, Status, Task, TaskSession, TimelineItem, User } from '@claude-task/shared';
+import type { Agent, Comment, Credential, Tag, Priority, ProjectBundle, Role, Status, Task, TaskSession, TimelineItem, User } from '@claude-task/shared';
 import { expect } from 'vitest';
 import type { ApiClient } from './client';
 import type { TestApp } from './app';
@@ -70,7 +70,7 @@ export async function createTask(
     statusId?: string;
     description?: string;
     priority?: Priority;
-    labelIds?: string[];
+    tagIds?: string[];
     assigneeIds?: string[];
   } = {},
 ): Promise<Task> {
@@ -79,10 +79,10 @@ export async function createTask(
   return res.body.task;
 }
 
-export async function createLabel(client: ApiClient, projectId: string, name: string, color = '#ff0000'): Promise<Label> {
-  const res = await client.post(`/projects/${projectId}/labels`, { name, color });
+export async function createTag(client: ApiClient, projectId: string, name: string, color = '#ff0000'): Promise<Tag> {
+  const res = await client.post(`/projects/${projectId}/tags`, { name, color });
   expect(res.status).toBe(201);
-  return res.body.label;
+  return res.body.tag;
 }
 
 /** Board order of task titles in a status. */

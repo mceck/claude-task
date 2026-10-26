@@ -16,6 +16,7 @@ export interface Config {
   secrets: SecretBox;
   agents: AgentsConfig;
   webUrl?: string;
+  push?: { serviceAccountFile: string };
   github?: { appId: string; privateKey: string } | null;
 }
 
@@ -61,6 +62,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     bootstrapAdmin: adminEmail && adminPassword ? { email: adminEmail, password: adminPassword, displayName: env.ADMIN_NAME?.trim() || 'Admin' } : null,
     loginRateLimit: { max: 10, windowMs: 15 * 60 * 1000 },
     secrets,
+    push: env.FCM_SERVICE_ACCOUNT_FILE ? { serviceAccountFile: env.FCM_SERVICE_ACCOUNT_FILE } : undefined,
     webUrl: (env.APP_URL?.trim() || `http://localhost:${env.PORT ?? 3000}`).replace(/\/+$/, ''),
     github:
       env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY

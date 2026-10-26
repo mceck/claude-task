@@ -1,7 +1,7 @@
 import type { RealtimeEvent, ServerMessage, Topic } from '@claude-task/shared';
 import type { WebSocket } from 'ws';
 
-const TOPIC_PATTERN = /^(?:(?:project|task|agent):[0-9a-f-]{36}|agents)$/;
+const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents)$/;
 
 export function isTopic(value: unknown): value is Topic {
   return typeof value === 'string' && TOPIC_PATTERN.test(value);
@@ -28,6 +28,7 @@ export class RealtimeHub {
     const conn = this.connections.get(socket);
     if (!conn) return;
     for (const topic of topics) {
+      if (topic.startsWith('user:') && topic !== `user:${conn.userId}`) continue;
       conn.topics.add(topic);
       let set = this.byTopic.get(topic);
       if (!set) this.byTopic.set(topic, (set = new Set()));

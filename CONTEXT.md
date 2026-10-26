@@ -23,7 +23,7 @@ _Avoid_: session (that's the Agent's conversation on a Task)
 ### Board
 
 **Project**:
-A body of work tied to exactly one code repository, with its own Board, Statuses and Labels.
+A body of work tied to exactly one code repository, with its own Board, Statuses and Tags.
 _Avoid_: workspace, list, repo
 
 **Project Key**:

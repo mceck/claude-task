@@ -1,6 +1,6 @@
 import { ProtectionWarning, PullRequestBadge } from '../components/Git';
 import { AGENTS_TOPIC, emptyBoardFilter, isFilterActive, matchesBoardFilter, PRIORITIES, projectTopic } from '@claude-task/shared';
-import type { BoardFilter, Label, Priority, Status, Task, TaskCard, User } from '@claude-task/shared';
+import type { BoardFilter, Tag, Priority, Status, Task, TaskCard, User } from '@claude-task/shared';
 import {
   closestCenter,
   DndContext,
@@ -18,7 +18,7 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities';
 import { useQueryClient } from '@tanstack/react-query';
 import { generateKeyBetween } from 'fractional-indexing';
-import { Flag, MessageSquare, Plus, Search, Settings, Tag, UserRound, X } from 'lucide-react';
+import { Flag, MessageSquare, Plus, Search, Settings, Tag as TagIcon, UserRound, X } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
 import { keys, useAgents, useBoardTasks, useProject, useUsers } from '../api/queries';
 import { AgentAvatar } from '../components/agents';
-import { LabelChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, UserAvatar } from '../components/common';
+import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, UserAvatar } from '../components/common';
 import { MultiPick } from '../components/MultiPick';
 import { TaskDetail } from '../components/TaskDetail';
 import { compareCards, toCard, upsertCard } from '../lib/cache';
@@ -67,7 +67,7 @@ export function BoardPage() {
 
   if (bundle.isPending) return <Loading className="h-full" />;
   if (!bundle.data) return <NotFoundPage what="Project" />;
-  const { statuses, labels } = bundle.data;
+  const { statuses, tags } = bundle.data;
   const columns = statuses
     .filter((s) => showClosed || s.category !== 'closed')
     .sort((a, b) => a.position - b.position);
@@ -93,7 +93,7 @@ export function BoardPage() {
           </Button>
         </header>
         <div className="flex flex-wrap items-center gap-2 border-b px-6 py-2.5">
-          <Filters filter={filter} onChange={setFilter} users={users.data ?? []} labels={labels} />
+          <Filters filter={filter} onChange={setFilter} users={users.data ?? []} tags={tags} />
           <div className="ml-auto flex items-center gap-2">
             <Switch id="show-closed" size="sm" checked={showClosed} onCheckedChange={(on) => setParam('closed', on ? '1' : null)} />
             <FieldLabel htmlFor="show-closed" className="text-muted-foreground">
@@ -109,7 +109,7 @@ export function BoardPage() {
             columns={columns}
             cards={tasks.data ?? []}
             filter={filter}
-            labels={labels}
+            tags={tags}
             users={users.data ?? []}
             selectedKey={openTask}
             onOpen={(key) => setParam('task', key)}
@@ -130,7 +130,7 @@ interface BoardProps {
   columns: Status[];
   cards: TaskCard[];
   filter: BoardFilter;
-  labels: Label[];
+  tags: Tag[];
   users: User[];
   selectedKey: string | null;
   onOpen: (taskKey: string) => void;
@@ -138,7 +138,7 @@ interface BoardProps {
 
 type Columns = Record<string, string[]>;
 
-function Board({ projectId, columns, cards, filter, labels, users, selectedKey, onOpen }: BoardProps) {
+function Board({ projectId, columns, cards, filter, tags, users, selectedKey, onOpen }: BoardProps) {
   const qc = useQueryClient();
   const [drag, setDrag] = useState<{ activeId: string; columns: Columns } | null>(null);
   const sensors = useSensors(
@@ -253,7 +253,7 @@ function Board({ projectId, columns, cards, filter, labels, users, selectedKey, 
                 {shown[status.id]!.map((id) => {
                   const card = byId.get(id);
                   return card ? (
-                    <SortableCard key={id} card={card} labels={labels} users={users} selected={card.key === selectedKey} onOpen={onOpen} />
+                    <SortableCard key={id} card={card} tags={tags} users={users} selected={card.key === selectedKey} onOpen={onOpen} />
                   ) : null;
                 })}
               </SortableContext>
@@ -261,7 +261,7 @@ function Board({ projectId, columns, cards, filter, labels, users, selectedKey, 
           ))}
         </div>
         {/* No drop animation: while it runs, a new drag can't start, so quick successive moves get lost. */}
-        <DragOverlay dropAnimation={null}>{active ? <Card card={active} labels={labels} users={users} dragging /> : null}</DragOverlay>
+        <DragOverlay dropAnimation={null}>{active ? <Card card={active} tags={tags} users={users} dragging /> : null}</DragOverlay>
       </DndContext>
     </div>
   );
@@ -343,7 +343,7 @@ function QuickAdd({ projectId, statusId }: { projectId: string; statusId: string
 
 interface CardProps {
   card: TaskCard;
-  labels: Label[];
+  tags: Tag[];
   users: User[];
   onOpen?: (key: string) => void;
   dragging?: boolean;
@@ -365,10 +365,10 @@ function SortableCard(props: CardProps) {
   );
 }
 
-function Card({ card, labels, users, onOpen, dragging, selected }: CardProps) {
+function Card({ card, tags, users, onOpen, dragging, selected }: CardProps) {
   const agents = useAgents();
   const agent = agents.data?.find((a) => a.id === card.agentId);
-  const cardLabels = card.labelIds.map((id) => labels.find((l) => l.id === id)).filter((l): l is Label => !!l);
+  const cardTags = card.tagIds.map((id) => tags.find((l) => l.id === id)).filter((l): l is Tag => !!l);
   const assignees = card.assigneeIds.map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u);
   return (
     <article
@@ -397,10 +397,10 @@ function Card({ card, labels, users, onOpen, dragging, selected }: CardProps) {
       </div>
       {card.pullRequest && <div className="mb-2"><PullRequestBadge pr={card.pullRequest} /></div>}
       <p className="text-[13px] leading-snug font-medium text-foreground/90 group-hover:text-foreground">{card.title}</p>
-      {(cardLabels.length > 0 || card.commentCount > 0) && (
+      {(cardTags.length > 0 || card.commentCount > 0) && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1">
-          {cardLabels.map((l) => (
-            <LabelChip key={l.id} name={l.name} color={l.color} />
+          {cardTags.map((l) => (
+            <TagChip key={l.id} name={l.name} color={l.color} />
           ))}
           {card.commentCount > 0 && (
             <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground" title={`${card.commentCount} comments`}>
@@ -415,7 +415,7 @@ function Card({ card, labels, users, onOpen, dragging, selected }: CardProps) {
 
 // Filters
 
-function Filters({ filter, onChange, users, labels }: { filter: BoardFilter; onChange: (f: BoardFilter) => void; users: User[]; labels: Label[] }) {
+function Filters({ filter, onChange, users, tags }: { filter: BoardFilter; onChange: (f: BoardFilter) => void; users: User[]; tags: Tag[] }) {
   const set = (patch: Partial<BoardFilter>) => onChange({ ...filter, ...patch });
   return (
     <>
@@ -436,11 +436,11 @@ function Filters({ filter, onChange, users, labels }: { filter: BoardFilter; onC
         onChange={(assignees) => set({ assignees })}
       />
       <MultiPick
-        label="Label"
-        icon={<Tag />}
-        options={labels.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
-        selected={filter.labels}
-        onChange={(l) => set({ labels: l })}
+        label="Tags"
+        icon={<TagIcon />}
+        options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
+        selected={filter.tags}
+        onChange={(l) => set({ tags: l })}
       />
       <MultiPick
         label="Priority"

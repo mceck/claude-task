@@ -1,4 +1,6 @@
 import {
+  AGENT_AVATAR_MAX_BYTES,
+  AGENT_AVATAR_TYPES,
   checkAgentDockerfile,
   createAgentBody,
   duplicateAgentBody,
@@ -8,14 +10,14 @@ import {
 } from '@claude-task/shared';
 import type { AgentUsage, JobDetail } from '@claude-task/shared';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
 import { agentBuilds, agents, credentials, jobs, queueEntries, sessions } from '../../db/schema';
-import { badRequest, conflict, notFound, parse } from '../../errors';
+import { badRequest, conflict, HttpError, notFound, parse } from '../../errors';
 import { latestRateLimits } from '../credentials/service';
 import { getTaskRow } from '../tasks/service';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
@@ -74,8 +76,54 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     return { agent: await loadAgent(ctx.db, connected, id) };
   });
 
+  app.get('/agents/:id/avatar', async (request, reply) => {
+    const { id } = parse(params, request.params);
+    const agent = await getAgentRow(ctx.db, id);
+    const blob = agent.avatarBlobId ? await ctx.blobs.get(agent.avatarBlobId) : null;
+    if (!blob) throw notFound('Avatar');
+    return reply
+      .header('content-type', blob.metadata.contentType)
+      .header('content-length', String(blob.metadata.size))
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'; sandbox")
+      // The URL carries the blob id, so a new image is a new URL.
+      .header('cache-control', 'private, max-age=31536000, immutable')
+      .send(blob.stream);
+  });
+
+  app.put('/agents/:id/avatar', admin, async (request) => {
+    const { id } = parse(params, request.params);
+    await getAgentRow(ctx.db, id);
+    const blobId = await receiveAvatar(ctx, request);
+    // Read the previous image under the row lock, so concurrent replacements each delete exactly the blob they replaced.
+    const before = await ctx.db.transaction(async (tx) => {
+      const row = await getAgentRow(tx, id, { lock: true });
+      await tx.update(agents).set({ avatarBlobId: blobId, updatedAt: new Date() }).where(eq(agents.id, id));
+      return row;
+    }).catch(async (err) => {
+      await ctx.blobs.delete(blobId);
+      throw err;
+    });
+    if (before.avatarBlobId) await ctx.blobs.delete(before.avatarBlobId);
+    await ctx.scheduler.publishAgent(id);
+    return { agent: await loadAgent(ctx.db, connected, id) };
+  });
+
+  app.delete('/agents/:id/avatar', admin, async (request) => {
+    const { id } = parse(params, request.params);
+    const before = await ctx.db.transaction(async (tx) => {
+      const row = await getAgentRow(tx, id, { lock: true });
+      await tx.update(agents).set({ avatarBlobId: null, updatedAt: new Date() }).where(eq(agents.id, id));
+      return row;
+    });
+    if (before.avatarBlobId) await ctx.blobs.delete(before.avatarBlobId);
+    await ctx.scheduler.publishAgent(id);
+    return { agent: await loadAgent(ctx.db, connected, id) };
+  });
+
   app.delete('/agents/:id', admin, async (request, reply) => {
     const { id } = parse(params, request.params);
+    const avatarBlobId = (await getAgentRow(ctx.db, id)).avatarBlobId;
     await ctx.db.transaction(async (tx) => {
       await getAgentRow(tx, id, { lock: true });
       const open = await tx
@@ -88,6 +136,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
       }
       await tx.delete(agents).where(eq(agents.id, id));
     });
+    if (avatarBlobId) await ctx.blobs.delete(avatarBlobId);
     ctx.runners.disconnect(id, 4003, 'agent deleted');
     void ctx.runtime.removeAgent(id).catch((err) => ctx.log.warn({ err, agentId: id }, 'could not remove the agent container'));
     await ctx.scheduler.publishAgent(id);
@@ -98,12 +147,16 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     const { name } = parse(duplicateAgentBody, request.body ?? {});
     const source = await getAgentRow(ctx.db, id);
+    // Blobs are owned by one row, so the copy gets its own.
+    const original = source.avatarBlobId ? await ctx.blobs.get(source.avatarBlobId) : null;
+    const avatarBlobId = original ? (await ctx.blobs.put(original.stream, original.metadata)).id : null;
     const [row] = await ctx.db
       .insert(agents)
       .values({
         name: name ?? `${source.name} (copy)`,
         avatarEmoji: source.avatarEmoji,
         avatarColor: source.avatarColor,
+        avatarBlobId,
         description: source.description,
         dockerfile: source.dockerfile,
         credentialId: source.credentialId,
@@ -272,3 +325,35 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   });
 }
 
+
+/** Stores the single uploaded image in the BlobStore and returns its id. */
+async function receiveAvatar(ctx: AppContext, request: FastifyRequest): Promise<string> {
+  if (!request.isMultipart()) throw badRequest('Send the image as multipart/form-data');
+  let blobId: string | null = null;
+  try {
+    for await (const part of request.parts({ limits: { fileSize: AGENT_AVATAR_MAX_BYTES, files: 1 } })) {
+      if (part.type !== 'file') continue;
+      if (blobId) {
+        part.file.resume();
+        continue;
+      }
+      const contentType = part.mimetype;
+      if (!(AGENT_AVATAR_TYPES as readonly string[]).includes(contentType)) {
+        part.file.resume();
+        throw badRequest('The avatar must be a PNG, JPEG, GIF or WebP image');
+      }
+      blobId = (await ctx.blobs.put(part.file, { filename: 'avatar', contentType })).id;
+      if (part.file.truncated) {
+        throw new HttpError(413, 'file_too_large', `The avatar must be at most ${AGENT_AVATAR_MAX_BYTES / 1024 / 1024} MB`);
+      }
+    }
+    if (!blobId) throw badRequest('Missing image file');
+    return blobId;
+  } catch (err) {
+    if (blobId) await ctx.blobs.delete(blobId);
+    if ((err as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') {
+      throw new HttpError(413, 'file_too_large', `The avatar must be at most ${AGENT_AVATAR_MAX_BYTES / 1024 / 1024} MB`);
+    }
+    throw err;
+  }
+}

@@ -44,6 +44,8 @@ export interface AgentRef {
   name: string;
   avatarEmoji: string;
   avatarColor: string;
+  /** Uploaded image shown instead of the emoji; the URL changes whenever the image does. */
+  avatarImageUrl: string | null;
 }
 
 export interface Agent extends AgentRef {
@@ -107,7 +109,7 @@ export interface TaskSession {
   queuePosition: number | null;
   /** The Queue Entry waits for a Retry after a failed Job. */
   held: boolean;
-  /** Edits by Users the Agent hasn't read yet (title, description, priority, labels). */
+  /** Edits by Users the Agent hasn't read yet (title, description, priority, tags). */
   unseenChanges: boolean;
   /** Version of the latest failed Job, so the UI can offer Retry. */
   lastJob: { id: string; state: JobState; failureStage: string | null; error: string | null } | null;

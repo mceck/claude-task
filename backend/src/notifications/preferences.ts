@@ -1,0 +1,54 @@
+import { userTopic } from '@claude-task/shared';
+import type { TaskPreference } from '@claude-task/shared';
+import { sql } from 'drizzle-orm';
+import type { Executor } from '../db/client';
+import type { AfterCommit } from '../context';
+import { badRequest } from '../errors';
+
+export async function preferences(db: Executor, userId: string, filter: { taskId?: string; projectId?: string }): Promise<TaskPreference[]> {
+  const result = await db.execute<{
+    taskId: string; following: boolean; muted: boolean; readPosition: string; latestPosition: string; unread: boolean;
+  }>(sql`select t.id as "taskId", coalesce(p.following, false) as following,
+    coalesce(p.muted, false) as muted, coalesce(p.read_position, 0)::text as "readPosition",
+    coalesce(a.latest, 0)::text as "latestPosition", coalesce(a.latest, 0) > coalesce(p.read_position, 0) as unread
+    from tasks t left join task_preferences p on p.task_id = t.id and p.user_id = ${userId}::uuid
+    left join lateral (select max(position) as latest from task_activity where task_id = t.id) a on true
+    where ${filter.taskId ? sql`t.id = ${filter.taskId}::uuid` : sql`t.project_id = ${filter.projectId}::uuid`}`);
+  return result.rows;
+}
+
+export async function emitPreference(db: Executor, after: AfterCommit, userId: string, taskId: string): Promise<TaskPreference> {
+  const [preference] = await preferences(db, userId, { taskId });
+  after.emit(userTopic(userId), { type: 'task.preference', preference: preference! });
+  return preference!;
+}
+
+/** Explicit unfollow and mute persist. Automatic following never overwrites either. */
+export async function autoFollow(db: Executor, after: AfterCommit, taskId: string, userIds: string[]): Promise<void> {
+  for (const userId of [...new Set(userIds)].sort()) {
+    const changed = await db.execute(sql`insert into task_preferences(user_id, task_id, following)
+      values (${userId}::uuid, ${taskId}::uuid, true)
+      on conflict(user_id, task_id) do update set following = true
+      where not task_preferences.explicit_follow and not task_preferences.following returning user_id`);
+    if (changed.rows.length) await emitPreference(db, after, userId, taskId);
+  }
+}
+
+export async function setPreference(db: Executor, after: AfterCommit, userId: string, taskId: string, patch: { following?: boolean; muted?: boolean }): Promise<TaskPreference> {
+  await db.execute(sql`insert into task_preferences(user_id, task_id, following, muted, explicit_follow)
+    values (${userId}::uuid, ${taskId}::uuid, ${patch.following ?? false}, ${patch.muted ?? false}, ${patch.following !== undefined})
+    on conflict(user_id, task_id) do update set
+      following = ${patch.following !== undefined ? sql`${patch.following}` : sql`task_preferences.following`},
+      muted = ${patch.muted !== undefined ? sql`${patch.muted}` : sql`task_preferences.muted`},
+      explicit_follow = task_preferences.explicit_follow or ${patch.following !== undefined}`);
+  return emitPreference(db, after, userId, taskId);
+}
+
+export async function advanceRead(db: Executor, after: AfterCommit, userId: string, taskId: string, itemId: string): Promise<TaskPreference> {
+  const entry = await db.execute<{ position: string }>(sql`select position::text from task_activity where task_id = ${taskId}::uuid and item_id = ${itemId}::uuid`);
+  if (!entry.rows[0]) throw badRequest('The read position must identify a persisted entry in this Task');
+  await db.execute(sql`insert into task_preferences(user_id, task_id, following, read_position)
+    values (${userId}::uuid, ${taskId}::uuid, false, ${entry.rows[0].position}::bigint)
+    on conflict(user_id, task_id) do update set read_position = greatest(task_preferences.read_position, excluded.read_position)`);
+  return emitPreference(db, after, userId, taskId);
+}

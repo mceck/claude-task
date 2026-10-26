@@ -7,7 +7,7 @@ import { agentRefs } from '../modules/agents/service';
 export type SessionRow = typeof sessions.$inferSelect;
 
 /** Fields whose human edits the Agent can be notified about; status and assignees don't drive it. */
-export const NOTIFIABLE_FIELDS = ['title', 'description', 'priority', 'labelIds'] as const;
+export const NOTIFIABLE_FIELDS = ['title', 'description', 'priority', 'tagIds'] as const;
 
 const notifiable = sql.raw(NOTIFIABLE_FIELDS.map((f) => `'${f}'`).join(', '));
 

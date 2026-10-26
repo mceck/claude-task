@@ -58,18 +58,18 @@ This spec covers the board without agents. Spec 02 adds agents, sessions, and th
 27. As a member, I want each task to get a sequential per-project number (`KEY-n`), so that I can reference it in conversation and in branch names.
 28. As a member, I want to write the task description in markdown with a live preview, so that I can give structured instructions with code blocks and checklists.
 29. As a member, I want to set a task's priority (urgent, high, normal, low, none), so that important work stands out.
-30. As a member, I want to create project-scoped labels with colors and attach several to a task, so that I can categorize work.
+30. As a member, I want to create project-scoped tags with colors and attach several to a task, so that I can categorize work.
 31. As a member, I want to assign one or more people to a task, so that it's clear who is responsible or reviewing.
 32. As a member, I want to drag a task between columns to change its status, so that updating the board is one gesture.
 33. As a member, I want to drag a task within a column to reorder it, so that I can express ordering inside a status.
 34. As a member, I want board changes made by others (including agents, see Spec 02) to appear live without reloading, so that I never act on stale information.
-35. As a member, I want to filter the board by assignee, label, priority, and free text, so that I can focus on a subset of tasks.
+35. As a member, I want to filter the board by assignee, tag, priority, and free text, so that I can focus on a subset of tasks.
 36. As a member, I want to open a task in a detail panel without leaving the board, so that I keep my context.
 37. As a member, I want a direct URL for each task, so that I can share links.
 38. As a member, I want to see who created a task and when, and when it was last updated, so that I have context.
-39. As a member, I want a task's field changes (status, title, description, priority, labels, assignees) recorded in its timeline, so that I can see what happened and who did it.
+39. As a member, I want a task's field changes (status, title, description, priority, tags, assignees) recorded in its timeline, so that I can see what happened and who did it.
 40. As a member, I want to delete a task (with confirmation), so that I can remove mistakes.
-41. As a member, I want task cards to show key, title, priority, labels, assignee avatars, and comment count, so that I can scan the board.
+41. As a member, I want task cards to show key, title, priority, tags, assignee avatars, and comment count, so that I can scan the board.
 
 ### Comments
 
@@ -80,6 +80,7 @@ This spec covers the board without agents. Spec 02 adds agents, sessions, and th
 46. As a member, I want new comments to appear live for everyone viewing the task, so that the conversation feels like a chat.
 47. As a member, I want to attach files to a comment (drag & drop or paste images), so that I can share screenshots, logs, and specs.
 48. As a member, I want image attachments previewed inline, so that I don't have to download them.
+48a. As a member, I want to insert images and files in a task description, so that the brief carries screenshots and specs. They are linked from the description text and also reach the assigned agent (Spec 02).
 49. As a member, I want to see comment authors distinguished by type (person, agent, system), so that I can read the timeline at a glance.
 50. As a member, I want the timeline ordered chronologically, with field-change events and comments interleaved, so that I can follow the full story of the task.
 
@@ -95,7 +96,7 @@ This spec covers the board without agents. Spec 02 adds agents, sessions, and th
   - **Users**: CRUD for users (admin), self-service password change.
   - **Projects**: CRUD, archive/unarchive, key uniqueness.
   - **Statuses**: per-project ordered statuses with categories and the deletion/migration rule.
-  - **Tasks**: CRUD, numbering, ordering, labels, assignees, revisions.
+  - **Tasks**: CRUD, numbering, ordering, tags, assignees, revisions.
   - **Comments**: CRUD, internal-note flag, author types, attachments linkage.
   - **BlobStore**: interface for storing and retrieving attachment bytes. The MVP implementation writes to the local filesystem under the data volume. Interface: put(stream, metadata) → blob id; get(blob id) → stream + metadata; delete(blob id).
   - **Realtime**: WebSocket hub for browsers. Clients subscribe to topics (`project:<id>` for board-level events, `task:<id>` for timeline events). Domain modules publish events after the database transaction commits.
@@ -117,32 +118,32 @@ This spec covers the board without agents. Spec 02 adds agents, sessions, and th
 - **Project**: id, key (unique, 2–6 uppercase letters, immutable), name, description, archived_at, next_task_number, timestamps. (Agent-related settings in Spec 02; repository link in Spec 03.)
 - **Status**: id, project id, name (unique within project), color, category ∈ {open, active, review, done, closed}, position.
   - Default set on project creation: Backlog (open), Todo (open), In Progress (active), Ready for Review (review), Done (done), Closed (closed).
-- **Label**: id, project id, name (unique within project), color.
+- **Tag**: id, project id, name (unique within project), color.
 - **Task**: id, project id, number (unique within project, assigned atomically from `next_task_number`), title, description (markdown), status id, priority ∈ {urgent, high, normal, low, none}, position (fractional index string for ordering within a status), created_by (actor), version (integer, incremented on every content change), timestamps. Agent assignment, session, branch, and PR fields come in Specs 02 and 03.
 - **TaskAssignee** (people): task id, user id.
-- **TaskLabel**: task id, label id.
+- **TaskTag**: task id, tag id.
 - **TaskRevision**: task id, version, actor, changed fields with before/after values, timestamp. Written in the same transaction as every task update. It drives the timeline's field-change events and (Spec 02) the "notify agent of changes" diff.
 - **Comment**: id, task id, author actor, kind ∈ {user, agent, system}, body (markdown), internal (boolean), edited_at, deleted_at (soft delete), timestamps. Spec 02 adds delivery fields.
-- **Attachment**: id, comment id, blob id, filename, content type, size. Max 25 MB per file, 10 files per comment.
+- **Attachment**: id, comment id (null for files uploaded from the description editor, which carry a task id instead), blob id, filename, content type, size. Max 25 MB per file, 10 files per comment.
 - **Actor** (used across the model): a polymorphic reference to a user, an agent (Spec 02), or the system, stored as type + id.
 
 ### API
 
 - REST + JSON under a versioned prefix. Shapes are defined once in the shared package and validated server-side (e.g. with zod).
-- Resource groups: auth (login, logout, me, change password), users (admin), projects, statuses (nested under project, with a reorder endpoint and a delete-with-migration endpoint), labels, tasks (list by project with filters, create, get, patch, delete, move = status + position in one call), comments (list by task, create, patch, delete), attachments (upload via multipart; download with an authorization check through the task).
+- Resource groups: auth (login, logout, me, change password), users (admin), projects, statuses (nested under project, with a reorder endpoint and a delete-with-migration endpoint), tags, tasks (list by project with filters, create, get, patch, delete, move = status + position in one call), comments (list by task, create, patch, delete), attachments (upload via multipart; download with an authorization check through the task).
 - The **task timeline** endpoint returns comments and revision events merged in chronological order with cursor pagination. Spec 02 adds agent timeline items to it.
 - Moving a task to a status in another category is an ordinary task update. This spec attaches no side effects to it (Spec 02 handles `closed`).
 - Concurrency: task patches carry the `version` the client last saw. If the server version is newer and the patch touches a field that changed since then, the server returns 409 with the current task, and the client refreshes and shows a notice. Moves and reorders never conflict: last write wins.
 
 ### Real-time events
 
-- Board topic events: task created/updated/moved/deleted (with the card projection), status list changed, label list changed.
+- Board topic events: task created/updated/moved/deleted (with the card projection), status list changed, tag list changed.
 - Task topic events: comment created/updated/deleted, revision created. Spec 02 adds session/turn/activity events to the same topic.
 - Events are notifications that carry the new projection. On reconnect, clients refetch the queries they have open instead of replaying missed events.
 
 ### Frontend views
 
-- Login, change-password (forced and voluntary), projects list, project board, task detail (side panel on the board plus a full-page route), project settings (general, statuses, labels), users admin.
+- Login, change-password (forced and voluntary), projects list, project board, task detail (side panel on the board plus a full-page route), project settings (general, statuses, tags), users admin.
 - The board uses horizontal columns per non-closed status in status order, plus a "show closed" toggle. Drag & drop does optimistic updates and rolls back on error.
 - The comment composer has a markdown editor, an internal-note toggle (changing the composer's styling while on), attachment drop/paste, and Cmd/Ctrl+Enter to submit.
 
@@ -168,7 +169,7 @@ This spec covers the board without agents. Spec 02 adds agents, sessions, and th
 10. Comments render markdown. Internal notes are visually distinct and flagged in the API.
 11. Image attachments preview inline. Files over 25 MB are rejected. Attachment downloads require an authenticated user.
 12. Closed-category statuses are hidden on the board by default and visible with the toggle.
-13. Board filters (assignee, label, priority, text) work together.
+13. Board filters (assignee, tag, priority, text) work together.
 
 ## Out of Scope
 

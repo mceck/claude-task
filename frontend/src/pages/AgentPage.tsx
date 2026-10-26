@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { del, errorMessage, get, patch, post } from '../api/client';
 import { keys, useAgent, useBuilds, useContainerLogs, useJob, useJobs, useMe, useQueue, useUsage } from '../api/queries';
 import { AgentAvatar, AgentStateBadge, formatCost, formatDuration, formatTokens } from '../components/agents';
-import { AgentForm, LogView } from '../components/AgentForm';
+import { AgentForm, applyAvatarChange, LogView } from '../components/AgentForm';
 import { ErrorText, Loading, Time, useConfirm } from '../components/common';
 import { useTopic } from '../lib/realtime';
 import { NotFoundPage } from './NotFoundPage';
@@ -185,8 +185,9 @@ function AgentDetail({ agent }: { agent: Agent }) {
               <div className="rounded-xl border bg-card p-5">
                 <AgentForm
                   agent={agent}
-                  onSave={async (body) => {
+                  onSave={async (body, avatar) => {
                     await patch(`/agents/${agent.id}`, body);
+                    await applyAvatarChange(agent.id, avatar);
                     await refresh();
                     toast.success('Agent saved');
                   }}

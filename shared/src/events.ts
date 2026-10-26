@@ -1,12 +1,14 @@
 // Real-time events pushed to browsers over the WebSocket. Events are notifications
 // carrying the new projection; on reconnect clients refetch instead of replaying.
+import type { UserEvent } from './mobile';
 import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, TaskSession } from './agents';
-import type { AgentItem, Comment, Label, Project, Revision, Status, Task, TaskCard } from './domain';
+import type { AgentItem, Comment, Tag, Project, Revision, Status, Task, TaskCard } from './domain';
 
-export type Topic = `project:${string}` | `task:${string}` | 'agents' | `agent:${string}`;
+export type Topic = `project:${string}` | `task:${string}` | 'agents' | `agent:${string}` | `user:${string}`;
 
 export const projectTopic = (projectId: string): Topic => `project:${projectId}`;
 export const taskTopic = (taskId: string): Topic => `task:${taskId}`;
+export const userTopic = (userId: string): Topic => `user:${userId}`;
 export const AGENTS_TOPIC: Topic = 'agents';
 export const agentTopic = (agentId: string): Topic => `agent:${agentId}`;
 
@@ -17,7 +19,7 @@ export type BoardEvent =
   | { type: 'task.moved'; task: TaskCard }
   | { type: 'task.deleted'; projectId: string; taskId: string }
   | { type: 'statuses.changed'; projectId: string; statuses: Status[] }
-  | { type: 'labels.changed'; projectId: string; labels: Label[] }
+  | { type: 'tags.changed'; projectId: string; tags: Tag[] }
   | { type: 'project.updated'; project: Project };
 
 /** Events on `task:<id>` (the Timeline and detail view). */
@@ -46,7 +48,7 @@ export type AgentEvent =
   | { type: 'build.log'; agentId: string; buildId: string; chunk: string }
   | { type: 'job.updated'; job: Job };
 
-export type RealtimeEvent = BoardEvent | TaskEvent | AgentEvent;
+export type RealtimeEvent = BoardEvent | TaskEvent | AgentEvent | UserEvent;
 
 export type ClientMessage =
   | { type: 'subscribe'; topics: Topic[] }

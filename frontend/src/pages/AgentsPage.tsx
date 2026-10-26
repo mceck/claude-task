@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { post, errorMessage } from '../api/client';
 import { keys, useAgents, useMe } from '../api/queries';
 import { AgentAvatar, AgentStateBadge } from '../components/agents';
-import { AgentForm } from '../components/AgentForm';
+import { AgentForm, applyAvatarChange } from '../components/AgentForm';
 import { ErrorText, Loading, Time } from '../components/common';
 import { useTopic } from '../lib/realtime';
 import { PageHeader } from './ProjectsPage';
@@ -71,8 +71,9 @@ export function AgentsPage() {
             <DialogDescription>Choose its identity, credential and environment.</DialogDescription>
           </DialogHeader>
           <AgentForm
-            onSave={async (body) => {
+            onSave={async (body, avatar) => {
               const { agent } = await post<{ agent: Agent }>('/agents', body);
+              await applyAvatarChange(agent.id, avatar);
               await qc.invalidateQueries({ queryKey: keys.agents });
               setCreating(false);
               navigate(`/agents/${agent.id}`);

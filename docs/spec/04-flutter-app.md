@@ -1,11 +1,11 @@
 ---
-status: to-do
+status: in-progress
 ---
 
 # Spec 04 — Flutter conversation frontend
 
-Design date: 2026-10-26. Awaiting shared-understanding confirmation after the
-grilling interview; product implementation has not started.
+Design date: 2026-10-26. Implementation started on 2026-10-26; progress and
+verification are tracked in `TODO.md` at the repository root.
 
 ## Intent
 
@@ -44,7 +44,7 @@ approved requirements.
 
 - Wide windows show a Project rail, a Task list grouped by Status and the
   selected Task's conversation. A details panel exposes description, Status,
-  priority, Labels, User assignees, Agent and Git links.
+  priority, Tags, User assignees, Agent and Git links.
 - Narrow windows use successive Project, Task list and conversation screens,
   with Task details opened on demand. Tablet and resized desktop layouts adapt
   to available width.

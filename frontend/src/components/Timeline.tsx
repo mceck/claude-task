@@ -1,7 +1,7 @@
 import { PRIORITIES } from '@claude-task/shared';
-import type { Agent, AgentItem, Attachment, Comment, Label, Priority, Revision, RevisionChange, Status, User } from '@claude-task/shared';
+import type { Agent, AgentItem, Attachment, Comment, Tag, Priority, Revision, RevisionChange, Status, User } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, Bot, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
+import { ArrowRightLeft, Bot, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -19,7 +19,7 @@ import { Markdown, MarkdownEditor } from './Markdown';
 
 interface Lookups {
   statuses: Status[];
-  labels: Label[];
+  tags: Tag[];
   users: User[];
   agents?: Agent[];
 }
@@ -237,7 +237,7 @@ const FIELD_ICON: Record<RevisionChange['field'], LucideIcon> = {
   description: FileText,
   statusId: ArrowRightLeft,
   priority: Flag,
-  labelIds: Tag,
+  tagIds: TagIcon,
   assigneeIds: UserRound,
   agentId: Bot,
   pullRequest: ArrowRightLeft,
@@ -264,9 +264,9 @@ function RevisionItem({ revision, ...lookups }: { revision: Revision } & Lookups
   );
 }
 
-export function describeChange(c: RevisionChange, { statuses, labels, users, agents = [] }: Lookups): string {
+export function describeChange(c: RevisionChange, { statuses, tags, users, agents = [] }: Lookups): string {
   const status = (id: unknown) => statuses.find((s) => s.id === id)?.name ?? 'a deleted status';
-  const label = (id: string) => labels.find((l) => l.id === id)?.name ?? 'a deleted label';
+  const label = (id: string) => tags.find((l) => l.id === id)?.name ?? 'a deleted tag';
   const user = (id: string) => users.find((u) => u.id === id)?.displayName ?? 'someone';
   const delta = (before: unknown, after: unknown) => {
     const b = before as string[];
@@ -285,11 +285,11 @@ export function describeChange(c: RevisionChange, { statuses, labels, users, age
       const name = (p: unknown) => (PRIORITIES.includes(p as Priority) ? (p === 'none' ? 'none' : String(p)) : String(p));
       return `changed priority from ${name(c.before)} to ${name(c.after)}`;
     }
-    case 'labelIds': {
+    case 'tagIds': {
       const { added, removed } = delta(c.before, c.after);
       return [
-        added.length && `added ${plural(added.length, 'label')} ${added.map(label).join(', ')}`,
-        removed.length && `removed ${plural(removed.length, 'label')} ${removed.map(label).join(', ')}`,
+        added.length && `added ${plural(added.length, 'tag')} ${added.map(label).join(', ')}`,
+        removed.length && `removed ${plural(removed.length, 'tag')} ${removed.map(label).join(', ')}`,
       ]
         .filter(Boolean)
         .join(' and ');

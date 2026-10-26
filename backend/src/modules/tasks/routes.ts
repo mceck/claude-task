@@ -20,7 +20,7 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
     const tasks = await loadCards(ctx.db, {
       projectId: project.id,
       includeClosed: q.includeClosed === 'true',
-      filter: { assignees: q.assignee, labels: q.label, priorities: q.priority, text: q.q ?? '' },
+      filter: { assignees: q.assignee, tags: q.tag, priorities: q.priority, text: q.q ?? '' },
     });
     return { tasks };
   });

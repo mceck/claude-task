@@ -18,7 +18,7 @@ describe('projects', () => {
       ['Done', 'done'],
       ['Closed', 'closed'],
     ]);
-    expect(res.body.labels).toEqual([]);
+    expect(res.body.tags).toEqual([]);
   });
 
   it.each(['A', 'TOOLONG', 'api', 'A1', 'AB-C', ''])('rejects the key %j', async (key) => {

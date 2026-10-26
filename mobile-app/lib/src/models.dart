@@ -1,0 +1,153 @@
+typedef Json = Map<String, dynamic>;
+
+List<Json> objects(dynamic value) => (value as List? ?? [])
+    .map((e) => Map<String, dynamic>.from(e as Map))
+    .toList();
+List<String> strings(dynamic value) => (value as List? ?? []).cast<String>();
+
+class User {
+  final String id, email, displayName;
+  final bool mustChangePassword;
+  User.fromJson(Json json)
+    : id = json['id'] as String,
+      email = json['email'] as String? ?? '',
+      displayName = json['displayName'] as String? ?? '',
+      mustChangePassword = json['mustChangePassword'] == true;
+}
+
+class Project {
+  final String id, key, name;
+  Project.fromJson(Json json)
+    : id = json['id'] as String,
+      key = json['key'] as String,
+      name = json['name'] as String;
+}
+
+class TaskStatus {
+  final String id, name, category, color;
+  TaskStatus.fromJson(Json json)
+    : id = json['id'] as String,
+      name = json['name'] as String,
+      category = json['category'] as String,
+      color = json['color'] as String? ?? '#888888';
+}
+
+class Tag {
+  final String id, name;
+  Tag.fromJson(Json json)
+    : id = json['id'] as String,
+      name = json['name'] as String;
+}
+
+class Agent {
+  final String id, name, emoji;
+  final bool enabled;
+  Agent.fromJson(Json json)
+    : id = json['id'] as String,
+      name = json['name'] as String,
+      emoji = json['avatarEmoji'] as String? ?? '🤖',
+      enabled = json['enabled'] == true;
+}
+
+class Task {
+  final String id, projectId, key, title, description, statusId, priority;
+  final String? agentId, branchName, branchUrl, pullRequestUrl;
+  final List<String> tagIds, assigneeIds;
+  final int version;
+  Task.fromJson(Json json)
+    : id = json['id'] as String,
+      projectId = json['projectId'] as String,
+      key = json['key'] as String,
+      title = json['title'] as String,
+      description = json['description'] as String? ?? '',
+      statusId = json['statusId'] as String,
+      priority = json['priority'] as String? ?? 'none',
+      agentId = json['agentId'] as String?,
+      tagIds = strings(json['tagIds']),
+      assigneeIds = strings(json['assigneeIds']),
+      version = json['version'] as int? ?? 1,
+      branchName = json['branchName'] as String?,
+      branchUrl = json['branchUrl'] as String?,
+      pullRequestUrl = (json['pullRequest'] as Map?)?['url'] as String?;
+}
+
+class TaskPreference {
+  final String taskId, readPosition, latestPosition;
+  final bool following, muted, unread;
+  TaskPreference.fromJson(Json json)
+    : taskId = json['taskId'] as String,
+      following = json['following'] == true,
+      muted = json['muted'] == true,
+      unread = json['unread'] == true,
+      readPosition = json['readPosition'] as String? ?? '0',
+      latestPosition = json['latestPosition'] as String? ?? '0';
+}
+
+class TimelineEntry {
+  final Json json;
+  TimelineEntry(this.json);
+  String get id => json['id'] as String;
+  String get type => json['type'] as String;
+  DateTime get createdAt => DateTime.parse(json['createdAt'] as String);
+  Json get content =>
+      Map<String, dynamic>.from(json[type == 'agent' ? 'item' : type] as Map);
+  Json get payload =>
+      Map<String, dynamic>.from(content['payload'] as Map? ?? {});
+  bool get internal => content['internal'] == true;
+  bool get deleted => content['deletedAt'] != null;
+  String get body => content['body'] as String? ?? '';
+  String get author =>
+      (content[type == 'revision' ? 'actor' : 'author'] as Map?)?['displayName']
+          as String? ??
+      'Agent';
+  String? get authorId => (content['author'] as Map?)?['id'] as String?;
+  bool get isOwnCommentEditable =>
+      type == 'comment' && content['kind'] == 'user' && !deleted;
+  List<Json> get attachments => objects(content['attachments']);
+}
+
+class DraftFile {
+  final String path, name;
+  const DraftFile(this.path, this.name);
+  Json toJson() => {'path': path, 'name': name};
+  DraftFile.fromJson(Json json)
+    : path = json['path'] as String,
+      name = json['name'] as String;
+}
+
+class Draft {
+  final String text;
+  final bool internal;
+  final List<DraftFile> files;
+
+  /// A request may have committed before connectivity was lost. Never retry it automatically.
+  final bool ambiguous;
+  const Draft({
+    this.text = '',
+    this.internal = false,
+    this.files = const [],
+    this.ambiguous = false,
+  });
+  Draft.fromJson(Json json)
+    : text = json['text'] as String? ?? '',
+      internal = json['internal'] == true,
+      files = objects(json['files']).map(DraftFile.fromJson).toList(),
+      ambiguous = json['ambiguous'] == true;
+  Json toJson() => {
+    'text': text,
+    'internal': internal,
+    'files': files.map((f) => f.toJson()).toList(),
+    'ambiguous': ambiguous,
+  };
+  Draft copyWith({
+    String? text,
+    bool? internal,
+    List<DraftFile>? files,
+    bool? ambiguous,
+  }) => Draft(
+    text: text ?? this.text,
+    internal: internal ?? this.internal,
+    files: files ?? this.files,
+    ambiguous: ambiguous ?? this.ambiguous,
+  );
+}

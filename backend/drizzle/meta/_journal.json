@@ -22,6 +22,41 @@
       "when": 1792965109446,
       "tag": "0002_git_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792972466812,
+      "tag": "0003_mobile",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792972870177,
+      "tag": "0004_agent_avatar_image",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792974209938,
+      "tag": "0005_task_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792974611240,
+      "tag": "0006_task_activity_commit_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792974992712,
+      "tag": "0007_rename_labels_to_tags",
+      "breakpoints": true
     }
   ]
 }

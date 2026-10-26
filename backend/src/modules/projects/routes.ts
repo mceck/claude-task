@@ -1,12 +1,12 @@
 import { createProjectBody, listProjectsQuery, projectTopic, updateProjectBody } from '@claude-task/shared';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { attachments, comments, projects, tasks } from '../../db/schema';
 import { badRequest, parse } from '../../errors';
-import { listLabels } from '../labels/service';
+import { listTags } from '../tags/service';
 import { listStatuses } from '../statuses/service';
 import { createProject, getProject, listProjects, serializeProject } from './service';
 
@@ -69,8 +69,8 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
       const blobs = await tx
         .select({ blobId: attachments.blobId })
         .from(attachments)
-        .innerJoin(comments, eq(comments.id, attachments.commentId))
-        .innerJoin(tasks, eq(tasks.id, comments.taskId))
+        .leftJoin(comments, eq(comments.id, attachments.commentId))
+        .innerJoin(tasks, eq(tasks.id, sql`coalesce(${attachments.taskId}, ${comments.taskId})`))
         .where(eq(tasks.projectId, project.id));
       // Tasks reference statuses without cascade, so remove them first.
       await tx.delete(tasks).where(eq(tasks.projectId, project.id));
@@ -86,7 +86,7 @@ async function bundle(ctx: AppContext, projectId: string) {
   return {
     project: serializeProject(project!),
     statuses: await listStatuses(ctx.db, projectId),
-    labels: await listLabels(ctx.db, projectId),
+    tags: await listTags(ctx.db, projectId),
   };
 }
 

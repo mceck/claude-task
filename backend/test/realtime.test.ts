@@ -3,7 +3,7 @@ import type { ProjectBundle } from '@claude-task/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ApiClient } from './helpers/client';
 import { useTestApp } from './helpers/app';
-import { createLabel, createProject, createTask, createUser, statusByName } from './helpers/fixtures';
+import { createTag, createProject, createTask, createUser, statusByName } from './helpers/fixtures';
 import { WsTestClient } from './helpers/ws';
 
 /** Long enough for a stray event to arrive over loopback. */
@@ -73,13 +73,13 @@ describe('realtime', () => {
       expect((await ws.next('task.deleted')).event).toEqual({ type: 'task.deleted', projectId: bundle.project.id, taskId: task.id });
     });
 
-    it('delivers status and label list changes', async () => {
+    it('delivers status and tag list changes', async () => {
       await admin.post(`/projects/${bundle.project.id}/statuses`, { name: 'QA', color: '#123456', category: 'review' });
       const { event } = await ws.next('statuses.changed');
       expect(event.statuses.map((s) => s.name)).toContain('QA');
 
-      await createLabel(admin, bundle.project.id, 'bug');
-      expect((await ws.next('labels.changed')).event.labels.map((l) => l.name)).toEqual(['bug']);
+      await createTag(admin, bundle.project.id, 'bug');
+      expect((await ws.next('tags.changed')).event.tags.map((l) => l.name)).toEqual(['bug']);
     });
 
     it('delivers project edits', async () => {

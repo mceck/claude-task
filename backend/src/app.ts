@@ -1,3 +1,4 @@
+import { notificationRoutes } from './notifications/routes';
 import { gitRoutes } from './git/routes';
 import { GitProviderError } from './git/provider';
 import { existsSync } from 'node:fs';
@@ -14,7 +15,7 @@ import { authRoutes } from './auth/routes';
 import type { AppContext } from './context';
 import { fromDatabaseError, HttpError } from './errors';
 import { commentRoutes } from './modules/comments/routes';
-import { labelRoutes } from './modules/labels/routes';
+import { tagRoutes } from './modules/tags/routes';
 import { projectRoutes } from './modules/projects/routes';
 import { statusRoutes } from './modules/statuses/routes';
 import { taskRoutes } from './modules/tasks/routes';
@@ -65,10 +66,11 @@ export async function buildApp(
         reply.status(404).send({ error: { code: 'not_found', message: 'No such endpoint' } }),
       );
       authRoutes(api, ctx);
+      notificationRoutes(api, ctx);
       userRoutes(api, ctx);
       projectRoutes(api, ctx);
       statusRoutes(api, ctx);
-      labelRoutes(api, ctx);
+      tagRoutes(api, ctx);
       taskRoutes(api, ctx);
       commentRoutes(api, ctx);
       credentialRoutes(api, ctx);

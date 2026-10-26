@@ -48,6 +48,7 @@ export interface TestApp {
 }
 
 export interface TestAppOptions {
+  push?: import('../../src/notifications/transport').PushTransport;
   config?: Partial<Config>;
   /** Keep data between tests in the file (default: truncate before each test). */
   keepData?: boolean;
@@ -89,7 +90,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
     };
     t.runtime = new FakeRuntime();
     t.git = new FakeGitProvider();
-    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false, runtime: t.runtime, git: t.git });
+    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false, runtime: t.runtime, git: t.git, push: options.push });
     await server.app.listen({ host: '127.0.0.1', port: 0 });
     const address = server.app.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');

@@ -84,8 +84,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       // Category changes can move cards in or out of the closed-hiding lists.
       void qc.invalidateQueries({ queryKey: keys.tasks(event.projectId) });
       return;
-    case 'labels.changed':
-      return updateBundles(qc, event.projectId, (b) => ({ ...b, labels: event.labels }));
+    case 'tags.changed':
+      return updateBundles(qc, event.projectId, (b) => ({ ...b, tags: event.tags }));
     case 'project.updated':
       void qc.invalidateQueries({ queryKey: ['repository-settings', event.project.id] });
       updateBundles(qc, event.project.id, (b) => ({ ...b, project: event.project }));

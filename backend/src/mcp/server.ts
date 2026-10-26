@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { transact } from '../context';
 import type { AppContext } from '../context';
 import type { Executor } from '../db/client';
-import { agents, comments, jobs, labels, projects, sessions, statuses, tasks } from '../db/schema';
+import { agents, comments, jobs, tags, projects, sessions, statuses, tasks } from '../db/schema';
 import { badRequest, HttpError, unauthorized } from '../errors';
 import { actorResolver } from '../modules/actors';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
@@ -72,7 +72,7 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
     'get_task',
     {
       description:
-        'Read a task: its fields, the statuses (with categories) you can move it to, the labels, assignees and non-internal comments (newest 50; pass `comments_before` from the previous answer for older ones). Without `key` it reads your own task.',
+        'Read a task: its fields, the statuses (with categories) you can move it to, the tags, assignees and non-internal comments (newest 50; pass `comments_before` from the previous answer for older ones). Without `key` it reads your own task.',
       inputSchema: { key: z.string().optional().describe('Task key like API-42; defaults to your task'), comments_before: z.string().optional() },
     },
     ({ key, comments_before }) => run(() => getTask(ctx, scope, key, comments_before)),
@@ -84,7 +84,7 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
       description: "List tasks of your project (summary fields only). Closed tasks are left out unless you ask for status_category 'closed'.",
       inputSchema: {
         status_category: z.enum(CATEGORIES).optional(),
-        label: z.string().optional().describe('Label name'),
+        tag: z.string().optional().describe('Label name'),
         text: z.string().optional().describe('Matches title or key'),
         limit: z.number().int().min(1).max(200).optional(),
       },
@@ -95,12 +95,12 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
   server.registerTool(
     'update_task',
     {
-      description: "Update your own task's title, description, priority or labels (label names must exist in the project; the list replaces the current labels).",
+      description: "Update your own task's title, description, priority or tags (tag names must exist in the project; the list replaces the current tags).",
       inputSchema: {
         title: z.string().min(1).max(500).optional(),
         description: z.string().max(100_000).optional(),
         priority: z.enum(PRIORITIES).optional(),
-        labels: z.array(z.string()).max(50).optional(),
+        tags: z.array(z.string()).max(50).optional(),
       },
     },
     (args) => run(() => updateOwnTask(ctx, scope, args)),
@@ -123,7 +123,7 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
         title: z.string().min(1).max(500),
         description: z.string().max(100_000).optional(),
         priority: z.enum(PRIORITIES).optional(),
-        labels: z.array(z.string()).max(50).optional(),
+        tags: z.array(z.string()).max(50).optional(),
       },
     },
     (args) => run(() => createProjectTask(ctx, scope, args)),
@@ -147,7 +147,7 @@ async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined
   const row = await findTaskInProject(ctx.db, scope, key);
   const task = await loadTask(ctx.db, row.id);
   const statusRows = await ctx.db.select().from(statuses).where(eq(statuses.projectId, scope.projectId)).orderBy(asc(statuses.position));
-  const labelRows = await ctx.db.select().from(labels).where(eq(labels.projectId, scope.projectId)).orderBy(asc(labels.name));
+  const tagRows = await ctx.db.select().from(tags).where(eq(tags.projectId, scope.projectId)).orderBy(asc(tags.name));
   const assignees = await actorResolver(ctx.db, task.assigneeIds.map((id) => ({ type: 'user' as const, id })));
 
   let cursor: { t: string; id: string } | null = null;
@@ -191,7 +191,7 @@ async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined
       description: task.description,
       status: statusName(task.statusId),
       priority: task.priority,
-      labels: task.labelIds.map((id) => labelRows.find((l) => l.id === id)?.name).filter(Boolean),
+      tags: task.tagIds.map((id) => tagRows.find((l) => l.id === id)?.name).filter(Boolean),
       assignees: task.assigneeIds.map((id) => assignees({ type: 'user', id }).displayName),
       createdBy: task.createdBy.displayName,
       yours: row.id === scope.taskId,
@@ -199,7 +199,7 @@ async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined
       pullRequest: task.pullRequest,
     },
     statuses: statusRows.map((s) => ({ name: s.name, category: s.category })),
-    labels: labelRows.map((l) => l.name),
+    tags: tagRows.map((l) => l.name),
     comments: shown
       .map(({ c }) => ({ author: authors({ type: c.authorType, id: c.authorId }).displayName, kind: c.kind, createdAt: c.createdAt.toISOString(), body: c.body }))
       .reverse(),
@@ -207,15 +207,15 @@ async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined
   };
 }
 
-async function listTasks(ctx: AppContext, scope: JobScope, args: { status_category?: string; label?: string; text?: string; limit?: number }) {
+async function listTasks(ctx: AppContext, scope: JobScope, args: { status_category?: string; tag?: string; text?: string; limit?: number }) {
   const statusRows = await ctx.db.select().from(statuses).where(eq(statuses.projectId, scope.projectId));
-  const labelRows = await ctx.db.select().from(labels).where(eq(labels.projectId, scope.projectId));
-  const label = args.label ? labelRows.find((l) => l.name.toLowerCase() === args.label!.toLowerCase()) : undefined;
-  if (args.label && !label) throw badRequest(`No label named "${args.label}" in the project`);
+  const tagRows = await ctx.db.select().from(tags).where(eq(tags.projectId, scope.projectId));
+  const tag = args.tag ? tagRows.find((l) => l.name.toLowerCase() === args.tag!.toLowerCase()) : undefined;
+  if (args.tag && !tag) throw badRequest(`No tag named "${args.tag}" in the project`);
   const cards = await loadCards(ctx.db, {
     projectId: scope.projectId,
     includeClosed: args.status_category === 'closed',
-    filter: { assignees: [], labels: label ? [label.id] : [], priorities: [], text: args.text ?? '' },
+    filter: { assignees: [], tags: tag ? [tag.id] : [], priorities: [], text: args.text ?? '' },
   });
   const status = (id: string) => statusRows.find((s) => s.id === id);
   return {
@@ -228,22 +228,22 @@ async function listTasks(ctx: AppContext, scope: JobScope, args: { status_catego
         status: status(c.statusId)?.name,
         category: status(c.statusId)?.category,
         priority: c.priority,
-        labels: c.labelIds.map((id) => labelRows.find((l) => l.id === id)?.name).filter(Boolean),
+        tags: c.tagIds.map((id) => tagRows.find((l) => l.id === id)?.name).filter(Boolean),
         yours: c.id === scope.taskId,
       })),
   };
 }
 
-async function labelIds(db: Executor, projectId: string, names: string[]): Promise<string[]> {
-  const rows = await db.select().from(labels).where(eq(labels.projectId, projectId));
+async function tagIds(db: Executor, projectId: string, names: string[]): Promise<string[]> {
+  const rows = await db.select().from(tags).where(eq(tags.projectId, projectId));
   return names.map((name) => {
     const found = rows.find((l) => l.name.toLowerCase() === name.trim().toLowerCase());
-    if (!found) throw badRequest(`No label named "${name}" in the project. Available: ${rows.map((l) => l.name).join(', ') || 'none'}`);
+    if (!found) throw badRequest(`No tag named "${name}" in the project. Available: ${rows.map((l) => l.name).join(', ') || 'none'}`);
     return found.id;
   });
 }
 
-async function updateOwnTask(ctx: AppContext, scope: JobScope, args: { title?: string; description?: string; priority?: (typeof PRIORITIES)[number]; labels?: string[] }) {
+async function updateOwnTask(ctx: AppContext, scope: JobScope, args: { title?: string; description?: string; priority?: (typeof PRIORITIES)[number]; tags?: string[] }) {
   const task = await transact(ctx, async (tx, after) => {
     const current = await getTaskRow(tx, scope.taskId);
     return updateTask(
@@ -255,7 +255,7 @@ async function updateOwnTask(ctx: AppContext, scope: JobScope, args: { title?: s
         title: args.title,
         description: args.description,
         priority: args.priority,
-        labelIds: args.labels ? await labelIds(tx, scope.projectId, args.labels) : undefined,
+        tagIds: args.tags ? await tagIds(tx, scope.projectId, args.tags) : undefined,
       },
       scope.actor,
     );
@@ -277,7 +277,7 @@ async function setStatus(ctx: AppContext, scope: JobScope, name: string) {
   return { moved: task.key, status: status.name };
 }
 
-async function createProjectTask(ctx: AppContext, scope: JobScope, args: { title: string; description?: string; priority?: (typeof PRIORITIES)[number]; labels?: string[] }) {
+async function createProjectTask(ctx: AppContext, scope: JobScope, args: { title: string; description?: string; priority?: (typeof PRIORITIES)[number]; tags?: string[] }) {
   const task = await transact(ctx, async (tx, after) =>
     createTask(
       tx,
@@ -287,7 +287,7 @@ async function createProjectTask(ctx: AppContext, scope: JobScope, args: { title
         title: args.title,
         description: args.description ?? '',
         priority: args.priority ?? 'none',
-        labelIds: args.labels ? await labelIds(tx, scope.projectId, args.labels) : [],
+        tagIds: args.tags ? await tagIds(tx, scope.projectId, args.tags) : [],
         assigneeIds: [],
       },
       scope.actor,

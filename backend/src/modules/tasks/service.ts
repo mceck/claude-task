@@ -1,3 +1,4 @@
+import { autoFollow } from '../../notifications/preferences';
 import { projectTopic, taskKey, taskTopic } from '@claude-task/shared';
 import type {
   Actor,
@@ -15,7 +16,7 @@ import type { SQL } from 'drizzle-orm';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { agents, labels, projects, statuses, taskAssignees, taskLabels, taskRevisions, tasks, users } from '../../db/schema';
+import { agents, tags, projects, statuses, taskAssignees, taskTags, taskRevisions, tasks, users } from '../../db/schema';
 import { onTaskChanged } from '../../sessions/lifecycle';
 import { badRequest, conflict, notFound } from '../../errors';
 import { actorResolver } from '../actors';
@@ -39,7 +40,7 @@ interface CardRow extends Record<string, unknown> {
   version: number;
   created_at: Date;
   updated_at: Date;
-  label_ids: string[];
+  tag_ids: string[];
   assignee_ids: string[];
   comment_count: number;
   agent_id: string | null;
@@ -81,9 +82,9 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
       }
       where.push(sql`(${sql.join(any, sql` or `)})`);
     }
-    if (f.labels.length > 0) {
-      where.push(sql`exists (select 1 from task_labels tl where tl.task_id = t.id
-        and tl.label_id in (${sql.join(f.labels.map((id) => sql`${id}::uuid`), sql`, `)}))`);
+    if (f.tags.length > 0) {
+      where.push(sql`exists (select 1 from task_tags tl where tl.task_id = t.id
+        and tl.tag_id in (${sql.join(f.tags.map((id) => sql`${id}::uuid`), sql`, `)}))`);
     }
     if (f.priorities.length > 0) {
       where.push(sql`t.priority in (${sql.join(f.priorities.map((p) => sql`${p}::priority`), sql`, `)})`);
@@ -98,8 +99,8 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
   const result = await db.execute<CardRow>(sql`
     select t.id, t.project_id, p.key as project_key, t.number, t.title, t.status_id, t.priority,
       t.position, t.version, t.created_at, t.updated_at,
-      coalesce((select array_agg(tl.label_id::text order by l.name, l.id)
-        from task_labels tl join labels l on l.id = tl.label_id where tl.task_id = t.id), '{}') as label_ids,
+      coalesce((select array_agg(tl.tag_id::text order by l.name, l.id)
+        from task_tags tl join tags l on l.id = tl.tag_id where tl.task_id = t.id), '{}') as tag_ids,
       coalesce((select array_agg(ta.user_id::text order by ta.user_id)
         from task_assignees ta where ta.task_id = t.id), '{}') as assignee_ids,
       (select count(*)::int from comments c where c.task_id = t.id and c.deleted_at is null) as comment_count,
@@ -122,7 +123,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     statusId: r.status_id,
     priority: r.priority,
     position: r.position,
-    labelIds: r.label_ids,
+    tagIds: r.tag_ids,
     assigneeIds: r.assignee_ids,
     commentCount: r.comment_count,
     branchName: r.branch_name,
@@ -207,7 +208,7 @@ export interface CreateTaskInput {
   statusId?: string;
   description: string;
   priority: Priority;
-  labelIds: string[];
+  tagIds: string[];
   assigneeIds: string[];
 }
 
@@ -228,7 +229,7 @@ export async function createTask(
 
   const statusId = input.statusId ?? (await firstOpenStatus(tx, projectId));
   await assertStatusInProject(tx, statusId, projectId);
-  const labelIds = await validLabels(tx, projectId, input.labelIds);
+  const tagIds = await validTags(tx, projectId, input.tagIds);
   const assigneeIds = await validAssignees(tx, input.assigneeIds);
 
   const [task] = await tx
@@ -245,9 +246,10 @@ export async function createTask(
       createdById: actor.id,
     })
     .returning();
-  await setLabels(tx, task!.id, labelIds);
+  await setTags(tx, task!.id, tagIds);
   await setAssignees(tx, task!.id, assigneeIds);
 
+  await autoFollow(tx, after, task!.id, [...assigneeIds, ...(actor.type === 'user' && actor.id ? [actor.id] : [])]);
   const created = await loadTask(tx, task!.id);
   after.emit(projectTopic(projectId), { type: 'task.created', task: cardOf(created) });
   return created;
@@ -259,7 +261,7 @@ export interface UpdateTaskInput {
   description?: string;
   statusId?: string;
   priority?: Priority;
-  labelIds?: string[];
+  tagIds?: string[];
   assigneeIds?: string[];
   agentId?: string | null;
 }
@@ -295,7 +297,7 @@ export async function updateTask(
     await assertStatusInProject(tx, patch.statusId, row.projectId);
     next.statusId = patch.statusId;
   }
-  if (patch.labelIds !== undefined) next.labelIds = await validLabels(tx, row.projectId, patch.labelIds);
+  if (patch.tagIds !== undefined) next.tagIds = await validTags(tx, row.projectId, patch.tagIds);
   if (patch.assigneeIds !== undefined) next.assigneeIds = await validAssignees(tx, patch.assigneeIds);
   if (patch.agentId !== undefined) next.agentId = patch.agentId === null ? null : await validAgent(tx, patch.agentId);
 
@@ -316,8 +318,11 @@ export async function updateTask(
       updatedAt: new Date(),
     })
     .where(eq(tasks.id, row.id));
-  if (changed.has('labelIds')) await setLabels(tx, row.id, next.labelIds);
-  if (changed.has('assigneeIds')) await setAssignees(tx, row.id, next.assigneeIds);
+  if (changed.has('tagIds')) await setTags(tx, row.id, next.tagIds);
+  if (changed.has('assigneeIds')) {
+    await setAssignees(tx, row.id, next.assigneeIds);
+    await autoFollow(tx, after, row.id, next.assigneeIds.filter((id) => !current.assigneeIds.includes(id)));
+  }
   await recordRevisions(tx, after, actor, [{ taskId: row.id, version: row.version + 1, changes }]);
   if (changed.has('agentId') || changed.has('statusId')) {
     await onTaskChanged(tx, after, await getTaskRow(tx, row.id), { agentId: row.agentId, statusId: row.statusId });
@@ -375,7 +380,7 @@ export async function moveTask(
 export async function deleteTask(tx: Executor, after: AfterCommit, taskId: string): Promise<{ blobIds: string[] }> {
   const row = await getTaskRow(tx, taskId, { lock: true });
   const blobs = await tx.execute<{ blob_id: string }>(sql`
-    select a.blob_id from attachments a join comments c on c.id = a.comment_id where c.task_id = ${row.id}`);
+    select a.blob_id from attachments a left join comments c on c.id = a.comment_id where coalesce(a.task_id, c.task_id) = ${row.id}`);
   await tx.delete(tasks).where(eq(tasks.id, row.id));
   after.emit(projectTopic(row.projectId), { type: 'task.deleted', projectId: row.projectId, taskId: row.id });
   after.emit(taskTopic(row.id), { type: 'task.removed', taskId: row.id });
@@ -416,29 +421,29 @@ export async function relocateStatusTasks(
   await emitTasksChanged(tx, after, moving.map((t) => t.id), 'task.moved');
 }
 
-/** Takes a Label off every Task that has it, recording a Revision on each, before the Label is deleted. */
-export async function detachLabel(tx: Executor, after: AfterCommit, label: { id: string; projectId: string }, actor: Actor): Promise<void> {
-  await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, label.projectId)).for('share');
+/** Takes a Tag off every Task that has it, recording a Revision on each, before the Tag is deleted. */
+export async function detachTag(tx: Executor, after: AfterCommit, tag: { id: string; projectId: string }, actor: Actor): Promise<void> {
+  await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, tag.projectId)).for('share');
   const tagged = await tx
     .select()
     .from(tasks)
-    .where(inArray(tasks.id, tx.select({ id: taskLabels.taskId }).from(taskLabels).where(eq(taskLabels.labelId, label.id))))
+    .where(inArray(tasks.id, tx.select({ id: taskTags.taskId }).from(taskTags).where(eq(taskTags.tagId, tag.id))))
     .orderBy(asc(tasks.id))
     .for('update', { of: tasks });
   if (tagged.length === 0) return;
   const ids = tagged.map((t) => t.id);
-  const current = await tx.select().from(taskLabels).where(inArray(taskLabels.taskId, ids));
-  const labelsOf = (taskId: string) => current.filter((c) => c.taskId === taskId).map((c) => c.labelId).sort();
+  const current = await tx.select().from(taskTags).where(inArray(taskTags.taskId, ids));
+  const tagsOf = (taskId: string) => current.filter((c) => c.taskId === taskId).map((c) => c.tagId).sort();
 
-  await tx.delete(taskLabels).where(eq(taskLabels.labelId, label.id));
+  await tx.delete(taskTags).where(eq(taskTags.tagId, tag.id));
   await tx.update(tasks).set({ version: sql`${tasks.version} + 1`, updatedAt: new Date() }).where(inArray(tasks.id, ids));
   await recordRevisions(
     tx,
     after,
     actor,
     tagged.map((t) => {
-      const before = labelsOf(t.id);
-      return { taskId: t.id, version: t.version + 1, changes: [{ field: 'labelIds', before, after: before.filter((l) => l !== label.id) }] };
+      const before = tagsOf(t.id);
+      return { taskId: t.id, version: t.version + 1, changes: [{ field: 'tagIds', before, after: before.filter((l) => l !== tag.id) }] };
     }),
   );
   await emitTasksChanged(tx, after, ids, 'task.updated');
@@ -505,14 +510,14 @@ interface Fields {
   description: string;
   statusId: string;
   priority: Priority;
-  labelIds: string[];
+  tagIds: string[];
   assigneeIds: string[];
   agentId: string | null;
 }
 
 async function currentFields(tx: Executor, row: TaskRow): Promise<Fields> {
   const [l, a] = await Promise.all([
-    tx.select({ id: taskLabels.labelId }).from(taskLabels).where(eq(taskLabels.taskId, row.id)),
+    tx.select({ id: taskTags.tagId }).from(taskTags).where(eq(taskTags.taskId, row.id)),
     tx.select({ id: taskAssignees.userId }).from(taskAssignees).where(eq(taskAssignees.taskId, row.id)),
   ]);
   return {
@@ -520,7 +525,7 @@ async function currentFields(tx: Executor, row: TaskRow): Promise<Fields> {
     description: row.description,
     statusId: row.statusId,
     priority: row.priority,
-    labelIds: l.map((x) => x.id).sort(),
+    tagIds: l.map((x) => x.id).sort(),
     assigneeIds: a.map((x) => x.id).sort(),
     agentId: row.agentId,
   };
@@ -537,9 +542,9 @@ function diff(before: Fields, after: Fields): RevisionChange[] {
   return changes;
 }
 
-async function setLabels(tx: Executor, taskId: string, labelIds: string[]) {
-  await tx.delete(taskLabels).where(eq(taskLabels.taskId, taskId));
-  if (labelIds.length > 0) await tx.insert(taskLabels).values(labelIds.map((labelId) => ({ taskId, labelId })));
+async function setTags(tx: Executor, taskId: string, tagIds: string[]) {
+  await tx.delete(taskTags).where(eq(taskTags.taskId, taskId));
+  if (tagIds.length > 0) await tx.insert(taskTags).values(tagIds.map((tagId) => ({ taskId, tagId })));
 }
 
 async function setAssignees(tx: Executor, taskId: string, userIds: string[]) {
@@ -548,14 +553,14 @@ async function setAssignees(tx: Executor, taskId: string, userIds: string[]) {
 }
 
 /** Deduplicated, sorted, and all belonging to the project. */
-async function validLabels(tx: Executor, projectId: string, ids: string[]): Promise<string[]> {
+async function validTags(tx: Executor, projectId: string, ids: string[]): Promise<string[]> {
   const unique = [...new Set(ids)].sort();
   if (unique.length === 0) return [];
   const found = await tx
-    .select({ id: labels.id })
-    .from(labels)
-    .where(and(eq(labels.projectId, projectId), inArray(labels.id, unique)));
-  if (found.length !== unique.length) throw badRequest('Unknown label for this project');
+    .select({ id: tags.id })
+    .from(tags)
+    .where(and(eq(tags.projectId, projectId), inArray(tags.id, unique)));
+  if (found.length !== unique.length) throw badRequest('Unknown tag for this project');
   return unique;
 }
 

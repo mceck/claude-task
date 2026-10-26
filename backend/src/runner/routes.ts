@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppContext } from '../context';
 import { agents, attachments, comments, jobs } from '../db/schema';
@@ -49,12 +49,16 @@ export function runnerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/runner/attachments/:id', { config: { auth: 'public' } }, async (request, reply) => {
     const agentId = await runnerAgent(ctx, request);
     const { id } = parse(params, request.params);
+    // Files of comments need a visible comment; files of the description belong to the task itself.
     const [row] = await ctx.db
       .select({ attachment: attachments })
       .from(attachments)
-      .innerJoin(comments, eq(comments.id, attachments.commentId))
-      .innerJoin(jobs, and(eq(jobs.taskId, comments.taskId), eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])))
-      .where(and(eq(attachments.id, id), eq(comments.internal, false), isNull(comments.deletedAt)))
+      .leftJoin(comments, eq(comments.id, attachments.commentId))
+      .innerJoin(
+        jobs,
+        and(eq(jobs.taskId, sql`coalesce(${attachments.taskId}, ${comments.taskId})`), eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])),
+      )
+      .where(and(eq(attachments.id, id), or(isNotNull(attachments.taskId), and(eq(comments.internal, false), isNull(comments.deletedAt)))))
       .limit(1);
     if (!row) throw notFound('Attachment');
     const blob = await ctx.blobs.get(row.attachment.blobId);

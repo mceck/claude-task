@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { CREDENTIAL_KINDS, EFFORT_LEVELS, PERMISSION_MODES } from './agents';
 import { CATEGORIES, PRIORITIES, ROLES } from './domain';
-import type { Label, Project, Status, Task, User } from './domain';
+import type { Tag, Project, Status, Task, User } from './domain';
 
 export const API_PREFIX = '/api/v1';
 /** Every mutating request must carry this header (CSRF defense). */
@@ -97,16 +97,16 @@ export const deleteStatusQuery = z.object({
   targetStatusId: id,
 });
 
-// Labels
+// Tags
 
-export const createLabelBody = z.strictObject({ name, color });
-export type CreateLabelBody = z.infer<typeof createLabelBody>;
+export const createTagBody = z.strictObject({ name, color });
+export type CreateTagBody = z.infer<typeof createTagBody>;
 
-export const updateLabelBody = z.strictObject({
+export const updateTagBody = z.strictObject({
   name: name.optional(),
   color: color.optional(),
 });
-export type UpdateLabelBody = z.infer<typeof updateLabelBody>;
+export type UpdateTagBody = z.infer<typeof updateTagBody>;
 
 // Tasks
 
@@ -119,7 +119,7 @@ export const createTaskBody = z.strictObject({
   statusId: id.optional(),
   description: description.default(''),
   priority: z.enum(PRIORITIES).default('none'),
-  labelIds: z.array(id).max(50).default([]),
+  tagIds: z.array(id).max(50).default([]),
   assigneeIds: z.array(id).max(50).default([]),
 });
 export type CreateTaskBody = z.input<typeof createTaskBody>;
@@ -131,7 +131,7 @@ export const updateTaskBody = z.strictObject({
   description: description.optional(),
   statusId: id.optional(),
   priority: z.enum(PRIORITIES).optional(),
-  labelIds: z.array(id).max(50).optional(),
+  tagIds: z.array(id).max(50).optional(),
   assigneeIds: z.array(id).max(50).optional(),
   /** Assign an Agent (at most one), or null to unassign. */
   agentId: id.nullable().optional(),
@@ -159,7 +159,7 @@ const csv = <T extends z.ZodType<unknown, string>>(item: T) =>
 export const listTasksQuery = z.object({
   /** User ids, or `none` for unassigned Tasks. */
   assignee: csv(z.union([id, z.literal('none')])),
-  label: csv(id),
+  tag: csv(id),
   priority: csv(z.enum(PRIORITIES)),
   q: z.string().max(200).optional(),
   includeClosed: z.enum(['true', 'false']).default('false'),
@@ -257,6 +257,10 @@ export const updateAgentBody = z.strictObject({
 });
 export type UpdateAgentBody = z.infer<typeof updateAgentBody>;
 
+/** Images the browser can render; SVG can carry scripts. */
+export const AGENT_AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+export const AGENT_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+
 export const duplicateAgentBody = z.strictObject({ name: name.optional() });
 
 /** Recreate the container now even if the Agent is working (kills the running Job). */
@@ -305,7 +309,7 @@ export interface MeResponse {
 export interface ProjectBundle {
   project: Project;
   statuses: Status[];
-  labels: Label[];
+  tags: Tag[];
 }
 
 // Git Integration

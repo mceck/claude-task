@@ -2,7 +2,7 @@ import type { ProjectBundle, Task, TaskCard } from '@claude-task/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ApiClient } from './helpers/client';
 import { useTestApp } from './helpers/app';
-import { columnTitles, createLabel, createProject, createTask, createUser, statusByName } from './helpers/fixtures';
+import { columnTitles, createTag, createProject, createTask, createUser, statusByName } from './helpers/fixtures';
 
 describe('tasks', () => {
   const app = useTestApp();
@@ -41,7 +41,7 @@ describe('tasks', () => {
         statusId: statusByName(bundle, 'Backlog').id,
         priority: 'none',
         description: '',
-        labelIds: [],
+        tagIds: [],
         assigneeIds: [],
         commentCount: 0,
         version: 1,
@@ -63,12 +63,12 @@ describe('tasks', () => {
       expect(await columnTitles(admin, projectId, todo.id)).toEqual(['first', 'second']);
     });
 
-    it('rejects statuses and labels from another project, and unknown users', async () => {
+    it('rejects statuses and tags from another project, and unknown users', async () => {
       const other = await createProject(admin);
-      const foreignLabel = await createLabel(admin, other.project.id, 'foreign');
+      const foreignTag = await createTag(admin, other.project.id, 'foreign');
       const post = (body: object) => admin.post(`/projects/${projectId}/tasks`, { title: 'x', ...body });
       expect((await post({ statusId: statusByName(other, 'Todo').id })).status).toBe(400);
-      expect((await post({ labelIds: [foreignLabel.id] })).status).toBe(400);
+      expect((await post({ tagIds: [foreignTag.id] })).status).toBe(400);
       expect((await post({ assigneeIds: ['00000000-0000-4000-8000-000000000000'] })).status).toBe(400);
       expect((await post({ title: '   ' })).status).toBe(400);
       expect((await post({ priority: 'meh' })).status).toBe(400);
@@ -90,13 +90,13 @@ describe('tasks', () => {
       expect((await admin.get('/tasks/garbage')).status).toBe(404);
     });
 
-    it('lists cards with key, title, priority, labels, assignees and comment count', async () => {
+    it('lists cards with key, title, priority, tags, assignees and comment count', async () => {
       const { user } = await createUser(app, admin);
-      const label = await createLabel(admin, projectId, 'bug');
+      const tag = await createTag(admin, projectId, 'bug');
       const task = await createTask(admin, projectId, {
         title: 'Card',
         priority: 'high',
-        labelIds: [label.id],
+        tagIds: [tag.id],
         assigneeIds: [user.id],
       });
       await admin.post(`/tasks/${task.id}/comments`, { body: 'hi' });
@@ -105,7 +105,7 @@ describe('tasks', () => {
         key: 'API-1',
         title: 'Card',
         priority: 'high',
-        labelIds: [label.id],
+        tagIds: [tag.id],
         assigneeIds: [user.id],
         commentCount: 1,
       });
@@ -131,11 +131,11 @@ describe('tasks', () => {
     beforeEach(async () => {
       alice = (await createUser(app, admin, { displayName: 'Alice' })).user.id;
       bob = (await createUser(app, admin, { displayName: 'Bob' })).user.id;
-      bug = (await createLabel(admin, projectId, 'bug')).id;
-      ui = (await createLabel(admin, projectId, 'ui')).id;
-      await createTask(admin, projectId, { title: 'Login crashes', priority: 'urgent', labelIds: [bug], assigneeIds: [alice] });
-      await createTask(admin, projectId, { title: 'Dark mode', priority: 'low', labelIds: [ui], assigneeIds: [bob] });
-      await createTask(admin, projectId, { title: 'Button misaligned', priority: 'normal', labelIds: [bug, ui], assigneeIds: [alice, bob] });
+      bug = (await createTag(admin, projectId, 'bug')).id;
+      ui = (await createTag(admin, projectId, 'ui')).id;
+      await createTask(admin, projectId, { title: 'Login crashes', priority: 'urgent', tagIds: [bug], assigneeIds: [alice] });
+      await createTask(admin, projectId, { title: 'Dark mode', priority: 'low', tagIds: [ui], assigneeIds: [bob] });
+      await createTask(admin, projectId, { title: 'Button misaligned', priority: 'normal', tagIds: [bug, ui], assigneeIds: [alice, bob] });
       await createTask(admin, projectId, { title: 'Write docs', priority: 'none' });
     });
 
@@ -148,8 +148,8 @@ describe('tasks', () => {
       expect(await titles(`assignee=${bob},none`)).toEqual(['Button misaligned', 'Dark mode', 'Write docs']);
     });
 
-    it('filters by label and priority', async () => {
-      expect(await titles(`label=${ui}`)).toEqual(['Button misaligned', 'Dark mode']);
+    it('filters by tag and priority', async () => {
+      expect(await titles(`tag=${ui}`)).toEqual(['Button misaligned', 'Dark mode']);
       expect(await titles('priority=urgent&priority=low')).toEqual(['Dark mode', 'Login crashes']);
     });
 
@@ -160,28 +160,28 @@ describe('tasks', () => {
     });
 
     it('combines filters', async () => {
-      expect(await titles(`assignee=${alice}&label=${ui}`)).toEqual(['Button misaligned']);
-      expect(await titles(`label=${bug}&priority=urgent&q=login`)).toEqual(['Login crashes']);
+      expect(await titles(`assignee=${alice}&tag=${ui}`)).toEqual(['Button misaligned']);
+      expect(await titles(`tag=${bug}&priority=urgent&q=login`)).toEqual(['Login crashes']);
       expect(await titles(`assignee=${bob}&priority=urgent`)).toEqual([]);
     });
 
     it('rejects malformed filters', async () => {
       expect((await admin.get(`/projects/${projectId}/tasks?priority=meh`)).status).toBe(400);
-      expect((await admin.get(`/projects/${projectId}/tasks?label=nope`)).status).toBe(400);
+      expect((await admin.get(`/projects/${projectId}/tasks?tag=nope`)).status).toBe(400);
     });
   });
 
   describe('updating', () => {
     it('updates fields, bumps the version and records a revision with before and after', async () => {
       const { user } = await createUser(app, admin);
-      const label = await createLabel(admin, projectId, 'bug');
+      const tag = await createTag(admin, projectId, 'bug');
       const task = await createTask(admin, projectId, { title: 'Old', description: 'old' });
       const res = await admin.patch(`/tasks/${task.id}`, {
         version: task.version,
         title: 'New',
         description: 'new',
         priority: 'urgent',
-        labelIds: [label.id],
+        tagIds: [tag.id],
         assigneeIds: [user.id],
       });
       expect(res.status).toBe(200);
@@ -197,7 +197,7 @@ describe('tasks', () => {
           { field: 'title', before: 'Old', after: 'New' },
           { field: 'description', before: 'old', after: 'new' },
           { field: 'priority', before: 'none', after: 'urgent' },
-          { field: 'labelIds', before: [], after: [label.id] },
+          { field: 'tagIds', before: [], after: [tag.id] },
           { field: 'assigneeIds', before: [], after: [user.id] },
         ]),
       );
@@ -418,47 +418,47 @@ describe('tasks', () => {
   });
 });
 
-describe('labels', () => {
+describe('tags', () => {
   const app = useTestApp();
 
-  it('creates, renames, recolors and deletes labels, detaching them from tasks', async () => {
+  it('creates, renames, recolors and deletes tags, detaching them from tasks', async () => {
     const admin = await app.admin();
     const { project } = await createProject(admin);
-    const label = await createLabel(admin, project.id, 'bug', '#ff0000');
-    const task = await createTask(admin, project.id, { labelIds: [label.id] });
+    const tag = await createTag(admin, project.id, 'bug', '#ff0000');
+    const task = await createTask(admin, project.id, { tagIds: [tag.id] });
 
-    const updated = await admin.patch(`/labels/${label.id}`, { name: 'defect', color: '#00ff00' });
-    expect(updated.body.label).toMatchObject({ name: 'defect', color: '#00ff00' });
-    expect((await admin.get(`/projects/${project.id}/labels`)).body.labels).toHaveLength(1);
+    const updated = await admin.patch(`/tags/${tag.id}`, { name: 'defect', color: '#00ff00' });
+    expect(updated.body.tag).toMatchObject({ name: 'defect', color: '#00ff00' });
+    expect((await admin.get(`/projects/${project.id}/tags`)).body.tags).toHaveLength(1);
 
-    expect((await admin.delete(`/labels/${label.id}`)).status).toBe(204);
-    expect((await admin.get(`/projects/${project.id}/labels`)).body.labels).toEqual([]);
-    expect((await admin.get(`/tasks/${task.id}`)).body.task.labelIds).toEqual([]);
+    expect((await admin.delete(`/tags/${tag.id}`)).status).toBe(204);
+    expect((await admin.get(`/projects/${project.id}/tags`)).body.tags).toEqual([]);
+    expect((await admin.get(`/tasks/${task.id}`)).body.task.tagIds).toEqual([]);
   });
 
-  it('records a revision on every task that loses a deleted label', async () => {
+  it('records a revision on every task that loses a deleted tag', async () => {
     const admin = await app.admin();
     const { project } = await createProject(admin);
-    const bug = await createLabel(admin, project.id, 'bug');
-    const ui = await createLabel(admin, project.id, 'ui');
-    const task = await createTask(admin, project.id, { labelIds: [bug.id, ui.id] });
-    const untouched = await createTask(admin, project.id, { labelIds: [ui.id] });
+    const bug = await createTag(admin, project.id, 'bug');
+    const ui = await createTag(admin, project.id, 'ui');
+    const task = await createTask(admin, project.id, { tagIds: [bug.id, ui.id] });
+    const untouched = await createTask(admin, project.id, { tagIds: [ui.id] });
 
-    await admin.delete(`/labels/${bug.id}`);
+    await admin.delete(`/tags/${bug.id}`);
 
     const after = (await admin.get(`/tasks/${task.id}`)).body.task;
-    expect(after).toMatchObject({ labelIds: [ui.id], version: 2 });
+    expect(after).toMatchObject({ tagIds: [ui.id], version: 2 });
     const [item] = (await admin.get(`/tasks/${task.id}/timeline`)).body.items;
     expect(item.revision.changes).toEqual([
-      { field: 'labelIds', before: [bug.id, ui.id].sort(), after: [ui.id] },
+      { field: 'tagIds', before: [bug.id, ui.id].sort(), after: [ui.id] },
     ]);
     expect((await admin.get(`/tasks/${untouched.id}`)).body.task.version).toBe(1);
   });
 
-  it('keeps label names unique within a project', async () => {
+  it('keeps tag names unique within a project', async () => {
     const admin = await app.admin();
     const { project } = await createProject(admin);
-    await createLabel(admin, project.id, 'bug');
-    expect((await admin.post(`/projects/${project.id}/labels`, { name: 'BUG', color: '#000000' })).status).toBe(409);
+    await createTag(admin, project.id, 'bug');
+    expect((await admin.post(`/projects/${project.id}/tags`, { name: 'BUG', color: '#000000' })).status).toBe(409);
   });
 });

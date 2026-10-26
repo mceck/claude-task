@@ -1,6 +1,6 @@
 import { RepositorySettings } from '../components/RepositorySettings';
 import { CATEGORIES, projectTopic } from '@claude-task/shared';
-import type { Category, Label as LabelT, Project, ProjectBundle, Status } from '@claude-task/shared';
+import type { Category, Tag as TagT, Project, ProjectBundle, Status } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useMe, useProject } from '../api/queries';
-import { LabelChip, Loading, StatusDot, useConfirm } from '../components/common';
+import { TagChip, Loading, StatusDot, useConfirm } from '../components/common';
 import { useTopic } from '../lib/realtime';
 import { NotFoundPage } from './NotFoundPage';
 import { CATEGORY_COLOR, PageHeader } from './ProjectsPage';
@@ -43,7 +43,7 @@ export function ProjectSettingsPage() {
         <TabsList className="mb-4">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="statuses">Statuses</TabsTrigger>
-          <TabsTrigger value="labels">Labels</TabsTrigger>
+          <TabsTrigger value="tags">Tags</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
         </TabsList>
@@ -53,8 +53,8 @@ export function ProjectSettingsPage() {
         <TabsContent value="statuses">
           <Statuses bundle={bundle.data} />
         </TabsContent>
-        <TabsContent value="labels">
-          <Labels bundle={bundle.data} />
+        <TabsContent value="tags">
+          <Tags bundle={bundle.data} />
         </TabsContent>
         <TabsContent value="agents"><ProjectAgentSettings projectId={project.id} /></TabsContent>
         <TabsContent value="repository"><RepositorySettings projectId={project.id} /></TabsContent>
@@ -325,8 +325,8 @@ function DeleteStatusDialog({
   );
 }
 
-function Labels({ bundle }: { bundle: ProjectBundle }) {
-  const { project, labels } = bundle;
+function Tags({ bundle }: { bundle: ProjectBundle }) {
+  const { project, tags } = bundle;
   const [name, setName] = useState('');
   const [color, setColor] = useState('#6366f1');
   const run = useRun(project);
@@ -334,30 +334,30 @@ function Labels({ bundle }: { bundle: ProjectBundle }) {
 
   const add = (e: FormEvent) => {
     e.preventDefault();
-    void run(() => post(`/projects/${project.id}/labels`, { name, color })).then((ok) => ok && setName(''));
+    void run(() => post(`/projects/${project.id}/tags`, { name, color })).then((ok) => ok && setName(''));
   };
 
-  const remove = async (l: LabelT) => {
-    const ok = await confirm({ title: `Delete label “${l.name}”?`, description: 'It’s removed from every task.', confirmLabel: 'Delete label', destructive: true });
-    if (ok) void run(() => del(`/labels/${l.id}`));
+  const remove = async (l: TagT) => {
+    const ok = await confirm({ title: `Delete tag “${l.name}”?`, description: 'It’s removed from every task.', confirmLabel: 'Delete tag', destructive: true });
+    if (ok) void run(() => del(`/tags/${l.id}`));
   };
 
   return (
-    <Section title="Labels" description="Project-scoped tags to categorize tasks. A task can have several.">
-      {labels.length === 0 ? (
-        <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No labels yet.</p>
+    <Section title="Tags" description="Project-scoped tags to categorize tasks. A task can have several.">
+      {tags.length === 0 ? (
+        <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No tags yet.</p>
       ) : (
         <ul className="divide-y rounded-lg border">
-          {labels.map((l) => (
+          {tags.map((l) => (
             <li key={`${l.id}:${l.name}:${l.color}`} className="flex items-center gap-2 px-3 py-2">
-              <ColorInput label={`Color of ${l.name}`} value={l.color} onCommit={(c) => run(() => patch(`/labels/${l.id}`, { color: c }))} />
+              <ColorInput label={`Color of ${l.name}`} value={l.color} onCommit={(c) => run(() => patch(`/tags/${l.id}`, { color: c }))} />
               <Input
                 aria-label={`Name of ${l.name}`}
                 defaultValue={l.name}
-                onBlur={(e) => e.target.value.trim() && e.target.value !== l.name && run(() => patch(`/labels/${l.id}`, { name: e.target.value }))}
+                onBlur={(e) => e.target.value.trim() && e.target.value !== l.name && run(() => patch(`/tags/${l.id}`, { name: e.target.value }))}
                 className="h-7 flex-1 border-transparent bg-transparent shadow-none hover:border-input dark:bg-transparent"
               />
-              <LabelChip name={l.name} color={l.color} />
+              <TagChip name={l.name} color={l.color} />
               <Button variant="ghost" size="icon-sm" aria-label={`Delete ${l.name}`} className="text-muted-foreground hover:text-destructive" onClick={() => remove(l)}>
                 <Trash2 />
               </Button>
@@ -368,9 +368,9 @@ function Labels({ bundle }: { bundle: ProjectBundle }) {
       <form onSubmit={add} className="mt-3 flex items-center gap-2">
         <label className="relative flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border">
           <StatusDot color={color} className="size-3" />
-          <input type="color" aria-label="New label color" value={color} onChange={(e) => setColor(e.target.value)} className="absolute inset-0 opacity-0" />
+          <input type="color" aria-label="New tag color" value={color} onChange={(e) => setColor(e.target.value)} className="absolute inset-0 opacity-0" />
         </label>
-        <Input aria-label="New label name" placeholder="New label name" value={name} onChange={(e) => setName(e.target.value)} required />
+        <Input aria-label="New tag name" placeholder="New tag name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Button type="submit" variant="outline">
           <Plus /> Add
         </Button>

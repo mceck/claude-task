@@ -76,7 +76,7 @@ export function PriorityIcon({ priority, className }: { priority: Priority; clas
   return <Icon aria-label={`Priority: ${p.label}`} className={cn('size-3.5 shrink-0', p.className, className)} />;
 }
 
-export function LabelChip({ name, color }: { name: string; color: string }) {
+export function TagChip({ name, color }: { name: string; color: string }) {
   return (
     <span className="inline-flex h-5 items-center gap-1.5 rounded-full border px-2 text-[11px] font-medium text-foreground/80">
       <span className="size-1.5 rounded-full" style={{ backgroundColor: color }} />

@@ -1,4 +1,4 @@
-import type { Label, Status, Task, TaskSession, User } from '@claude-task/shared';
+import type { Tag, Status, Task, TaskSession, User } from '@claude-task/shared';
 import { Expand, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -13,17 +13,17 @@ type SessionAction = 'stop' | 'retry' | 'notify';
 interface Props {
   task: Task;
   statuses: Status[];
-  labels: Label[];
+  tags: Tag[];
   users: User[];
   session: TaskSession | null | undefined;
   onSessionAction: (action: SessionAction) => Promise<void>;
 }
 
-export function TaskActivity({ task, statuses, labels, users, session, onSessionAction }: Props) {
+export function TaskActivity({ task, statuses, tags, users, session, onSessionAction }: Props) {
   const [expanded, setExpanded] = useState(false);
   const draft = useCommentDraft();
   const dialog = useRef<HTMLDivElement>(null);
-  const timeline = <Timeline taskId={task.id} statuses={statuses} labels={labels} users={users} />;
+  const timeline = <Timeline taskId={task.id} statuses={statuses} tags={tags} users={users} />;
   const composer = <Composer taskId={task.id} draft={draft} />;
 
   return (

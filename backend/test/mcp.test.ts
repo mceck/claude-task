@@ -4,7 +4,7 @@ import type { JobStartMessage } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import type { TestApp } from './helpers/app';
-import { assignAgent, comment, createAgent, createLabel, createProject, createTask, getSession, statusByName, timeline } from './helpers/fixtures';
+import { assignAgent, comment, createAgent, createTag, createProject, createTask, getSession, statusByName, timeline } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 
 /** Connects like `claude` does: the URL and bearer header from the Job's MCP config. */
@@ -25,7 +25,7 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 async function setup(app: TestApp) {
   const admin = await app.admin();
   const bundle = await createProject(admin, { name: 'Payments' });
-  await createLabel(admin, bundle.project.id, 'bug');
+  await createTag(admin, bundle.project.id, 'bug');
   const { agent, runner } = await createAgent(app, admin, { name: 'Ada Bot' });
   const task = await createTask(admin, bundle.project.id, { title: 'Fix login', description: '- [ ] repro' });
   const other = await createTask(admin, bundle.project.id, { title: 'Unrelated' });
@@ -45,14 +45,14 @@ describe('Task Tools (MCP)', () => {
     expect(tools.map((t) => t.name).sort()).toEqual(['create_task', 'get_task', 'list_tasks', 'open_pull_request', 'set_status', 'update_task']);
   });
 
-  it('reads the own Task with statuses, labels and non-internal comments', async () => {
+  it('reads the own Task with statuses, tags and non-internal comments', async () => {
     const { admin, client, task } = await setup(app);
     await comment(admin, task.id, 'Visible to the agent');
     await comment(admin, task.id, 'Not for the agent', true);
     const { json } = await call(client, 'get_task');
     expect(json.task).toMatchObject({ key: task.key, title: 'Fix login', description: '- [ ] repro', status: 'Backlog', yours: true });
     expect(json.statuses).toContainEqual({ name: 'Closed', category: 'closed' });
-    expect(json.labels).toEqual(['bug']);
+    expect(json.tags).toEqual(['bug']);
     expect(json.comments.map((c: { body: string }) => c.body)).toEqual(['Visible to the agent']);
   });
 
@@ -90,15 +90,15 @@ describe('Task Tools (MCP)', () => {
 
   it('updates the own Task, recorded as a Revision by the Agent', async () => {
     const { admin, client, task, agent } = await setup(app);
-    const res = await call(client, 'update_task', { description: '- [x] repro', labels: ['bug'], priority: 'high' });
+    const res = await call(client, 'update_task', { description: '- [x] repro', tags: ['bug'], priority: 'high' });
     expect(res.isError).toBe(false);
     const updated = (await admin.get(`/tasks/${task.id}`)).body.task;
-    expect(updated).toMatchObject({ description: '- [x] repro', priority: 'high', labelIds: [expect.any(String)] });
+    expect(updated).toMatchObject({ description: '- [x] repro', priority: 'high', tagIds: [expect.any(String)] });
     const revision = (await timeline(admin, task.id)).filter((i) => i.type === 'revision').at(-1)!;
     expect(revision).toMatchObject({ revision: { actor: { type: 'agent', id: agent.id, displayName: 'Ada Bot' } } });
 
-    const bad = await call(client, 'update_task', { labels: ['nope'] });
-    expect(bad).toMatchObject({ isError: true, text: expect.stringContaining('No label named "nope"') });
+    const bad = await call(client, 'update_task', { tags: ['nope'] });
+    expect(bad).toMatchObject({ isError: true, text: expect.stringContaining('No tag named "nope"') });
   });
 
   it('moves the own Task but never to a closed Status', async () => {
@@ -112,7 +112,7 @@ describe('Task Tools (MCP)', () => {
 
   it('creates unassigned Tasks in the same Project, created by the Agent', async () => {
     const { admin, bundle, client, agent } = await setup(app);
-    const { json } = await call(client, 'create_task', { title: 'Flaky test in CI', labels: ['bug'] });
+    const { json } = await call(client, 'create_task', { title: 'Flaky test in CI', tags: ['bug'] });
     const tasks = (await admin.get(`/projects/${bundle.project.id}/tasks`)).body.tasks;
     const created = tasks.find((t: { key: string }) => t.key === json.created);
     expect(created).toMatchObject({ title: 'Flaky test in CI', assigneeIds: [], agentId: null, statusId: statusByName(bundle, 'Backlog').id });

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { taskTopic } from '@claude-task/shared';
 import type { Comment, InputBlock, TimelineItem } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
@@ -8,7 +9,7 @@ import {
   assignAgent,
   comment,
   createAgent,
-  createLabel,
+  createTag,
   createProject,
   createTask,
   createUser,
@@ -46,8 +47,8 @@ describe('assignment and the first Job', () => {
     await admin.put(`/projects/${project.id}/env/API_URL`, { value: 'https://staging.example.com' });
     await admin.put(`/projects/${project.id}/env/STRIPE_KEY`, { value: 'sk_test_supersecret', secret: true });
     await admin.patch(`/agents/${agent.id}`, { model: 'opus', effort: 'high', permissionMode: 'acceptEdits', systemPrompt: 'Always write tests.' });
-    const label = await createLabel(admin, project.id, 'backend');
-    const task = await createTask(admin, project.id, { title: 'Fix login redirect', description: 'After login we land on /.', priority: 'high', labelIds: [label.id] });
+    const tag = await createTag(admin, project.id, 'backend');
+    const task = await createTask(admin, project.id, { title: 'Fix login redirect', description: 'After login we land on /.', priority: 'high', tagIds: [tag.id] });
     await comment(admin, task.id, 'It happens on Safari only.');
     await comment(admin, task.id, 'Humans only: the client is upset', true);
 
@@ -79,7 +80,7 @@ describe('assignment and the first Job', () => {
     const message = texts(start.initialMessage);
     expect(message).toContain(`${task.key}: Fix login redirect`);
     expect(message).toContain('Priority: high');
-    expect(message).toContain('Labels: backend');
+    expect(message).toContain('Tags: backend');
     expect(message).toContain('After login we land on /.');
     expect(message).toMatch(/\[Comment by Ada Admin — \d{4}-\d\d-\d\dT[^\]]+\]\nIt happens on Safari only\./);
     expect(message).not.toContain('client is upset');
@@ -708,5 +709,77 @@ describe('Runner output and attachment isolation', () => {
     const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, agent.id)}` } };
     expect((await app.client().get(`/runner/attachments/${visible}`, opts)).status).toBe(200);
     expect((await app.client().get(`/runner/attachments/${internal}`, opts)).status).toBe(404);
+  });
+  describe('files in the task description', () => {
+    const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+    const uploadToTask = async (admin: ApiClient, taskId: string, name: string, type: string, data: Buffer | string) => {
+      const form = new FormData();
+      form.append('files', new Blob([data], { type }), name);
+      const res = await admin.request('POST', `/tasks/${taskId}/attachments`, { form });
+      expect(res.status).toBe(201);
+      return res.body.attachments[0] as { id: string; url: string; commentId: string | null };
+    };
+
+    it('stores uploads on the task, serves them to users and hands them to the agent on start', async () => {
+      const { admin, project, agent, runner } = await setup(app);
+      const task = await createTask(admin, project.id);
+      const image = await uploadToTask(admin, task.id, 'mock.png', 'image/png', PNG);
+      const doc = await uploadToTask(admin, task.id, 'spec.pdf', 'application/pdf', 'pdf bytes');
+      expect(image.commentId).toBeNull();
+      expect((await admin.get(image.url.replace('/api/v1', ''))).status).toBe(200);
+
+      const description = `See ![mock](${image.url}) and [the spec](${doc.url}).`;
+      expect((await admin.patch(`/tasks/${task.id}`, { version: task.version, description })).status).toBe(200);
+      await assignAgent(admin, task.id, agent.id);
+      const start = await runner.next('job.start');
+
+      const message = texts(start.initialMessage);
+      expect(message).toContain(description);
+      expect(message).toContain(`\`${image.url}\` → \`.claude-task/attachments/${image.id}/mock.png\``);
+      expect(message).toContain(`\`${doc.url}\` → \`.claude-task/attachments/${doc.id}/spec.pdf\``);
+      expect((start.initialMessage as InputBlock[]).some((b) => b.type === 'image')).toBe(true);
+      expect(start.attachmentsToFetch.map((f: { path: string }) => f.path).sort()).toEqual([
+        `.claude-task/attachments/${doc.id}/spec.pdf`,
+        `.claude-task/attachments/${image.id}/mock.png`,
+      ].sort());
+
+      const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, agent.id)}` } };
+      expect((await app.client().get(`/runner/attachments/${doc.id}`, opts)).status).toBe(200);
+      await runner.exit(start.jobId);
+    });
+
+    it('removes old uploads the description no longer links to when more are uploaded', async () => {
+      const { admin, project } = await setup(app);
+      const task = await createTask(admin, project.id);
+      const kept = await uploadToTask(admin, task.id, 'kept.png', 'image/png', PNG);
+      const dropped = await uploadToTask(admin, task.id, 'dropped.png', 'image/png', PNG);
+      const fresh = await uploadToTask(admin, task.id, 'fresh.png', 'image/png', PNG);
+      expect((await admin.patch(`/tasks/${task.id}`, { version: task.version, description: `![kept](${kept.url})` })).status).toBe(200);
+      await app.server.ctx.db.execute(sql`update attachments set created_at = now() - interval '2 days' where id in (${kept.id}::uuid, ${dropped.id}::uuid)`);
+      await uploadToTask(admin, task.id, 'next.png', 'image/png', PNG);
+      expect((await admin.get(kept.url.replace('/api/v1', ''))).status).toBe(200);
+      expect((await admin.get(dropped.url.replace('/api/v1', ''))).status).toBe(404);
+      expect((await admin.get(fresh.url.replace('/api/v1', ''))).status).toBe(200);
+    });
+
+    it('only serves them to the runner of an agent working on the task', async () => {
+      const { admin, project, agent, runner } = await setup(app);
+      const task = await createTask(admin, project.id);
+      const other = await createTask(admin, project.id);
+      const file = await uploadToTask(admin, other.id, 'a.txt', 'text/plain', 'x');
+      await assignAgent(admin, task.id, agent.id);
+      const start = await runner.next('job.start');
+      runner.accept(start.jobId);
+      const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, agent.id)}` } };
+      expect((await app.client().get(`/runner/attachments/${file.id}`, opts)).status).toBe(404);
+    });
+
+    it('removes the files with the task', async () => {
+      const { admin, project } = await setup(app);
+      const task = await createTask(admin, project.id);
+      const file = await uploadToTask(admin, task.id, 'a.txt', 'text/plain', 'x');
+      expect((await admin.delete(`/tasks/${task.id}`)).status).toBe(204);
+      expect((await admin.get(file.url.replace('/api/v1', ''))).status).toBe(404);
+    });
   });
 });

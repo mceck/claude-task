@@ -4,9 +4,9 @@ import { z } from 'zod';
 import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
-import { HttpError, notFound, parse } from '../../errors';
+import { badRequest, HttpError, notFound, parse } from '../../errors';
 import { getTaskRow } from '../tasks/service';
-import { createUserComment, deleteComment, getAttachment, updateComment } from './service';
+import { createTaskAttachments, createUserComment, pruneTaskAttachments, deleteComment, getAttachment, updateComment } from './service';
 import type { NewAttachment } from './service';
 
 const taskParams = z.object({ taskId: z.string().min(1).max(64) });
@@ -30,6 +30,23 @@ export function commentRoutes(app: FastifyInstance, ctx: AppContext): void {
         createUserComment(tx, after, task, { ...body, attachments: files }, author),
       );
       return reply.status(201).send({ comment });
+    } catch (err) {
+      await Promise.all(files.map((f) => ctx.blobs.delete(f.blobId)));
+      throw err;
+    }
+  });
+
+  /** Uploads for the description editor; the files are linked from the description text. */
+  app.post('/tasks/:taskId/attachments', async (request, reply) => {
+    const { taskId } = parse(taskParams, request.params);
+    const task = await getTaskRow(ctx.db, taskId);
+    if (!request.isMultipart()) throw badRequest('Send the files as multipart/form-data');
+    const { files } = await receiveMultipart(ctx, request);
+    if (files.length === 0) throw badRequest('Missing file');
+    try {
+      const freed = await pruneTaskAttachments(ctx.db, task.id);
+      await Promise.all(freed.map((blobId) => ctx.blobs.delete(blobId)));
+      return reply.status(201).send({ attachments: await createTaskAttachments(ctx.db, task.id, files) });
     } catch (err) {
       await Promise.all(files.map((f) => ctx.blobs.delete(f.blobId)));
       throw err;

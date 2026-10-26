@@ -1,11 +1,11 @@
 // What an Agent receives: the Message content blocks (Comments, Task snapshots, notices)
 // and the system prompt its Session runs with.
-import { RUNNER_ATTACHMENTS_PATH } from '@claude-task/shared';
+import { API_PREFIX, RUNNER_ATTACHMENTS_PATH } from '@claude-task/shared';
 import type { AttachmentToFetch, InputBlock } from '@claude-task/shared';
-import { asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { AppContext } from '../context';
 import type { Executor } from '../db/client';
-import { attachments, comments, labels, projects, statuses, taskLabels, tasks } from '../db/schema';
+import { attachments, comments, tags, projects, statuses, taskTags, tasks } from '../db/schema';
 import { actorResolver } from '../modules/actors';
 
 export type CommentRow = typeof comments.$inferSelect;
@@ -24,8 +24,54 @@ export function attachmentPath(commentId: string, filename: string): string {
   return `.claude-task/attachments/${commentId}/${filename.replace(/[/\\]/g, '_') || 'file'}`;
 }
 
+/** Files linked from a Task's description (or a change notice), ready to give to the Agent. */
+export interface TaskFiles {
+  /** Maps each link in the text to its file in the Worktree; empty when none are linked. */
+  note: string;
+  images: InputBlock[];
+  fetch: AttachmentToFetch[];
+}
+
+const ATTACHMENT_LINK = new RegExp(`${API_PREFIX}/attachments/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`, 'g');
+
+/**
+ * Description files stay linked by URL in the text (so the Agent can edit the description without
+ * breaking the links); this tells it where each one is on disk and shows it small images.
+ */
+export async function renderTaskFiles(ctx: AppContext, db: Executor, taskId: string, text: string, seen = new Set<string>()): Promise<TaskFiles> {
+  // `seen` holds the files already shown in this message, so repeated links don't resend them.
+  const ids = [...new Set([...text.matchAll(ATTACHMENT_LINK)].map((m) => m[1]!))].filter((id) => !seen.has(id));
+  for (const id of ids) seen.add(id);
+  const none: TaskFiles = { note: '', images: [], fetch: [] };
+  if (ids.length === 0) return none;
+  const files = await db
+    .select()
+    .from(attachments)
+    .where(and(inArray(attachments.id, ids), eq(attachments.taskId, taskId)))
+    .orderBy(asc(attachments.position));
+  if (files.length === 0) return none;
+  const result: TaskFiles = { note: '', images: [], fetch: [] };
+  const lines: string[] = [];
+  for (const f of files) {
+    const path = attachmentPath(f.id, f.filename);
+    result.fetch.push({ url: `${ctx.config.agents.backendUrl}${RUNNER_ATTACHMENTS_PATH}/${f.id}`, path });
+    let shown = '';
+    if (IMAGE_TYPES.has(f.contentType) && f.size <= IMAGE_BLOCK_MAX_BYTES) {
+      const data = await readBlob(ctx, f.blobId);
+      if (data) {
+        result.images.push({ type: 'text', text: `(Image from the description: ${f.filename})` });
+        result.images.push({ type: 'image', source: { type: 'base64', media_type: f.contentType, data: data.toString('base64') } });
+        shown = ' (also attached below)';
+      }
+    }
+    lines.push(`- \`${API_PREFIX}/attachments/${f.id}\` → \`${path}\`${shown}`);
+  }
+  result.note = ['Files linked in the text above are saved in your working directory (keep the links as they are if you edit the text):', ...lines].join('\n');
+  return result;
+}
+
 /** `[Comment by <name> — <ISO time>]` and the body; attachments as images or fetched files. */
-export async function renderComments(ctx: AppContext, db: Executor, rows: CommentRow[]): Promise<MessageParts> {
+export async function renderComments(ctx: AppContext, db: Executor, rows: CommentRow[], seenTaskFiles = new Set<string>()): Promise<MessageParts> {
   const parts: MessageParts = { blocks: [], fetch: [] };
   if (rows.length === 0) return parts;
   const resolve = await actorResolver(db, rows.map((r) => ({ type: r.authorType, id: r.authorId })));
@@ -37,7 +83,9 @@ export async function renderComments(ctx: AppContext, db: Executor, rows: Commen
 
   for (const c of rows) {
     if (c.noticeMessage) {
-      parts.blocks.push({ type: 'text', text: c.noticeMessage });
+      const files = await renderTaskFiles(ctx, db, c.taskId, c.noticeMessage, seenTaskFiles);
+      parts.blocks.push({ type: 'text', text: files.note ? `${c.noticeMessage}\n${files.note}` : c.noticeMessage }, ...files.images);
+      parts.fetch.push(...files.fetch);
       continue;
     }
     const author = resolve({ type: c.authorType, id: c.authorId });
@@ -77,7 +125,7 @@ export interface TaskSnapshot {
   priority: string;
   status: string;
   category: string;
-  labels: string[];
+  tags: string[];
   projectName: string;
   version: number;
 }
@@ -90,12 +138,12 @@ export async function taskSnapshot(db: Executor, taskId: string): Promise<TaskSn
     .innerJoin(statuses, eq(statuses.id, tasks.statusId))
     .where(eq(tasks.id, taskId));
   const t = row!.task;
-  const labelRows = await db
-    .select({ name: labels.name })
-    .from(labels)
-    .innerJoin(taskLabels, eq(taskLabels.labelId, labels.id))
-    .where(eq(taskLabels.taskId, taskId))
-    .orderBy(asc(labels.name));
+  const tagRows = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .innerJoin(taskTags, eq(taskTags.tagId, tags.id))
+    .where(eq(taskTags.taskId, taskId))
+    .orderBy(asc(tags.name));
   return {
     key: `${row!.projectKey}-${t.number}`,
     title: t.title,
@@ -103,19 +151,20 @@ export async function taskSnapshot(db: Executor, taskId: string): Promise<TaskSn
     priority: t.priority,
     status: row!.status,
     category: row!.category,
-    labels: labelRows.map((l) => l.name),
+    tags: tagRows.map((l) => l.name),
     projectName: row!.projectName,
     version: t.version,
   };
 }
 
-export function describeTask(t: TaskSnapshot): string {
+export function describeTask(t: TaskSnapshot, filesNote = ''): string {
   return [
     `Task ${t.key}: ${t.title}`,
-    `Status: ${t.status} (${t.category}) · Priority: ${t.priority} · Labels: ${t.labels.length ? t.labels.join(', ') : 'none'}`,
+    `Status: ${t.status} (${t.category}) · Priority: ${t.priority} · Tags: ${t.tags.length ? t.tags.join(', ') : 'none'}`,
     '',
     'Description:',
     t.description.trim() || '(no description)',
+    ...(filesNote ? ['', filesNote] : []),
   ].join('\n');
 }
 
@@ -123,12 +172,12 @@ export function describeTask(t: TaskSnapshot): string {
 export function startMessage(
   t: TaskSnapshot,
   conversation: MessageParts,
-  opts: { branch: string | null; previousAgent: boolean },
+  opts: { branch: string | null; previousAgent: boolean; files?: TaskFiles },
 ): MessageParts {
   const intro = [
     `You have been assigned task ${t.key} in project "${t.projectName}".`,
     '',
-    describeTask(t),
+    describeTask(t, opts.files?.note),
   ];
   if (opts.branch) intro.push('', `Task branch: ${opts.branch}`);
   if (opts.previousAgent) {
@@ -138,7 +187,10 @@ export function startMessage(
     );
   }
   intro.push('', conversation.blocks.length ? 'Conversation so far (oldest first):' : 'There are no comments yet.');
-  return { blocks: [{ type: 'text', text: intro.join('\n') }, ...conversation.blocks], fetch: conversation.fetch };
+  return {
+    blocks: [{ type: 'text', text: intro.join('\n') }, ...(opts.files?.images ?? []), ...conversation.blocks],
+    fetch: [...(opts.files?.fetch ?? []), ...conversation.fetch],
+  };
 }
 
 export const RESUME_MESSAGE = 'The previous run was interrupted by a restart; continue where you left off.';
@@ -164,11 +216,11 @@ export function systemPrompt(p: PromptInput): string {
     '- Everything you write as text is posted as a comment on the task, for humans: write clearly and use markdown.',
     '- New messages from humans can arrive while you work. Take them into account as soon as you see them.',
     '- If you need clarification, ask in text and end your turn. The answer will arrive as a new message.',
-    '- Files attached to comments are saved under `.claude-task/attachments/` in your working directory.',
+    '- Files attached to comments, and files linked in the task description, are saved under `.claude-task/attachments/` in your working directory.',
     '',
     'Task tools (MCP server `claude-task`):',
-    '- `get_task`: read your task (or another task of the project by key): fields, statuses, labels and comments.',
-    '- `update_task`: change your task\'s title, description, priority or labels (e.g. tick checklist items).',
+    '- `get_task`: read your task (or another task of the project by key): fields, statuses, tags and comments.',
+    '- `update_task`: change your task\'s title, description, priority or tags (e.g. tick checklist items).',
     '- `set_status`: move your task to another status to signal progress. Closed statuses are for humans.',
     '- `list_tasks`: list the project\'s tasks.',
     '- `create_task`: report an out-of-scope issue as a new, unassigned task.',

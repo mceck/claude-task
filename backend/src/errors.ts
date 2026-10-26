@@ -33,7 +33,7 @@ const UNIQUE_MESSAGES: Record<string, string> = {
   users_email_unique: 'A user with this email already exists',
   projects_key_unique: 'A project with this key already exists',
   statuses_name_unique: 'A status with this name already exists in the project',
-  labels_name_unique: 'A label with this name already exists in the project',
+  tags_name_unique: 'A tag with this name already exists in the project',
   credentials_name_unique: 'A credential with this name already exists',
   agents_name_unique: 'An agent with this name already exists',
   project_env_vars_name_unique: 'This variable already exists in the project',

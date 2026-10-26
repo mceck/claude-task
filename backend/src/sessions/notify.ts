@@ -4,14 +4,14 @@ import { createTwoFilesPatch } from 'diff';
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../context';
 import type { Executor } from '../db/client';
-import { comments, labels, sessions, taskRevisions } from '../db/schema';
+import { comments, tags, sessions, taskRevisions } from '../db/schema';
 import { conflict } from '../errors';
 import { actorResolver } from '../modules/actors';
 import { getTaskRow } from '../modules/tasks/service';
 import { deliverComment } from './lifecycle';
 import { NOTIFIABLE_FIELDS } from './view';
 
-const FIELD_NAMES: Record<string, string> = { title: 'Title', description: 'Description', priority: 'Priority', labelIds: 'Labels' };
+const FIELD_NAMES: Record<string, string> = { title: 'Title', description: 'Description', priority: 'Priority', tagIds: 'Tags' };
 
 /** Field-by-field changes made by Users after `sinceVersion` (first `before`, last `after`), or null. */
 export async function describeUnseenChanges(db: Executor, taskId: string, sinceVersion: number): Promise<{ text: string; version: number } | null> {
@@ -35,21 +35,21 @@ export async function describeUnseenChanges(db: Executor, taskId: string, sinceV
   if (changed.length === 0) return null;
 
   const resolve = await actorResolver(db, [...editors].map((id) => ({ type: 'user' as const, id })));
-  const labelIds = changed.filter(([f]) => f === 'labelIds').flatMap(([, v]) => [...(v.before as string[]), ...(v.after as string[])]);
-  const labelRows = labelIds.length ? await db.select().from(labels).where(inArray(labels.id, labelIds)) : [];
-  const labelName = (id: string) => labelRows.find((l) => l.id === id)?.name ?? '(deleted label)';
+  const tagIds = changed.filter(([f]) => f === 'tagIds').flatMap(([, v]) => [...(v.before as string[]), ...(v.after as string[])]);
+  const tagRows = tagIds.length ? await db.select().from(tags).where(inArray(tags.id, tagIds)) : [];
+  const tagName = (id: string) => tagRows.find((l) => l.id === id)?.name ?? '(deleted tag)';
 
   const lines = [`[Task changes by ${[...editors].map((id) => resolve({ type: 'user', id }).displayName).join(', ')} since you last read the task]`];
   for (const [field, { before, after }] of changed) {
     if (field === 'description') {
       const patch = createTwoFilesPatch('description', 'description', String(before), String(after), 'before', 'after', { context: 3 });
       lines.push('Description:', '```diff', patch.split('\n').slice(2).join('\n').trimEnd(), '```');
-    } else if (field === 'labelIds') {
+    } else if (field === 'tagIds') {
       const b = before as string[];
       const a = after as string[];
-      const added = a.filter((x) => !b.includes(x)).map(labelName);
-      const removed = b.filter((x) => !a.includes(x)).map(labelName);
-      lines.push(`Labels: ${[added.length && `added ${added.join(', ')}`, removed.length && `removed ${removed.join(', ')}`].filter(Boolean).join('; ')}`);
+      const added = a.filter((x) => !b.includes(x)).map(tagName);
+      const removed = b.filter((x) => !a.includes(x)).map(tagName);
+      lines.push(`Tags: ${[added.length && `added ${added.join(', ')}`, removed.length && `removed ${removed.join(', ')}`].filter(Boolean).join('; ')}`);
     } else {
       lines.push(`${FIELD_NAMES[field]}: ${JSON.stringify(before)} → ${JSON.stringify(after)}`);
     }

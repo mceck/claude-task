@@ -1,4 +1,4 @@
-import { AGENTS_TOPIC, agentTopic, taskKey } from '@claude-task/shared';
+import { AGENTS_TOPIC, agentTopic, API_PREFIX, taskKey } from '@claude-task/shared';
 import type { Agent, AgentRef, AgentState, AgentBuild, Job, QueueEntryKind, TaskRef } from '@claude-task/shared';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
@@ -16,15 +16,21 @@ export function desiredContainerSpec(a: Pick<AgentRow, 'imageTag' | 'cpuLimit' |
   return a.imageTag ? JSON.stringify({ image: a.imageTag, cpu: a.cpuLimit, mem: a.memoryMb }) : null;
 }
 
-export function agentRef(a: Pick<AgentRow, 'id' | 'name' | 'avatarEmoji' | 'avatarColor'>): AgentRef {
-  return { id: a.id, name: a.name, avatarEmoji: a.avatarEmoji, avatarColor: a.avatarColor };
+export function agentRef(a: Pick<AgentRow, 'id' | 'name' | 'avatarEmoji' | 'avatarColor' | 'avatarBlobId'>): AgentRef {
+  return {
+    id: a.id,
+    name: a.name,
+    avatarEmoji: a.avatarEmoji,
+    avatarColor: a.avatarColor,
+    avatarImageUrl: a.avatarBlobId ? `${API_PREFIX}/agents/${a.id}/avatar?v=${a.avatarBlobId}` : null,
+  };
 }
 
 export async function agentRefs(db: Executor, ids: string[]): Promise<Map<string, AgentRef>> {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return new Map();
   const rows = await db
-    .select({ id: agents.id, name: agents.name, avatarEmoji: agents.avatarEmoji, avatarColor: agents.avatarColor })
+    .select({ id: agents.id, name: agents.name, avatarEmoji: agents.avatarEmoji, avatarColor: agents.avatarColor, avatarBlobId: agents.avatarBlobId })
     .from(agents)
     .where(inArray(agents.id, unique));
   return new Map(rows.map((r) => [r.id, agentRef(r)]));
