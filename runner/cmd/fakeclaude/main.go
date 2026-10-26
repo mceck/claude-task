@@ -11,7 +11,9 @@
 //	FAKE_CLAUDE_EXIT         exit right away with this code, after writing FAKE_CLAUDE_STDERR
 //
 // Message text keywords: "CRASH" kills the process with SIGKILL, "HANG" runs the tool until
-// interrupted, "STUCK" stops responding to anything.
+// interrupted, "STUCK" stops responding to anything, "SPAWN" leaves a background process in its
+// process group (pid in ./bg.pid), "TRICKLE" leaves one in its own session that keeps writing
+// lines to stdout for a while, "HUGE" writes a 70 MiB stdout line.
 // Sessions are remembered in $HOME/.fakeclaude/sessions, like the real CLI refuses a reused
 // --session-id and an unknown --resume.
 package main
@@ -21,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -48,6 +51,18 @@ func main() {
 	args := os.Args[1:]
 	if len(args) == 1 && args[0] == "--version" {
 		fmt.Println("9.9.9 (Claude Code)")
+		return
+	}
+	if len(args) == 1 && args[0] == "--background" {
+		time.Sleep(10 * time.Minute)
+		return
+	}
+	if len(args) == 1 && args[0] == "--trickle" {
+		for i := 1; i <= 8; i++ {
+			time.Sleep(400 * time.Millisecond)
+			fmt.Printf("{\"type\":\"system\",\"subtype\":\"trickle\",\"n\":%d}\n", i)
+		}
+		time.Sleep(20 * time.Second) // keeps the pipe open with nothing coming
 		return
 	}
 	rec.Args = args
@@ -105,8 +120,17 @@ func turn(m map[string]any, lines chan map[string]any) chan map[string]any {
 	if strings.Contains(text, "CRASH") {
 		syscall.Kill(os.Getpid(), syscall.SIGKILL)
 	}
+	if strings.Contains(text, "SPAWN") {
+		background(false)
+	}
+	if strings.Contains(text, "TRICKLE") {
+		background(true)
+	}
 	start := time.Now()
 	msgID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
+	if strings.Contains(text, "HUGE") {
+		assistant(msgID, map[string]any{"type": "text", "text": strings.Repeat("x", 70<<20)})
+	}
 	assistant(msgID, map[string]any{"type": "text", "text": "Working on: " + text})
 	if strings.Contains(text, "STUCK") {
 		for { // deaf to stdin, interrupts and stdin closing
@@ -167,6 +191,25 @@ func turn(m map[string]any, lines chan map[string]any) chan map[string]any {
 	}
 	emit(result)
 	return lines
+}
+
+// background starts a process that outlives this one: in this process group and silent, or in
+// its own session and writing to this process's stdout.
+func background(trickle bool) {
+	self, _ := os.Executable()
+	cmd := exec.Command(self, "--background")
+	if trickle {
+		cmd = exec.Command(self, "--trickle")
+		cmd.Stdout = os.Stdout
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	}
+	if err := cmd.Start(); err != nil {
+		panic(err)
+	}
+	if !trickle {
+		os.WriteFile("bg.pid", []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
+	}
+	go cmd.Wait()
 }
 
 func checkSession(args []string) bool {

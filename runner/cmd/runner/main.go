@@ -20,6 +20,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Nothing the Runner starts (claude, setup, mise, git and its hooks) may see its credentials.
+	os.Unsetenv("CLAUDE_TASK_RUNNER_TOKEN")
+	os.Unsetenv("CLAUDE_TASK_BACKEND_URL")
+	hideMemory()
 	r := runner.New(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()

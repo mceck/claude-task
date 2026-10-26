@@ -15,12 +15,17 @@ import (
 	"claude-task/runner/internal/protocol"
 )
 
-const excludeEntry = ".claude-task/"
+const (
+	excludeEntry = ".claude-task/"
+	// setupPendingMarker marks a new Worktree whose setup hasn't succeeded yet.
+	setupPendingMarker = ".claude-task/setup-pending"
+)
 
 // prepareWorktree makes the Task's Worktree ready (Spec 03) and reports whether it was just created.
+// A new Worktree is marked setup-pending as soon as it exists.
 func (j *job) prepareWorktree() (string, bool, error) {
-	j.r.worktreeMu.Lock()
-	defer j.r.worktreeMu.Unlock()
+	<-j.turn
+	defer j.endTurn()
 	home := j.r.cfg.Home
 	wt, err := within(home, j.start.WorktreePath)
 	if err != nil {
@@ -32,13 +37,20 @@ func (j *job) prepareWorktree() (string, bool, error) {
 		if err := os.MkdirAll(wt, 0o755); err != nil {
 			return "", false, err
 		}
-		return wt, os.IsNotExist(statErr), nil
+		created := os.IsNotExist(statErr)
+		if created {
+			if err := markSetupPending(wt); err != nil {
+				return "", false, err
+			}
+		}
+		return wt, created, nil
 	}
 	repo, err := within(home, g.RepoPath)
 	if err != nil {
 		return "", false, err
 	}
-	out := &chunkWriter{j: j}
+	out := j.setupWriter()
+	defer out.Flush()
 	created, err := prepareGitWorktree(out, repo, wt, g)
 	j.remoteBranchMissing = !refExists(repo, "refs/remotes/origin/"+g.TaskBranch)
 	return wt, created, err
@@ -139,11 +151,22 @@ func createWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) error {
 	if err := git(repo, "worktree", "add", "--no-track", "-B", b, wt, base); err != nil {
 		return err
 	}
+	if err := markSetupPending(wt); err != nil {
+		return err
+	}
 	// 3. Upstream = origin/<task branch>, set by config so it works before the remote branch exists.
 	if err := git(repo, "config", "branch."+b+".remote", "origin"); err != nil {
 		return err
 	}
 	return git(repo, "config", "branch."+b+".merge", "refs/heads/"+b)
+}
+
+func markSetupPending(wt string) error {
+	p := filepath.Join(wt, setupPendingMarker)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, nil, 0o644)
 }
 
 func validWorktree(wt string) bool {
@@ -204,8 +227,6 @@ func runGit(out io.Writer, dir string, args ...string) error {
 
 // removeWorktree deletes a Task's Worktree directory; branches are never deleted.
 func (r *Runner) removeWorktree(m *protocol.Incoming) {
-	r.worktreeMu.Lock()
-	defer r.worktreeMu.Unlock()
 	wt, err := within(r.cfg.Home, m.WorktreePath)
 	if err != nil {
 		log.Printf("worktree.remove: %v", err)

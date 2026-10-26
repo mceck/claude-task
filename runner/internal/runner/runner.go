@@ -5,6 +5,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"math/rand/v2"
 	"net/http"
@@ -23,17 +24,21 @@ const (
 	writeTimeout = 10 * time.Second
 	pingInterval = 30 * time.Second
 	readLimit    = 64 << 20 // job.start can carry base64 images
+	// maxMessageBytes caps an outgoing message well below the backend's 64 MiB limit: a bigger
+	// one would drop the connection again on every resend.
+	maxMessageBytes = 32 << 20
+	previewBytes    = 16 << 10
 )
 
 type Runner struct {
-	worktreeMu    sync.Mutex
 	cfg           Config
 	claudeVersion string
 
-	mu      sync.Mutex
-	conn    *websocket.Conn // nil while disconnected
-	jobs    []*job          // Jobs with a live process or unacked messages, oldest first
-	current *job            // the Job being prepared or running, if any
+	mu        sync.Mutex
+	conn      *websocket.Conn // nil while disconnected
+	jobs      []*job          // Jobs with a live process or unacked messages, oldest first
+	current   *job            // the Job being prepared or running, if any
+	worktrees turns           // Worktree preparation and removal, in arrival order
 }
 
 func New(cfg Config) *Runner {
@@ -190,17 +195,39 @@ func (r *Runner) sendNow(v any) {
 func (r *Runner) emit(j *job, typ string, fields map[string]any) int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.emitLocked(j, typ, fields)
+}
+
+func (r *Runner) emitLocked(j *job, typ string, fields map[string]any) int64 {
 	j.seq++
 	msg := map[string]any{"type": typ, "jobId": j.id, "seq": j.seq}
 	for k, v := range fields {
 		msg[k] = v
 	}
 	data, _ := json.Marshal(msg)
+	if line, ok := msg["line"].(string); ok && len(data) > maxMessageBytes {
+		// Within the limit as raw bytes, but not once escaped.
+		msg["line"] = unparsedLine([]byte(line), len(line))
+		data, _ = json.Marshal(msg)
+	}
 	if err := j.out.add(j.seq, data); err != nil {
 		log.Printf("job %s: outbox: %v", j.id, err)
 	}
 	r.sendLocked(data)
 	return j.seq
+}
+
+// unparsedLine stands in for a stdout line too big to send: valid stream-json the projection
+// skips, with the beginning of the line.
+func unparsedLine(line []byte, size int) string {
+	keep := completeUTF8(line[:min(len(line), previewBytes)])
+	b, _ := json.Marshal(struct {
+		Type      string `json:"type"`
+		Line      string `json:"line"`
+		Truncated bool   `json:"truncated"`
+		Bytes     int    `json:"bytes"`
+	}{"unparsed", string(line[:keep]), true, size})
+	return string(b)
 }
 
 func (r *Runner) handle(m *protocol.Incoming) {
@@ -218,15 +245,30 @@ func (r *Runner) handle(m *protocol.Incoming) {
 		r.start(m)
 	case "job.input", "job.interrupt", "job.end", "job.cancel":
 		r.mu.Lock()
-		j := r.current
+		j := r.findLocked(m.JobID)
+		if j != nil && j.finished {
+			j = nil
+		}
 		r.mu.Unlock()
-		if j == nil || j.id != m.JobID {
+		if j == nil {
 			log.Printf("ignoring %s for job %s that isn't running", m.Type, m.JobID)
 			return
 		}
 		j.control(m)
 	case "worktree.remove":
-		r.removeWorktree(m)
+		// Off the read loop: it waits for Worktree work before it and for the Jobs using the Worktree.
+		r.mu.Lock()
+		turn, endTurn := r.worktrees.enter()
+		users := r.usingLocked(m.WorktreePath)
+		r.mu.Unlock()
+		go func() {
+			defer endTurn()
+			<-turn
+			for _, j := range users {
+				<-j.done
+			}
+			r.removeWorktree(m)
+		}()
 	default:
 		log.Printf("ignoring unknown message type %q", m.Type)
 	}
@@ -239,28 +281,66 @@ func (r *Runner) start(m *protocol.Incoming) {
 		return // a resent job.start for a Job we already know
 	}
 	j := newJob(r, m)
+	j.turn, j.endTurn = r.worktrees.enter()
 	r.jobs = append(r.jobs, j)
-	busy := r.current != nil
-	if !busy {
+	cur := r.current
+	if cur == nil {
 		r.current = j
 	}
 	r.mu.Unlock()
-	if busy {
-		r.emit(j, "job.failed", map[string]any{"stage": "spawn", "message": "another job is running"})
-		r.finish(j)
-		return
+	switch {
+	case cur == nil:
+		go j.run()
+	case cur.isCancelled():
+		go r.startAfter(j, cur)
+	default:
+		r.finish(j, "job.failed", map[string]any{"stage": "spawn", "message": "another job is running"})
 	}
-	go j.run()
 }
 
-// finish marks a Job done; it's forgotten once all its messages are acked.
-func (r *Runner) finish(j *job) {
+// startAfter runs j once the cancelled Job cur has stopped: the backend sends the next Job as
+// soon as it cancels one. cur gets until its KILL deadline, plus time to drain its output.
+func (r *Runner) startAfter(j, cur *job) {
+	deadline := time.After(r.cfg.CancelKill + drainIdle + 3*time.Second)
+	for {
+		select {
+		case <-cur.done:
+		case <-j.cancelled:
+			j.fail("spawn", errCancelled)
+			return
+		case <-deadline:
+			j.fail("spawn", errors.New("another job is running"))
+			return
+		}
+		r.mu.Lock()
+		if cur = r.current; cur == nil {
+			r.current = j
+		}
+		r.mu.Unlock()
+		if cur == nil {
+			j.run()
+			return
+		}
+		if !cur.isCancelled() {
+			j.fail("spawn", errors.New("another job is running"))
+			return
+		}
+	}
+}
+
+// finish sends the Job's last message and marks it done at once, so the next job.start, which
+// the backend sends as soon as it reads that message, never finds this Job still current.
+// The Job is forgotten once all its messages are acked.
+func (r *Runner) finish(j *job, typ string, fields map[string]any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	j.finished = true
 	if r.current == j {
 		r.current = nil
 	}
+	r.emitLocked(j, typ, fields)
+	j.finished = true
+	close(j.done)
+	j.endTurn()
 	r.retireLocked(j)
 }
 
@@ -275,6 +355,21 @@ func (r *Runner) retireLocked(j *job) {
 			break
 		}
 	}
+}
+
+// usingLocked returns the unfinished Jobs on a Worktree.
+func (r *Runner) usingLocked(worktreePath string) []*job {
+	wt, err := within(r.cfg.Home, worktreePath)
+	if err != nil {
+		return nil
+	}
+	var users []*job
+	for _, j := range r.jobs {
+		if !j.finished && j.worktreeDir() == wt {
+			users = append(users, j)
+		}
+	}
+	return users
 }
 
 func (r *Runner) findLocked(id string) *job {
@@ -293,6 +388,27 @@ func (r *Runner) Shutdown() {
 	r.mu.Unlock()
 	if j != nil {
 		j.terminate()
+	}
+}
+
+// turns hands out Worktree work one at a time, in the order it was asked for.
+type turns struct{ last chan struct{} }
+
+// enter returns a channel closed when it's the caller's turn, and the func that ends the turn.
+// Ending it early still keeps the order.
+func (t *turns) enter() (<-chan struct{}, func()) {
+	prev := t.last
+	if prev == nil {
+		prev = make(chan struct{})
+		close(prev)
+	}
+	next := make(chan struct{})
+	t.last = next
+	var once sync.Once
+	return prev, func() {
+		once.Do(func() {
+			go func() { <-prev; close(next) }()
+		})
 	}
 }
 
