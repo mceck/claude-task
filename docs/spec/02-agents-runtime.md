@@ -22,7 +22,7 @@ Depends on: [Spec 01 — Core Board](01-core-board.md). Uses the Git operations 
 
 ## Problem Statement
 
-We want Claude Code agents to work on tasks from our board as if they were teammates. When I assign a task to an agent, it should start working right away in an environment that can build and test our code. It should talk to us through the task's comments: everything it says and does shows up on the task, and anything we write on the task reaches it, **even while it's in the middle of working**. The conversation for a task has to be one continuous Claude Code session that survives for as long as the task is open: through review, follow-up feedback, container restarts, and reassignments.
+We want Claude Code agents to work on tasks from our board as if they were teammates. When I assign a task to an agent and send my first comment, it should start working right away in an environment that can build and test our code. It should talk to us through the task's comments: everything it says and does shows up on the task, and anything we write on the task reaches it, **even while it's in the middle of working**. The conversation for a task has to be one continuous Claude Code session that survives for as long as the task is open: through review, follow-up feedback, container restarts, and reassignments.
 
 Today this means opening a terminal per task, babysitting sessions, copy-pasting feedback, and losing sessions when terminals close.
 
@@ -32,7 +32,7 @@ Admins define **Agents**: global, reusable workers, each with its own Dockerfile
 
 Each agent runs as **one long-lived Docker container** on the host, managed by the backend through the host's Docker socket. Inside it, a small **Runner** (Go) connects out to the backend over WebSocket and runs `claude` in headless streaming mode (`-p --input-format stream-json --output-format stream-json`) on behalf of the backend.
 
-Every task assigned to an agent gets its own **Session**: a Claude Code session id plus a git **Worktree** on the task's branch, inside the agent's container volume. An agent executes **one job at a time**. Work for an agent goes through a **Queue** owned by the backend. Assigning a task enqueues the session start. Comments on a task whose job is running are injected into the running `claude` process immediately. Comments on any other task of that agent are queued and delivered (merged) when the agent is free.
+Every task assigned to an agent gets its own **Session**: a Claude Code session id plus a git **Worktree** on the task's branch, inside the agent's container volume. An agent executes **one job at a time**. Work for an agent goes through a **Queue** owned by the backend. Assigning a task creates a `pending` session; the first user comment enqueues the session start. Comments on a task whose job is running are injected into the running `claude` process immediately. Comments on any other task of that agent are queued and delivered (merged) when the agent is free.
 
 The agent's output is read from the `claude` stream and shown on the task's timeline: its text as agent comments, its thinking collapsed, and its tool calls as a compact, expandable activity log. The agent moves and edits its own task through **task tools** exposed by the backend as an MCP server. Task status never drives the agent automatically, with one exception: moving the task to a `closed` status ends the session.
 
@@ -79,8 +79,8 @@ The agent's output is read from the `claude` stream and shown on the task's time
 
 ### Assignment & sessions
 
-28. As a member, I want to assign a task to an agent (at most one agent per task), so that the agent starts working on it.
-29. As a member, I want the agent to start working as soon as it's assigned, whatever the task's status, so that assignment alone is the trigger.
+28. As a member, I want to assign a task to an agent (at most one agent per task), so that it's the one working on it once I write to it.
+29. As a member, I want the agent to start working on the first comment I send after assigning it, whatever the task's status, so that I can prepare the task before the agent reads it.
 30. As a member, I want to see the task's session state (`queued #N`, `running`, `waiting for messages`, `paused`, `closed`) on the task and on its card, so that I know what the agent is doing.
 31. As a member, I want the agent to receive the task's title, description, priority, tags, and all existing non-internal comments when its session starts, so that it has full context.
 32. As a member, I want to reassign a task to a different agent, so that a better-suited agent picks it up, starting a fresh session that receives the task, the full non-internal comment history (including the previous agent's messages), and the existing branch.
@@ -232,7 +232,8 @@ Backend → runner:
 ### Queue & dispatch
 
 - **Enqueue rules**:
-  - Assigning an agent to a task with no session → create a Session (state `pending`) and a QueueEntry of kind `start` at the end of the agent's queue.
+  - Assigning an agent to a task with no session → create a Session (state `pending`); nothing is enqueued.
+  - A user comment (or Notify agent) on a `pending` session → a QueueEntry of kind `start` at the end of the agent's queue; the comment is covered by the start snapshot.
   - A user comment (not internal) created on a task with a non-closed, non-paused session for its agent:
     - if that session has a job in state `running` → send `job.input` immediately and mark the comment `delivered` (job id);
     - otherwise → mark it `queued` and attach it to the task's QueueEntry, creating one of kind `messages` at the end of the queue if none exists. If an entry already exists, its position is kept and the comment is merged into it.
@@ -252,7 +253,7 @@ Backend → runner:
 | Event | Behavior |
 |---|---|
 | Task moved to a `closed`-category status | If a job is running: `job.cancel`. Delete the QueueEntry; mark its comments `not_delivered` ("task closed"). Session → `closed`. Send `worktree.remove` (when the runner is connected, otherwise on next connect). |
-| Closed task moved back to a non-closed status | Session → `idle` (same session id). Nothing is enqueued; the next comment (or Notify agent) enqueues a `messages` entry. At job start the worktree is recreated from the task branch (Spec 03). |
+| Closed task moved back to a non-closed status | Session → `idle` (same session id), or `pending` if it never started. Nothing is enqueued; the next comment (or Notify agent) enqueues a `messages` entry. At job start the worktree is recreated from the task branch (Spec 03). |
 | Agent unassigned (no replacement) | If running: `job.interrupt` then `job.end`. Delete the QueueEntry (`not_delivered`, "agent unassigned"). Session → `paused`. Later comments get `not_delivered` ("no agent assigned"). |
 | Reassigned to a different agent | The old session follows the unassign rule. If the new agent has a `paused` session for this task, it's reactivated (→ `idle`) and enqueued as `messages`, with every non-internal comment posted since that session's last job. Otherwise a new session and a `start` entry. |
 | Agent disabled | Running job finishes normally; no new jobs dispatched; queue retained. |
@@ -336,7 +337,7 @@ Backend → runner:
 2. Credentials and secret env vars are never returned by any API after saving (only last4) and are encrypted at rest. The backend refuses to start without `SECRETS_MASTER_KEY`.
 3. Creating an agent builds its image (live log), creates its container with the configured limits and volume, and the runner connects. The agent shows `idle`.
 4. A Dockerfile not based on `claude-task/agent-base`, or whose final user isn't `agent`, is rejected. A failed build leaves the previous container running and marks the agent `build_failed`.
-5. Assigning a task to an idle agent starts a job within 5 seconds: the worktree exists on the task branch, the setup script ran (output visible), and `claude` runs with the session id, model, permission mode, system prompt, MCP config, credential env, and project env.
+5. Assigning a task alone starts nothing; the first user comment on it, with an idle agent, starts a job within 5 seconds: the worktree exists on the task branch, the setup script ran (output visible), and `claude` runs with the session id, model, permission mode, system prompt, MCP config, credential env, and project env.
 6. The agent's text appears live on the task as an agent comment, its thinking collapsed, its tool calls in collapsed activity groups, and each turn ends with a summary.
 7. A comment posted while the agent works on that task is delivered immediately (`delivered`) and influences the same run (verified in the e2e smoke).
 8. Comments posted on another task of a busy agent are `queued` and later delivered together in a single message with authors and timestamps.

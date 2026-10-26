@@ -43,6 +43,7 @@ test('links a repository, validates its base branch, warns about protection and 
   const task = await createTask(page.request, project, 'Fix café login');
   const current = (await (await page.request.get(`/api/v1/tasks/${task.id}`)).json()).task;
   await page.request.patch(`/api/v1/tasks/${task.id}`, { headers, data: { version: current.version, agentId: agent.id } });
+  await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers, data: { body: 'Please get started.' } });
   await expect
     .poll(async () => (await (await page.request.get(`/api/v1/tasks/${task.id}`)).json()).task.branchName)
     .toBe(`task/${task.key.toLowerCase()}-fix-cafe-login`);

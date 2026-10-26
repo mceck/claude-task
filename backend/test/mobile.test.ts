@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { PushTransportError } from '../src/notifications/transport';
 import type { PushMessage, PushTransport } from '../src/notifications/transport';
 import { useTestApp } from './helpers/app';
-import { assignAgent, comment, createAgent, createProject, createTask, createUser } from './helpers/fixtures';
+import { assignAgent, assignAndStart, comment, createAgent, createProject, createTask, createUser } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
 
@@ -103,7 +103,7 @@ describe('durable phone notifications', () => {
     await register(admin);
     await register(member.client);
     const { agent, runner } = await createAgent(app, admin);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const stream = new Stream();
     await runner.runJob([stream.init(), stream.delta('Please help'), stream.text('Please help'), stream.text('Done'), stream.result()]);
     await app.settle();
@@ -119,7 +119,7 @@ describe('durable phone notifications', () => {
     await comment(member.client, task.id, 'Following');
     await register(member.client);
     const { agent, runner } = await createAgent(app, admin);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const stream = new Stream();
     // Stop the timer to control the dispatch boundary precisely.
     app.server.ctx.pushDispatcher.stop();
@@ -153,7 +153,7 @@ describe('durable phone notifications', () => {
     await register(admin);
     app.server.ctx.pushDispatcher.stop();
     const { agent, runner } = await createAgent(app, admin);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const stream = new Stream();
     await runner.runJob([stream.init(), stream.result()]);
     await app.settle();

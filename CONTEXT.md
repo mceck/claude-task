@@ -141,7 +141,7 @@ The actions an Agent can take on Tasks from inside its Session: reading, editing
 ### Execution
 
 **Assignment**:
-Linking an Agent to a Task. It's the only trigger that starts an Agent's work, whatever the Task's Status.
+Linking an Agent to a Task. It doesn't start any work by itself: the Session stays `pending` until the first User Comment on the Task, whatever the Task's Status.
 _Avoid_: dispatch, scheduling
 
 **Session**:

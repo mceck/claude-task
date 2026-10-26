@@ -31,7 +31,7 @@ void main() {
     expect(h.controller.projects, hasLength(1));
   });
   test(
-    'Create and start keeps the Task and retries only versioned assignment after partial failure',
+    'Create and assign keeps the Task and retries only versioned assignment after partial failure',
     () async {
       final h = Harness();
       addTearDown(h.dispose);

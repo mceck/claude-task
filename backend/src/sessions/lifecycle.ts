@@ -102,12 +102,10 @@ async function reassign(tx: Executor, after: AfterCommit, task: TaskRow, previou
       .values({ taskId: task.id, agentId: task.agentId, state: closed ? 'closed' : 'pending', worktreePath: await worktreePathFor(tx, task) })
       .returning();
     session = created!;
-    if (!closed) await enqueue(tx, after, { agentId: task.agentId, taskId: task.id, sessionId: session.id, kind: 'start' });
   } else if (closed) {
     await tx.update(sessions).set({ state: 'closed', closedAt: session.closedAt ?? new Date() }).where(eq(sessions.id, session.id));
   } else if (!session.started) {
     await tx.update(sessions).set({ state: 'pending', closedAt: null }).where(eq(sessions.id, session.id));
-    await enqueue(tx, after, { agentId: task.agentId, taskId: task.id, sessionId: session.id, kind: 'start' });
   } else {
     // Back to an Agent that worked on it before: same Session, plus whatever was said meanwhile.
     await tx.update(sessions).set({ state: 'idle', closedAt: null, worktreeRemovalPending: false }).where(eq(sessions.id, session.id));
@@ -183,7 +181,6 @@ async function reopenSession(tx: Executor, after: AfterCommit, task: TaskRow): P
     .update(sessions)
     .set({ state: session.started ? 'idle' : 'pending', closedAt: null, worktreeRemovalPending: false })
     .where(eq(sessions.id, session.id));
-  if (!session.started) await enqueue(tx, after, { agentId: task.agentId, taskId: task.id, sessionId: session.id, kind: 'start' });
   publishSession(after, task.id, [task.agentId]);
 }
 

@@ -4,7 +4,7 @@ import type { JobStartMessage } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import type { TestApp } from './helpers/app';
-import { assignAgent, comment, createAgent, createTag, createProject, createTask, getSession, statusByName, timeline } from './helpers/fixtures';
+import { assignAgent, assignAndStart, comment, createAgent, createTag, createProject, createTask, getSession, statusByName, timeline } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 
 /** Connects like `claude` does: the URL and bearer header from the Job's MCP config. */
@@ -29,7 +29,7 @@ async function setup(app: TestApp) {
   const { agent, runner } = await createAgent(app, admin, { name: 'Ada Bot' });
   const task = await createTask(admin, bundle.project.id, { title: 'Fix login', description: '- [ ] repro' });
   const other = await createTask(admin, bundle.project.id, { title: 'Unrelated' });
-  await assignAgent(admin, task.id, agent.id);
+  await assignAndStart(admin, task.id, agent.id);
   const start = await runner.next('job.start');
   runner.accept(start.jobId);
   await runner.drain();
@@ -53,7 +53,7 @@ describe('Task Tools (MCP)', () => {
     expect(json.task).toMatchObject({ key: task.key, title: 'Fix login', description: '- [ ] repro', status: 'Backlog', yours: true });
     expect(json.statuses).toContainEqual({ name: 'Closed', category: 'closed' });
     expect(json.tags).toEqual(['bug']);
-    expect(json.comments.map((c: { body: string }) => c.body)).toEqual(['Visible to the agent']);
+    expect(json.comments.map((c: { body: string }) => c.body)).toEqual(['Please get started.', 'Visible to the agent']);
   });
 
   it('reading the own Task clears Unseen Changes', async () => {
@@ -75,7 +75,7 @@ describe('Task Tools (MCP)', () => {
     expect(first.comments).toHaveLength(50);
     expect(first.comments.at(-1).body).toBe('c54');
     const older = (await call(client, 'get_task', { comments_before: first.commentsBefore })).json;
-    expect(older.comments.map((c: { body: string }) => c.body)).toEqual(['c0', 'c1', 'c2', 'c3', 'c4']);
+    expect(older.comments.map((c: { body: string }) => c.body)).toEqual(['Please get started.', 'c0', 'c1', 'c2', 'c3', 'c4']);
     expect(older.commentsBefore).toBeNull();
   });
 

@@ -137,6 +137,14 @@ export async function assignAgent(client: ApiClient, taskId: string, agentId: st
   return res.body.task;
 }
 
+/** Assigns the Agent and posts the first User comment, which is what starts its Session. */
+export async function assignAndStart(client: ApiClient, taskId: string, agentId: string, body = 'Please get started.'): Promise<Task> {
+  const task = await assignAgent(client, taskId, agentId);
+  const res = await client.post(`/tasks/${taskId}/comments`, { body });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return task;
+}
+
 export async function moveToStatus(client: ApiClient, taskId: string, statusId: string): Promise<Task> {
   const res = await client.post(`/tasks/${taskId}/move`, { statusId });
   expect(res.status, JSON.stringify(res.body)).toBe(200);

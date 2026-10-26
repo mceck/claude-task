@@ -23,8 +23,9 @@ the existing domain terminology and execution rules remain authoritative.
   Infrastructure configuration and Credential administration remain on the web.
 - Group a Project's Tasks by Status, like Discord channel categories.
 - Allow optional Agent selection when creating a Task. With an Agent selected,
-  label the action **Create and start**; otherwise create a Task without starting
-  an Agent. Assignment remains the execution trigger.
+  label the action **Create and assign**; otherwise create a Task without an
+  Agent. Assignment doesn't start the Agent: its first Job starts on the first
+  User Comment.
 - Include phone push notifications in the first version, including when the app
   is closed. Notify for completed Agent responses, errors and requests for
   intervention, rather than streaming fragments.

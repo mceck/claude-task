@@ -1,7 +1,7 @@
 import { DEFAULT_AGENT_DOCKERFILE, agentTopic } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
-import { assignAgent, createAgent, createCredential, createProject, createTask, createUser } from './helpers/fixtures';
+import { assignAgent, assignAndStart, createAgent, createCredential, createProject, createTask, createUser } from './helpers/fixtures';
 import { FakeRunner } from './helpers/runner';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
@@ -99,7 +99,7 @@ describe('agents', () => {
     const { agent, runner } = await createAgent(app, admin);
     const oldImage = app.runtime.containers.get(agent.id)!.spec.image;
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     await runner.drain();
@@ -125,7 +125,7 @@ describe('agents', () => {
     const { project } = await createProject(admin);
     const { agent, runner } = await createAgent(app, admin);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const s = new Stream(start.sessionId);
@@ -171,7 +171,7 @@ describe('agents', () => {
     const { project } = await createProject(admin);
     const { agent, runner } = await createAgent(app, admin);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     await runner.next('job.start');
     const blocked = await admin.delete(`/agents/${agent.id}`);
     expect(blocked.status).toBe(409);

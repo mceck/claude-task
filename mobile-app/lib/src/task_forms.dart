@@ -116,7 +116,7 @@ Future<void> showCreateTask(BuildContext context, TaskController c) async {
                   ? 'Creating…'
                   : agentId.isEmpty
                   ? 'Create Task'
-                  : 'Create and start',
+                  : 'Create and assign',
             ),
           ),
         ],

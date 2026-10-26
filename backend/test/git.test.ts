@@ -4,7 +4,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { taskTopic, projectTopic } from '@claude-task/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { useTestApp } from './helpers/app';
-import { assignAgent, createAgent, createProject, createTask, createUser, getSession, moveToStatus, statusByName, timeline } from './helpers/fixtures';
+import { assignAgent, assignAndStart, createAgent, createProject, createTask, createUser, getSession, moveToStatus, statusByName, timeline } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
 
@@ -22,7 +22,7 @@ describe('Git integration through the public API', () => {
   }
   async function running() {
     const s = await setup();
-    await assignAgent(s.admin, s.task.id, s.agent.id);
+    await assignAndStart(s.admin, s.task.id, s.agent.id);
     const start = await s.runner.next('job.start');
     s.runner.accept(start.jobId);
     await s.runner.play(start.jobId, [new Stream(start.sessionId).init()]);
@@ -72,7 +72,7 @@ describe('Git integration through the public API', () => {
 
   it('blocks repository changes for non-closed sessions, including paused ones; allows changes after close', async () => {
     const { admin, bundle, agent, runner, task } = await setup();
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     expect((await admin.put(`/projects/${bundle.project.id}/repository`, { providerRepoId: '2' })).status).toBe(409);
     await assignAgent(admin, task.id, null);
@@ -105,7 +105,7 @@ describe('Git integration through the public API', () => {
     await runner.exit(start.jobId);
     const other = await createAgent(app, admin);
     app.git.branches.get('1')!.add(branch);
-    await assignAgent(admin, task.id, other.agent.id);
+    await assignAndStart(admin, task.id, other.agent.id);
     const reassigned = await other.runner.next('job.start');
     expect(reassigned.git).toMatchObject({ taskBranch: branch, branchExists: true });
     expect(reassigned.worktreePath).toBe(start.worktreePath);
@@ -119,7 +119,7 @@ describe('Git integration through the public API', () => {
     const { admin, agent, runner, task } = await setup();
     const current = (await admin.get(`/tasks/${task.id}`)).body.task;
     await admin.patch(`/tasks/${task.id}`, { version: current.version, title });
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     expect((await runner.next('job.start')).git!.taskBranch).toBe(`task/${task.key.toLowerCase()}${suffix}`);
   });
 
@@ -130,7 +130,7 @@ describe('Git integration through the public API', () => {
       return runner.next('git.token', (m) => m.requestId === id);
     };
     expect((await request('idle', '00000000-0000-0000-0000-000000000000', 'acme/example')).error).toBeTruthy();
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     expect((await request('dispatched', start.jobId, 'acme/example')).error).toBeTruthy();
     runner.accept(start.jobId);

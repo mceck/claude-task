@@ -32,7 +32,7 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 
 ## Invariants (don't break these)
 
-- **Assignment is the only trigger.** Task Status never drives an Agent, except that a `closed`-category Status ends the Session.
+- **The first User Comment is the trigger.** Assigning an Agent only creates a `pending` Session; its first Job starts on the first User Comment (or Notify agent). Task Status never drives an Agent, except that a `closed`-category Status ends the Session.
 - **One Job at a time per Agent.** The Queue lives in the backend DB. The Runner is stateless, dials out over WebSocket, and resends events using seq/ack.
 - **One Session per (Task, Agent)**, resumed with `claude --resume <id>`. Worktree paths are deterministic per (project, task) because resume needs the same cwd.
 - **Agents run `claude -p --input-format stream-json --output-format stream-json`**, not `--bare` (repo CLAUDE.md, `.claude/` and `.mcp.json` must load). Comments for the running Task are written to stdin mid-turn. Everything else waits in the Queue.

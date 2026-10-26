@@ -86,7 +86,7 @@ void main() {
     },
   );
   testWidgets(
-    'optional Agent changes Create Task to Create and start and preserves partial success',
+    'optional Agent changes Create Task to Create and assign and preserves partial success',
     (tester) async {
       tester.view.physicalSize = const Size(900, 1000);
       tester.view.devicePixelRatio = 1;
@@ -107,9 +107,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('🤖 Ada Bot').last);
       await tester.pumpAndSettle();
-      expect(find.text('Create and start'), findsOneWidget);
+      expect(find.text('Create and assign'), findsOneWidget);
       h.api.failAssignment = true;
-      await tester.tap(find.text('Create and start'));
+      await tester.tap(find.text('Create and assign'));
       await tester.pumpAndSettle();
       expect(h.api.createCount, 1);
       expect(find.text('Retry assignment'), findsOneWidget);

@@ -6,7 +6,7 @@ import { useTestApp } from './helpers/app';
 import type { TestApp } from './helpers/app';
 import type { ApiClient } from './helpers/client';
 import {
-  assignAgent,
+  assignAgent, assignAndStart,
   comment,
   createAgent,
   createTag,
@@ -34,12 +34,26 @@ async function setup(app: TestApp) {
 
 /** Assigns the Task and plays one quiet Turn, leaving the Session idle. */
 async function startAndFinish(client: ApiClient, runner: FakeRunner, taskId: string, agentId: string, stream = new Stream()) {
-  await assignAgent(client, taskId, agentId);
+  await assignAndStart(client, taskId, agentId);
   return runner.runJob([stream.init(), stream.text('On it.'), stream.result()]);
 }
 
 describe('assignment and the first Job', () => {
   const app = useTestApp();
+
+  it("doesn't start the Agent on assignment, only on the first User Comment", async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id, { title: 'Wait for me' });
+    await assignAgent(admin, task.id, agent.id);
+    await app.settle();
+    expect(await runner.none('job.start')).toBe(true);
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'pending', queuePosition: null });
+    expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toEqual([]);
+
+    await comment(admin, task.id, 'Go ahead.');
+    const start = await runner.next('job.start');
+    expect(texts(start.initialMessage)).toContain('Go ahead.');
+  });
 
   it('starts a Job right away with the Session, configuration, credential and project env', async () => {
     const { admin, project, agent, runner } = await setup(app);
@@ -52,7 +66,7 @@ describe('assignment and the first Job', () => {
     await comment(admin, task.id, 'It happens on Safari only.');
     await comment(admin, task.id, 'Humans only: the client is upset', true);
 
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
 
     const session = await getSession(admin, task.id);
@@ -94,14 +108,14 @@ describe('assignment and the first Job', () => {
   it("assigns regardless of the Task's status", async () => {
     const { admin, bundle, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id, { statusId: statusByName(bundle, 'Ready for Review').id });
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     expect((await runner.next('job.start')).initialMessage).toBeTruthy();
   });
 
   it('allows one Agent per Task and records the assignment as a Revision', async () => {
     const { admin, project, agent } = await setup(app);
     const task = await createTask(admin, project.id);
-    const updated = await assignAgent(admin, task.id, agent.id);
+    const updated = await assignAndStart(admin, task.id, agent.id);
     expect(updated.agentId).toBe(agent.id);
     const revisions = (await timeline(admin, task.id)).filter((i) => i.type === 'revision');
     expect(revisions.at(-1)).toMatchObject({ revision: { changes: [{ field: 'agentId', before: null, after: agent.id }] } });
@@ -111,8 +125,8 @@ describe('assignment and the first Job', () => {
     const { admin, project, agent, runner } = await setup(app);
     const first = await createTask(admin, project.id, { title: 'First' });
     const second = await createTask(admin, project.id, { title: 'Second' });
-    await assignAgent(admin, first.id, agent.id);
-    await assignAgent(admin, second.id, agent.id);
+    await assignAndStart(admin, first.id, agent.id);
+    await assignAndStart(admin, second.id, agent.id);
     await app.settle();
 
     expect(runner.messages('job.start')).toHaveLength(1);
@@ -138,7 +152,7 @@ describe('assignment and the first Job', () => {
     const { project } = await createProject(admin);
     const { agent } = await createAgent(app, admin, { connect: false });
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     await app.settle();
     expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'offline', queueLength: 1 });
 
@@ -151,7 +165,7 @@ describe('assignment and the first Job', () => {
     const { admin, project, agent, runner } = await setup(app);
     await admin.patch(`/agents/${agent.id}`, { enabled: false });
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     expect(await runner.none('job.start')).toBe(true);
     expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'disabled', queueLength: 1 });
 
@@ -168,7 +182,7 @@ describe('the Agent on the Timeline', () => {
     const task = await createTask(admin, project.id);
     const ws = await WsTestClient.connect(app.url, admin.cookie);
     await ws.subscribe(taskTopic(task.id));
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const s = new Stream();
@@ -194,7 +208,7 @@ describe('the Agent on the Timeline', () => {
     const shape = items
       .filter((i) => i.type !== 'revision')
       .map((i) => (i.type === 'comment' ? `comment:${i.comment.kind}` : i.type === 'agent' ? i.item.payload.kind : 'revision'));
-    expect(shape).toEqual(['thinking', 'comment:agent', 'activity', 'comment:agent', 'turn_summary']);
+    expect(shape).toEqual(['comment:user', 'thinking', 'comment:agent', 'activity', 'comment:agent', 'turn_summary']);
 
     const [first, second] = comments(items).filter((c) => c.kind === 'agent');
     expect(first).toMatchObject({ body: 'Looking into it.', author: { type: 'agent', id: agent.id, displayName: 'Ada Bot' } });
@@ -230,7 +244,7 @@ describe('the Agent on the Timeline', () => {
   it('processes each Runner message once, even when resent', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const s = new Stream();
@@ -244,7 +258,7 @@ describe('the Agent on the Timeline', () => {
   it('reports credential and API failures as System Comments naming the Credential', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const s = new Stream();
@@ -264,7 +278,7 @@ describe('the Agent on the Timeline', () => {
   it('keeps the latest rate-limit status of the Credential', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const s = new Stream();
@@ -280,7 +294,7 @@ describe('Comments reaching the Agent', () => {
   it('writes a Comment to the running Job right away', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     await runner.drain();
@@ -295,7 +309,7 @@ describe('Comments reaching the Agent', () => {
   it('never delivers Internal Notes', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     await runner.drain();
@@ -310,7 +324,7 @@ describe('Comments reaching the Agent', () => {
     const busy = await createTask(admin, project.id, { title: 'Busy' });
     const other = await createTask(admin, project.id, { title: 'Other' });
     await startAndFinish(admin, runner, other.id, agent.id);
-    await assignAgent(admin, busy.id, agent.id);
+    await assignAndStart(admin, busy.id, agent.id);
     const busyJob = await runner.next('job.start', (m) => texts(m.initialMessage).includes('Busy'));
     runner.accept(busyJob.jobId);
     await runner.drain();
@@ -331,7 +345,7 @@ describe('Comments reaching the Agent', () => {
     expect(text).toMatch(/\[Comment by Mia Member — .+\]\nSecond note/);
     expect(text.indexOf('First note')).toBeLessThan(text.indexOf('Second note'));
     const delivered = comments(await timeline(admin, other.id)).filter((c) => c.kind === 'user');
-    expect(delivered.map((c) => c.delivery)).toEqual([
+    expect(delivered.slice(-2).map((c) => c.delivery)).toEqual([
       { state: 'delivered', reason: null, jobId: next.jobId },
       { state: 'delivered', reason: null, jobId: next.jobId },
     ]);
@@ -341,9 +355,9 @@ describe('Comments reaching the Agent', () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
     const waiting = await createTask(admin, project.id, { title: 'Waiting' });
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
-    await assignAgent(admin, waiting.id, agent.id);
+    await assignAndStart(admin, waiting.id, agent.id);
     runner.accept(start.jobId);
     const s = new Stream();
     await runner.play(start.jobId, [s.init(), s.text('Done.'), s.result()]);
@@ -372,7 +386,7 @@ describe('Stop, Retry and failures', () => {
   it('Stop interrupts the Turn; the next Comment continues the same Session', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     await runner.drain();
@@ -399,7 +413,7 @@ describe('Stop, Retry and failures', () => {
   it('a failed setup posts the error and waits for Retry', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     runner.sendJob({ type: 'job.setup_output', jobId: start.jobId, chunk: 'npm ERR! missing script: ci\n' });
@@ -420,7 +434,7 @@ describe('Stop, Retry and failures', () => {
   it("resumes a Session that `claude` created before dying silently", async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     runner.sendJob({ type: 'job.stderr', jobId: start.jobId, chunk: `Error: Session ID ${start.sessionId} is already in use.\n` });
@@ -433,7 +447,7 @@ describe('Stop, Retry and failures', () => {
   it('a crashed process leaves a System Comment and the Session idle', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     runner.sendJob({ type: 'job.stderr', jobId: start.jobId, chunk: 'panic: out of memory\n' });
@@ -454,7 +468,7 @@ describe('Session lifecycle', () => {
     const task = await createTask(admin, project.id);
     const other = await createTask(admin, project.id);
     await startAndFinish(admin, runner, task.id, agent.id);
-    await assignAgent(admin, other.id, agent.id);
+    await assignAndStart(admin, other.id, agent.id);
     const busy = await runner.next('job.start', (m) => texts(m.initialMessage).includes(other.key));
     runner.accept(busy.jobId);
     await runner.drain();
@@ -506,13 +520,13 @@ describe('Session lifecycle', () => {
     const { admin, project, agent, runner } = await setup(app);
     const { agent: other, runner: otherRunner } = await createAgent(app, admin, { name: 'Bea Bot' });
     const task = await createTask(admin, project.id, { title: 'Shared work' });
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const s = new Stream(start.sessionId);
     await runner.play(start.jobId, [s.init(), s.text('I found the bug in auth.ts.')]);
 
-    await assignAgent(admin, task.id, other.id);
+    await assignAndStart(admin, task.id, other.id);
     await runner.next('job.interrupt', (m) => m.jobId === start.jobId);
     await runner.next('job.end', (m) => m.jobId === start.jobId);
     const fresh = await otherRunner.next('job.start');
@@ -534,12 +548,12 @@ describe('Session lifecycle', () => {
     const { agent: other, runner: otherRunner } = await createAgent(app, admin, { name: 'Bea Bot' });
     const task = await createTask(admin, project.id);
     const first = await startAndFinish(admin, runner, task.id, agent.id);
-    await assignAgent(admin, task.id, other.id);
+    await assignAndStart(admin, task.id, other.id);
     const bea = new Stream();
     await otherRunner.runJob([bea.init(), bea.text('Bea here: tried a cache fix.'), bea.result()]);
     await comment(admin, task.id, 'Bea, that broke staging.');
 
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const resumed = await runner.next('job.start', (m) => m.jobId !== first.jobId);
     expect(resumed).toMatchObject({ sessionId: first.sessionId, mode: 'resume' });
     const text = texts(resumed.initialMessage);
@@ -552,9 +566,9 @@ describe('Session lifecycle', () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
     const waiting = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
-    await assignAgent(admin, waiting.id, agent.id);
+    await assignAndStart(admin, waiting.id, agent.id);
     runner.accept(start.jobId);
     const s = new Stream(start.sessionId);
     await runner.play(start.jobId, [s.init(), s.toolUse('t1', 'Bash', { command: 'npm run build' })]);
@@ -575,7 +589,7 @@ describe('Session lifecycle', () => {
   it('a Runner reconnecting with its Job keeps it and resends from the last ack', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const s = new Stream(start.sessionId);
@@ -601,9 +615,9 @@ describe('the Queue', () => {
     const { admin, project, agent, runner } = await setup(app);
     const { client: member } = await createUser(app, admin);
     const [busy, a, b, c] = await Promise.all(['Busy', 'A', 'B', 'C'].map((title) => createTask(admin, project.id, { title })));
-    await assignAgent(admin, busy!.id, agent.id);
+    await assignAndStart(admin, busy!.id, agent.id);
     await runner.next('job.start');
-    for (const t of [a!, b!, c!]) await assignAgent(admin, t.id, agent.id);
+    for (const t of [a!, b!, c!]) await assignAndStart(admin, t.id, agent.id);
 
     let entries = (await member.get(`/agents/${agent.id}/queue`)).body.entries;
     expect(entries.map((e: { task: { title: string } }) => e.task.title)).toEqual(['A', 'B', 'C']);
@@ -623,7 +637,7 @@ describe('the Queue', () => {
     const task = await createTask(admin, project.id);
     const busy = await createTask(admin, project.id);
     await startAndFinish(admin, runner, task.id, agent.id);
-    await assignAgent(admin, busy.id, agent.id);
+    await assignAndStart(admin, busy.id, agent.id);
     await runner.next('job.start', (m) => texts(m.initialMessage).includes(busy.key));
     const c = await comment(admin, task.id, 'Low priority remark');
     const [entry] = (await admin.get(`/agents/${agent.id}/queue`)).body.entries;
@@ -675,7 +689,7 @@ describe('Runner output and attachment isolation', () => {
   it('accepts large raw tool results while keeping the displayed output compact', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const s = new Stream(start.sessionId);
@@ -692,7 +706,7 @@ describe('Runner output and attachment isolation', () => {
   it('serves public comment attachments to the active runner and refuses internal note attachments', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
-    await assignAgent(admin, task.id, agent.id);
+    await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
     const upload = async (internal: boolean) => {
@@ -730,7 +744,7 @@ describe('Runner output and attachment isolation', () => {
 
       const description = `See ![mock](${image.url}) and [the spec](${doc.url}).`;
       expect((await admin.patch(`/tasks/${task.id}`, { version: task.version, description })).status).toBe(200);
-      await assignAgent(admin, task.id, agent.id);
+      await assignAndStart(admin, task.id, agent.id);
       const start = await runner.next('job.start');
 
       const message = texts(start.initialMessage);
@@ -767,7 +781,7 @@ describe('Runner output and attachment isolation', () => {
       const task = await createTask(admin, project.id);
       const other = await createTask(admin, project.id);
       const file = await uploadToTask(admin, other.id, 'a.txt', 'text/plain', 'x');
-      await assignAgent(admin, task.id, agent.id);
+      await assignAndStart(admin, task.id, agent.id);
       const start = await runner.next('job.start');
       runner.accept(start.jobId);
       const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, agent.id)}` } };

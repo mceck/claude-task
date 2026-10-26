@@ -49,6 +49,13 @@ async function assign(page: Page, agentName: string) {
   await page.getByRole('option', { name: agentName, exact: true }).click();
 }
 
+/** Assignment alone doesn't start the Agent: the first User Comment does. */
+async function assignAndStart(page: Page, agentName: string) {
+  await assign(page, agentName);
+  await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please get started.');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+}
+
 test('creates and rotates write-only credentials, configures an agent and reads build/container logs', async ({ page }) => {
   await login(page.request);
   await page.goto('/admin/credentials');
@@ -97,7 +104,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   const task = await createTask(page.request, project, 'Fix the redirect');
   const agent = await seedAgent(page.request, 'Runtime agent');
   await page.goto(`/t/${task.key}`);
-  await assign(page, agent.name);
+  await assignAndStart(page, agent.name);
   await expect(page.getByLabel('Session: running')).toBeVisible();
   await page.getByRole('button', { name: 'Expand activity' }).click();
   const job = await jobStart(page.request, agent.id, task.id);
@@ -150,6 +157,7 @@ test('shows card state and lets a member reorder the queue without managing agen
   for (const task of [tasks[1]!, tasks[2]!, tasks[0]!]) {
     const { task: current } = await (await admin.request.get(`/api/v1/tasks/${task.id}`)).json();
     expect((await admin.request.patch(`/api/v1/tasks/${task.id}`, { headers, data: { version: current.version, agentId: agent.id } })).ok()).toBe(true);
+    expect((await admin.request.post(`/api/v1/tasks/${task.id}/comments`, { headers, data: { body: 'Please get started.' } })).ok()).toBe(true);
     if (task.id !== tasks[0]!.id) {
       const job = await jobStart(admin.request, agent.id, task.id);
       await replay(admin.request, agent.id, job.jobId, [new Stream(job.sessionId).result()], true);
@@ -219,7 +227,7 @@ test('shows setup failures and retries the same session only on request', async 
   const task = await createTask(page.request, project, 'Recover setup');
   const agent = await seedAgent(page.request, 'Retry agent');
   await page.goto(`/t/${task.key}`);
-  await assign(page, agent.name);
+  await assignAndStart(page, agent.name);
   const start = await jobStart(page.request, agent.id, task.id);
   expect(
     (
@@ -265,7 +273,7 @@ test('keeps the live session state when an older HTTP snapshot arrives late', as
   try {
     await page.goto(`/t/${task.key}`);
     await ready;
-    await assign(page, agent.name);
+    await assignAndStart(page, agent.name);
     await jobStart(page.request, agent.id, task.id);
     await expect(page.getByLabel('Session: running')).toBeVisible();
     release();
