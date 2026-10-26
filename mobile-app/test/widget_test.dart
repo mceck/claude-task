@@ -45,10 +45,7 @@ void main() {
       await tester.tap(find.text('Fix login'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('comment-composer')), findsOneWidget);
-      expect(
-        find.textContaining('Internal chat · never delivered'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Internal chat'), findsOneWidget);
       await tester.enterText(
         find.byKey(const Key('comment-composer')),
         'A draft for humans',

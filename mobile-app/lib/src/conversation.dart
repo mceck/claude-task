@@ -1145,7 +1145,7 @@ class _CommentView extends StatelessWidget {
                 SizedBox(width: 5),
                 Flexible(
                   child: Text(
-                    'Internal chat · never delivered to the Agent',
+                    'Internal chat',
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 11,
