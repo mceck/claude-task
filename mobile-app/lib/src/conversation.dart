@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
+
 import 'app.dart';
 import 'controller.dart';
 import 'models.dart';
@@ -735,7 +737,7 @@ class _LiveTail extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    const Pill(label: 'Agent', color: Palette.violet),
+                    const Pill(label: 'Agent', color: Palette.agent),
                     const SizedBox(width: 8),
                     const TypingDots(),
                   ],
@@ -761,14 +763,10 @@ class _LiveTail extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: DashedOutline(
-                      color: Palette.violet.withValues(alpha: .4),
+                      color: Palette.agent,
                       borderRadius: _bubbleRadius(own: false),
-                      child: Container(
+                      child: Padding(
                         padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                        decoration: BoxDecoration(
-                          color: Palette.violet.withValues(alpha: .05),
-                          borderRadius: _bubbleRadius(own: false),
-                        ),
                         child: Md(
                           '$text ▍',
                           selectable: false,
@@ -884,7 +882,7 @@ class TimelineTile extends StatelessWidget {
           child: _Collapsible(
             icon: Icons.psychology_outlined,
             title: 'Thinking',
-            color: Palette.violet,
+            color: Palette.agent,
             child: SelectableText(
               payload['text'] as String? ?? '',
               style: const TextStyle(
@@ -1110,28 +1108,16 @@ class _CommentView extends StatelessWidget {
     final e = entry, kind = e.content['kind'];
     final isAgent = kind == 'agent', isSystem = kind == 'system';
     final delivery = e.content['delivery'] as Map?;
-    // Same tones as the web Timeline: Agent violet, System amber, Internal chat slate.
-    final (Color fill, Color line) = e.internal
-        ? (
-            Palette.slate.withValues(alpha: .08),
-            Palette.slate.withValues(alpha: .45),
-          )
+    // Claude uses orange; Internal chat stays gray and System notices use amber.
+    final line = e.internal
+        ? Palette.slate.withValues(alpha: .65)
         : isAgent
-        ? (
-            Palette.violet.withValues(alpha: .06),
-            Palette.violet.withValues(alpha: .28),
-          )
+        ? Palette.agent
         : isSystem
-        ? (
-            Palette.warning.withValues(alpha: .06),
-            Palette.warning.withValues(alpha: .3),
-          )
+        ? Palette.warning.withValues(alpha: .85)
         : own
-        ? (
-            Palette.primary.withValues(alpha: .14),
-            Palette.primary.withValues(alpha: .3),
-          )
-        : (Palette.surface, Palette.border);
+        ? Palette.primary.withValues(alpha: .85)
+        : Palette.borderStrong;
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1158,7 +1144,7 @@ class _CommentView extends StatelessWidget {
           ),
         if (e.body.isNotEmpty)
           _Clamped(
-            fade: Color.alphaBlend(fill, Palette.bg),
+            fade: Palette.bg,
             child: Md(e.body, size: isSystem ? 13.5 : 14.5, onLink: openLink),
           ),
         for (final attachment in e.attachments)
@@ -1166,7 +1152,6 @@ class _CommentView extends StatelessWidget {
       ],
     );
     final bubble = _Bubble(
-      fill: fill,
       line: line,
       dashed: e.internal,
       radius: _bubbleRadius(own: own),
@@ -1234,7 +1219,7 @@ class _CommentView extends StatelessWidget {
         ),
         if (isAgent) ...[
           const SizedBox(width: 6),
-          const Pill(label: 'Agent', color: Palette.violet),
+          const Pill(label: 'Agent', color: Palette.agent),
         ],
         if (isSystem) ...[
           const SizedBox(width: 6),
@@ -1305,12 +1290,11 @@ class _CommentView extends StatelessWidget {
 }
 
 class _Bubble extends StatelessWidget {
-  final Color fill, line;
+  final Color line;
   final bool dashed;
   final BorderRadius radius;
   final Widget child;
   const _Bubble({
-    required this.fill,
     required this.line,
     required this.radius,
     required this.child,
@@ -1321,7 +1305,6 @@ class _Bubble extends StatelessWidget {
     final box = Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
       decoration: BoxDecoration(
-        color: fill,
         borderRadius: radius,
         border: dashed ? null : Border.all(color: line),
       ),
@@ -1661,7 +1644,6 @@ class _CollapsibleState extends State<_Collapsible> {
     child: AnimatedContainer(
       duration: const Duration(milliseconds: 180),
       decoration: BoxDecoration(
-        color: _open ? Palette.surface : Colors.transparent,
         borderRadius: BorderRadius.circular(Radii.md),
         border: Border.all(color: Palette.border),
       ),
@@ -2031,6 +2013,45 @@ class _ComposerState extends State<Composer> {
     return !c.sending && c.online && !c.draft.ambiguous;
   }
 
+  Future<void> _send() async {
+    if (!_canSend) return;
+    final restoreFocus = _focus.hasFocus;
+    await perform(context, widget.controller.send);
+    if (mounted && restoreFocus) _focus.requestFocus();
+  }
+
+  KeyEventResult _handleComposerKey(FocusNode node, KeyEvent event) {
+    if (event.logicalKey != LogicalKeyboardKey.enter &&
+        event.logicalKey != LogicalKeyboardKey.numpadEnter) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    final composing = _text.value.composing;
+    if (keyboard.isAltPressed ||
+        (keyboard.isShiftPressed &&
+            (keyboard.isControlPressed || keyboard.isMetaPressed)) ||
+        (composing.isValid && !composing.isCollapsed)) {
+      return KeyEventResult.ignored;
+    }
+    if (event is KeyRepeatEvent) return KeyEventResult.handled;
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (keyboard.isShiftPressed) {
+      // Use the editor action to preserve selection, undo and draft updates.
+      Actions.invoke(
+        _focus.context!,
+        ReplaceTextIntent(
+          _text.value,
+          '\n',
+          _text.selection,
+          SelectionChangedCause.keyboard,
+        ),
+      );
+    } else {
+      _send();
+    }
+    return KeyEventResult.handled;
+  }
+
   Future<void> _attach() => perform(context, () async {
     final c = widget.controller;
     final result = await FilePicker.pickFiles();
@@ -2054,11 +2075,12 @@ class _ComposerState extends State<Composer> {
   Widget build(BuildContext context) {
     final c = widget.controller, draft = widget.controller.draft;
     final internal = draft.internal;
+    final sendForeground = internal ? Colors.white : Palette.onPrimary;
     // Internal chat looks like the web composer: dashed slate, never the accent.
     final line = internal
         ? Palette.slate.withValues(alpha: _focus.hasFocus ? .75 : .5)
         : _focus.hasFocus
-        ? Palette.primary.withValues(alpha: .55)
+        ? Palette.primary
         : Palette.borderStrong;
     final radius = BorderRadius.circular(Radii.xl);
     final sendLabel = internal ? 'Send to internal chat' : 'Send comment';
@@ -2066,28 +2088,9 @@ class _ComposerState extends State<Composer> {
       duration: Motion.medium,
       curve: Motion.enter,
       decoration: BoxDecoration(
-        color: internal
-            ? Color.alphaBlend(
-                Palette.slate.withValues(alpha: .08),
-                Palette.surface,
-              )
-            : Palette.surface,
         borderRadius: radius,
         // Always 1px, so switching to the dashed outline moves nothing.
         border: Border.all(color: internal ? Colors.transparent : line),
-        boxShadow: [
-          const BoxShadow(
-            color: Color(0x55000000),
-            blurRadius: 24,
-            offset: Offset(0, 8),
-          ),
-          if (_focus.hasFocus && !internal)
-            BoxShadow(
-              color: Palette.primary.withValues(alpha: .12),
-              blurRadius: 0,
-              spreadRadius: 3,
-            ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2162,21 +2165,8 @@ class _ComposerState extends State<Composer> {
                 ),
               ),
               Expanded(
-                child: CallbackShortcuts(
-                  bindings: {
-                    const SingleActivator(
-                      LogicalKeyboardKey.enter,
-                      meta: true,
-                    ): () {
-                      if (_canSend) perform(context, c.send);
-                    },
-                    const SingleActivator(
-                      LogicalKeyboardKey.enter,
-                      control: true,
-                    ): () {
-                      if (_canSend) perform(context, c.send);
-                    },
-                  },
+                child: Focus(
+                  onKeyEvent: _handleComposerKey,
                   child: TextField(
                     key: const Key('comment-composer'),
                     controller: _text,
@@ -2185,6 +2175,10 @@ class _ComposerState extends State<Composer> {
                     minLines: 1,
                     maxLines: 6,
                     maxLength: 100000,
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.send,
+                    onEditingComplete: _text.clearComposing,
+                    onSubmitted: (_) => _send(),
                     textCapitalization: TextCapitalization.sentences,
                     style: const TextStyle(fontSize: 15, height: 1.4),
                     decoration: InputDecoration(
@@ -2216,7 +2210,7 @@ class _ComposerState extends State<Composer> {
                     duration: Motion.fast,
                     child: Pressable(
                       key: const Key('send-comment'),
-                      onTap: _canSend ? () => perform(context, c.send) : null,
+                      onTap: _canSend ? _send : null,
                       semanticLabel: sendLabel,
                       pressedScale: .88,
                       color: internal ? Palette.slateDeep : Palette.primary,
@@ -2235,16 +2229,19 @@ class _ComposerState extends State<Composer> {
                                 ),
                               ),
                           child: c.sending
-                              ? const Padding(
-                                  key: ValueKey('sending'),
-                                  padding: EdgeInsets.all(10),
-                                  child: Spinner(size: 16, color: Colors.white),
+                              ? Padding(
+                                  key: const ValueKey('sending'),
+                                  padding: const EdgeInsets.all(10),
+                                  child: Spinner(
+                                    size: 16,
+                                    color: sendForeground,
+                                  ),
                                 )
-                              : const Icon(
+                              : Icon(
                                   Icons.arrow_upward_rounded,
-                                  key: ValueKey('send'),
+                                  key: const ValueKey('send'),
                                   size: 19,
-                                  color: Colors.white,
+                                  color: sendForeground,
                                 ),
                         ),
                       ),
@@ -2296,9 +2293,9 @@ class _ComposerState extends State<Composer> {
                           : SkillSuggestions(
                               text: _text,
                               skills: c.session?['commands'] is List
-                                  ? objects(
-                                      c.session?['commands'],
-                                    ).map(SkillCommand.fromJson).toList()
+                                  ? objects(c.session?['commands'])
+                                        .map(SkillCommand.fromJson)
+                                        .toList()
                                   : c.agents
                                             .where(
                                               (a) => a.id == c.task?.agentId,

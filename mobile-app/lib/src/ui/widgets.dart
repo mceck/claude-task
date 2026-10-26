@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+
 import 'theme.dart';
 
 /// Fades and slides its child in once, after [delay]. No timers: the delay is
@@ -157,7 +158,7 @@ class _DashedPainter extends CustomPainter {
 /// Three bouncing dots while an Agent is writing.
 class TypingDots extends StatefulWidget {
   final Color color;
-  const TypingDots({super.key, this.color = Palette.violet});
+  const TypingDots({super.key, this.color = Palette.agent});
   @override
   State<TypingDots> createState() => _TypingDotsState();
 }
@@ -308,7 +309,7 @@ class AppButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = onPressed != null && !busy;
     final (background, foreground, border) = switch (tone) {
-      Tone.primary => (Palette.primary, Colors.white, null),
+      Tone.primary => (Palette.primary, Palette.onPrimary, null),
       Tone.warning => (Palette.warning, const Color(0xff2a1d05), null),
       Tone.slate => (Palette.slateDeep, Colors.white, null),
       Tone.danger => (
@@ -362,9 +363,9 @@ class AppButton extends StatelessWidget {
           boxShadow: tone == Tone.primary && enabled && !compact
               ? [
                   BoxShadow(
-                    color: Palette.primary.withValues(alpha: .28),
-                    blurRadius: 18,
-                    offset: const Offset(0, 6),
+                    color: Palette.primary.withValues(alpha: .18),
+                    blurRadius: 20,
+                    offset: const Offset(0, 4),
                   ),
                 ]
               : null,
@@ -408,7 +409,7 @@ class IconAction extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
     final foreground = filled
-        ? Colors.white
+        ? Palette.onPrimary
         : active
         ? Palette.primarySoft
         : color ?? Palette.fgMuted;
@@ -562,7 +563,7 @@ class Avatar extends StatelessWidget {
                   Color.lerp(
                     base,
                     Palette.bg,
-                    .35,
+                    selected ? .12 : .35,
                   )!.withValues(alpha: selected ? 1 : .22),
                 ],
               ),
@@ -580,7 +581,9 @@ class Avatar extends StatelessWidget {
               ? size * .5
               : size * (letters.length > 2 ? .26 : .36),
           fontWeight: FontWeight.w600,
-          color: selected ? Colors.white : Color.lerp(base, Colors.white, .45),
+          color: selected
+              ? Palette.onPrimary
+              : Color.lerp(base, Colors.white, .45),
           letterSpacing: -.2,
           height: 1,
         ),
@@ -696,7 +699,7 @@ class ChoiceChipX extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: Colors.white,
+                color: Palette.onPrimary,
               ),
             ),
           ),
@@ -1041,7 +1044,7 @@ class BrandMark extends StatelessWidget {
       width: 3 * unit,
       height: height * unit,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Palette.onPrimary,
         borderRadius: BorderRadius.circular(unit),
       ),
     );
@@ -1054,12 +1057,12 @@ class BrandMark extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xfff0916b), Palette.primaryDeep],
+          colors: [Palette.primary, Palette.primaryDeep],
         ),
         border: Border.all(color: Colors.white.withValues(alpha: .14)),
         boxShadow: [
           BoxShadow(
-            color: Palette.primary.withValues(alpha: .35),
+            color: Palette.primary.withValues(alpha: .24),
             blurRadius: size * .5,
             offset: Offset(0, size * .12),
           ),

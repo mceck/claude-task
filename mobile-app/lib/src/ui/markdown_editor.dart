@@ -958,7 +958,7 @@ FleatherThemeData _editorTheme(BuildContext context) {
       style: const TextStyle(
         fontFamily: mono,
         fontSize: 13,
-        color: Color(0xffe3c7ff),
+        color: Palette.code,
       ),
       backgroundColor: Palette.muted,
       radius: const Radius.circular(4),

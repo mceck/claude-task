@@ -46,7 +46,7 @@ The integration smoke has a separate Keychain service and temporary cache, so it
 
 ## Task description editor
 
-Create Task and Edit Task use a native Fleather editor with the app's graphite theme, terracotta selection and Geist typography. The formatting toolbar scrolls horizontally on phones; Write, Markdown and Preview share the same description. The backend continues to receive a Markdown string.
+Create Task and Edit Task use a native Fleather editor with the app's neutral charcoal theme, saturated neon teal selection and Geist typography. Bright action fills use dark labels; Agent messages use electric orange outlines and positive states use neon green. Chat bubbles, streaming messages and the composer have transparent backgrounds with colored borders. The formatting toolbar scrolls horizontally on phones; Write, Markdown and Preview share the same description. The backend continues to receive a Markdown string.
 
 The visual editor supports headings 1–6, bold, italic, strikethrough, inline code, links, bullet/numbered lists, nested lists, checklists, simple quotes and dividers. Code blocks have a language field and a dedicated editor; tables have an editable Markdown block. Image URLs are retained, including existing alt text and titles, and displayed as linked cards without automatically fetching remote images. Uploading new attachments is outside this field.
 
@@ -55,6 +55,8 @@ Opening a description, changing the selection or switching modes does not rewrit
 Fleather uses `^1.28.0`, locked to 1.28.0, with the standalone `material_ui` and `cupertino_ui` packages. The app and editor share these components; `Md` wraps `flutter_markdown_plus` in a scoped compatibility bridge while that package still uses the SDK's Material widgets. AppFlowy Editor 6.2 was evaluated but requires `file_picker ^10.2.0`, conflicting with the app's existing `^13.2.0`; no dependency override or downgrade was introduced.
 
 ## Local conversations and drafts
+
+In the message composer, Enter sends and Shift+Enter inserts a newline at the selection. This applies to Comments and Internal chat; Ctrl/Cmd+Enter also sends. The phone keyboard exposes its Send action. Sending keeps the composer focused, and active IME composition is left to the input method.
 
 Fetched Projects, Task lists, Task details and persisted Timeline pages are saved under application support, isolated by a hash of installation origin and User ID. Transient streaming text and Thinking stay in memory. The native Keychain / platform secure store holds the Login material. macOS uses the legacy Keychain without Keychain Sharing, allowing local development without a provisioning profile. Linux needs a working Secret Service / keyring (`libsecret`) in addition to the normal Flutter GTK toolchain.
 

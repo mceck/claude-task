@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+
 import 'app.dart';
 import 'controller.dart';
 import 'conversation.dart';
@@ -52,8 +53,7 @@ class Workspace extends StatelessWidget {
                     ? const EmptyState(
                         icon: Icons.forum_outlined,
                         title: 'Select a Task to join the conversation',
-                        message:
-                            'Tasks are grouped by Status. Open one to talk with its Agent.',
+                        message: 'Tasks are grouped by Status. Open one to talk with its Agent.',
                       )
                     : Conversation(
                         key: ValueKey(c.task!.id),
@@ -254,13 +254,13 @@ class _RailItem extends StatelessWidget {
   );
 }
 
-/// Status category colors, as on the web Projects page.
+/// Status categories use the same semantic tones as the rest of the app.
 const categoryColors = {
   'open': Palette.slate,
-  'active': Color(0xff3b82f6),
-  'review': Color(0xff8b5cf6),
-  'done': Color(0xff10b981),
-  'closed': Color(0xff52525b),
+  'active': Palette.info,
+  'review': Palette.violet,
+  'done': Palette.success,
+  'closed': Palette.fgSubtle,
 };
 
 class ProjectList extends StatelessWidget {

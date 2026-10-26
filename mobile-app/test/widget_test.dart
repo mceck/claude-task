@@ -1,9 +1,137 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:claude_task_mobile/src/app.dart';
+
 import 'support.dart';
 
 void main() {
+  for (final internal in [false, true]) {
+    testWidgets(
+      'Enter sends and Shift+Enter inserts a newline in ${internal ? 'Internal chat' : 'Comments'}',
+      (tester) async {
+        final h = Harness();
+        addTearDown(h.dispose);
+        await h.login();
+        await h.openTask();
+        await tester.pumpWidget(TaskApp(controller: h.controller));
+        await tester.pumpAndSettle();
+        if (internal) {
+          await tester.tap(find.byKey(const ValueKey('segment:true')));
+          await tester.pumpAndSettle();
+        }
+        final field = find.byKey(const Key('comment-composer'));
+        await tester.enterText(field, 'FirstSecond');
+        final text = tester.widget<TextField>(field).controller!;
+        text.selection = const TextSelection.collapsed(offset: 5);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.pumpAndSettle();
+        expect(text.text, 'First\nSecond');
+        expect(text.selection, const TextSelection.collapsed(offset: 6));
+        expect(h.controller.draft.text, 'First\nSecond');
+        expect(h.api.sendCount, 0);
+
+        // A selected range is replaced, rather than appending at the end.
+        text.selection = const TextSelection(baseOffset: 6, extentOffset: 12);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.numpadEnter);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.pumpAndSettle();
+        expect(h.controller.draft.text, 'First\n\n');
+        expect(h.api.sendCount, 0);
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(h.api.sendCount, 1);
+        final sent = h.api.items.last['comment'] as Map;
+        expect(sent['body'], 'First\n\n');
+        expect(sent['internal'], internal);
+        expect(h.controller.draft.text, isEmpty);
+        expect(text.text, isEmpty);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('composer supports phone Send and Ctrl/Cmd+Enter', (
+    tester,
+  ) async {
+    final h = Harness();
+    addTearDown(h.dispose);
+    await h.login();
+    await h.openTask();
+    await tester.pumpWidget(TaskApp(controller: h.controller));
+    await tester.pumpAndSettle();
+    final field = find.byKey(const Key('comment-composer'));
+    await tester.enterText(field, 'Phone message');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    expect(h.api.sendCount, 1);
+    for (final modifier in [
+      LogicalKeyboardKey.controlLeft,
+      LogicalKeyboardKey.metaLeft,
+    ]) {
+      await tester.enterText(field, 'Keyboard message');
+      await tester.sendKeyDownEvent(modifier);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(modifier);
+      await tester.pumpAndSettle();
+    }
+    expect(h.api.sendCount, 3);
+    await tester.enterText(field, 'Keypad message');
+    await tester.sendKeyEvent(LogicalKeyboardKey.numpadEnter);
+    await tester.pumpAndSettle();
+    expect(h.api.sendCount, 4);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Enter preserves composition and does not retry an unknown send',
+    (tester) async {
+      final h = Harness();
+      addTearDown(h.dispose);
+      await h.login();
+      await h.openTask();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+      final field = find.byKey(const Key('comment-composer'));
+      await tester.enterText(field, 'Draft');
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: 'Draft',
+          selection: TextSelection.collapsed(offset: 5),
+          composing: TextRange(start: 0, end: 5),
+        ),
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(h.api.sendCount, 0);
+      expect(h.controller.draft.text, 'Draft');
+
+      await tester.enterText(field, 'Keep this draft');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(h.api.sendCount, 1);
+
+      h.api.failSend = true;
+      await tester.enterText(field, 'Unknown outcome');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(h.api.sendCount, 2);
+      expect(h.controller.draft.ambiguous, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(h.api.sendCount, 2);
+      expect(h.controller.draft.text, 'Unknown outcome');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'login collects installation URL and authenticates into Projects',
     (tester) async {

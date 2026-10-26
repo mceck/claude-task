@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+
 import '../models.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -27,9 +28,8 @@ class SkillSuggestions extends StatelessWidget {
           !value.selection.isCollapsed) {
         return const SizedBox.shrink();
       }
-      final match = RegExp(
-        r'(?:^|\s)/([a-zA-Z0-9_:-]*)$',
-      ).firstMatch(value.text.substring(0, caret));
+      final match = RegExp(r'(?:^|\s)/([a-zA-Z0-9_:-]*)$')
+          .firstMatch(value.text.substring(0, caret));
       if (match == null) return const SizedBox.shrink();
       final query = match.group(1)!.toLowerCase();
       final tokenStart = caret - query.length - 1;
@@ -96,7 +96,7 @@ class SkillSuggestions extends StatelessWidget {
                                 ? Palette.primary
                                 : skill.kind == 'mcp'
                                 ? Palette.info
-                                : Palette.violet,
+                                : Palette.agent,
                           ),
                         ],
                       ),
@@ -117,9 +117,9 @@ class SkillSuggestions extends StatelessWidget {
                   ),
                   onTap: () {
                     final start = caret - query.length - 1;
-                    final suffix = RegExp(
-                      r'^[a-zA-Z0-9_:-]*',
-                    ).firstMatch(value.text.substring(caret))!.end;
+                    final suffix = RegExp(r'^[a-zA-Z0-9_:-]*')
+                        .firstMatch(value.text.substring(caret))!
+                        .end;
                     final next =
                         '${value.text.substring(0, start)}/${skill.name} ${value.text.substring(caret + suffix)}';
                     text.value = TextEditingValue(

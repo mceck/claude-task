@@ -2,31 +2,34 @@ import 'package:cupertino_ui/cupertino_ui.dart'
     show CupertinoPageTransitionsBuilder;
 import 'package:material_ui/material_ui.dart';
 
-/// Dark tokens: warm graphite layers with a terracotta accent. Semantic colors
-/// (Agent violet, Internal chat slate, warning amber) match the web frontend.
+/// Neutral charcoal surfaces with neon teal actions and orange Agent outlines.
+/// Bright accent fills use dark ink so labels stay readable.
 abstract final class Palette {
-  static const bg = Color(0xff0f0f0e);
-  static const sidebar = Color(0xff0a0a09);
-  static const surface = Color(0xff161615);
-  static const raised = Color(0xff1c1c1b);
-  static const muted = Color(0xff242422);
-  static const hover = Color(0xff2b2b29);
-  static const border = Color(0x14ffffff);
-  static const borderStrong = Color(0x26ffffff);
-  static const fg = Color(0xfff5f4f1);
-  static const fgMuted = Color(0xffa29f98);
-  static const fgSubtle = Color(0xff706d67);
-  static const primary = Color(0xffdb6a44);
-  static const primarySoft = Color(0xfff3a184);
-  static const primaryDeep = Color(0xffb8502f);
-  static const violet = Color(0xffa78bfa);
-  static const slate = Color(0xff94a3b8);
-  static const slateDeep = Color(0xff475569);
-  static const danger = Color(0xffff6467);
-  static const warning = Color(0xffedb345);
-  static const orange = Color(0xfffb923c);
-  static const success = Color(0xff4ac06c);
-  static const info = Color(0xff38bdf8);
+  static const bg = Color(0xff101010);
+  static const sidebar = Color(0xff0a0a0a);
+  static const surface = Color(0xff171717);
+  static const raised = Color(0xff202020);
+  static const muted = Color(0xff292929);
+  static const hover = Color(0xff333333);
+  static const border = Color(0xff303030);
+  static const borderStrong = Color(0xff474747);
+  static const fg = Color(0xfff4f4f4);
+  static const fgMuted = Color(0xffb3b3b3);
+  static const fgSubtle = Color(0xff999999);
+  static const primary = Color(0xff00edc4);
+  static const primarySoft = Color(0xff20ffd6);
+  static const primaryDeep = Color(0xff00b894);
+  static const onPrimary = Color(0xff001c16);
+  static const agent = Color(0xffff9d00);
+  static const violet = Color(0xffbd33ff);
+  static const slate = Color(0xffb1b1b1);
+  static const slateDeep = Color(0xff525252);
+  static const danger = Color(0xffff356b);
+  static const warning = Color(0xffffe600);
+  static const orange = Color(0xffff8a00);
+  static const success = Color(0xff39ff14);
+  static const info = Color(0xff00baff);
+  static const code = Color(0xffd9d9d9);
 }
 
 abstract final class Radii {
@@ -51,7 +54,7 @@ Color tint(String seed) {
   for (final unit in seed.codeUnits) {
     hash = (hash * 31 + unit) & 0x7fffffff;
   }
-  return HSLColor.fromAHSL(1, (hash % 360).toDouble(), .55, .62).toColor();
+  return HSLColor.fromAHSL(1, (hash % 360).toDouble(), .65, .68).toColor();
 }
 
 /// Session state colors shared by the board rows and the conversation header.
@@ -76,7 +79,7 @@ Color hexColor(String hex, [Color fallback = Palette.fgMuted]) {
 ThemeData buildTheme() {
   const scheme = ColorScheme.dark(
     primary: Palette.primary,
-    onPrimary: Colors.white,
+    onPrimary: Palette.onPrimary,
     secondary: Palette.primarySoft,
     onSecondary: Palette.bg,
     surface: Palette.bg,

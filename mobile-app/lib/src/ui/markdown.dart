@@ -22,8 +22,8 @@ MarkdownStyleSheet markdownStyle(BuildContext context, {double size = 14.5}) {
     code: TextStyle(
       fontFamily: mono,
       fontSize: size - 1.5,
-      color: const Color(0xffe3c7ff),
-      backgroundColor: Colors.white.withValues(alpha: .06),
+      color: Palette.code,
+      backgroundColor: Palette.muted,
     ),
     codeblockPadding: const EdgeInsets.all(14),
     codeblockDecoration: BoxDecoration(
