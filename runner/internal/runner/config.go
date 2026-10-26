@@ -3,7 +3,9 @@ package runner
 import (
 	"errors"
 	"os"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -54,4 +56,11 @@ func envInt(name string, fallback int) int {
 		return v
 	}
 	return fallback
+}
+
+// childEnv is the Runner's environment for the processes it starts, minus the Runner token:
+// the token outlives the Job, while claude, its tools, the setup script and git hooks run Agent
+// code, and their output reaches the Timeline.
+func childEnv() []string {
+	return slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "CLAUDE_TASK_RUNNER_TOKEN=") })
 }

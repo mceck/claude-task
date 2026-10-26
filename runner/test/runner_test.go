@@ -288,6 +288,29 @@ func TestSetupScriptRunsOnlyForANewWorktree(t *testing.T) {
 	}
 }
 
+// The Runner token outlives the Job: claude, its tools and the setup script never see it
+// (their output reaches the Timeline), while git still finds the credential socket.
+func TestRunnerTokenStaysOutOfJobProcesses(t *testing.T) {
+	b := newBackend(t)
+	startRunner(t, b)
+	rec := filepath.Join(t.TempDir(), "rec.json")
+	b.send(jobStart(jobOpts{id: "j1", text: "a", setup: `echo "token=[$CLAUDE_TASK_RUNNER_TOKEN]"`,
+		env: map[string]string{"FAKE_CLAUDE_RECORD": rec}}))
+	b.waitEvent("j1", "result", isResult)
+	if out := b.setupOutput("j1"); !strings.Contains(out, "token=[]") {
+		t.Fatalf("setup script saw the runner token: %q", out)
+	}
+	r := readRecord(t, rec)
+	if _, ok := r.Env["CLAUDE_TASK_RUNNER_TOKEN"]; ok {
+		t.Fatal("claude got the runner token")
+	}
+	if r.Env["CLAUDE_TASK_GIT_SOCKET"] == "" {
+		t.Fatal("claude lost the git credential socket")
+	}
+	b.send(msg{"type": "job.end", "jobId": "j1"})
+	b.waitType("j1", "job.exited")
+}
+
 func TestWorktreePathsMustStayInHome(t *testing.T) {
 	b := newBackend(t)
 	startRunner(t, b)

@@ -16,11 +16,12 @@ import type { SQL } from 'drizzle-orm';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { agents, tags, projects, statuses, taskAssignees, taskTags, taskRevisions, tasks, users } from '../../db/schema';
+import { agents, jobs, tags, projects, statuses, taskAssignees, taskTags, taskRevisions, tasks, users } from '../../db/schema';
 import { onTaskChanged } from '../../sessions/lifecycle';
 import { badRequest, conflict, notFound } from '../../errors';
 import { actorResolver } from '../actors';
 import { UUID } from '../../ids';
+import { ACTIVE_JOB_STATES } from '../agents/service';
 
 export type TaskRow = typeof tasks.$inferSelect;
 
@@ -377,8 +378,24 @@ export async function moveTask(
   return task!;
 }
 
+/**
+ * Tasks an Agent is working on can't be deleted: the Job's row would go while `claude` keeps
+ * running with the Task's secrets, and the Runner would refuse the Agent's next Jobs. Lock the
+ * Tasks first (a dispatch takes a key share lock on its Task).
+ */
+export async function assertNoActiveJobs(tx: Executor, where: SQL): Promise<void> {
+  const [active] = await tx
+    .select({ id: jobs.id })
+    .from(jobs)
+    .innerJoin(tasks, eq(tasks.id, jobs.taskId))
+    .where(and(where, inArray(jobs.state, [...ACTIVE_JOB_STATES])))
+    .limit(1);
+  if (active) throw conflict('An agent is working on this. Stop it, or close the task, before deleting.');
+}
+
 export async function deleteTask(tx: Executor, after: AfterCommit, taskId: string): Promise<{ blobIds: string[] }> {
   const row = await getTaskRow(tx, taskId, { lock: true });
+  await assertNoActiveJobs(tx, eq(tasks.id, row.id));
   const blobs = await tx.execute<{ blob_id: string }>(sql`
     select a.blob_id from attachments a left join comments c on c.id = a.comment_id where coalesce(a.task_id, c.task_id) = ${row.id}`);
   await tx.delete(tasks).where(eq(tasks.id, row.id));

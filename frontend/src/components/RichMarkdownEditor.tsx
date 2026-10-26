@@ -432,6 +432,9 @@ export default function RichMarkdownEditor({
       <MDXEditor
         ref={editor}
         markdown={value}
+        // MDXEditor renders HTML tags with any attribute (onerror, srcdoc…). Agents write descriptions,
+        // so HTML is not parsed: a description with HTML fails over to the plain Markdown view.
+        suppressHtmlProcessing
         readOnly={readOnly}
         overlayContainer={overlayContainer}
         onChange={(md, initialMarkdownNormalize) => {
@@ -659,6 +662,7 @@ export function CommentEditor({
       <MDXEditor
         ref={editor}
         markdown={initialValue}
+        suppressHtmlProcessing
         onChange={(md, initialMarkdownNormalize) => !initialMarkdownNormalize && onChange(md)}
         onError={() => setFailed(true)}
         placeholder={placeholder}

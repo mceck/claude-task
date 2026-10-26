@@ -582,7 +582,8 @@ function Description({ taskId, description, onSave, overlayContainer }: { taskId
           const link = target.closest('a');
           if (link) {
             event.preventDefault();
-            window.open(link.href, '_blank', 'noopener,noreferrer');
+            // Descriptions are untrusted (Agents write them): never a javascript: or data: URL.
+            if (/^(https?|mailto):/i.test(link.href)) window.open(link.href, '_blank', 'noopener,noreferrer');
             return;
           }
           // Checkboxes keep working, and selecting text to copy it doesn't start an edit.
