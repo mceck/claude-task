@@ -8,8 +8,9 @@ import { badRequest, HttpError, notFound, parse } from '../../errors';
 import { getTaskRow } from '../tasks/service';
 import { createTaskAttachments, createUserComment, pruneTaskAttachments, deleteComment, getAttachment, updateComment } from './service';
 import type { NewAttachment } from './service';
+import { idOrKey } from '../../ids';
 
-const taskParams = z.object({ taskId: z.string().min(1).max(64) });
+const taskParams = z.object({ taskId: idOrKey });
 const params = z.object({ id: z.uuid() });
 
 /** Images we let the browser render inline; everything else downloads. SVG can carry scripts. */

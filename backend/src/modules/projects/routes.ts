@@ -3,14 +3,16 @@ import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { transact } from '../../context';
-import type { AppContext } from '../../context';
+import type { AfterCommit, AppContext } from '../../context';
+import type { Executor } from '../../db/client';
 import { attachments, comments, projects, tasks } from '../../db/schema';
 import { badRequest, parse } from '../../errors';
 import { listTags } from '../tags/service';
 import { listStatuses } from '../statuses/service';
 import { createProject, getProject, listProjects, serializeProject } from './service';
+import { idOrKey } from '../../ids';
 
-const params = z.object({ id: z.string().min(1).max(64) });
+const params = z.object({ id: idOrKey });
 
 export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/projects', async (request) => {
@@ -35,13 +37,7 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(updateProjectBody, request.body);
     return transact(ctx, async (tx, after) => {
       const existing = await getProject(tx, id, { lock: true });
-      const [project] = await tx
-        .update(projects)
-        .set({ ...body, updatedAt: new Date() })
-        .where(eq(projects.id, existing.id))
-        .returning();
-      after.emit(projectTopic(existing.id), { type: 'project.updated', project: serializeProject(project!) });
-      return { project: serializeProject(project!) };
+      return updateProject(tx, after, existing.id, body);
     });
   });
 
@@ -50,13 +46,9 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
       const { id } = parse(params, request.params);
       return transact(ctx, async (tx, after) => {
         const existing = await getProject(tx, id, { lock: true });
-        const [project] = await tx
-          .update(projects)
-          .set({ archivedAt: action === 'archive' ? (existing.archivedAt ?? new Date()) : null, updatedAt: new Date() })
-          .where(eq(projects.id, existing.id))
-          .returning();
-        after.emit(projectTopic(existing.id), { type: 'project.updated', project: serializeProject(project!) });
-        return { project: serializeProject(project!) };
+        return updateProject(tx, after, existing.id, {
+          archivedAt: action === 'archive' ? (existing.archivedAt ?? new Date()) : null,
+        });
       });
     });
   }
@@ -79,6 +71,16 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
     });
     return reply.status(204).send();
   });
+}
+
+async function updateProject(tx: Executor, after: AfterCommit, id: string, patch: Partial<typeof projects.$inferInsert>) {
+  const [project] = await tx
+    .update(projects)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(projects.id, id))
+    .returning();
+  after.emit(projectTopic(id), { type: 'project.updated', project: serializeProject(project!) });
+  return { project: serializeProject(project!) };
 }
 
 async function bundle(ctx: AppContext, projectId: string) {

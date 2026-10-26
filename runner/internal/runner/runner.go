@@ -167,17 +167,23 @@ func write(ctx context.Context, c *websocket.Conn, data []byte) error {
 	return c.Write(ctx, websocket.MessageText, data)
 }
 
+// sendLocked writes to the current connection, dropping it on failure. Caller holds r.mu.
+func (r *Runner) sendLocked(data []byte) {
+	if r.conn == nil {
+		return
+	}
+	if err := write(context.Background(), r.conn, data); err != nil {
+		r.conn.CloseNow()
+		r.conn = nil
+	}
+}
+
 // sendNow sends a message that isn't kept for resending (pong).
 func (r *Runner) sendNow(v any) {
 	data, _ := json.Marshal(v)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.conn != nil {
-		if err := write(context.Background(), r.conn, data); err != nil {
-			r.conn.CloseNow()
-			r.conn = nil
-		}
-	}
+	r.sendLocked(data)
 }
 
 // emit assigns the next seq of the Job, keeps the message until acked and sends it if connected.
@@ -193,12 +199,7 @@ func (r *Runner) emit(j *job, typ string, fields map[string]any) int64 {
 	if err := j.out.add(j.seq, data); err != nil {
 		log.Printf("job %s: outbox: %v", j.id, err)
 	}
-	if r.conn != nil {
-		if err := write(context.Background(), r.conn, data); err != nil {
-			r.conn.CloseNow()
-			r.conn = nil
-		}
-	}
+	r.sendLocked(data)
 	return j.seq
 }
 

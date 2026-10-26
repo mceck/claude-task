@@ -36,7 +36,7 @@ const DOT: Record<string, string> = {
   build_failed: 'bg-red-500',
 };
 
-export function StateDot({ state, className }: { state: string; className?: string }) {
+function StateDot({ state, className }: { state: string; className?: string }) {
   const live = state === 'running' || state === 'working' || state === 'building';
   return (
     <span className={cn('relative flex size-2.5 rounded-full ring-2 ring-background', DOT[state] ?? 'bg-muted-foreground', className)}>
@@ -45,7 +45,7 @@ export function StateDot({ state, className }: { state: string; className?: stri
   );
 }
 
-export const AGENT_STATE_LABEL: Record<AgentState, string> = {
+const AGENT_STATE_LABEL: Record<AgentState, string> = {
   idle: 'Idle',
   working: 'Working',
   offline: 'Offline',
@@ -73,7 +73,7 @@ export function AgentStateBadge({ state, taskKey }: { state: AgentState; taskKey
 }
 
 /** "queued #2", "running", "waiting for messages", "paused", "closed". */
-export function sessionLabel(session: Pick<TaskSession, 'state' | 'queuePosition' | 'held'>): string {
+function sessionLabel(session: Pick<TaskSession, 'state' | 'queuePosition' | 'held'>): string {
   if (session.held) return 'waiting for retry';
   if (session.queuePosition) return `queued #${session.queuePosition}`;
   return { pending: 'starting', idle: 'waiting for messages', running: 'running', paused: 'paused', closed: 'closed' }[session.state];

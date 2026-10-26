@@ -17,7 +17,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
-export function initials(name: string): string {
+function initials(name: string): string {
   return name
     .split(/\s+/)
     .filter(Boolean)
@@ -103,6 +103,16 @@ export function ErrorText({ children }: { children: ReactNode }) {
   );
 }
 
+export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-sm font-medium">{label}</span>
+      {children}
+      {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
+    </label>
+  );
+}
+
 export function Loading({ className }: { className?: string }) {
   return (
     <div className={cn('flex items-center justify-center p-10 text-muted-foreground', className)}>
@@ -120,7 +130,7 @@ export function Kbd({ children }: { children: ReactNode }) {
 }
 
 const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-export function timeAgo(iso: string): string {
+function timeAgo(iso: string): string {
   const s = (Date.parse(iso) - Date.now()) / 1000;
   const abs = Math.abs(s);
   if (abs < 45) return 'just now';

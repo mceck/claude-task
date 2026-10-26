@@ -9,9 +9,10 @@ import { projectEnvVars, projects } from '../../db/schema';
 import { badRequest, notFound, parse } from '../../errors';
 import { last4 } from '../../secrets';
 import { getProject } from './service';
+import { idOrKey } from '../../ids';
 
-const projectParams = z.object({ projectId: z.string().min(1).max(64) });
-const envParams = z.object({ projectId: z.string().min(1).max(64), name: z.string().regex(ENV_VAR_NAME) });
+const projectParams = z.object({ projectId: idOrKey });
+const envParams = z.object({ projectId: idOrKey, name: z.string().regex(ENV_VAR_NAME) });
 
 /** Names the platform sets itself; a Project can't override them. */
 const RESERVED = /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|CLAUDE_CODE_RESUME_INTERRUPTED_TURN|CLAUDE_TASK_.*|HOME|PATH|USER)$/;

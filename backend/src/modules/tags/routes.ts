@@ -10,8 +10,9 @@ import { parse } from '../../errors';
 import { getProject } from '../projects/service';
 import { detachTag } from '../tasks/service';
 import { emitTagsChanged, getTag, listTags, serializeTag } from './service';
+import { idOrKey } from '../../ids';
 
-const projectParams = z.object({ projectId: z.string().min(1).max(64) });
+const projectParams = z.object({ projectId: idOrKey });
 const params = z.object({ id: z.uuid() });
 
 export function tagRoutes(app: FastifyInstance, ctx: AppContext): void {

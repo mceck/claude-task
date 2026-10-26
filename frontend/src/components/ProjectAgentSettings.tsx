@@ -9,8 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useAgentSettings, useMe } from '../api/queries';
-import { Field } from './AgentForm';
-import { ErrorText, Loading, useConfirm } from './common';
+import { Field, ErrorText, Loading, useConfirm } from './common';
 
 export function ProjectAgentSettings({ projectId }: { projectId: string }) {
   const query = useAgentSettings(projectId);

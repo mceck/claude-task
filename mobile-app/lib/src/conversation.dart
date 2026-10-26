@@ -705,7 +705,7 @@ class _LiveTail extends StatelessWidget {
         c.liveThinking.isNotEmpty ||
         c.liveText.isNotEmpty ||
         c.liveStatus.isNotEmpty;
-    final agent = c.agents.where((a) => a.id == c.task?.agentId).firstOrNull;
+    final agent = c.agents.byId(c.task?.agentId);
     // No size or fade transition: the stored entry replaces this in the same
     // frame, so animating here would show a gap or a flicker.
     if (!live) return const SizedBox.shrink();
@@ -947,10 +947,8 @@ class TimelineTile extends StatelessWidget {
     }
     final own = kind == 'user' && e.authorId == controller.user?.id;
     final agent = kind == 'agent'
-        ? controller.agents.where((a) => a.id == e.authorId).firstOrNull ??
-              controller.agents
-                  .where((a) => a.id == controller.task?.agentId)
-                  .firstOrNull
+        ? controller.agents.byId(e.authorId) ??
+              controller.agents.byId(controller.task?.agentId)
         : null;
     final editable = e.isOwnCommentEditable && own;
     return _CommentView(
@@ -1037,15 +1035,10 @@ IconData changeIcon(String? field) => switch (field) {
 /// A Revision change in words, as the web Timeline says it.
 String describeChange(Json change, TaskController c) {
   final before = change['before'], after = change['after'];
-  String status(Object? id) =>
-      c.statuses.where((s) => s.id == id).firstOrNull?.name ??
-      'a deleted status';
-  String tag(Object? id) =>
-      c.tags.where((l) => l.id == id).firstOrNull?.name ?? 'a deleted tag';
-  String user(Object? id) =>
-      c.users.where((u) => u.id == id).firstOrNull?.displayName ?? 'someone';
-  String agent(Object? id) =>
-      c.agents.where((a) => a.id == id).firstOrNull?.name ?? 'a deleted agent';
+  String status(Object? id) => c.statuses.byId(id)?.name ?? 'a deleted status';
+  String tag(Object? id) => c.tags.byId(id)?.name ?? 'a deleted tag';
+  String user(Object? id) => c.users.byId(id)?.displayName ?? 'someone';
+  String agent(Object? id) => c.agents.byId(id)?.name ?? 'a deleted agent';
   String plural(int n, String word) => n == 1 ? word : '${word}s';
   final was = strings(before is List ? before : const []);
   final now = strings(after is List ? after : const []);

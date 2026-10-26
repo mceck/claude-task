@@ -20,10 +20,10 @@ import { agents, tags, projects, statuses, taskAssignees, taskTags, taskRevision
 import { onTaskChanged } from '../../sessions/lifecycle';
 import { badRequest, conflict, notFound } from '../../errors';
 import { actorResolver } from '../actors';
+import { UUID } from '../../ids';
 
 export type TaskRow = typeof tasks.$inferSelect;
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TASK_KEY = /^([A-Za-z]{2,6})-(\d{1,9})$/;
 
 // Reading

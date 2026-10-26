@@ -972,15 +972,9 @@ class _TaskRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = controller, pref = c.preferences[task.id];
     final unread = pref?.unread == true;
-    final agent = c.agents.where((a) => a.id == task.agentId).firstOrNull;
-    final tags = [
-      for (final id in task.tagIds)
-        ?c.tags.where((l) => l.id == id).firstOrNull,
-    ];
-    final assignees = [
-      for (final id in task.assigneeIds)
-        ?c.users.where((u) => u.id == id).firstOrNull,
-    ];
+    final agent = c.agents.byId(task.agentId);
+    final tags = [for (final id in task.tagIds) ?c.tags.byId(id)];
+    final assignees = [for (final id in task.assigneeIds) ?c.users.byId(id)];
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Stack(

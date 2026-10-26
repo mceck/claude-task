@@ -11,8 +11,9 @@ import { getProject } from '../projects/service';
 import { onStatusClosedChanged } from '../../sessions/lifecycle';
 import { relocateStatusTasks } from '../tasks/service';
 import { assertEntryAndExit, emitStatusesChanged, getStatus, listStatuses, serializeStatus } from './service';
+import { idOrKey } from '../../ids';
 
-const projectParams = z.object({ projectId: z.string().min(1).max(64) });
+const projectParams = z.object({ projectId: idOrKey });
 const params = z.object({ id: z.uuid() });
 
 export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
