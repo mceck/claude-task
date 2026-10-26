@@ -48,6 +48,10 @@ const DESCRIPTIONS: Record<string, string> = {
   plan: 'Plan a task before making changes.',
   rename: 'Set the conversation name.',
 };
+/** The runtime reports every interactive built-in and bundled skill too; only curated ones, plugin (`a:b`) and MCP prompts are offered. */
+function offered(name: string): boolean {
+  return name in DESCRIPTIONS || name.includes(':') || name.startsWith('mcp__');
+}
 export function commandName(body: string): string | null {
   const match = /^\/([a-zA-Z0-9][a-zA-Z0-9_:-]{0,127})(?:\s|$)/.exec(body);
   return match && !UNAVAILABLE.has(match[1]!) ? match[1]! : null;
@@ -56,7 +60,7 @@ export function commandName(body: string): string | null {
 export function chatCommands(runtime: string[] | null, skills: SkillCommand[]): ChatCommand[] {
   const result = new Map<string, ChatCommand>();
   for (const name of runtime ?? ['compact', 'context', 'usage']) {
-    if (commandName(`/${name}`) !== name) continue;
+    if (commandName(`/${name}`) !== name || !offered(name)) continue;
     result.set(name, {
       name,
       description: DESCRIPTIONS[name] ?? 'Run this Claude command.',

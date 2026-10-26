@@ -121,7 +121,7 @@ export function Composer({
         return;
       }
     }
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void submit();
     }
@@ -259,8 +259,8 @@ export function Composer({
           <Paperclip /> Attach
         </Button>
         <span className="ml-auto hidden items-center gap-1 text-[11px] text-muted-foreground sm:flex">
-          <Kbd>⌘</Kbd>
-          <Kbd>↵</Kbd>
+          <Kbd>↵</Kbd> send · <Kbd>⇧</Kbd>
+          <Kbd>↵</Kbd> new line
         </span>
         <Button
           size="sm"

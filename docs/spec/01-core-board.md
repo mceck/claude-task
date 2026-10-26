@@ -145,7 +145,7 @@ This spec covers the board without agents. Spec 02 adds agents, sessions, and th
 
 - Login, change-password (forced and voluntary), projects list, project board, task detail (side panel on the board plus a full-page route), project settings (general, statuses, tags), users admin.
 - The board uses horizontal columns per non-closed status in status order, plus a "show closed" toggle. Drag & drop does optimistic updates and rolls back on error.
-- The comment composer has a markdown editor, an internal-note toggle (changing the composer's styling while on), attachment drop/paste, and Cmd/Ctrl+Enter to submit.
+- The comment composer has a markdown editor, an internal-note toggle (changing the composer's styling while on), attachment drop/paste, and Enter to submit (Shift+Enter for a new line).
 
 ## Testing Decisions
 

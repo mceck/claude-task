@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { useCredentials, useSkills, useMcpServers } from '../api/queries';
+import { useCredentials, useMcpServers } from '../api/queries';
 import { AgentAvatar } from './agents';
+import { AgentSkillSelector } from './AgentSkillSelector';
 import { api, del, errorMessage } from '../api/client';
 
 /** What the form wants done with the Agent's image once the Agent is saved. */
@@ -89,7 +90,6 @@ function DockerfileEditor({ value, onChange }: { value: string; onChange: (s: st
 
 export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: CreateAgentBody, avatar: AvatarChange) => Promise<void> }) {
   const credentials = useCredentials();
-  const skills = useSkills();
   const mcpServers = useMcpServers();
   const [skillIds, setSkillIds] = useState(agent?.skillIds ?? []);
   const [mcpServerIds, setMcpServerIds] = useState(agent?.mcpServerIds ?? []);
@@ -255,23 +255,19 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
       <Field label="System prompt">
         <Textarea aria-label="System prompt" rows={5} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} maxLength={50000} />
       </Field>
-      {([
-        { label: 'Skills', query: skills, selected: skillIds, set: setSkillIds },
-        { label: 'MCP servers', query: mcpServers, selected: mcpServerIds, set: setMcpServerIds },
-      ] as const).map(({ label, query, selected, set }) => (
-        <fieldset key={label} className="space-y-2 rounded-lg border p-3">
-          <legend className="px-1 text-sm font-medium">{label}</legend>
-          {query.isPending && <p className="text-xs text-muted-foreground">Loading…</p>}
-          {query.error && <p role="alert" className="text-sm text-destructive">{errorMessage(query.error)}</p>}
-          {query.data?.map((item) => (
-            <label key={item.id} className="flex items-start gap-2 text-sm">
-              <input type="checkbox" checked={selected.includes(item.id)} onChange={(e) => set(e.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))} />
-              <span><b>{item.name}</b><span className="block text-xs text-muted-foreground">{item.description}</span></span>
-            </label>
-          ))}
-          <Link to="/admin/extensions" className="text-xs underline">Manage shared skills and MCP servers</Link>
-        </fieldset>
-      ))}
+      <AgentSkillSelector selectedIds={skillIds} onChange={setSkillIds} />
+      <fieldset className="space-y-2 rounded-lg border p-3">
+        <legend className="px-1 text-sm font-medium">MCP servers</legend>
+        {mcpServers.isPending && <p className="text-xs text-muted-foreground">Loading…</p>}
+        {mcpServers.error && <p role="alert" className="text-sm text-destructive">{errorMessage(mcpServers.error)}</p>}
+        {mcpServers.data?.map((item) => (
+          <label key={item.id} className="flex items-start gap-2 text-sm">
+            <input type="checkbox" checked={mcpServerIds.includes(item.id)} onChange={(e) => setMcpServerIds(e.target.checked ? [...mcpServerIds, item.id] : mcpServerIds.filter((id) => id !== item.id))} />
+            <span><b>{item.name}</b><span className="block text-xs text-muted-foreground">{item.description}</span></span>
+          </label>
+        ))}
+        <Link to="/admin/extensions" className="text-xs underline">Manage shared skills and MCP servers</Link>
+      </fieldset>
       <div className="space-y-1.5">
         <Label>Dockerfile</Label>
         <DockerfileEditor value={dockerfile} onChange={setDockerfile} />
