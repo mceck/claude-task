@@ -67,6 +67,7 @@ async function handleHello(ctx: AppContext, agentId: string, msg: Extract<Runner
     ctx.runners.send(agentId, { type: 'job.cancel', jobId: msg.activeJobId });
   }
   for (const s of pendingRemovals) ctx.scheduler.removeWorktree(s.id);
+  await ctx.scheduler.reconcile(agentId);
   ctx.scheduler.kick(agentId);
 }
 

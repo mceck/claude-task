@@ -24,7 +24,7 @@ export function TaskActivity({ task, statuses, tags, users, session, onSessionAc
   const draft = useCommentDraft();
   const dialog = useRef<HTMLDivElement>(null);
   const timeline = <Timeline taskId={task.id} statuses={statuses} tags={tags} users={users} />;
-  const composer = <Composer taskId={task.id} draft={draft} />;
+  const composer = <Composer taskId={task.id} agentId={task.agentId} commands={session?.commands} draft={draft} />;
 
   return (
     <Dialog open={expanded} onOpenChange={setExpanded}>

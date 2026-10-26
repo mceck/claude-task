@@ -22,6 +22,7 @@ import { UsersPage } from './pages/UsersPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { AgentPage } from './pages/AgentPage';
 import { CredentialsPage } from './pages/CredentialsPage';
+import { ExtensionsPage } from './pages/ExtensionsPage';
 
 const queryClient: QueryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -54,6 +55,7 @@ const router = createBrowserRouter([
       { path: '/agents', element: <AgentsPage /> },
       { path: '/agents/:agentId', element: <AgentPage /> },
       { path: '/admin/credentials', element: <CredentialsPage /> },
+      { path: '/admin/extensions', element: <ExtensionsPage /> },
       { path: '/admin/git', element: <GitConnectionsPage /> },
       { path: '/admin/github', element: <Navigate to="/admin/git" replace /> },
       { path: '*', element: <NotFoundPage /> },

@@ -12,6 +12,10 @@ interface FakeContainer {
  * as soon as they're created. Used by the backend tests and with `AGENT_RUNTIME=fake`.
  */
 export class FakeRuntime implements AgentRuntime {
+  readonly configuredSkills = new Map<string, { revision: number; skills: import('@claude-task/shared').InstalledSkill[] }>();
+  async configureSkills(agentId: string, revision: number, skills: import('@claude-task/shared').InstalledSkill[]): Promise<void> {
+    this.configuredSkills.set(agentId, { revision, skills });
+  }
   readonly containers = new Map<string, FakeContainer>();
   readonly removed: string[] = [];
   /** Next builds' outcomes, consumed in order; default success. */

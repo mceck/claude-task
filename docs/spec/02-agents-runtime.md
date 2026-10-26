@@ -74,7 +74,7 @@ The agent's output is read from the `claude` stream and shown on the task's time
 ### Projects (agent-related settings)
 
 25. As a member, I want to write a project's **worktree setup script** (e.g. `npm ci`), so that every new task worktree is ready to build and test.
-26. As an admin, I want to define a project's environment variables and secrets, so that agents working on that project's tasks (and only those) get them.
+26. As an admin, I want to define a project's environment variables and secrets, so that agents working on that project's tasks (and only those) get them. Besides one at a time, I can import a `.env` file: its variables are merged into the existing ones (same names overwritten, others kept, an existing secret stays secret), optionally all as secrets.
 27. As a member, I want to write project-level agent instructions, so that every agent working on this project follows its conventions on top of the repo's CLAUDE.md.
 
 ### Assignment & sessions
@@ -315,7 +315,7 @@ Spec 03 added `git.token_request` / `git.token` for Git credentials. [Spec 05](0
 - **Agents list**: all agents with state, current task, queue length, credential name, last activity.
 - **Agent detail**: configuration form (admin; Dockerfile editor with syntax highlighting), build history with logs (live while building), container state with Rebuild / Restart / Force recreate, live container logs, queue (drag to reorder, remove), current job, recent jobs, usage (tokens/cost per day, per task) and latest rate-limit status.
 - **Credentials** (admin): list, create, rotate, delete (blocked if in use).
-- **Project settings**: "Agents" tab with setup script, agent instructions, env vars and secrets (secrets admin-only).
+- **Project settings**: "Agents" tab with setup script, agent instructions, env vars and secrets (secrets admin-only), plus a `.env` import (paste or pick a file, live preview of names and overwrites, atomic: an invalid file writes nothing).
 
 ## Testing Decisions
 

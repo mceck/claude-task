@@ -1,0 +1,1 @@
+ALTER TABLE "jobs" ADD COLUMN "slash_commands" jsonb;

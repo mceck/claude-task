@@ -1,7 +1,8 @@
+import { chatCommands } from '@claude-task/shared';
 import type { TaskSession } from '@claude-task/shared';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import type { Executor } from '../db/client';
-import { jobs, queueEntries, sessions, tasks } from '../db/schema';
+import { agentSkills, jobs, queueEntries, sessions, skills, tasks } from '../db/schema';
 import { agentRefs } from '../modules/agents/service';
 
 export type SessionRow = typeof sessions.$inferSelect;
@@ -45,7 +46,12 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
     .from(sessions)
     .where(eq(sessions.id, s.id));
   const agent = (await agentRefs(db, [s.agentId])).get(s.agentId)!;
+  const skillRows = await db.select({ name: skills.name, description: skills.description }).from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId))
+    .where(and(eq(agentSkills.agentId, s.agentId), eq(skills.userInvocable, true)));
+  const [runtime] = await db.select({ commands: jobs.slashCommands }).from(jobs).where(and(eq(jobs.sessionId, s.id), isNotNull(jobs.slashCommands)))
+    .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
   return {
+    commands: chatCommands(runtime?.commands ?? null, skillRows),
     id: s.id,
     agent,
     state: s.state,

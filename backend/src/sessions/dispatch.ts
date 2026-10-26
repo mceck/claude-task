@@ -1,6 +1,6 @@
 import { gitSlug, taskBranch } from '../git/branches';
 // The dispatcher: turns the first Queue Entry of an idle Agent into a Job (one at a time).
-import { GIT_PROXY_PATH, MCP_PATH, RUNNER_WS_PATH } from '@claude-task/shared';
+import { commandName, GIT_PROXY_PATH, MCP_PATH, RUNNER_WS_PATH } from '@claude-task/shared';
 import type { JobStartMessage } from '@claude-task/shared';
 import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
@@ -9,6 +9,7 @@ import { comments, jobs, projectEnvVars, projects, queueEntries, sessions, tasks
 import type { Executor } from '../db/client';
 import { ACTIVE_JOB_STATES, desiredContainerSpec, getAgentRow } from '../modules/agents/service';
 import { credentialEnv } from '../modules/credentials/service';
+import { agentExtensions, resolvedMcp } from '../modules/extensions/service';
 import { newToken } from '../secrets';
 import { REASSIGNED_MESSAGE, RESUME_MESSAGE, renderComments, renderTaskFiles, startMessage, systemPrompt, taskSnapshot } from './messages';
 import type { CommentRow, MessageParts } from './messages';
@@ -26,6 +27,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     const agent = await getAgentRow(tx, agentId, { lock: true });
     const ready =
       agent.enabled &&
+      agent.extensionsRevision === agent.configuredExtensionsRevision &&
       ctx.runners.isConnected(agentId) &&
       agent.containerState === 'running' &&
       agent.containerSpec !== null &&
@@ -61,10 +63,15 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
       .from(comments)
       .where(and(eq(comments.queueEntryId, entry.id), isNull(comments.deletedAt)))
       .orderBy(asc(comments.createdAt), asc(comments.id));
+    // Keep slash commands as standalone CLI inputs, in order with normal queued Comments.
+    const commandIndex = attached.findIndex((c) => c.kind === 'user' && !c.noticeMessage && commandName(c.body));
+    const batch = commandIndex === 0 ? attached.slice(0, 1) : commandIndex > 0 ? attached.slice(0, commandIndex) : attached;
+    const remaining = new Set(attached.slice(batch.length).map((c) => c.id));
+    let initialContext = '';
     let included: CommentRow[];
     let message: MessageParts;
     if (fresh) {
-      included = await conversation(tx, task!.id);
+      included = (await conversation(tx, task!.id)).filter((c) => !remaining.has(c.id));
       const previousAgent = await tx
         .select({ id: sessions.id })
         .from(sessions)
@@ -73,10 +80,17 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
       const files = await renderTaskFiles(ctx, tx, task!.id, snapshot.description, seenFiles);
       message = startMessage(snapshot, await renderComments(ctx, tx, included, seenFiles), { branch, previousAgent: previousAgent.length > 0, files });
       // Notices made while the Session was pending are covered by the snapshot.
-      included = [...included, ...attached.filter((c) => !included.some((i) => i.id === c.id))];
+      included = [...included, ...batch.filter((c) => !included.some((i) => i.id === c.id))];
+      if (commandIndex === 0) {
+        // A first command still needs the Task context, without a text prefix that would
+        // turn /init (or a skill) into an ordinary prompt instead of a native command.
+        initialContext = '\n\nTask and conversation context for the requested command:\n' + message.blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+        const command = await renderComments(ctx, tx, batch);
+        message = { blocks: command.blocks, fetch: [...message.fetch, ...command.fetch] };
+      }
     } else {
-      included = attached;
-      message = await renderComments(ctx, tx, attached);
+      included = batch;
+      message = await renderComments(ctx, tx, batch);
       if (message.blocks.length === 0) {
         message.blocks.push({ type: 'text', text: entry.kind === 'resume_interrupted' ? RESUME_MESSAGE : REASSIGNED_MESSAGE });
       }
@@ -89,7 +103,8 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
 
     const jobToken = newToken();
     const [job] = await tx.insert(jobs).values({ sessionId: session!.id, agentId, taskId: task!.id, kind: entry.kind, tokenHash: jobToken.hash }).returning();
-    await tx.delete(queueEntries).where(eq(queueEntries.id, entry.id));
+    if (remaining.size) await tx.update(queueEntries).set({ kind: 'messages' }).where(eq(queueEntries.id, entry.id));
+    else await tx.delete(queueEntries).where(eq(queueEntries.id, entry.id));
     if (included.length > 0) {
       await tx
         .update(comments)
@@ -109,6 +124,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     const seen = Math.max(session!.lastSeenTaskVersion, fresh ? snapshot.version : 0, ...included.map((c) => c.noticeTaskVersion ?? 0));
     await tx.update(sessions).set({ state: 'running', lastJobAt: new Date(), lastSeenTaskVersion: seen }).where(eq(sessions.id, session!.id));
 
+    const extensions = await agentExtensions(tx, agentId);
     const start: JobStartMessage = {
       type: 'job.start',
       jobId: job!.id,
@@ -144,10 +160,11 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
           worktreePath: session!.worktreePath,
           branch,
           projectInstructions: project!.agentInstructions,
-          agentPrompt: agent.systemPrompt,
+          agentPrompt: agent.systemPrompt + initialContext,
         }),
         mcpConfig: JSON.stringify({
           mcpServers: {
+            ...resolvedMcp(ctx, extensions.mcpServers),
             'claude-task': {
               type: 'http',
               url: `${ctx.config.agents.backendUrl}${MCP_PATH}`,

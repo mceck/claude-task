@@ -1,8 +1,8 @@
-import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES } from '@claude-task/shared';
-import type { Comment } from '@claude-task/shared';
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES, chatCommands, skillToken } from '@claude-task/shared';
+import type { ChatCommand, Comment } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, FileText, Lock, Paperclip, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
 import { putTimelineItem } from '../lib/cache';
+import { useAgent } from '../api/queries';
 import { ErrorText, Kbd } from './common';
 import { MarkdownEditor } from './Markdown';
 
@@ -23,12 +24,50 @@ export function useCommentDraft() {
   return { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy };
 }
 
-export function Composer({ taskId, draft }: { taskId: string; draft?: ReturnType<typeof useCommentDraft> }) {
+export function Composer({
+  taskId,
+  agentId,
+  commands,
+  draft,
+}: {
+  taskId: string;
+  agentId?: string | null;
+  commands?: ChatCommand[];
+  draft?: ReturnType<typeof useCommentDraft>;
+}) {
   const localDraft = useCommentDraft();
   const { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy } = draft ?? localDraft;
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
+  const agent = useAgent(agentId ?? undefined);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const listId = useId();
+  const [caret, setCaret] = useState(0),
+    [active, setActive] = useState(0),
+    [dismissed, setDismissed] = useState('');
+  const token = !internal && dismissed !== `${body}@${caret}` ? skillToken(body, caret) : null;
+  const available = commands ?? (agentId ? chatCommands(null, agent.data?.skillCommands ?? []) : []);
+  const suggestions = token
+    ? available.filter((s) => s.name.toLowerCase().startsWith(token.query) && (token.start === 0 || s.kind === 'skill'))
+    : [];
+  const selected = Math.min(active, suggestions.length - 1);
+  useEffect(() => {
+    document.getElementById(`${listId}-${selected}`)?.scrollIntoView({ block: 'nearest' });
+  }, [listId, selected]);
+  const chooseSkill = (name: string) => {
+    if (!token) return;
+    const suffix = /^[a-zA-Z0-9_:-]*/.exec(body.slice(caret))![0].length;
+    const next = `${body.slice(0, token.start)}/${name} ${body.slice(caret + suffix)}`;
+    const position = token.start + name.length + 2;
+    setBody(next);
+    setCaret(position);
+    setActive(0);
+    requestAnimationFrame(() => {
+      textarea.current?.focus();
+      textarea.current?.setSelectionRange(position, position);
+    });
+  };
 
   const addFiles = (incoming: File[]) => {
     const tooBig = incoming.find((f) => f.size > ATTACHMENT_MAX_BYTES);
@@ -64,6 +103,24 @@ export function Composer({ taskId, draft }: { taskId: string; draft?: ReturnType
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (suggestions.length && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive((selected + (e.key === 'ArrowDown' ? 1 : -1) + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        chooseSkill(suggestions[selected]!.name);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setDismissed(`${body}@${caret}`);
+        return;
+      }
+    }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       void submit();
@@ -73,7 +130,13 @@ export function Composer({ taskId, draft }: { taskId: string; draft?: ReturnType
     const pasted = [...e.clipboardData.files];
     if (pasted.length > 0) {
       e.preventDefault();
-      addFiles(pasted.map((f, i) => (f.name && f.name !== 'image.png' ? f : new File([f], `pasted-${Date.now()}-${i}.${f.type.split('/')[1] ?? 'png'}`, { type: f.type }))));
+      addFiles(
+        pasted.map((f, i) =>
+          f.name && f.name !== 'image.png'
+            ? f
+            : new File([f], `pasted-${Date.now()}-${i}.${f.type.split('/')[1] ?? 'png'}`, { type: f.type }),
+        ),
+      );
     }
   };
   const onDrop = (e: DragEvent<HTMLTextAreaElement>) => {
@@ -103,6 +166,20 @@ export function Composer({ taskId, draft }: { taskId: string; draft?: ReturnType
         </p>
       )}
       <MarkdownEditor
+        inputRef={textarea}
+        onCaretChange={(position) => {
+          setCaret(position);
+          setActive(0);
+        }}
+        onSelect={(e) => {
+          const position = e.currentTarget.selectionStart === e.currentTarget.selectionEnd ? e.currentTarget.selectionStart : -1;
+          if (position !== caret) {
+            setCaret(position);
+            setActive(0);
+          }
+        }}
+        ariaControls={suggestions.length ? listId : undefined}
+        ariaActiveDescendant={suggestions.length ? `${listId}-${selected}` : undefined}
         label="Comment"
         value={body}
         onChange={setBody}
@@ -112,6 +189,29 @@ export function Composer({ taskId, draft }: { taskId: string; draft?: ReturnType
         onPaste={onPaste}
         onDrop={onDrop}
       />
+      {suggestions.length > 0 && (
+        <ul id={listId} role="listbox" aria-label="Chat commands" className="my-2 max-h-60 overflow-auto rounded-lg border bg-popover p-1">
+          {suggestions.map((skill, i) => (
+            <li key={skill.name}>
+              <button
+                id={`${listId}-${i}`}
+                type="button"
+                role="option"
+                aria-selected={i === selected}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => chooseSkill(skill.name)}
+                className={cn('w-full rounded px-3 py-2 text-left text-sm', i === selected && 'bg-accent')}
+              >
+                <span className="font-medium">/{skill.name}</span>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {skill.kind === 'skill' ? 'Skill' : skill.kind === 'mcp' ? 'MCP' : 'Claude'}
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">{skill.description}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {files.length > 0 && (
         <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Files to attach">
           {files.map((f, i) => (
@@ -133,7 +233,13 @@ export function Composer({ taskId, draft }: { taskId: string; draft?: ReturnType
       <ErrorText>{error}</ErrorText>
       <div className="mt-2 flex items-center gap-3 border-t pt-2">
         <div className="flex items-center gap-2">
-          <Switch id={`internal-${taskId}`} size="sm" checked={internal} onCheckedChange={setInternal} className="data-[state=checked]:bg-amber-500" />
+          <Switch
+            id={`internal-${taskId}`}
+            size="sm"
+            checked={internal}
+            onCheckedChange={setInternal}
+            className="data-[state=checked]:bg-amber-500"
+          />
           <Label htmlFor={`internal-${taskId}`} className={cn('text-xs', internal ? 'text-amber-500' : 'text-muted-foreground')}>
             Internal note
           </Label>

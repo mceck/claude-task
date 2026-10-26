@@ -1,6 +1,6 @@
 // What an Agent receives: the Message content blocks (Comments, Task snapshots, notices)
 // and the system prompt its Session runs with.
-import { API_PREFIX, RUNNER_ATTACHMENTS_PATH } from '@claude-task/shared';
+import { API_PREFIX, RUNNER_ATTACHMENTS_PATH, commandName } from '@claude-task/shared';
 import type { AttachmentToFetch, InputBlock } from '@claude-task/shared';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { AppContext } from '../context';
@@ -90,7 +90,8 @@ export async function renderComments(ctx: AppContext, db: Executor, rows: Commen
     }
     const author = resolve({ type: c.authorType, id: c.authorId });
     const who = c.kind === 'agent' ? `${author.displayName} (agent)` : author.displayName;
-    let text = `[Comment by ${who} — ${c.createdAt.toISOString()}]\n${c.body}`;
+    let text = rows.length === 1 && c.kind === 'user' && commandName(c.body)
+      ? c.body : `[Comment by ${who} — ${c.createdAt.toISOString()}]\n${c.body}`;
     const images: InputBlock[] = [];
     for (const f of files.filter((x) => x.commentId === c.id)) {
       if (IMAGE_TYPES.has(f.contentType) && f.size <= IMAGE_BLOCK_MAX_BYTES) {

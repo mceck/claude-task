@@ -33,18 +33,28 @@ interface EditorProps {
   onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   onDrop?: (e: DragEvent<HTMLTextAreaElement>) => void;
+  inputRef?: React.Ref<HTMLTextAreaElement>;
+  onSelect?: (e: React.SyntheticEvent<HTMLTextAreaElement>) => void;
+  onCaretChange?: (caret: number) => void;
+  ariaControls?: string;
+  ariaActiveDescendant?: string;
 }
 
-export function MarkdownEditor({ value, onChange, placeholder, layout = 'tabs', rows = 4, autoFocus, label, className, toolbar, onKeyDown, onPaste, onDrop }: EditorProps) {
+export function MarkdownEditor({ value, onChange, placeholder, layout = 'tabs', rows = 4, autoFocus, label, className, toolbar, onKeyDown, onPaste, onDrop, inputRef, onSelect, onCaretChange, ariaControls, ariaActiveDescendant }: EditorProps) {
   const [tab, setTab] = useState<'write' | 'preview'>('write');
   const textarea = (
     <textarea
+      ref={inputRef}
+      onSelect={onSelect}
+      aria-controls={ariaControls}
+      aria-activedescendant={ariaActiveDescendant}
+      aria-autocomplete={ariaControls ? 'list' : undefined}
       aria-label={label}
       autoFocus={autoFocus}
       rows={rows}
       value={value}
       placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => { onChange(e.target.value); onCaretChange?.(e.target.selectionStart); }}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
       onDrop={onDrop}

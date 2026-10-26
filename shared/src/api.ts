@@ -209,6 +209,8 @@ export type UpdateCredentialBody = z.infer<typeof updateCredentialBody>;
 // Agents (admin, except reads and queue management)
 
 const agentFields = {
+  skillIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate skill'),
+  mcpServerIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate MCP server'),
   name,
   avatarEmoji: z.string().trim().min(1).max(16),
   avatarColor: color,
@@ -227,6 +229,8 @@ const agentFields = {
 
 export const createAgentBody = z.strictObject({
   ...agentFields,
+  skillIds: agentFields.skillIds.default([]),
+  mcpServerIds: agentFields.mcpServerIds.default([]),
   avatarEmoji: agentFields.avatarEmoji.default('🤖'),
   avatarColor: agentFields.avatarColor.default('#6366f1'),
   description: agentFields.description.default(''),
@@ -241,6 +245,8 @@ export const createAgentBody = z.strictObject({
 export type CreateAgentBody = z.input<typeof createAgentBody>;
 
 export const updateAgentBody = z.strictObject({
+  skillIds: agentFields.skillIds.optional(),
+  mcpServerIds: agentFields.mcpServerIds.optional(),
   name: agentFields.name.optional(),
   avatarEmoji: agentFields.avatarEmoji.optional(),
   avatarColor: agentFields.avatarColor.optional(),
@@ -289,6 +295,13 @@ export const putEnvVarBody = z.strictObject({
   secret: z.boolean().default(false),
 });
 export type PutEnvVarBody = z.input<typeof putEnvVarBody>;
+
+/** A `.env` file whose variables are merged into the Project's: same names are overwritten, others kept. */
+export const importEnvBody = z.strictObject({
+  content: z.string().max(500_000),
+  secret: z.boolean().default(false),
+});
+export type ImportEnvBody = z.input<typeof importEnvBody>;
 
 // Errors
 

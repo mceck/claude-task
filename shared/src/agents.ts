@@ -49,6 +49,11 @@ export interface AgentRef {
 }
 
 export interface Agent extends AgentRef {
+  skillIds: string[];
+  mcpServerIds: string[];
+  skillCommands: import('./extensions').SkillCommand[];
+  extensionsPending: boolean;
+  extensionsError: string | null;
   description: string;
   dockerfile: string;
   credentialId: string;
@@ -102,6 +107,7 @@ export type JobState = (typeof JOB_STATES)[number];
 
 /** The current Session of a Task, as the Task view and its card show it. */
 export interface TaskSession {
+  commands?: import('./commands').ChatCommand[];
   id: string;
   agent: AgentRef;
   state: SessionState;

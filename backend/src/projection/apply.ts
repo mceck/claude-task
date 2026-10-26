@@ -107,7 +107,8 @@ export async function applyProjection(
         await tx.insert(rateLimitObservations).values({ credentialId, agentId: job.agentId, payload: m.info });
         break;
       case 'init':
-        await tx.update(jobs).set({ claudeVersion: m.claudeVersion, mcpServers: m.mcpServers }).where(eq(jobs.id, job.id));
+        await tx.update(jobs).set({ claudeVersion: m.claudeVersion, mcpServers: m.mcpServers, slashCommands: m.slashCommands }).where(eq(jobs.id, job.id));
+        after.effect((ctx) => ctx.scheduler.publishTask(job.taskId));
         break;
     }
   }

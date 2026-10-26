@@ -6,6 +6,7 @@ import type { AppContext } from '../context';
 import { agentBuilds, agents, jobs, queueEntries, sessions } from '../db/schema';
 import { ACTIVE_JOB_STATES, desiredContainerSpec, loadJobs, publishAgent, serializeBuild } from '../modules/agents/service';
 import { loadCommentsById } from '../modules/comments/service';
+import { agentExtensions } from '../modules/extensions/service';
 import { loadCard } from '../modules/tasks/service';
 import { recoverAbandonedJobs } from '../runner/handlers';
 import { newToken } from '../secrets';
@@ -249,6 +250,26 @@ export class Scheduler {
       await this.publishAgent(agentId);
       if (info.state === 'running') this.kick(agentId);
     }
+    if (info.state === 'running') {
+      const configured = await db.transaction(async (tx) => {
+        // The same lock excludes dispatch while files are synchronized.
+        const [current] = await tx.select().from(agents).where(eq(agents.id, agentId)).for('update');
+        if (!current || current.extensionsRevision === current.configuredExtensionsRevision) return false;
+        const [busy] = await tx.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
+        if (busy) return false;
+        try {
+          const extensions = await agentExtensions(tx, agentId);
+          await runtime.configureSkills(agentId, current.extensionsRevision, extensions.skills.map(({ name, files }) => ({ name, files })));
+          await tx.update(agents).set({ configuredExtensionsRevision: current.extensionsRevision, extensionsError: null }).where(eq(agents.id, agentId));
+          return true;
+        } catch (err) {
+          await tx.update(agents).set({ extensionsError: (err instanceof Error ? err.message : 'Could not configure skills').slice(0, 2000) }).where(eq(agents.id, agentId));
+          return false;
+        }
+      });
+      await this.publishAgent(agentId);
+      if (configured) this.kick(agentId);
+    }
   }
 
   private async recreate(agent: typeof agents.$inferSelect, desired: string): Promise<void> {
@@ -256,7 +277,7 @@ export class Scheduler {
     // A new token for every container: the old one stops working with the old container.
     await this.ctx.db
       .update(agents)
-      .set({ runnerTokenHash: hash, containerSpec: desired, forceRecreate: false, updatedAt: new Date() })
+      .set({ runnerTokenHash: hash, containerSpec: desired, forceRecreate: false, configuredExtensionsRevision: -1, updatedAt: new Date() })
       .where(eq(agents.id, agent.id));
     this.ctx.runners.disconnect(agent.id, 4002, 'container recreated');
     await this.ctx.runtime.createContainer(agent.id, {

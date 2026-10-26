@@ -7,7 +7,7 @@ because the available organization has exhausted its monthly spend limit; see
 
 ## Local development
 
-Use Node 22+, pnpm, PostgreSQL and a running Docker daemon. Copy `backend/.env.example` to
+Use Node 22.20+, pnpm, PostgreSQL and a running Docker daemon. Copy `backend/.env.example` to
 `backend/.env`. Set `DATABASE_URL`, the bootstrap admin details, and
 `SECRETS_MASTER_KEY` to the output of `openssl rand -base64 32`. Keep that key stable
 and backed up alongside the database: existing encrypted credentials need it.
@@ -69,6 +69,55 @@ Mise installs the declared tools/runtimes, not application packages: keep comman
 such as `pnpm install` or `bundle install` in the project setup script. Tool installs
 persist in the Agent Volume, and mise shims are on `PATH` for the runner, Claude and
 login shells, including when reusing a pre-existing home volume.
+
+## Shared skills and MCP servers
+
+Admins manage the catalog in **Skills & MCP**, then select entries in each Agent's
+configuration. Skill import uses the pinned `skills` CLI (`skills add <source>
+--skill <names> --agent claude-code --copy --yes`) in a temporary project. Sources
+accept `owner/repo`, HTTPS repository/directory links and SSH Git URLs, as supported
+by the CLI. Git authentication must be available to the backend process; the
+production backend image includes Git and OpenSSH. The existing project Git
+Connections are not used by the skills CLI.
+
+The catalog stores a snapshot of all imported files, including executable scripts
+and binary assets, limited to 10 MB / 1000 files per import. **Reimport** explicitly
+fetches newer content while retaining skill IDs and assignments. The CLI's lock
+state is isolated in the temporary directory. Secrets must not be embedded in
+source URLs.
+
+Assigned skills are synchronized into the persistent home and linked under
+`/home/agent/.claude/skills/`. Claude discovers them natively; no skill list or skill
+instructions are added to the platform's system prompt. Updates and unassignments
+wait until the Agent has no active Job, then apply without rebuilding its image or
+recreating its container. Files not managed by the platform are preserved; a name
+collision with an unmanaged skill reports an error instead of overwriting it.
+Recreated containers synchronize the catalog again. Pending changes and failures
+appear in the Agent view, and dispatch waits for successful synchronization.
+
+MCP entries support HTTP, SSE and stdio. Headers and stdio environment values may
+be secret: they are encrypted with `SECRETS_MASTER_KEY`, returned as redacted values,
+and resolved only into the new Job's MCP configuration. Saving an unchanged redacted
+secret preserves its value. The internal `claude-task` server is reserved and
+always added by the platform. Install stdio servers and their runtimes in the
+Agent's Dockerfile; commands execute inside the Agent container. Running Jobs keep
+their original MCP configuration. Assigned catalog entries must be unassigned before
+they can be deleted. Duplicating an Agent copies its catalog assignments.
+
+Web and mobile comment composers complete `/` commands for the assigned Agent,
+with filtering and descriptions. Skills with `user-invocable: false` stay hidden.
+The session's `system/init.slash_commands` list supplies native Claude commands,
+bundled skills, project commands and MCP prompts available in that environment.
+Before the first runtime report, the menu offers assigned skills plus the basic
+`compact`, `context` and `usage` commands. Commands that would replace the managed
+conversation or override Agent configuration are omitted. Native commands are
+suggested at the beginning of a message; skills can also be mentioned in a sentence.
+
+Native slash inputs run as standalone Jobs, in order with queued Comments. A first
+slash input gets the Task context through the system prompt so its command text
+reaches Claude unchanged. Local command output is shown in the Timeline once.
+The web menu supports arrows, Enter/Tab and Escape; mobile supports tap selection
+and preserves the surrounding draft and caret. Internal Notes do not offer commands.
 
 ## Automated checks
 

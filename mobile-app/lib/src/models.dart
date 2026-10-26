@@ -42,11 +42,23 @@ class Tag {
 class Agent {
   final String id, name, emoji;
   final bool enabled;
+  final List<SkillCommand> skillCommands;
   Agent.fromJson(Json json)
     : id = json['id'] as String,
       name = json['name'] as String,
       emoji = json['avatarEmoji'] as String? ?? '🤖',
-      enabled = json['enabled'] == true;
+      enabled = json['enabled'] == true,
+      skillCommands = objects(
+        json['skillCommands'],
+      ).map(SkillCommand.fromJson).toList();
+}
+
+class SkillCommand {
+  final String name, description, kind;
+  SkillCommand.fromJson(Json json)
+    : name = json['name'] as String,
+      description = json['description'] as String? ?? '',
+      kind = json['kind'] as String? ?? 'skill';
 }
 
 class Task {

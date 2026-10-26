@@ -11,6 +11,7 @@ import 'task_forms.dart';
 import 'ui/markdown.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
+import 'ui/skill_suggestions.dart';
 
 class Conversation extends StatefulWidget {
   final TaskController controller;
@@ -1573,6 +1574,21 @@ class _ComposerState extends State<Composer> {
                             ),
                         ],
                       ),
+                    ),
+                  if (!draft.internal)
+                    SkillSuggestions(
+                      text: _text,
+                      skills: c.session?['commands'] is List
+                          ? objects(
+                              c.session?['commands'],
+                            ).map(SkillCommand.fromJson).toList()
+                          : c.agents
+                                    .where((a) => a.id == c.task?.agentId)
+                                    .firstOrNull
+                                    ?.skillCommands ??
+                                [],
+                      onSelected: (value) =>
+                          c.setDraft(c.draft.copyWith(text: value)),
                     ),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.end,

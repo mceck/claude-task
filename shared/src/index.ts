@@ -7,3 +7,6 @@ export * from './runner';
 export * from './dockerfile';
 export * from './git';
 export * from './mobile';
+export * from './extensions';
+export * from './commands';
+export * from './dotenv';

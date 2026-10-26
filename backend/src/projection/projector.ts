@@ -23,6 +23,7 @@ export interface ProjectionState {
   retrying: boolean;
   /** Credential errors are reported once per Job. */
   credentialReported: boolean;
+  hasVisibleOutput?: boolean;
   nextId: number;
 }
 
@@ -48,7 +49,7 @@ export type Mutation =
   | { op: 'system_comment'; body: string }
   | { op: 'turn'; turn: TurnRecord }
   | { op: 'rate_limit'; info: Record<string, unknown> }
-  | { op: 'init'; claudeVersion: string | null; mcpServers: unknown[] };
+  | { op: 'init'; claudeVersion: string | null; mcpServers: unknown[]; slashCommands: string[] | null };
 
 export type Broadcast =
   | { type: 'live.delta'; delta: LiveDelta }
@@ -147,7 +148,8 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     if (e.subtype === 'init') {
       startTurn();
       const servers: Json[] = Array.isArray(e.mcp_servers) ? e.mcp_servers : [];
-      mutations.push({ op: 'init', claudeVersion: typeof e.claude_code_version === 'string' ? e.claude_code_version : null, mcpServers: servers });
+      mutations.push({ op: 'init', claudeVersion: typeof e.claude_code_version === 'string' ? e.claude_code_version : null, mcpServers: servers,
+        slashCommands: Array.isArray(e.slash_commands) ? e.slash_commands.filter((name: unknown): name is string => typeof name === 'string').slice(0, 1000) : null });
       // HTTP servers are still `pending` at init; only a definite failure is worth a comment.
       const tools = servers.find((m) => m?.name === TASK_MCP_SERVER);
       if (tools && ['failed', 'needs-auth'].includes(tools.status)) {
@@ -156,6 +158,9 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
           body: `The Task Tools server failed to load (${tools.status}), so the agent can't read or update tasks in this run.`,
         });
       }
+    } else if (e.subtype === 'local_command_output' && typeof e.content === 'string') {
+      const text = e.content.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').trim();
+      if (text) { mutations.push({ op: 'system_comment', body: text }); s.hasVisibleOutput = true; }
     } else if (e.subtype === 'api_retry') {
       const attempt = Number(e.attempt ?? 0);
       const maxRetries = Number(e.max_retries ?? 0);
@@ -189,6 +194,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
 
   function handleAssistant() {
     const content: Json[] = Array.isArray(e.message?.content) ? e.message.content : [];
+    if (content.some((b) => b?.type === 'text' && b.text)) s.hasVisibleOutput = true;
     // Messages the CLI makes up itself (spend limits, API errors) aren't the Agent talking.
     if (e.message?.model === '<synthetic>') {
       const text = content.filter((b) => b?.type === 'text').map((b) => String(b.text)).join('\n').trim();
@@ -305,7 +311,10 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       const detail = typeof e.result === 'string' && e.result.trim() ? e.result.trim() : null;
       const errors = Array.isArray(e.errors) ? e.errors.filter((x: unknown) => typeof x === 'string') : [];
       mutations.push({ op: 'system_comment', body: resultMessage(subtype, detail ?? errors.join('\n')) });
+    } else if (!s.hasVisibleOutput && s.toolCalls === 0 && typeof e.result === 'string' && e.result.trim()) {
+      mutations.push({ op: 'system_comment', body: e.result.trim() });
     }
+    s.hasVisibleOutput = false;
     s.turns++;
     s.turnStartedAt = null;
     s.toolCalls = 0;

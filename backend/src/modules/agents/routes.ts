@@ -25,6 +25,7 @@ import { retrySession, stopTurn } from '../../sessions/lifecycle';
 import { notifyAgent } from '../../sessions/notify';
 import { loadTaskSession } from '../../sessions/view';
 import { getAgentRow, loadAgent, loadAgents, loadBuilds, loadJobs, serializeBuild, taskRefs } from './service';
+import { agentExtensions, setAssignments } from '../extensions/service';
 
 const params = z.object({ id: z.uuid() });
 const entryParams = z.object({ id: z.uuid(), entryId: z.uuid() });
@@ -57,9 +58,14 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(createAgentBody, request.body);
     assertDockerfile(body.dockerfile);
     await assertCredential(ctx.db, body.credentialId);
-    const [row] = await ctx.db.insert(agents).values(body).returning();
-    ctx.scheduler.build(row!.id);
-    return reply.status(201).send({ agent: await loadAgent(ctx.db, connected, row!.id) });
+    const { skillIds, mcpServerIds, ...fields } = body;
+    const row = await ctx.db.transaction(async (tx) => {
+      const [created] = await tx.insert(agents).values(fields).returning();
+      await setAssignments(tx, created!.id, skillIds, mcpServerIds);
+      return created!;
+    });
+    ctx.scheduler.build(row.id);
+    return reply.status(201).send({ agent: await loadAgent(ctx.db, connected, row.id) });
   });
 
   app.patch('/agents/:id', admin, async (request) => {
@@ -68,9 +74,14 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (body.dockerfile !== undefined) assertDockerfile(body.dockerfile);
     if (body.credentialId !== undefined) await assertCredential(ctx.db, body.credentialId);
     const before = await getAgentRow(ctx.db, id);
-    await ctx.db.update(agents).set({ ...body, updatedAt: new Date() }).where(eq(agents.id, id));
+    const { skillIds, mcpServerIds, ...fields } = body;
+    await ctx.db.transaction(async (tx) => {
+      await getAgentRow(tx, id, { lock: true });
+      await tx.update(agents).set({ ...fields, updatedAt: new Date() }).where(eq(agents.id, id));
+      await setAssignments(tx, id, skillIds, mcpServerIds);
+    });
     if (body.dockerfile !== undefined && body.dockerfile !== before.dockerfile) ctx.scheduler.build(id);
-    else void ctx.scheduler.reconcile(id);
+    else void ctx.scheduler.reconcile(id).then(() => ctx.scheduler.kick(id), () => {});
     if (body.enabled) ctx.scheduler.kick(id);
     await ctx.scheduler.publishAgent(id);
     return { agent: await loadAgent(ctx.db, connected, id) };
@@ -169,6 +180,8 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
         enabled: source.enabled,
       })
       .returning();
+    const extensions = await agentExtensions(ctx.db, source.id);
+    await setAssignments(ctx.db, row!.id, extensions.skills.map((s) => s.id), extensions.mcpServers.map((s) => s.id));
     ctx.scheduler.build(row!.id);
     return reply.status(201).send({ agent: await loadAgent(ctx.db, connected, row!.id) });
   });

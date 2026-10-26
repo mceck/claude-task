@@ -302,6 +302,9 @@ export const agents = pgTable(
     effort: effortEnum('effort'),
     permissionMode: permissionModeEnum('permission_mode').notNull().default('bypassPermissions'),
     systemPrompt: text('system_prompt').notNull().default(''),
+    extensionsRevision: integer('extensions_revision').notNull().default(0),
+    configuredExtensionsRevision: integer('configured_extensions_revision').notNull().default(-1),
+    extensionsError: text('extensions_error'),
     cpuLimit: doublePrecision('cpu_limit'),
     memoryMb: integer('memory_mb'),
     enabled: boolean('enabled').notNull().default(true),
@@ -346,6 +349,39 @@ export const agentBuilds = pgTable(
   },
   (t) => [index('agent_builds_agent_idx').on(t.agentId, t.startedAt)],
 );
+
+export const skills = pgTable('skills', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull().unique(),
+  description: text('description').notNull(),
+  source: text('source').notNull(),
+  userInvocable: boolean('user_invocable').notNull().default(true),
+  files: jsonb('files').$type<import('@claude-task/shared').SkillFile[]>().notNull(),
+  contentHash: text('content_hash').notNull(),
+  updatedAt: updatedAt(),
+});
+
+export interface StoredMcpValue { value: string | null; ciphertext: string | null; last4: string | null }
+export const mcpServers = pgTable('mcp_servers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull().unique(),
+  description: text('description').notNull().default(''),
+  type: text('type').$type<'http' | 'sse' | 'stdio'>().notNull(),
+  url: text('url').notNull().default(''),
+  command: text('command').notNull().default(''),
+  args: jsonb('args').$type<string[]>().notNull().default([]),
+  headers: jsonb('headers').$type<Record<string, StoredMcpValue>>().notNull().default({}),
+  env: jsonb('env').$type<Record<string, StoredMcpValue>>().notNull().default({}),
+  updatedAt: updatedAt(),
+});
+export const agentSkills = pgTable('agent_skills', {
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
+  skillId: uuid('skill_id').notNull().references(() => skills.id, { onDelete: 'restrict' }),
+}, (t) => [primaryKey({ columns: [t.agentId, t.skillId] })]);
+export const agentMcpServers = pgTable('agent_mcp_servers', {
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
+  mcpServerId: uuid('mcp_server_id').notNull().references(() => mcpServers.id, { onDelete: 'restrict' }),
+}, (t) => [primaryKey({ columns: [t.agentId, t.mcpServerId] })]);
 
 export const projectEnvVars = pgTable(
   'project_env_vars',
@@ -440,6 +476,7 @@ export const jobs = pgTable(
     projection: jsonb('projection').$type<Record<string, unknown>>(),
     claudeVersion: text('claude_version'),
     mcpServers: jsonb('mcp_servers').$type<unknown[]>(),
+    slashCommands: jsonb('slash_commands').$type<string[]>(),
     setupOutput: text('setup_output').notNull().default(''),
     stderr: text('stderr').notNull().default(''),
     exitCode: integer('exit_code'),

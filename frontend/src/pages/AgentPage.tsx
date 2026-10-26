@@ -115,6 +115,8 @@ function AgentDetail({ agent }: { agent: Agent }) {
             Container recreation is waiting for the current job to finish.
           </p>
         )}
+        {agent.extensionsPending && <p role="status" className="w-full text-muted-foreground">Skills and MCP changes will apply before the next job.</p>}
+        {agent.extensionsError && <p role="alert" className="w-full text-destructive">{agent.extensionsError}</p>}
         {admin && (
           <div className="flex w-full flex-wrap gap-2 border-t pt-3">
             <Button variant="outline" size="sm" disabled={busy || agent.state === 'building'} onClick={() => action('rebuild')}>

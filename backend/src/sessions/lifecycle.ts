@@ -1,7 +1,7 @@
 // Session lifecycle rules (Spec 02): Assignment, unassignment, reassignment, closing and
 // reopening a Task, and how a User's Comment reaches the Agent. Lock order everywhere:
 // project → task → agents (by id) → session → job → queue entries.
-import { taskKey } from '@claude-task/shared';
+import { commandName, taskKey } from '@claude-task/shared';
 import { and, asc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../context';
 import type { Executor } from '../db/client';
@@ -224,7 +224,9 @@ export async function deliverComment(
   }
 
   const job = await activeJob(tx, session.id, true);
-  if (job && job.state === 'running' && after.ctx.runners.isConnected(job.agentId)) {
+  // Native commands run at a Job boundary, after the active response has finished.
+  const waiting = await getEntry(tx, task.agentId, task.id);
+  if (job && job.state === 'running' && !waiting && !commandName(comment.body) && after.ctx.runners.isConnected(job.agentId)) {
     const parts = await renderComments(after.ctx, tx, [comment]);
     await setDelivery('delivered', null, job.id);
     if (comment.noticeTaskVersion !== null) {

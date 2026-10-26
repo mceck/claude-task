@@ -40,6 +40,8 @@ export const keys = {
   usage: (agentId: string) => ['usage', agentId] as const,
   logs: (agentId: string) => ['logs', agentId] as const,
   credentials: ['credentials'] as const,
+  skills: ['skills'] as const,
+  mcpServers: ['mcp-servers'] as const,
   agentSettings: (projectId: string) => ['agent-settings', projectId] as const,
 };
 
@@ -153,6 +155,13 @@ export function useContainerLogs(agentId: string, enabled: boolean) {
 
 export function useCredentials(enabled = true) {
   return useQuery({ queryKey: keys.credentials, queryFn: () => get<{ credentials: Credential[] }>('/credentials').then((r) => r.credentials), enabled });
+}
+
+export function useSkills() {
+  return useQuery({ queryKey: keys.skills, queryFn: () => get<{ skills: import('@claude-task/shared').Skill[] }>('/skills').then((r) => r.skills) });
+}
+export function useMcpServers() {
+  return useQuery({ queryKey: keys.mcpServers, queryFn: () => get<{ mcpServers: import('@claude-task/shared').McpServer[] }>('/mcp-servers').then((r) => r.mcpServers) });
 }
 
 export function useTaskSession(taskId: string | undefined) {

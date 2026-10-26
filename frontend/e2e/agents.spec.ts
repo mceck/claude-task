@@ -56,6 +56,70 @@ async function assignAndStart(page: Page, agentName: string) {
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
 }
 
+test('completes assigned skills in the chat with keyboard, click, and Escape', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Slash commands');
+  const agent = await seedAgent(page.request, 'Skill agent');
+  await page.route(`**/api/v1/tasks/${task.id}/session`, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (body.session) body.session.commands = [{ name: 'review', description: 'Review changes', kind: 'skill' }, { name: 'release', description: 'Prepare release', kind: 'skill' }, { name: 'compact', description: 'Summarize conversation history', kind: 'claude' }];
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto(`/t/${task.key}`);
+  const assigned = page.waitForResponse((r) => r.url().endsWith(`/tasks/${task.id}`) && r.request().method() === 'PATCH' && r.status() === 200);
+  await assign(page, agent.name);
+  await assigned;
+  await page.reload();
+  const composer = page.getByRole('textbox', { name: 'Comment', exact: true });
+  await composer.fill('/');
+  await expect(page.getByRole('listbox', { name: 'Chat commands' })).toBeVisible();
+  await composer.press('ArrowDown');
+  await composer.press('Enter');
+  await expect(composer).toHaveValue('/release ');
+  await composer.fill('Please /rev');
+  await page.getByRole('option', { name: /^\/review/ }).click();
+  await expect(composer).toHaveValue('Please /review ');
+  await composer.fill('/re');
+  await composer.press('Escape');
+  await expect(page.getByRole('listbox', { name: 'Chat commands' })).toBeHidden();
+  await expect(composer).toHaveValue('/re');
+  await composer.fill('src/re');
+  await expect(page.getByRole('listbox', { name: 'Chat commands' })).toBeHidden();
+  await composer.fill('/comp');
+  await expect(page.getByRole('option', { name: /^\/compact/ })).toBeVisible();
+  await composer.press('Tab');
+  await expect(composer).toHaveValue('/compact ');
+  await composer.fill('/review authentication');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'Timeline' }).getByText('/review authentication', { exact: true })).toBeVisible();
+});
+
+test('manages MCP servers without exposing saved secrets', async ({ page }) => {
+  await login(page.request);
+  await page.goto('/admin/extensions');
+  await page.getByRole('button', { name: 'Add MCP server', exact: true }).click();
+  const name = `search-${Date.now()}`;
+  await page.getByLabel('MCP server name').fill(name);
+  await page.getByLabel('MCP URL').fill('https://mcp.example.com');
+  await page.getByRole('button', { name: 'Add headers', exact: true }).click();
+  await page.getByLabel('Headers name 1').fill('Authorization');
+  await page.getByLabel('Headers value 1').fill('Bearer test-secret-1234');
+  await page.getByRole('checkbox', { name: 'Secret', exact: true }).check();
+  await page.getByRole('button', { name: 'Save MCP server', exact: true }).click();
+  const server = page.locator('article').filter({ has: page.getByRole('heading', { name: `${name} http`, exact: true }) });
+  await expect(server).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('test-secret-1234');
+  await server.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByLabel('Headers value 1')).toHaveValue('');
+  await page.getByLabel('MCP description').fill('Updated configuration');
+  await page.getByRole('button', { name: 'Save MCP server', exact: true }).click();
+  await expect(server).toContainText('Updated configuration');
+  await server.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(server).toBeHidden();
+});
+
 test('creates and rotates write-only credentials, configures an agent and reads build/container logs', async ({ page }) => {
   await login(page.request);
   await page.goto('/admin/credentials');
@@ -140,7 +204,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await page.getByRole('button', { name: 'Exit full screen' }).click();
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Include the logout flow.');
+  await page.getByRole('textbox', { name: 'editable markdown', exact: true }).fill('Include the logout flow.');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Notify agent' })).toBeVisible();
   await page.getByRole('button', { name: 'Notify agent' }).click();
@@ -219,6 +283,26 @@ test('saves project setup, instructions and write-only environment secrets', asy
   await expect(page.getByLabel('Agent instructions')).toHaveValue('Always add regression tests.');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByLabel('Variable value')).toHaveValue('');
+});
+
+test('imports a .env file and merges it with the existing variables', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  await page.goto(`/p/${project.key}/settings`);
+  await page.getByRole('tab', { name: 'Agents', exact: true }).click();
+  await page.getByLabel('Variable name').fill('KEEP_ME');
+  await page.getByLabel('Variable value').fill('kept');
+  await page.getByRole('button', { name: 'Add variable', exact: true }).click();
+  await expect(page.getByText('kept', { exact: true })).toBeVisible();
+  await page.getByLabel('.env file').setInputFiles({ name: '.env', mimeType: 'text/plain', buffer: Buffer.from('# staging\nKEEP_ME=replaced\nAPI_URL="https://staging.example.com"\n') });
+  await expect(page.getByRole('list', { name: 'Variables to import' })).toContainText('KEEP_ME· overwrites');
+  await page.getByRole('button', { name: 'Import 2 variables' }).click();
+  await expect(page.getByText('Imported 2 variables')).toBeVisible();
+  await expect(page.getByText('https://staging.example.com', { exact: true })).toBeVisible();
+  await expect(page.getByText('replaced', { exact: true })).toBeVisible();
+  await page.getByLabel('.env content').fill('not a variable');
+  await expect(page.getByText('Line 1: expected NAME=value')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeDisabled();
 });
 
 test('shows setup failures and retries the same session only on request', async ({ page }) => {

@@ -22,6 +22,7 @@ import { statusRoutes } from './modules/statuses/routes';
 import { taskRoutes } from './modules/tasks/routes';
 import { userRoutes } from './modules/users/routes';
 import { agentRoutes } from './modules/agents/routes';
+import { extensionRoutes } from './modules/extensions/routes';
 import { credentialRoutes } from './modules/credentials/routes';
 import { agentSettingsRoutes } from './modules/projects/agent-settings';
 import { mcpRoutes } from './mcp/server';
@@ -77,6 +78,7 @@ export async function buildApp(
       credentialRoutes(api, ctx);
       gitRoutes(api, ctx);
       agentRoutes(api, ctx);
+      extensionRoutes(api, ctx);
       agentSettingsRoutes(api, ctx);
       realtimeRoutes(api, ctx);
       runnerRoutes(api, ctx);

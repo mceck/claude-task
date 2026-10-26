@@ -1,12 +1,13 @@
+import { parseDotenv } from '@claude-task/shared';
 import type { ProjectAgentSettings as Settings, ProjectEnvVar } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { del, errorMessage, patch, put } from '../api/client';
+import { del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useAgentSettings, useMe } from '../api/queries';
 import { Field } from './AgentForm';
 import { ErrorText, Loading, useConfirm } from './common';
@@ -171,7 +172,107 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
             </div>
           </form>
         )}
+        {admin && <EnvImport projectId={projectId} env={settings.env} busy={busy} run={run} />}
       </section>
     </div>
+  );
+}
+
+const MAX_ENV_FILE = 500_000;
+
+/** Paste or pick a `.env` file; its variables are merged into the Project's (same names overwritten). */
+function EnvImport({
+  projectId,
+  env,
+  busy,
+  run,
+}: {
+  projectId: string;
+  env: ProjectEnvVar[];
+  busy: boolean;
+  run: (fn: () => Promise<{ settings: Settings }>) => Promise<boolean>;
+}) {
+  const [content, setContent] = useState('');
+  const [secret, setSecret] = useState(false);
+  const parsed = useMemo(() => (content.trim() ? parseDotenv(content) : null), [content]);
+  const existing = useMemo(() => new Map(env.map((e) => [e.name, e])), [env]);
+  const pickFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > MAX_ENV_FILE) {
+      toast.error('The .env file is too large');
+      return;
+    }
+    setContent(await file.text());
+  };
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!parsed?.ok) return;
+    if (await run(() => post(`/projects/${projectId}/env/import`, { content, secret }))) {
+      toast.success(`Imported ${parsed.entries.length} ${parsed.entries.length === 1 ? 'variable' : 'variables'}`);
+      setContent('');
+      setSecret(false);
+    }
+  };
+  return (
+    <form onSubmit={submit} className="space-y-3 border-t pt-4">
+      <h3 className="text-sm font-medium">Import .env</h3>
+      <p className="text-sm text-muted-foreground">Variables are merged with the existing ones: same names are overwritten, others are kept. Existing secrets stay secret.</p>
+      <Field label=".env content">
+        <Textarea
+          aria-label=".env content"
+          rows={6}
+          className="font-mono text-xs"
+          placeholder={'API_URL=https://staging.example.com\nDB_PASSWORD="…"'}
+          autoComplete="off"
+          spellCheck={false}
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          maxLength={MAX_ENV_FILE}
+        />
+      </Field>
+      {parsed &&
+        (parsed.ok ? (
+          parsed.entries.length ? (
+            <ul aria-label="Variables to import" className="flex flex-wrap gap-1.5 text-xs">
+              {parsed.entries.map(({ name }) => (
+                <li key={name} className="rounded-md border px-1.5 py-0.5 font-mono">
+                  {name}
+                  {existing.has(name) && <span className="ml-1 font-sans text-muted-foreground">{existing.get(name)!.secret ? '· overwrites secret' : '· overwrites'}</span>}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No variables found.</p>
+          )
+        ) : (
+          <ul className="space-y-0.5 text-sm text-destructive">
+            {parsed.errors.map((err) => (
+              <li key={err}>{err}</li>
+            ))}
+          </ul>
+        ))}
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={secret} onChange={(e) => setSecret(e.target.checked)} /> Import as secrets
+      </label>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" asChild>
+          <label className="cursor-pointer">
+            Choose file
+            <input
+              aria-label=".env file"
+              type="file"
+              className="sr-only"
+              onChange={(e) => {
+                void pickFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </Button>
+        <Button type="submit" disabled={busy || !parsed?.ok || !parsed.entries.length}>
+          {parsed?.ok && parsed.entries.length ? `Import ${parsed.entries.length} ${parsed.entries.length === 1 ? 'variable' : 'variables'}` : 'Import'}
+        </Button>
+      </div>
+    </form>
   );
 }

@@ -7,6 +7,7 @@ import Docker from 'dockerode';
 import { pack } from 'tar-stream';
 import type { AgentsConfig } from '../config';
 import { agentImageRepo, containerName, volumeName } from './runtime';
+import { skillArchive } from './skill-files';
 import type { AgentRuntime, BuildResult, ContainerInfo, ContainerSpec } from './runtime';
 
 const AGENT_HOME = '/home/agent';
@@ -91,6 +92,18 @@ export class DockerRuntime implements AgentRuntime {
 
   async restartContainer(agentId: string): Promise<void> {
     await this.docker.getContainer(containerName(agentId)).restart();
+  }
+
+  async configureSkills(agentId: string, revision: number, skills: import('@claude-task/shared').InstalledSkill[]): Promise<void> {
+    const { archive, script } = await skillArchive(revision, skills);
+    const container = this.docker.getContainer(containerName(agentId));
+    await container.putArchive(archive, { path: AGENT_HOME });
+    const exec = await container.exec({ Cmd: ['/bin/bash', '-c', script], User: 'agent', AttachStdout: true, AttachStderr: true });
+    const stream = await exec.start({ hijack: true, stdin: false });
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    const result = await exec.inspect();
+    if (result.ExitCode !== 0) throw new Error(demux(Buffer.concat(chunks)).trim() || 'Could not configure agent skills');
   }
 
   async removeAgent(agentId: string): Promise<void> {

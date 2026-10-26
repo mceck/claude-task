@@ -233,6 +233,55 @@ describe('project settings for Agents', () => {
     expect((await admin.delete(`/projects/${project.id}/env/NODE_ENV`)).status).toBe(200);
   });
 
+  it('merges an imported .env file into the existing variables', async () => {
+    const admin = await app.admin();
+    const { client: member } = await createUser(app, admin);
+    const { project } = await createProject(admin);
+    await admin.put(`/projects/${project.id}/env/KEEP_ME`, { value: 'kept' });
+    await admin.put(`/projects/${project.id}/env/API_URL`, { value: 'https://old.example.com' });
+    await admin.put(`/projects/${project.id}/env/DB_PASSWORD`, { value: 'old-secret', secret: true });
+    const content = [
+      '﻿# Staging',
+      'API_URL=https://staging.example.com/#frag # comment',
+      'export NODE_ENV = "production"',
+      "SINGLE='a \\n b'",
+      'MULTI="line1\\nline2',
+      'line3"',
+      'EMPTY=',
+      'DB_PASSWORD=new-secret-value',
+      'NODE_ENV=test',
+      '',
+    ].join('\r\n');
+    const res = await admin.post(`/projects/${project.id}/env/import`, { content });
+    expect(res.status).toBe(200);
+    expect(res.body.settings.env).toEqual([
+      { id: expect.any(String), name: 'API_URL', secret: false, value: 'https://staging.example.com/#frag', last4: null },
+      // A secret is never downgraded to plain by an import.
+      { id: expect.any(String), name: 'DB_PASSWORD', secret: true, value: null, last4: 'alue' },
+      { id: expect.any(String), name: 'EMPTY', secret: false, value: '', last4: null },
+      { id: expect.any(String), name: 'KEEP_ME', secret: false, value: 'kept', last4: null },
+      { id: expect.any(String), name: 'MULTI', secret: false, value: 'line1\nline2\nline3', last4: null },
+      { id: expect.any(String), name: 'NODE_ENV', secret: false, value: 'test', last4: null },
+      { id: expect.any(String), name: 'SINGLE', secret: false, value: 'a \\n b', last4: null },
+    ]);
+
+    const secrets = await admin.post(`/projects/${project.id}/env/import`, { content: 'TOKEN=tok_abcdef1234\nKEEP_ME=now-secret', secret: true });
+    const env = secrets.body.settings.env;
+    expect(env.find((e: { name: string }) => e.name === 'TOKEN')).toMatchObject({ secret: true, value: null, last4: '1234' });
+    expect(env.find((e: { name: string }) => e.name === 'KEEP_ME')).toMatchObject({ secret: true, value: null });
+    expect(JSON.stringify(secrets.body)).not.toContain('tok_abcdef');
+
+    const bad = await admin.post(`/projects/${project.id}/env/import`, { content: 'OK=1\nnot a variable\n1BAD=x\nQ="open' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.details.errors).toEqual(['Line 2: expected NAME=value', 'Line 3: 1BAD is not a valid variable name', 'Line 4: unterminated " quote']);
+    expect((await admin.post(`/projects/${project.id}/env/import`, { content: 'OK=1\nANTHROPIC_API_KEY=x' })).status).toBe(400);
+    expect((await admin.post(`/projects/${project.id}/env/import`, { content: '# nothing' })).status).toBe(400);
+    expect((await member.post(`/projects/${project.id}/env/import`, { content: 'X=1' })).status).toBe(403);
+    // Rejected imports write nothing.
+    const after = (await admin.get(`/projects/${project.id}/agent-settings`)).body.settings.env;
+    expect(after.map((e: { name: string }) => e.name)).not.toContain('OK');
+  });
+
   it('lets members write the Setup Script and Agent Instructions', async () => {
     const admin = await app.admin();
     const { client: member } = await createUser(app, admin);
