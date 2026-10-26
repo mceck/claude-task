@@ -47,6 +47,10 @@ dependencies:
   crypto: ^3.0.7
   http_parser: ^4.1.2
   flutter_markdown_plus: ^1.0.12
+  # Upgrade together with the Flutter 3.38 toolchain.
+  fleather: 1.26.0
+  markdown: ^7.3.0
+  parchment: ^1.26.0
 
 dev_dependencies:
   integration_test:

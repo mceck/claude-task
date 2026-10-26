@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fleather/fleather.dart' show FleatherLocalizations;
 import 'api.dart' as api;
 import 'auth_view.dart';
 import 'controller.dart';
@@ -39,6 +40,7 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
     title: 'Claude Task',
     debugShowCheckedModeBanner: false,
     theme: buildTheme(),
+    localizationsDelegates: const [FleatherLocalizations.delegate],
     home: AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) {
