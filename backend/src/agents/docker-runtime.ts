@@ -261,7 +261,8 @@ async function execIn(container: Docker.Container, cmd: string[]): Promise<{ exi
     Cmd: cmd,
     User: 'agent',
     WorkingDir: AGENT_HOME,
-    Env: [`HOME=${AGENT_HOME}`, 'GIT_TERMINAL_PROMPT=0'],
+    // Execs inherit the container's env: blank the Runner token for the code they run (plugins).
+    Env: [`HOME=${AGENT_HOME}`, 'GIT_TERMINAL_PROMPT=0', 'CLAUDE_TASK_RUNNER_TOKEN='],
     AttachStdout: true,
     AttachStderr: true,
   });
