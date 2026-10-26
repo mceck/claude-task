@@ -19,12 +19,13 @@ import type { Executor } from '../../db/client';
 import { agentBuilds, agents, credentials, jobs, queueEntries, sessions } from '../../db/schema';
 import { badRequest, conflict, HttpError, notFound, parse } from '../../errors';
 import { latestRateLimits } from '../credentials/service';
-import { getTaskRow } from '../tasks/service';
+import { getTaskRow, unassignDeletedAgent } from '../tasks/service';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { retrySession, stopTurn } from '../../sessions/lifecycle';
 import { notifyAgent } from '../../sessions/notify';
 import { loadTaskSession } from '../../sessions/view';
 import { getAgentRow, loadAgent, loadAgents, loadBuilds, loadJobs, serializeBuild, taskRefs } from './service';
+import type { AgentRow } from './service';
 import { agentExtensions, setAssignments } from '../extensions/service';
 import { idOrKey } from '../../ids';
 
@@ -146,7 +147,9 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.delete('/agents/:id', admin, async (request, reply) => {
     const { id } = parse(params, request.params);
     const avatarBlobId = (await getAgentRow(ctx.db, id)).avatarBlobId;
-    await ctx.db.transaction(async (tx) => {
+    const actor = userActor(currentUser(request));
+    await transact(ctx, async (tx, after) => {
+      await unassignDeletedAgent(tx, after, id, actor);
       await getAgentRow(tx, id, { lock: true });
       const open = await tx
         .select({ taskId: sessions.taskId })
@@ -169,37 +172,46 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     const { name } = parse(duplicateAgentBody, request.body ?? {});
     const source = await getAgentRow(ctx.db, id);
-    // Blobs are owned by one row, so the copy gets its own.
+    // Blobs are owned by one row, so the copy gets its own (removed again if the copy fails).
     const original = source.avatarBlobId ? await ctx.blobs.get(source.avatarBlobId) : null;
     const avatarBlobId = original ? (await ctx.blobs.put(original.stream, original.metadata)).id : null;
-    const [row] = await ctx.db
-      .insert(agents)
-      .values({
-        name: name ?? `${source.name} (copy)`,
-        avatarEmoji: source.avatarEmoji,
-        avatarColor: source.avatarColor,
-        avatarBlobId,
-        description: source.description,
-        dockerfile: source.dockerfile,
-        services: source.services,
-        credentialId: source.credentialId,
-        model: source.model,
-        effort: source.effort,
-        permissionMode: source.permissionMode,
-        systemPrompt: source.systemPrompt,
-        cpuLimit: source.cpuLimit,
-        memoryMb: source.memoryMb,
-        enabled: source.enabled,
-      })
-      .returning();
-    const extensions = await agentExtensions(ctx.db, source.id);
-    await setAssignments(ctx.db, row!.id, {
-      skillIds: extensions.skills.map((s) => s.id),
-      mcpServerIds: extensions.mcpServers.map((s) => s.id),
-      pluginIds: extensions.plugins.map((p) => p.id),
-    });
-    ctx.scheduler.build(row!.id);
-    return reply.status(201).send({ agent: await loadAgent(ctx.db, connected, row!.id) });
+    let row: AgentRow;
+    try {
+      row = await ctx.db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(agents)
+          .values({
+            name: name ?? (await copyName(tx, source.name)),
+            avatarEmoji: source.avatarEmoji,
+            avatarColor: source.avatarColor,
+            avatarBlobId,
+            description: source.description,
+            dockerfile: source.dockerfile,
+            services: source.services,
+            credentialId: source.credentialId,
+            model: source.model,
+            effort: source.effort,
+            permissionMode: source.permissionMode,
+            systemPrompt: source.systemPrompt,
+            cpuLimit: source.cpuLimit,
+            memoryMb: source.memoryMb,
+            enabled: source.enabled,
+          })
+          .returning();
+        const extensions = await agentExtensions(tx, source.id);
+        await setAssignments(tx, created!.id, {
+          skillIds: extensions.skills.map((s) => s.id),
+          mcpServerIds: extensions.mcpServers.map((s) => s.id),
+          pluginIds: extensions.plugins.map((p) => p.id),
+        });
+        return created!;
+      });
+    } catch (err) {
+      if (avatarBlobId) await ctx.blobs.delete(avatarBlobId);
+      throw err;
+    }
+    ctx.scheduler.build(row.id);
+    return reply.status(201).send({ agent: await loadAgent(ctx.db, connected, row.id) });
   });
 
   app.post('/agents/:id/rebuild', admin, async (request) => {
@@ -382,5 +394,15 @@ async function receiveAvatar(ctx: AppContext, request: FastifyRequest): Promise<
       throw avatarTooLarge();
     }
     throw err;
+  }
+}
+
+/** `<name> (copy)`, then `(copy 2)`, … : the first one free, within the 100-character limit. */
+async function copyName(db: Executor, source: string): Promise<string> {
+  const taken = new Set((await db.select({ name: agents.name }).from(agents)).map((a) => a.name.toLowerCase()));
+  for (let n = 1; ; n++) {
+    const suffix = n === 1 ? ' (copy)' : ` (copy ${n})`;
+    const candidate = `${source.slice(0, 100 - suffix.length).trimEnd()}${suffix}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
   }
 }

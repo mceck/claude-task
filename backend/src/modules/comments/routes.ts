@@ -45,9 +45,14 @@ export function commentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { files } = await receiveMultipart(ctx, request);
     if (files.length === 0) throw badRequest('Missing file');
     try {
-      const freed = await pruneTaskAttachments(ctx.db, task.id);
+      // The Task's lock makes pruning, counting and inserting one step for concurrent uploads.
+      const { freed, created } = await ctx.db.transaction(async (tx) => {
+        await getTaskRow(tx, task.id, { lock: true });
+        const freed = await pruneTaskAttachments(tx, task.id);
+        return { freed, created: await createTaskAttachments(tx, task.id, files) };
+      });
       await Promise.all(freed.map((blobId) => ctx.blobs.delete(blobId)));
-      return reply.status(201).send({ attachments: await createTaskAttachments(ctx.db, task.id, files) });
+      return reply.status(201).send({ attachments: created });
     } catch (err) {
       await Promise.all(files.map((f) => ctx.blobs.delete(f.blobId)));
       throw err;

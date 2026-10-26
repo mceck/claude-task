@@ -609,7 +609,7 @@ describe('Session lifecycle', () => {
 
   // Deleting would drop the Job's row while `claude` keeps running with the Task's secrets,
   // and the Runner would refuse every later Job of the Agent as "another job is running".
-  it('refuses deleting a Task, or its Project, while a Job works on it', async () => {
+  it('refuses deleting a Task, or its Project, while a Job works on it, and removes the Worktree once deleted', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const member = await createUser(app, admin, { role: 'member' });
     const task = await createTask(admin, project.id);
@@ -627,12 +627,37 @@ describe('Session lifecycle', () => {
 
     await runner.exit(start.jobId);
     expect((await member.client.delete(`/tasks/${task.id}`)).status).toBe(204);
+    expect(await runner.next('worktree.remove')).toMatchObject({ worktreePath: start.worktreePath });
     expect((await admin.delete(`/projects/${project.id}`)).status).toBe(204);
   });
 });
 
 describe('the Queue', () => {
   const app = useTestApp();
+
+  it('deleting the only queued Comment of a Task drops its entry instead of starting a Job for nothing', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const [busy, started, fresh] = await Promise.all(['Busy', 'Started', 'Fresh'].map((title) => createTask(admin, project.id, { title })));
+    await startAndFinish(admin, runner, started!.id, agent.id);
+    await assignAndStart(admin, busy!.id, agent.id);
+    const working = await runner.next('job.start', (m) => texts(m.initialMessage).includes(busy!.key));
+    runner.accept(working.jobId);
+    await runner.drain();
+
+    const followUp = await comment(admin, started!.id, 'Oops, wrong task');
+    await assignAgent(admin, fresh!.id, agent.id);
+    const trigger = await comment(admin, fresh!.id, 'Never mind');
+    expect((await getSession(admin, fresh!.id))?.queuePosition).not.toBeNull();
+    for (const c of [followUp, trigger]) expect((await admin.delete(`/comments/${c.id}`)).status).toBe(204);
+    expect(await getSession(admin, started!.id)).toMatchObject({ state: 'idle', queuePosition: null });
+    expect(await getSession(admin, fresh!.id)).toMatchObject({ state: 'pending', queuePosition: null });
+
+    await runner.play(working.jobId, [new Stream(working.sessionId).init(), new Stream(working.sessionId).result()]);
+    await runner.next('job.end', (m) => m.jobId === working.jobId);
+    await runner.exit(working.jobId);
+    await app.settle();
+    expect(runner.messages('job.start')).toHaveLength(2);
+  });
 
   it('members reorder entries and remove them; removed Comments become not delivered', async () => {
     const { admin, project, agent, runner } = await setup(app);
@@ -809,6 +834,25 @@ describe('Runner output and attachment isolation', () => {
       runner.accept(start.jobId);
       const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, agent.id)}` } };
       expect((await app.client().get(`/runner/attachments/${file.id}`, opts)).status).toBe(404);
+    });
+
+    it('keeps the per-Task limit under concurrent uploads', async () => {
+      const { admin, project } = await setup(app);
+      const task = await createTask(admin, project.id);
+      const first = await uploadToTask(admin, task.id, 'a.txt', 'text/plain', 'x');
+      await app.server.ctx.db.execute(sql`
+        insert into attachments (task_id, blob_id, filename, content_type, size)
+        select task_id, blob_id, filename, content_type, size from attachments, generate_series(1, 98) where id = ${first.id}::uuid`);
+      const uploads = await Promise.all(
+        Array.from({ length: 6 }, () => {
+          const form = new FormData();
+          form.append('files', new Blob(['y'], { type: 'text/plain' }), 'b.txt');
+          return admin.request('POST', `/tasks/${task.id}/attachments`, { form });
+        }),
+      );
+      expect(uploads.filter((r) => r.status === 201)).toHaveLength(1);
+      const { rows } = await app.server.ctx.db.execute<{ n: number }>(sql`select count(*)::int as n from attachments where task_id = ${task.id}::uuid`);
+      expect(rows[0]!.n).toBe(100);
     });
 
     it('removes the files with the task', async () => {

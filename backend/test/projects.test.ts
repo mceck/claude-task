@@ -148,6 +148,23 @@ describe('statuses', () => {
     expect(res.body.status).toMatchObject({ name: 'Ready', color: '#abcdef', category: 'open' });
   });
 
+  it('answers edits racing a deletion of the same status or tag with 404, never 500', async () => {
+    const admin = await app.admin();
+    const bundle = await createProject(admin);
+    const todo = statusByName(bundle, 'Backlog');
+    for (let i = 0; i < 8; i++) {
+      const status = (await admin.post(`/projects/${bundle.project.id}/statuses`, { name: `Race ${i}`, color: '#123456', category: 'open' })).body.status;
+      const tag = (await admin.post(`/projects/${bundle.project.id}/tags`, { name: `race-${i}`, color: '#123456' })).body.tag;
+      const results = await Promise.all([
+        admin.patch(`/statuses/${status.id}`, { name: `Renamed ${i}` }),
+        admin.delete(`/statuses/${status.id}?targetStatusId=${todo.id}`),
+        admin.patch(`/tags/${tag.id}`, { name: `renamed-${i}` }),
+        admin.delete(`/tags/${tag.id}`),
+      ]);
+      for (const r of results) expect([200, 204, 404]).toContain(r.status);
+    }
+  });
+
   it('keeps names unique within a project, ignoring case', async () => {
     const admin = await app.admin();
     const bundle = await createProject(admin);

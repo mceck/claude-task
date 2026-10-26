@@ -1,12 +1,12 @@
 // An Agent's Queue: one entry per Task, ordered by fractional position. Callers hold the
 // Agent's row lock, which serializes every change to its Queue.
 import type { QueueEntry, QueueEntryKind } from '@claude-task/shared';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import type { AfterCommit } from '../context';
 import type { Executor } from '../db/client';
 import { comments, queueEntries } from '../db/schema';
-import { taskRefs } from '../modules/agents/service';
+import { lockAgents, taskRefs } from '../modules/agents/service';
 
 export type EntryRow = typeof queueEntries.$inferSelect;
 
@@ -79,6 +79,21 @@ export async function attachComments(tx: Executor, after: AfterCommit, entryId: 
     })
     .where(inArray(comments.id, commentIds));
   after.effect((ctx) => ctx.scheduler.publishComments(commentIds));
+}
+
+/**
+ * After a queued Comment was deleted: an entry left with nothing to deliver is dropped, so no
+ * Job starts for it. Entries that resume an interrupted Turn stand on their own.
+ */
+export async function dropIfEmpty(tx: Executor, after: AfterCommit, entryId: string): Promise<void> {
+  const [entry] = await tx.select().from(queueEntries).where(eq(queueEntries.id, entryId)).for('update');
+  if (!entry || entry.kind === 'resume_interrupted') return;
+  const [live] = await tx
+    .select({ id: comments.id })
+    .from(comments)
+    .where(and(eq(comments.queueEntryId, entry.id), isNull(comments.deletedAt)))
+    .limit(1);
+  if (!live) await removeEntry(tx, after, entry, 'comment deleted');
 }
 
 /** Drops the entry; its undelivered Comments become `not_delivered` with the reason. */

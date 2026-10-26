@@ -53,6 +53,7 @@ export function fromDatabaseError(err: unknown): HttpError | null {
     return new HttpError(409, 'retry', 'The request clashed with a concurrent change; please retry');
   }
   if (e.code === '22P02') return badRequest('Malformed identifier');
+  if (e.code === '22007' || e.code === '22008') return badRequest('Malformed date');
   return null;
 }
 

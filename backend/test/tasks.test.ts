@@ -414,6 +414,13 @@ describe('tasks', () => {
     it('rejects a malformed cursor', async () => {
       const task = await createTask(admin, projectId);
       expect((await admin.get(`/tasks/${task.id}/timeline?before=nonsense`)).status).toBe(400);
+      const forged = (c: unknown) => Buffer.from(JSON.stringify(c)).toString('base64url');
+      for (const c of [
+        { t: 'not a date', k: 'comment', id: task.id },
+        { t: new Date().toISOString(), k: 'comment', id: 'not-a-uuid' },
+      ]) {
+        expect((await admin.get(`/tasks/${task.id}/timeline?before=${forged(c)}`)).status).toBe(400);
+      }
     });
   });
 });

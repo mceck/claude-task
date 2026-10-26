@@ -17,7 +17,7 @@ import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
 import { agents, jobs, tags, projects, statuses, taskAssignees, taskTags, taskRevisions, tasks, users } from '../../db/schema';
-import { onTaskChanged } from '../../sessions/lifecycle';
+import { onTaskChanged, removeDeletedWorktrees } from '../../sessions/lifecycle';
 import { badRequest, conflict, notFound } from '../../errors';
 import { actorResolver } from '../actors';
 import { UUID } from '../../ids';
@@ -396,6 +396,7 @@ export async function assertNoActiveJobs(tx: Executor, where: SQL): Promise<void
 export async function deleteTask(tx: Executor, after: AfterCommit, taskId: string): Promise<{ blobIds: string[] }> {
   const row = await getTaskRow(tx, taskId, { lock: true });
   await assertNoActiveJobs(tx, eq(tasks.id, row.id));
+  await removeDeletedWorktrees(tx, after, [row.id]);
   const blobs = await tx.execute<{ blob_id: string }>(sql`
     select a.blob_id from attachments a left join comments c on c.id = a.comment_id where coalesce(a.task_id, c.task_id) = ${row.id}`);
   await tx.delete(tasks).where(eq(tasks.id, row.id));
@@ -480,6 +481,27 @@ export function serializeRevision(
     changes: r.changes,
     createdAt: r.createdAt.toISOString(),
   };
+}
+
+/**
+ * An Agent being deleted leaves its (closed) Tasks unassigned, recorded like any edit. Locks the
+ * Tasks, so it runs before the Agent's row is locked (lock order: task → agent).
+ */
+export async function unassignDeletedAgent(tx: Executor, after: AfterCommit, agentId: string, actor: Actor): Promise<void> {
+  const assigned = await tx.select().from(tasks).where(eq(tasks.agentId, agentId)).orderBy(asc(tasks.id)).for('update');
+  if (assigned.length === 0) return;
+  const ids = assigned.map((t) => t.id);
+  await tx
+    .update(tasks)
+    .set({ agentId: null, version: sql`${tasks.version} + 1`, updatedAt: new Date() })
+    .where(inArray(tasks.id, ids));
+  await recordRevisions(
+    tx,
+    after,
+    actor,
+    assigned.map((t) => ({ taskId: t.id, version: t.version + 1, changes: [{ field: 'agentId' as const, before: agentId, after: null }] })),
+  );
+  await emitTasksChanged(tx, after, ids, 'task.updated');
 }
 
 async function recordRevisions(

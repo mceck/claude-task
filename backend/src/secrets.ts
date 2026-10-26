@@ -32,8 +32,9 @@ export class SecretBox {
   }
 }
 
+/** The hint shown for a stored secret; none for short ones, which it would (almost) reveal. */
 export function last4(secret: string): string {
-  return secret.slice(-4);
+  return secret.length >= 12 ? secret.slice(-4) : '';
 }
 
 /** Random bearer tokens (Runner, Job): only their hash is stored. */

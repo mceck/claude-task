@@ -79,6 +79,15 @@ describe('Task Tools (MCP)', () => {
     expect(older.commentsBefore).toBeNull();
   });
 
+  it('answers a forged comments cursor with an error the model can act on', async () => {
+    const { client } = await setup(app);
+    for (const c of [{ t: 'not a date', id: '00000000-0000-0000-0000-000000000000' }, { t: new Date().toISOString(), id: 'x' }]) {
+      const res = await call(client, 'get_task', { comments_before: Buffer.from(JSON.stringify(c)).toString('base64url') });
+      expect(res.isError).toBe(true);
+      expect(res.text).not.toBe('Internal error');
+    }
+  });
+
   it('reads and lists other Tasks of the same Project only', async () => {
     const { admin, client, other } = await setup(app);
     const elsewhere = await createTask(admin, (await createProject(admin)).project.id);
@@ -128,5 +137,26 @@ describe('Task Tools (MCP)', () => {
     await runner.play(start.jobId, [s.result()]);
     await runner.exit(start.jobId);
     await expect(mcpClient(app, start)).rejects.toThrow();
+  });
+
+  it('stops working once a human closes the Task or unassigns the Agent, even before the process exits', async () => {
+    const { admin, bundle, client, task, agent, runner, start } = await setup(app);
+    const res = await admin.post(`/tasks/${task.id}/move`, { statusId: statusByName(bundle, 'Closed').id });
+    expect(res.status).toBe(200);
+    const reopen = await call(client, 'set_status', { status_name: 'In Progress' }).catch((err: Error) => ({ isError: true, text: err.message }));
+    expect(reopen.isError, reopen.text).toBe(true);
+    expect((await admin.get(`/tasks/${task.id}`)).body.task.statusId).toBe(statusByName(bundle, 'Closed').id);
+
+    const other = await createTask(admin, bundle.project.id, { title: 'Second' });
+    await assignAndStart(admin, other.id, agent.id);
+    await runner.exit(start.jobId, null, 'SIGTERM');
+    const second = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    runner.accept(second.jobId);
+    await runner.drain();
+    const secondClient = await mcpClient(app, second);
+    await assignAgent(admin, other.id, null);
+    const edit = await call(secondClient, 'update_task', { title: 'Renamed by a gone agent' }).catch((err: Error) => ({ isError: true, text: err.message }));
+    expect(edit.isError).toBe(true);
+    expect((await admin.get(`/tasks/${other.id}`)).body.task.title).toBe('Second');
   });
 });

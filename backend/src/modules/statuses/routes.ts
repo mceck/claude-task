@@ -44,8 +44,9 @@ export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     const body = parse(updateStatusBody, request.body);
     return transact(ctx, async (tx, after) => {
+      // Read it again under the Project lock: a concurrent change or deletion may have won.
+      await getProject(tx, (await getStatus(tx, id)).projectId, { lock: true });
       const existing = await getStatus(tx, id);
-      await getProject(tx, existing.projectId, { lock: true });
       if (body.category && body.category !== existing.category) {
         const all = await listStatuses(tx, existing.projectId);
         assertEntryAndExit(all.map((s) => (s.id === id ? body.category! : s.category)));
@@ -81,8 +82,8 @@ export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { targetStatusId } = parse(deleteStatusQuery, request.query);
     const actor = userActor(currentUser(request));
     await transact(ctx, async (tx, after) => {
+      await getProject(tx, (await getStatus(tx, id)).projectId, { lock: true });
       const existing = await getStatus(tx, id);
-      await getProject(tx, existing.projectId, { lock: true });
       if (targetStatusId === id) throw badRequest('Choose a different status for its tasks');
       const [target] = await tx
         .select()

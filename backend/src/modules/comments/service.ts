@@ -4,7 +4,9 @@ import type { Actor, Attachment, Comment, TimelineItem, TimelinePage } from '@cl
 import { and, asc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentItems, attachments, comments, taskRevisions, tasks } from '../../db/schema';
+import { agentItems, attachments, comments, queueEntries, taskRevisions, tasks } from '../../db/schema';
+import { lockAgents } from '../agents/service';
+import { dropIfEmpty } from '../../sessions/queue';
 import { serializeAgentItem } from '../../projection/apply';
 import { badRequest, forbidden, notFound } from '../../errors';
 import type { UserRow } from '../../auth/logins';
@@ -157,11 +159,18 @@ export async function deleteComment(
   user: UserRow,
   removeBlob: (blobId: string) => Promise<void>,
 ): Promise<void> {
+  // A queued Comment changes its Agent's Queue: lock the Agent first, as the dispatcher does.
+  const peek = await getCommentRow(tx, commentId);
+  const [entry] = peek.queueEntryId
+    ? await tx.select({ agentId: queueEntries.agentId }).from(queueEntries).where(eq(queueEntries.id, peek.queueEntryId))
+    : [];
+  if (entry) await lockAgents(tx, [entry.agentId]);
   const row = await getCommentRow(tx, commentId, true);
   if (row.deletedAt) return;
   const own = row.kind === 'user' && row.authorType === 'user' && row.authorId === user.id;
   if (!own && user.role !== 'admin') throw forbidden('You can only delete your own comments');
   await tx.update(comments).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(comments.id, row.id));
+  if (row.queueEntryId) await dropIfEmpty(tx, after, row.queueEntryId);
   const removed = await tx.delete(attachments).where(eq(attachments.commentId, row.id)).returning();
   for (const a of removed) after.run(() => removeBlob(a.blobId));
   after.emit(taskTopic(row.taskId), { type: 'comment.deleted', comment: await loadComment(tx, row.id) });
@@ -220,7 +229,13 @@ const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('bas
 function decodeCursor(raw: string): Cursor {
   try {
     const c = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Cursor;
-    if (typeof c.t === 'string' && ['comment', 'revision', 'agent'].includes(c.k) && typeof c.id === 'string') return c;
+    if (
+      typeof c.t === 'string' &&
+      ['comment', 'revision', 'agent'].includes(c.k) &&
+      typeof c.id === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(c.id)
+    )
+      return c;
   } catch {
     // fall through
   }

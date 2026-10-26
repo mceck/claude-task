@@ -171,6 +171,20 @@ async function closeSessions(tx: Executor, after: AfterCommit, task: TaskRow): P
   publishSession(after, task.id, open.map((s) => s.agentId));
 }
 
+/** Tasks being deleted (with their Sessions): their Agents remove the Worktrees once committed. */
+export async function removeDeletedWorktrees(tx: Executor, after: AfterCommit, taskIds: string[]): Promise<void> {
+  if (taskIds.length === 0) return;
+  const kept = await tx
+    .select({ agentId: sessions.agentId, worktreePath: sessions.worktreePath })
+    .from(sessions)
+    .where(and(inArray(sessions.taskId, taskIds), or(ne(sessions.state, 'closed'), eq(sessions.worktreeRemovalPending, true))));
+  after.effect((ctx) => {
+    for (const s of kept) {
+      ctx.runners.send(s.agentId, { type: 'worktree.remove', worktreePath: s.worktreePath, repoPath: `repos/${s.worktreePath.split('/')[1]}.git` });
+    }
+  });
+}
+
 /** Reopened: the same Session waits for the next Comment (or Notify agent). */
 async function reopenSession(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
   if (!task.agentId || !task.currentSessionId) return;

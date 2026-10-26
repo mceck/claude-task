@@ -13,7 +13,7 @@ import { transact } from '../context';
 import type { AppContext } from '../context';
 import type { Executor } from '../db/client';
 import { agents, comments, jobs, tags, projects, sessions, statuses, tasks } from '../db/schema';
-import { badRequest, HttpError, unauthorized } from '../errors';
+import { badRequest, fromDatabaseError, HttpError, unauthorized } from '../errors';
 import { actorResolver } from '../modules/actors';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import { createTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from '../modules/tasks/service';
@@ -33,13 +33,21 @@ const COMMENT_PAGE = 50;
 async function jobScope(ctx: AppContext, request: FastifyRequest): Promise<JobScope> {
   const token = /^Bearer (.+)$/.exec(request.headers.authorization ?? '')?.[1];
   if (!token) throw unauthorized('Missing job token');
-  // Valid only while its Job runs.
+  // Valid only while its Job runs, and not once a human closed the Task or unassigned the Agent.
   const [row] = await ctx.db
     .select({ job: jobs, agentName: agents.name, projectId: tasks.projectId })
     .from(jobs)
     .innerJoin(agents, eq(agents.id, jobs.agentId))
     .innerJoin(tasks, eq(tasks.id, jobs.taskId))
-    .where(and(eq(jobs.tokenHash, hashToken(token)), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
+    .innerJoin(sessions, eq(sessions.id, jobs.sessionId))
+    .where(
+      and(
+        eq(jobs.tokenHash, hashToken(token)),
+        inArray(jobs.state, [...ACTIVE_JOB_STATES]),
+        eq(jobs.cancelRequested, false),
+        eq(sessions.state, 'running'),
+      ),
+    );
   if (!row) throw unauthorized('Unknown or expired job token');
   return {
     jobId: row.job.id,
@@ -60,7 +68,8 @@ async function run(fn: () => Promise<unknown>): Promise<ToolResult> {
   try {
     return ok(await fn());
   } catch (err) {
-    const message = err instanceof HttpError || err instanceof GitProviderError ? err.message : 'Internal error';
+    const known = err instanceof HttpError || err instanceof GitProviderError ? err : fromDatabaseError(err);
+    const message = known ? known.message : 'Internal error';
     return { content: [{ type: 'text', text: message }], isError: true };
   }
 }
