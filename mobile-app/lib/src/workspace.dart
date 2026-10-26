@@ -30,37 +30,26 @@ class Workspace extends StatelessWidget {
                   right: BorderSide(color: Palette.border),
                 ),
               ),
-              child: AnimatedSwitcher(
-                duration: Motion.medium,
-                switchInCurve: Motion.enter,
-                switchOutCurve: Motion.exit,
-                child: c.project == null
-                    ? const EmptyState(
-                        icon: Icons.folder_open_rounded,
-                        title: 'Select a Project',
-                        message:
-                            'Pick a Project from the rail to see its Tasks.',
-                      )
-                    : TaskList(key: ValueKey(c.project!.id), controller: c),
-              ),
+              child: c.project == null
+                  ? const EmptyState(
+                      icon: Icons.folder_open_rounded,
+                      title: 'Select a Project',
+                      message: 'Pick a Project from the rail to see its Tasks.',
+                    )
+                  : TaskList(key: ValueKey(c.project!.id), controller: c),
             ),
             Expanded(
-              child: AnimatedSwitcher(
-                duration: Motion.medium,
-                switchInCurve: Motion.enter,
-                switchOutCurve: Motion.exit,
-                child: c.task == null
-                    ? const EmptyState(
-                        icon: Icons.forum_outlined,
-                        title: 'Select a Task to join the conversation',
-                        message: 'Tasks are grouped by Status. Open one to talk with its Agent.',
-                      )
-                    : Conversation(
-                        key: ValueKey(c.task!.id),
-                        controller: c,
-                        showDetailsAction: box.maxWidth < 1500,
-                      ),
-              ),
+              child: c.task == null
+                  ? const EmptyState(
+                      icon: Icons.forum_outlined,
+                      title: 'Select a Task to join the conversation',
+                      message: 'Tasks are grouped by Status. Open one to talk with its Agent.',
+                    )
+                  : Conversation(
+                      key: ValueKey(c.task!.id),
+                      controller: c,
+                      showDetailsAction: box.maxWidth < 1500,
+                    ),
             ),
             if (box.maxWidth >= 1500 && c.task != null)
               Container(
@@ -102,22 +91,7 @@ class Workspace extends StatelessWidget {
           if (popped) return;
           depth == 2 ? c.backToTasks() : c.backToProjects();
         },
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 280),
-          switchInCurve: Motion.enter,
-          switchOutCurve: Motion.exit,
-          transitionBuilder: (child, animation) => FadeTransition(
-            opacity: animation,
-            child: SlideTransition(
-              position: Tween(
-                begin: const Offset(.05, 0),
-                end: Offset.zero,
-              ).animate(animation),
-              child: child,
-            ),
-          ),
-          child: page,
-        ),
+        child: page,
       );
     },
   );
@@ -161,7 +135,9 @@ class ProjectRail extends StatelessWidget {
                     child: _RailItem(
                       project: p,
                       selected: c.project?.id == p.id,
-                      onTap: () => c.selectProject(p),
+                      onTap: () {
+                        if (c.project?.id != p.id) c.selectProject(p);
+                      },
                     ),
                   ),
               ],
@@ -204,14 +180,16 @@ class _RailItem extends StatelessWidget {
     child: Stack(
       alignment: Alignment.centerLeft,
       children: [
-        AnimatedContainer(
-          duration: Motion.medium,
-          curve: Motion.pop,
-          width: 4,
-          height: selected ? 32 : 0,
-          decoration: const BoxDecoration(
-            color: Palette.primary,
-            borderRadius: BorderRadius.horizontal(right: Radius.circular(4)),
+        AnimatedOpacity(
+          opacity: selected ? 1 : 0,
+          duration: Motion.fast,
+          child: Container(
+            width: 3,
+            height: 28,
+            decoration: const BoxDecoration(
+              color: Palette.primary,
+              borderRadius: BorderRadius.horizontal(right: Radius.circular(3)),
+            ),
           ),
         ),
         Center(
@@ -269,32 +247,36 @@ class ProjectList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
-    final intro = c.projects.isNotEmpty && firstIntro('projects');
+    final totalTasks = c.projects.fold(
+      0,
+      (total, project) => total + project.taskTotal,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 14, 6),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
           child: Row(
             children: [
-              const FadeSlideIn(
-                scale: .7,
-                offset: Offset.zero,
-                child: BrandMark(size: 36),
-              ),
+              const BrandMark(size: 32),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    const Text(
                       'Projects',
-                      style: Theme.of(context).textTheme.headlineSmall,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -.6,
+                      ),
                     ),
+                    const SizedBox(height: 3),
                     Text(
-                      'Hi ${c.user!.displayName.split(' ').first} · ${c.projects.length} ${c.projects.length == 1 ? 'board' : 'boards'}',
+                      '${c.projects.length} ${c.projects.length == 1 ? 'project' : 'projects'} · $totalTasks ${totalTasks == 1 ? 'task' : 'tasks'}',
                       style: const TextStyle(
-                        fontSize: 12.5,
+                        fontSize: 12,
                         color: Palette.fgSubtle,
                       ),
                     ),
@@ -310,13 +292,14 @@ class ProjectList extends StatelessWidget {
                   child: Avatar(
                     label: c.user!.displayName,
                     seed: c.user!.id,
-                    size: 36,
+                    size: 32,
                   ),
                 ),
               ),
             ],
           ),
         ),
+        const Divider(),
         Expanded(
           child: c.projects.isEmpty
               ? const EmptyState(
@@ -329,17 +312,16 @@ class ProjectList extends StatelessWidget {
                   backgroundColor: Palette.raised,
                   onRefresh: () => perform(context, c.refresh),
                   child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
                     physics: const AlwaysScrollableScrollPhysics(),
                     itemCount: c.projects.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (context, i) => FadeSlideIn.staggered(
-                      index: i,
-                      enabled: intro,
-                      child: _ProjectCard(
-                        project: c.projects[i],
-                        onTap: () => c.selectProject(c.projects[i]),
-                      ),
+                    separatorBuilder: (_, _) => const Padding(
+                      padding: EdgeInsets.only(left: 64, right: 12),
+                      child: Divider(),
+                    ),
+                    itemBuilder: (context, i) => _ProjectRow(
+                      project: c.projects[i],
+                      onTap: () => c.selectProject(c.projects[i]),
                     ),
                   ),
                 ),
@@ -349,112 +331,155 @@ class ProjectList extends StatelessWidget {
   }
 }
 
-class _ProjectCard extends StatelessWidget {
+class _ProjectRow extends StatelessWidget {
   final Project project;
   final VoidCallback onTap;
-  const _ProjectCard({required this.project, required this.onTap});
+  const _ProjectRow({required this.project, required this.onTap});
   @override
   Widget build(BuildContext context) {
     final p = project, total = p.taskTotal;
     final finished =
         (p.taskCounts['done'] ?? 0) + (p.taskCounts['closed'] ?? 0);
+    final progress = total == 0 ? 0.0 : (finished / total).clamp(0.0, 1.0);
+    final percent = (progress * 100).round();
     return Pressable(
+      key: ValueKey('project-row:${p.id}'),
       onTap: onTap,
-      color: Palette.surface,
+      semanticLabel: p.name,
       hoverColor: const Color(0x08ffffff),
-      border: Border.all(color: Palette.border),
-      borderRadius: BorderRadius.circular(Radii.lg),
-      pressedScale: .98,
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      borderRadius: BorderRadius.circular(Radii.md),
+      pressedScale: 1,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Avatar(
-                label: p.key,
-                seed: p.name,
-                size: 46,
-                circle: false,
-                initials: false,
-                selected: true,
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Avatar(
+            label: p.key,
+            seed: p.name,
+            size: 40,
+            circle: false,
+            initials: false,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      p.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium,
+                    Expanded(
+                      child: Tooltip(
+                        message: p.name,
+                        child: Text(
+                          p.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15.5,
+                            height: 1.3,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -.2,
+                          ),
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 18,
+                      color: Palette.fgSubtle,
+                    ),
+                  ],
+                ),
+                if (p.description.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    p.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.3,
+                      color: Palette.fgMuted,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        p.key,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: mono,
+                          fontSize: 10.5,
+                          height: 1.2,
+                          color: Palette.fgSubtle,
+                        ),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 7),
+                      child: Dot(color: Palette.borderStrong, size: 3),
+                    ),
                     Text(
-                      p.description.isEmpty ? p.key : p.description,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontFamily: p.description.isEmpty ? mono : null,
-                        fontSize: 12.5,
-                        color: Palette.fgSubtle,
+                      total == 0
+                          ? 'No tasks yet'
+                          : '$total ${total == 1 ? 'task' : 'tasks'}',
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        height: 1.2,
+                        color: Palette.fgMuted,
                       ),
                     ),
                   ],
                 ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: Palette.fgSubtle),
-            ],
-          ),
-          if (total > 0) ...[
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(99),
-              child: SizedBox(
-                height: 5,
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0, end: 1),
-                  duration: Motion.slow,
-                  curve: Motion.enter,
-                  builder: (context, t, _) => Row(
+                if (total > 0) ...[
+                  const SizedBox(height: 7),
+                  Row(
                     children: [
-                      for (final entry in categoryColors.entries)
-                        if ((p.taskCounts[entry.key] ?? 0) > 0)
-                          Expanded(
-                            flex: p.taskCounts[entry.key]!,
-                            child: FractionallySizedBox(
-                              alignment: Alignment.centerLeft,
-                              widthFactor: t,
-                              child: ColoredBox(color: entry.value),
+                      Expanded(
+                        child: Semantics(
+                          label: 'Task completion',
+                          value: '$finished of $total completed',
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(99),
+                            child: SizedBox(
+                              height: 3,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  const ColoredBox(color: Palette.muted),
+                                  FractionallySizedBox(
+                                    alignment: Alignment.centerLeft,
+                                    widthFactor: progress,
+                                    child: const ColoredBox(
+                                      color: Palette.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '$percent% done',
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          height: 1.2,
+                          color: Palette.fgSubtle,
+                        ),
+                      ),
                     ],
                   ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Text(
-                  '$total ${total == 1 ? 'Task' : 'Tasks'}',
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    color: Palette.fgMuted,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '${(finished / total * 100).round()}% done',
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    color: Palette.fgSubtle,
-                  ),
-                ),
+                ],
               ],
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -907,7 +932,7 @@ class _GroupHeader extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 14, bottom: 4),
+    padding: const EdgeInsets.only(top: 8, bottom: 2),
     child: Pressable(
       onTap: onTap,
       pressedScale: 1,
@@ -928,29 +953,26 @@ class _GroupHeader extends StatelessWidget {
           const SizedBox(width: 6),
           StatusDot(color: hexColor(status.color), size: 8),
           const SizedBox(width: 9),
-          Text(
-            status.name.toUpperCase(),
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: .9,
-              color: Palette.fgMuted,
+          Expanded(
+            child: Text(
+              status.name.toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: .65,
+                color: Palette.fgMuted,
+              ),
             ),
           ),
           const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-            decoration: BoxDecoration(
-              color: Palette.muted,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              '$count',
-              style: const TextStyle(
-                fontFamily: mono,
-                fontSize: 10.5,
-                color: Palette.fgSubtle,
-              ),
+          Text(
+            '$count',
+            style: const TextStyle(
+              fontFamily: mono,
+              fontSize: 10.5,
+              color: Palette.fgSubtle,
             ),
           ),
         ],
@@ -975,159 +997,173 @@ class _TaskRow extends StatelessWidget {
     final agent = c.agents.byId(task.agentId);
     final tags = [for (final id in task.tagIds) ?c.tags.byId(id)];
     final assignees = [for (final id in task.assigneeIds) ?c.users.byId(id)];
+    final tagNames = tags.map((tag) => tag.name).join(' · ');
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Stack(
-        children: [
-          Pressable(
-            onTap: () => c.selectTask(task),
-            pressedScale: .985,
-            color: selected
-                ? Palette.hover
-                : Palette.surface.withValues(alpha: .55),
-            border: Border.all(
-              color: selected
-                  ? Palette.primary.withValues(alpha: .45)
-                  : Palette.border,
-            ),
-            borderRadius: BorderRadius.circular(Radii.md),
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+      padding: const EdgeInsets.only(left: 16, bottom: 2),
+      child: Semantics(
+        key: ValueKey('task-row:${task.id}'),
+        selected: selected,
+        child: Tooltip(
+          message: task.title,
+          child: Stack(
+            children: [
+              Pressable(
+                onTap: () {
+                  if (!selected) c.selectTask(task);
+                },
+                pressedScale: 1,
+                color: selected ? Palette.surface : Colors.transparent,
+                hoverColor: const Color(0x08ffffff),
+                borderRadius: BorderRadius.circular(Radii.sm),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 9,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      priorityIcon(task.priority),
-                      size: 13,
-                      color: priorityColor(task.priority),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      task.key,
-                      style: const TextStyle(
-                        fontFamily: mono,
-                        fontSize: 11,
-                        color: Palette.fgSubtle,
-                      ),
-                    ),
-                    if (pref?.muted == true) ...[
-                      const SizedBox(width: 6),
-                      const Icon(
-                        Icons.notifications_off_outlined,
-                        size: 12,
-                        color: Palette.fgSubtle,
-                      ),
-                    ],
-                    const Spacer(),
-                    AnimatedScale(
-                      scale: unread ? 1 : 0,
-                      duration: Motion.medium,
-                      curve: Motion.pop,
-                      child: const Dot(
-                        color: Palette.primary,
-                        size: 7,
-                        glow: true,
-                      ),
-                    ),
-                    if (assignees.isNotEmpty) ...[
-                      const SizedBox(width: 8),
-                      for (final (i, u) in assignees.take(3).indexed)
-                        Align(
-                          widthFactor: i == 0 ? 1 : .7,
-                          child: DecoratedBox(
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(color: Palette.bg, spreadRadius: 1.5),
-                              ],
-                            ),
-                            child: Avatar(
-                              label: u.displayName,
-                              seed: u.id,
-                              size: 18,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            task.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              height: 1.35,
+                              fontWeight: unread
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                              color: Palette.fg,
                             ),
                           ),
                         ),
-                    ],
-                    if (task.agentId != null) ...[
-                      const SizedBox(width: 8),
-                      AgentBadge(
-                        agent: agent,
-                        state: task.sessionState,
-                        queuePosition: task.queuePosition,
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  task.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.35,
-                    fontWeight: unread || selected
-                        ? FontWeight.w600
-                        : FontWeight.w500,
-                    color: unread || selected
-                        ? Palette.fg
-                        : Palette.fg.withValues(alpha: .86),
-                  ),
-                ),
-                if (tags.isNotEmpty || task.commentCount > 0) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Wrap(
-                          spacing: 4,
-                          runSpacing: 4,
-                          children: [
-                            for (final tag in tags)
-                              TagChip(tag: tag, dense: true),
-                          ],
+                        if (unread) ...[
+                          const SizedBox(width: 8),
+                          const Dot(color: Palette.primary, size: 5),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Tooltip(
+                          message: priorityLabel(task.priority),
+                          child: Icon(
+                            priorityIcon(task.priority),
+                            size: 12,
+                            color: priorityColor(task.priority),
+                          ),
                         ),
-                      ),
-                      if (task.commentCount > 0) ...[
-                        const Icon(
-                          Icons.chat_bubble_outline_rounded,
-                          size: 12,
-                          color: Palette.fgSubtle,
+                        const SizedBox(width: 5),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 88),
+                          child: Text(
+                            task.key,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: mono,
+                              fontSize: 10.5,
+                              color: Palette.fgSubtle,
+                            ),
+                          ),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${task.commentCount}',
-                          style: const TextStyle(
-                            fontSize: 11,
+                        if (pref?.muted == true) ...[
+                          const SizedBox(width: 5),
+                          const Icon(
+                            Icons.notifications_off_outlined,
+                            size: 11,
                             color: Palette.fgSubtle,
                           ),
+                        ],
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: tags.isEmpty
+                              ? const SizedBox.shrink()
+                              : Tooltip(
+                                  message: tagNames,
+                                  child: Row(
+                                    children: [
+                                      Dot(color: tagColor(tags.first), size: 5),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(
+                                          tagNames,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 10.5,
+                                            color: Palette.fgMuted,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                         ),
+                        for (final user in assignees.take(2))
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Tooltip(
+                              message: user.displayName,
+                              child: Avatar(
+                                label: user.displayName,
+                                seed: user.id,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                        if (task.agentId != null) ...[
+                          const SizedBox(width: 6),
+                          AgentBadge(
+                            agent: agent,
+                            state: task.sessionState,
+                            queuePosition: task.queuePosition,
+                            size: 18,
+                          ),
+                        ],
+                        if (task.commentCount > 0) ...[
+                          const SizedBox(width: 8),
+                          const Icon(
+                            Icons.chat_bubble_outline_rounded,
+                            size: 11,
+                            color: Palette.fgSubtle,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${task.commentCount}',
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              color: Palette.fgSubtle,
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-          Positioned(
-            left: 0,
-            top: 12,
-            bottom: 12,
-            child: AnimatedContainer(
-              duration: Motion.medium,
-              curve: Motion.pop,
-              width: selected ? 3 : 0,
-              decoration: const BoxDecoration(
-                color: Palette.primary,
-                borderRadius: BorderRadius.horizontal(
-                  right: Radius.circular(3),
+                    ),
+                  ],
                 ),
               ),
-            ),
+              Positioned(
+                left: 0,
+                top: 12,
+                bottom: 12,
+                child: AnimatedOpacity(
+                  opacity: selected ? 1 : 0,
+                  duration: Motion.fast,
+                  child: Container(
+                    width: 2,
+                    decoration: BoxDecoration(
+                      color: Palette.primary,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

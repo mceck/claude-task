@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:claude_task_mobile/src/api.dart';
 import 'package:claude_task_mobile/src/controller.dart';
 import 'package:claude_task_mobile/src/models.dart';
@@ -353,10 +354,9 @@ class FakeApi implements TaskApi {
 }
 
 class Harness {
-  final api = FakeApi(),
-      live = FakeLive(),
-      storage = MemoryStorage(),
-      push = FakePush();
+  final FakeApi api;
+  Harness({FakeApi? api}) : api = api ?? FakeApi();
+  final live = FakeLive(), storage = MemoryStorage(), push = FakePush();
   late final TaskController controller = TaskController(
     storage: storage,
     push: push,
