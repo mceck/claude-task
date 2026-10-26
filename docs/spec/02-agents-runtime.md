@@ -174,9 +174,10 @@ If (1) fails, fall back to: comments for the running task are held until the `re
 ### Base image
 
 - The backend ships the base image's Dockerfile and builds it locally at startup through the Docker socket whenever `claude-task/agent-base:<platform-version>` is missing. It also tags it `claude-task/agent-base:latest`. No registry.
-- Contents: Debian slim, git, ca-certificates, curl, the `claude` CLI at the version pinned in backend config (`CLAUDE_CODE_VERSION`), the runner binary, the git credential helper (Spec 03; since Spec 05 it serves the Job token for the Git Proxy), a non-root user `agent` (uid 1000) with home `/home/agent`, `DISABLE_AUTOUPDATER=1`, entrypoint = runner, user = agent.
+- Contents: Ubuntu 24.04 (`buildpack-deps:noble`), git, ca-certificates, curl, mise, service installation/startup scripts, the `claude` CLI at the version pinned in backend config (`CLAUDE_CODE_VERSION`), the runner binary, the git credential helper (Spec 03; since Spec 05 it serves the Job token for the Git Proxy), a non-root user `agent` (uid 1000) with home `/home/agent`, `DISABLE_AUTOUPDATER=1`. The entrypoint starts the selected services, then the runner, all as `agent`.
 - Agent Dockerfiles must have `claude-task/agent-base` (any tag or no tag) as their first `FROM`. The backend validates this on save and always builds against the current platform version by passing it as the resolved base. Agent Dockerfiles may switch to root for installs but must end as `USER agent` (validated by inspecting the built image config; a failure fails the build).
-- Upgrading `CLAUDE_CODE_VERSION` or the runner changes the platform version: the base image is rebuilt, then every agent image is rebuilt and recreated following the "wait for idle" rule.
+- Agent configuration selects which local development services to install and start: PostgreSQL and Redis are selected by default, including for existing Agents; MySQL, Mailpit and RustFS are optional. An empty selection is supported. Selection changes rebuild the image and follow the same wait-for-idle recreation rule as Dockerfile changes. Duplicates inherit the selection. All services run as `agent`, bind to loopback and keep data in the Agent Volume even when disabled.
+- Upgrading `CLAUDE_CODE_VERSION`, the runner or the Base Image scripts changes the platform version: the base image is rebuilt, then every agent image is rebuilt and recreated following the "wait for idle" rule.
 
 ### AgentRuntime (Docker)
 

@@ -1,6 +1,6 @@
 // Request payloads, validated server-side and typed client-side.
 import { z } from 'zod';
-import { CREDENTIAL_KINDS, EFFORT_LEVELS, PERMISSION_MODES } from './agents';
+import { AGENT_SERVICES, DEFAULT_AGENT_SERVICES, CREDENTIAL_KINDS, EFFORT_LEVELS, PERMISSION_MODES } from './agents';
 import { CATEGORIES, PRIORITIES, ROLES } from './domain';
 import type { Tag, Project, Status, Task, User } from './domain';
 
@@ -209,6 +209,9 @@ export type UpdateCredentialBody = z.infer<typeof updateCredentialBody>;
 // Agents (admin, except reads and queue management)
 
 const agentFields = {
+  services: z.array(z.enum(AGENT_SERVICES)).max(AGENT_SERVICES.length)
+    .refine((v) => new Set(v).size === v.length, 'Duplicate service')
+    .transform((v) => AGENT_SERVICES.filter((service) => v.includes(service))),
   skillIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate skill'),
   mcpServerIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate MCP server'),
   pluginIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate plugin'),
@@ -230,6 +233,7 @@ const agentFields = {
 
 export const createAgentBody = z.strictObject({
   ...agentFields,
+  services: agentFields.services.default(DEFAULT_AGENT_SERVICES),
   skillIds: agentFields.skillIds.default([]),
   mcpServerIds: agentFields.mcpServerIds.default([]),
   pluginIds: agentFields.pluginIds.default([]),
@@ -247,6 +251,7 @@ export const createAgentBody = z.strictObject({
 export type CreateAgentBody = z.input<typeof createAgentBody>;
 
 export const updateAgentBody = z.strictObject({
+  services: agentFields.services.optional(),
   skillIds: agentFields.skillIds.optional(),
   mcpServerIds: agentFields.mcpServerIds.optional(),
   pluginIds: agentFields.pluginIds.optional(),

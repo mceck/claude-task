@@ -169,7 +169,7 @@ export class Scheduler {
     try {
       await runtime.ensureBaseImage((chunk) => onLog(chunk));
       const result = await runtime.buildAgentImage(
-        { agentId, buildId: build!.id, dockerfile: pinAgentBase(agent.dockerfile, runtime.baseVersion) },
+        { agentId, buildId: build!.id, dockerfile: pinAgentBase(agent.dockerfile, runtime.baseVersion, agent.services) },
         onLog,
       );
       if (!isAgentUser(result.user)) {
