@@ -68,6 +68,11 @@ export class WsTestClient {
     this.socket.close();
   }
 
+  /** Plays a browser that stopped reading (a frozen tab or a dead network). */
+  stopReading(): void {
+    (this.socket as unknown as { _socket: import('node:net').Socket })._socket.pause();
+  }
+
   private wait(match: (m: ServerMessage) => boolean, timeoutMs: number): Promise<ServerMessage> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
