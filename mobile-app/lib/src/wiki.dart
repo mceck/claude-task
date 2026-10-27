@@ -17,27 +17,32 @@ class WikiList extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
           child: Row(
             children: [
-              if (Scaffold.maybeOf(context)?.hasDrawer ?? false) ...[
-                IconAction(
-                  icon: Icons.menu_rounded,
-                  tooltip: 'Menu',
-                  onPressed: () => Scaffold.of(context).openDrawer(),
-                ),
-                const SizedBox(width: 8),
-              ],
-              IconAction(
-                icon: Icons.folder_open_outlined,
-                tooltip: 'Projects',
-                onPressed: c.showProjects,
-              ),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Wiki',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+              const BrandMark(size: 32),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Wiki',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -.6,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${c.wikis.length} ${c.wikis.length == 1 ? 'wiki' : 'wikis'}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Palette.fgSubtle,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               IconAction(
@@ -45,6 +50,12 @@ class WikiList extends StatelessWidget {
                 tooltip: 'New wiki',
                 onPressed: c.online ? () => showWikiForm(context, c) : null,
               ),
+              if (Scaffold.maybeOf(context)?.hasDrawer ?? false)
+                IconAction(
+                  icon: Icons.menu_rounded,
+                  tooltip: 'Menu',
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                ),
             ],
           ),
         ),
