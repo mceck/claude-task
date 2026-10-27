@@ -12,3 +12,9 @@ services:
       - claude-task.localhost
     port: 5173
     autostart: true
+  mailpit:
+    command: mailpit
+    domains:
+      - mailpit.test
+    port: 8025
+    autostart: true
