@@ -17,13 +17,16 @@ List<String> strings(dynamic value) => (value as List? ?? []).cast<String>();
 class User implements Identified {
   @override
   final String id;
-  final String email, displayName;
+  final String email, displayName, role;
   final String? avatarImageUrl;
-  final bool mustChangePassword;
+  final bool mustChangePassword, active;
+  bool get isAdmin => role == 'admin';
   User.fromJson(Json json)
     : id = json['id'] as String,
       email = json['email'] as String? ?? '',
       displayName = json['displayName'] as String? ?? '',
+      role = json['role'] as String? ?? 'member',
+      active = json['active'] != false,
       avatarImageUrl = json['avatarImageUrl'] as String?,
       mustChangePassword = json['mustChangePassword'] == true;
 }

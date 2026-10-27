@@ -44,6 +44,10 @@ pnpm test
 
 The integration smoke has a separate Keychain service and temporary cache, so it does not use the normal app profile.
 
+## Settings
+
+Profile → Settings edits Projects (details, archive, Statuses, Tags, new Project), Agents (identity, Credential, model, effort, permission mode, system prompt, enabled; duplicate and delete) and, for Admins, Users and Credentials. Dockerfiles, builds, Git Connections, Extensions and secret variables remain in the web app.
+
 ## Task description editor
 
 Create Task and Edit Task use a native Fleather editor with the app's neutral charcoal theme, saturated neon teal selection and Geist typography. Bright action fills use dark labels; Agent messages use electric orange outlines and positive states use neon green. Chat bubbles, streaming messages and the composer have transparent backgrounds with colored borders. The formatting toolbar scrolls horizontally on phones; Write, Markdown and Preview share the same description. The backend continues to receive a Markdown string.
