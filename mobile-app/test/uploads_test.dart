@@ -198,12 +198,6 @@ void main() {
         h.controller.projects.single,
       );
       await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<AppButton>(find.widgetWithText(AppButton, 'Archive'))
-            .tone,
-        Tone.danger,
-      );
       await tester.tap(find.text('Upload logo'));
       await tester.pumpAndSettle();
       expect(h.controller.projects.single.logoUrl, endsWith('v=1'));
@@ -224,6 +218,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(h.controller.projects.single.logoUrl, isNull);
       expect(find.text('Upload logo'), findsOneWidget);
+      final archive = find.widgetWithText(AppButton, 'Archive');
+      await tester.scrollUntilVisible(archive, 300);
+      expect(tester.widget<AppButton>(archive).tone, Tone.danger);
       expect(tester.takeException(), isNull);
     },
   );

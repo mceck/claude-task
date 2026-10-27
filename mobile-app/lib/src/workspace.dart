@@ -82,7 +82,8 @@ class Workspace extends StatelessWidget {
                   ? const EmptyState(
                       icon: Icons.forum_outlined,
                       title: 'Select a Task to join the conversation',
-                      message: 'Tasks are grouped by Status. Open one to talk with its Agent.',
+                      message:
+                          'Tasks are grouped by Status. Open one to talk with its Agent.',
                     )
                   : Conversation(
                       key: ValueKey(c.task!.id),
@@ -545,44 +546,21 @@ class ProjectList extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-          child: Row(
-            children: [
-              const DrawerBrandMark(),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Projects',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -.6,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '${c.projects.length} ${c.projects.length == 1 ? 'project' : 'projects'} · $totalTasks ${totalTasks == 1 ? 'task' : 'tasks'}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Palette.fgSubtle,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconAction(
-                icon: Icons.add_rounded,
-                tooltip: 'New project',
-                onPressed: c.online ? () => showProjectForm(context, c) : null,
-              ),
-            ],
-          ),
+        PageHeader(
+          leading: const DrawerBrandMark(),
+          title: 'Projects',
+          subtitle:
+              '${c.projects.length} ${c.projects.length == 1 ? 'project' : 'projects'} · $totalTasks ${totalTasks == 1 ? 'task' : 'tasks'}',
+          actions: [
+            IconAction(
+              icon: Icons.add_rounded,
+              tooltip: 'New project',
+              filled: true,
+              size: 36,
+              onPressed: c.online ? () => showProjectForm(context, c) : null,
+            ),
+          ],
         ),
-        const Divider(),
         Expanded(
           child: c.projects.isEmpty
               ? EmptyState(
@@ -597,9 +575,7 @@ class ProjectList extends StatelessWidget {
                         : null,
                   ),
                 )
-              : RefreshIndicator(
-                  color: Palette.primary,
-                  backgroundColor: Palette.raised,
+              : AppRefresh(
                   onRefresh: () => perform(context, c.refresh),
                   child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
@@ -837,6 +813,11 @@ class _ProfileSheetState extends State<_ProfileSheet> {
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Notice.error(_error!),
+              ),
             Row(
               children: [
                 UserAvatar(
@@ -869,67 +850,39 @@ class _ProfileSheetState extends State<_ProfileSheet> {
               ],
             ),
             const SizedBox(height: 16),
-            AppButton(
-              label: 'Change photo',
-              icon: Icons.photo_camera_outlined,
-              tone: Tone.secondary,
-              onPressed: _saving || !c.online ? null : () => _changePhoto(),
-            ),
-            if (c.user!.avatarImageUrl != null) ...[
-              const SizedBox(height: 8),
-              AppButton(
-                label: 'Remove photo',
-                tone: Tone.secondary,
-                onPressed: _saving || !c.online
-                    ? null
-                    : () => _changePhoto(remove: true),
-              ),
-            ],
-            if (_saving)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text('Saving photo…'),
-              ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: Palette.danger),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                AppButton(
+                  label: 'Change photo',
+                  icon: Icons.photo_camera_outlined,
+                  tone: Tone.secondary,
+                  compact: true,
+                  busy: _saving,
+                  onPressed: _saving || !c.online ? null : () => _changePhoto(),
                 ),
-              ),
+                if (c.user!.avatarImageUrl != null)
+                  AppButton(
+                    label: 'Remove photo',
+                    icon: Icons.delete_outline_rounded,
+                    tone: Tone.danger,
+                    compact: true,
+                    onPressed: _saving || !c.online
+                        ? null
+                        : () => _changePhoto(remove: true),
+                  ),
+              ],
+            ),
             const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Palette.surface,
-                borderRadius: BorderRadius.circular(Radii.md),
-                border: Border.all(color: Palette.border),
+            AppTile(
+              leading: const IconBadge(
+                Icons.notifications_none_rounded,
+                color: Palette.primarySoft,
               ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: Palette.primary.withValues(alpha: .14),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.notifications_none_rounded,
-                      size: 18,
-                      color: Palette.primarySoft,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      c.push.status,
-                      style: const TextStyle(fontSize: 13.5),
-                    ),
-                  ),
-                ],
-              ),
+              title: 'Notifications',
+              subtitle: c.push.status,
+              subtitleLines: 3,
             ),
           ],
         ),
@@ -1015,78 +968,38 @@ class _TaskListState extends State<TaskList> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: EdgeInsets.fromLTRB(
-            widget.onBack == null ? 18 : 6,
-            12,
-            12,
-            10,
-          ),
-          child: Row(
-            children: [
-              if (widget.onBack != null)
-                IconAction(
-                  icon: Icons.arrow_back_ios_new_rounded,
-                  tooltip: 'Back',
-                  onPressed: widget.onBack,
-                ),
-              if (widget.onBack != null) ...[
-                const SizedBox(width: 4),
-                ProjectLogo(
+        PageHeader(
+          onBack: widget.onBack,
+          leading: widget.onBack == null
+              ? null
+              : ProjectLogo(
                   project: c.project!,
                   api: c.api,
                   size: 32,
                   selected: true,
                 ),
-                const SizedBox(width: 10),
-              ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            c.project!.name,
-                            style: Theme.of(context).textTheme.titleLarge,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        IconAction(
-                          icon: Icons.edit_outlined,
-                          tooltip: 'Edit project',
-                          size: 32,
-                          onPressed: c.online
-                              ? () =>
-                                    showProjectSettings(context, c, c.project!)
-                              : null,
-                        ),
-                      ],
-                    ),
-                    Text(
-                      '${c.tasks.length} Tasks',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Palette.fgSubtle,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconAction(
-                icon: Icons.add_rounded,
-                tooltip: 'Create Task',
-                filled: true,
-                size: 36,
-                onPressed: c.online ? () => showCreateTask(context, c) : null,
-              ),
-            ],
-          ),
+          title: c.project!.name,
+          subtitle:
+              '${c.tasks.length} ${c.tasks.length == 1 ? 'task' : 'tasks'}',
+          actions: [
+            IconAction(
+              icon: Icons.edit_outlined,
+              tooltip: 'Edit project',
+              onPressed: c.online
+                  ? () => showProjectSettings(context, c, c.project!)
+                  : null,
+            ),
+            IconAction(
+              icon: Icons.add_rounded,
+              tooltip: 'Create Task',
+              filled: true,
+              size: 36,
+              onPressed: c.online ? () => showCreateTask(context, c) : null,
+            ),
+          ],
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
           child: TextField(
             key: const Key('task-search'),
             controller: _searchField,
@@ -1150,9 +1063,7 @@ class _TaskListState extends State<TaskList> {
                   title: 'No matching Tasks',
                   message: 'Try another search or clear the filters.',
                 )
-              : RefreshIndicator(
-                  color: Palette.primary,
-                  backgroundColor: Palette.raised,
+              : AppRefresh(
                   onRefresh: () => perform(context, c.refresh),
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
@@ -1220,32 +1131,21 @@ class _TaskListState extends State<TaskList> {
             set(() {});
           }
 
-          Widget group(String label, List<Widget> chips) => Padding(
-            padding: const EdgeInsets.only(bottom: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SectionLabel(label),
-                Wrap(spacing: 8, runSpacing: 8, children: chips),
-              ],
-            ),
+          Widget group(String label, List<Widget> chips) => Section(
+            title: label,
+            children: [Wrap(spacing: 8, runSpacing: 8, children: chips)],
           );
           return SheetScaffold(
             title: 'Task filters',
             body: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    const Expanded(child: Text('Show closed tasks')),
-                    Switch(
-                      value: c.includeClosed,
-                      onChanged: (value) =>
-                          update(() => c.includeClosed = value),
-                    ),
-                  ],
+                SwitchRow(
+                  label: 'Show closed tasks',
+                  value: c.includeClosed,
+                  onChanged: (value) => update(() => c.includeClosed = value),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 group('Priority', [
                   for (final p in ['', ...priorities])
                     ChoiceChipX(

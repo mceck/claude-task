@@ -9,6 +9,19 @@ import 'models.dart';
 import 'push.dart';
 import 'storage.dart';
 
+/// Colors handed to Tags created inline, cycling so neighbours differ (the
+/// same cycle as the web app).
+const _tagColors = [
+  '#6366f1',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#0ea5e9',
+  '#a855f7',
+  '#ec4899',
+  '#14b8a6',
+];
+
 class TaskController extends ChangeNotifier {
   final ProfileStorage storage;
   final TaskApi Function(Uri, String?) apiFactory;
@@ -69,7 +82,8 @@ class TaskController extends ChangeNotifier {
       if (user != null && !user!.mustChangePassword) {
         unawaited(
           _registerToken(token).catchError((Object _) {
-            error = 'Phone token registration failed; try Enable notifications again';
+            error =
+                'Phone token registration failed; try Enable notifications again';
             notifyListeners();
           }),
         );
@@ -706,9 +720,9 @@ class TaskController extends ChangeNotifier {
       }
     }
     unawaited(
-      _fetchProject(projectId)
-          .then((_) => notifyListeners())
-          .catchError((Object _) {}),
+      _fetchProject(
+        projectId,
+      ).then((_) => notifyListeners()).catchError((Object _) {}),
     );
     notifyListeners();
     return task;
@@ -721,6 +735,35 @@ class TaskController extends ChangeNotifier {
     await updateTask({'agentId': id});
     assignmentRetryId = null;
     notifyListeners();
+  }
+
+  /// Creates a Tag in the open Project, with the next color of the web app's
+  /// cycle, and adds it to the Project's Tags.
+  Future<Tag> createTag(String name) async {
+    final current = project!;
+    final result = await _request(
+      'POST',
+      '/projects/${current.id}/tags',
+      body: {
+        'name': name,
+        'color': _tagColors[tags.length % _tagColors.length],
+      },
+    );
+    final json = result['tag'] as Json, tag = Tag.fromJson(json);
+    if (project?.id == current.id) {
+      tags = [...tags.where((t) => t.id != tag.id), tag];
+      final key = 'project:${current.id}';
+      final cache = storage.read(key) ?? {};
+      await storage.write(key, {
+        ...cache,
+        'tags': [
+          ...objects(cache['tags']).where((t) => t['id'] != tag.id),
+          json,
+        ],
+      });
+      notifyListeners();
+    }
+    return tag;
   }
 
   Future<void> updateTask(Json fields) async {
@@ -806,7 +849,8 @@ class TaskController extends ChangeNotifier {
   Future<void> reconcileSend() async {
     await _fetchTask(task!.id);
     await setDraft(draft.copyWith(ambiguous: false));
-    error = 'Conversation refreshed. Check for your Comment; sending again is a manual action.';
+    error =
+        'Conversation refreshed. Check for your Comment; sending again is a manual action.';
     notifyListeners();
   }
 

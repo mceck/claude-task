@@ -374,178 +374,144 @@ class _Header extends StatelessWidget {
         _held(session) &&
         session?['state'] != 'running';
     final unseen = c.online && session?['unseenChanges'] == true;
-    return Container(
-      padding: EdgeInsets.fromLTRB(onBack == null ? 20 : 6, 10, 10, 10),
-      decoration: const BoxDecoration(
-        color: Palette.bg,
-        border: Border(bottom: BorderSide(color: Palette.border)),
-      ),
-      child: Row(
+    return PageHeader(
+      onBack: onBack,
+      title: t.title,
+      onTitleTap: showDetailsAction ? () => showDetails(context, c) : null,
+      meta: Row(
         children: [
-          if (onBack != null) ...[
-            IconAction(
-              icon: Icons.arrow_back_ios_new_rounded,
-              tooltip: 'Back',
-              onPressed: onBack,
+          Text(
+            c.wiki == null ? t.key : 'Wiki',
+            style: const TextStyle(
+              fontFamily: mono,
+              fontSize: 11.5,
+              color: Palette.fgSubtle,
             ),
-            const SizedBox(width: 4),
-          ],
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: showDetailsAction ? () => showDetails(context, c) : null,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    t.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Text(
-                        c.wiki == null ? t.key : 'Wiki',
-                        style: const TextStyle(
-                          fontFamily: mono,
-                          fontSize: 11.5,
-                          color: Palette.fgSubtle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: AnimatedSwitcher(
-                          duration: Motion.medium,
-                          layoutBuilder: (current, previous) => Stack(
-                            alignment: Alignment.centerLeft,
-                            children: [...previous, ?current],
-                          ),
-                          child: SessionBadge(
-                            key: ValueKey(sessionLabel(session)),
-                            session: session,
-                          ),
-                        ),
-                      ),
-                      // Beside the state it acts on, in free space: showing it
-                      // never shifts the title or the header actions.
-                      for (final action in [
-                        if (running) _PillAction.stop,
-                        if (retry) _PillAction.retry,
-                        if (unseen) _PillAction.notify,
-                      ]) ...[
-                        const SizedBox(width: 6),
-                        _SessionPill(
-                          action: action,
-                          onTap: () => perform(
-                            context,
-                            () => c.sessionAction(action.name),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: AnimatedSwitcher(
+              duration: Motion.medium,
+              layoutBuilder: (current, previous) => Stack(
+                alignment: Alignment.centerLeft,
+                children: [...previous, ?current],
+              ),
+              child: SessionBadge(
+                key: ValueKey(sessionLabel(session)),
+                session: session,
               ),
             ),
           ),
-          if (c.wiki != null)
-            IconAction(
-              icon: Icons.restart_alt_rounded,
-              tooltip: 'Reset chat',
-              onPressed: c.online ? () => confirmResetWiki(context, c) : null,
+          // Beside the state it acts on, in free space: showing it
+          // never shifts the title or the header actions.
+          for (final action in [
+            if (running) _PillAction.stop,
+            if (retry) _PillAction.retry,
+            if (unseen) _PillAction.notify,
+          ]) ...[
+            const SizedBox(width: 6),
+            _SessionPill(
+              action: action,
+              onTap: () => perform(context, () => c.sessionAction(action.name)),
             ),
-          if (showDetailsAction && c.wiki == null)
-            IconAction(
-              icon: Icons.info_outline_rounded,
-              tooltip: 'Task details',
-              onPressed: () => showDetails(context, c),
-            ),
-          IconAction(
-            icon: muted
-                ? Icons.notifications_off_outlined
-                : Icons.notifications_none_rounded,
-            tooltip: c.wiki != null
-                ? (muted ? 'Unmute wiki' : 'Mute wiki')
-                : (muted ? 'Unmute Task' : 'Mute Task'),
-            active: muted,
-            onPressed: c.online
-                ? () =>
-                      perform(context, () => c.setPreference({'muted': !muted}))
-                : null,
-          ),
-          Builder(
-            builder: (anchor) => IconAction(
-              icon: Icons.more_horiz_rounded,
-              tooltip: c.wiki == null ? 'Task actions' : 'Wiki actions',
-              onPressed: () async {
-                final action = await showActions<String>(anchor, [
-                  ActionItem(
-                    'follow',
-                    c.wiki != null
-                        ? (following ? 'Unfollow wiki' : 'Follow wiki')
-                        : (following ? 'Unfollow Task' : 'Follow Task'),
-                    following
-                        ? Icons.bookmark_rounded
-                        : Icons.bookmark_outline_rounded,
-                    enabled: c.online,
-                  ),
-                  ActionItem(
-                    'stop',
-                    'Stop',
-                    Icons.stop_circle_outlined,
-                    enabled: running,
-                  ),
-                  ActionItem(
-                    'retry',
-                    'Retry',
-                    Icons.replay_rounded,
-                    enabled: c.online && t.agentId != null && _held(session),
-                  ),
-                  ActionItem(
-                    'notify',
-                    'Notify agent',
-                    Icons.campaign_outlined,
-                    enabled: c.online && session?['unseenChanges'] == true,
-                  ),
-                  if (c.wiki != null)
-                    ActionItem(
-                      'wiki-settings',
-                      'Wiki settings',
-                      Icons.settings_outlined,
-                      enabled: c.online,
-                    ),
-                  ActionItem(
-                    'delete',
-                    c.wiki == null ? 'Delete Task' : 'Delete wiki',
-                    Icons.delete_outline_rounded,
-                    enabled: c.online,
-                    destructive: true,
-                  ),
-                ], title: '${t.key} · ${t.title}');
-                if (action == null || !anchor.mounted) return;
-                if (action == 'wiki-settings') {
-                  await showWikiForm(anchor, c, wiki: c.wiki);
-                } else if (action == 'delete') {
-                  if (c.wiki != null) {
-                    await confirmDeleteWiki(anchor, c);
-                  } else {
-                    await confirmDeleteTask(anchor, c);
-                  }
-                } else if (action == 'follow') {
-                  await perform(
-                    anchor,
-                    () => c.setPreference({'following': !following}),
-                  );
-                } else {
-                  await perform(anchor, () => c.sessionAction(action));
-                }
-              },
-            ),
-          ),
+          ],
         ],
       ),
+      actions: [
+        if (c.wiki != null)
+          IconAction(
+            icon: Icons.restart_alt_rounded,
+            tooltip: 'Reset chat',
+            onPressed: c.online ? () => confirmResetWiki(context, c) : null,
+          ),
+        if (showDetailsAction && c.wiki == null)
+          IconAction(
+            icon: Icons.info_outline_rounded,
+            tooltip: 'Task details',
+            onPressed: () => showDetails(context, c),
+          ),
+        IconAction(
+          icon: muted
+              ? Icons.notifications_off_outlined
+              : Icons.notifications_none_rounded,
+          tooltip: c.wiki != null
+              ? (muted ? 'Unmute wiki' : 'Mute wiki')
+              : (muted ? 'Unmute Task' : 'Mute Task'),
+          active: muted,
+          onPressed: c.online
+              ? () => perform(context, () => c.setPreference({'muted': !muted}))
+              : null,
+        ),
+        Builder(
+          builder: (anchor) => IconAction(
+            icon: Icons.more_horiz_rounded,
+            tooltip: c.wiki == null ? 'Task actions' : 'Wiki actions',
+            onPressed: () async {
+              final action = await showActions<String>(anchor, [
+                ActionItem(
+                  'follow',
+                  c.wiki != null
+                      ? (following ? 'Unfollow wiki' : 'Follow wiki')
+                      : (following ? 'Unfollow Task' : 'Follow Task'),
+                  following
+                      ? Icons.bookmark_rounded
+                      : Icons.bookmark_outline_rounded,
+                  enabled: c.online,
+                ),
+                ActionItem(
+                  'stop',
+                  'Stop',
+                  Icons.stop_circle_outlined,
+                  enabled: running,
+                ),
+                ActionItem(
+                  'retry',
+                  'Retry',
+                  Icons.replay_rounded,
+                  enabled: c.online && t.agentId != null && _held(session),
+                ),
+                ActionItem(
+                  'notify',
+                  'Notify agent',
+                  Icons.campaign_outlined,
+                  enabled: c.online && session?['unseenChanges'] == true,
+                ),
+                if (c.wiki != null)
+                  ActionItem(
+                    'wiki-settings',
+                    'Wiki settings',
+                    Icons.settings_outlined,
+                    enabled: c.online,
+                  ),
+                ActionItem(
+                  'delete',
+                  c.wiki == null ? 'Delete Task' : 'Delete wiki',
+                  Icons.delete_outline_rounded,
+                  enabled: c.online,
+                  destructive: true,
+                ),
+              ], title: '${t.key} · ${t.title}');
+              if (action == null || !anchor.mounted) return;
+              if (action == 'wiki-settings') {
+                await showWikiForm(anchor, c, wiki: c.wiki);
+              } else if (action == 'delete') {
+                if (c.wiki != null) {
+                  await confirmDeleteWiki(anchor, c);
+                } else {
+                  await confirmDeleteTask(anchor, c);
+                }
+              } else if (action == 'follow') {
+                await perform(
+                  anchor,
+                  () => c.setPreference({'following': !following}),
+                );
+              } else {
+                await perform(anchor, () => c.sessionAction(action));
+              }
+            },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2006,6 +1972,9 @@ class _AttachmentTileState extends State<AttachmentTile> {
       : '${(n / 1024 / 1024).toStringAsFixed(1)} MB';
 }
 
+/// Height of one line of the composer: its buttons are centered on it.
+const _composerLine = 48.0;
+
 class Composer extends StatefulWidget {
   final TaskController controller;
   const Composer({super.key, required this.controller});
@@ -2135,7 +2104,15 @@ class _ComposerState extends State<Composer> {
         : Palette.borderStrong;
     final radius = BorderRadius.circular(Radii.xl);
     final sendLabel = internal ? 'Send to internal chat' : 'Send comment';
+    // Buttons sit in fixed-height slots as tall as one line of text, so they
+    // stay centered on it whatever the platform's font metrics, and stay on
+    // the last line as the text grows.
+    Widget slot(Widget child) => SizedBox(
+      height: _composerLine,
+      child: Center(child: child),
+    );
     final box = AnimatedContainer(
+      key: const Key('composer-box'),
       duration: Motion.medium,
       curve: Motion.enter,
       decoration: BoxDecoration(
@@ -2177,18 +2154,17 @@ class _ComposerState extends State<Composer> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(6, 0, 0, 7),
-                child: IconAction(
+              const SizedBox(width: 6),
+              slot(
+                IconAction(
                   icon: Icons.attach_file_rounded,
                   tooltip: 'Attach local files',
                   size: 36,
                   onPressed: c.sending || _attaching ? null : _attach,
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 7),
-                child: Semantics(
+              slot(
+                Semantics(
                   key: const Key('internal-toggle'),
                   toggled: internal,
                   child: DecoratedBox(
@@ -2217,45 +2193,66 @@ class _ComposerState extends State<Composer> {
                 ),
               ),
               Expanded(
-                child: Focus(
-                  onKeyEvent: _handleComposerKey,
-                  child: TextField(
-                    key: const Key('comment-composer'),
-                    controller: _text,
-                    focusNode: _focus,
-                    enabled: !c.sending,
-                    minLines: 1,
-                    maxLines: 6,
-                    maxLength: 100000,
-                    keyboardType: TextInputType.multiline,
-                    textInputAction: TextInputAction.send,
-                    onEditingComplete: _text.clearComposing,
-                    onSubmitted: (_) => _send(),
-                    textCapitalization: TextCapitalization.sentences,
-                    style: const TextStyle(fontSize: 15, height: 1.4),
-                    decoration: InputDecoration(
-                      hintText: internal
-                          ? 'Hidden from the Agent…'
-                          : c.task?.agentId == null
-                          ? 'Leave a comment…'
-                          : 'Message the Agent…',
-                      // One line, so changing it never resizes the composer.
-                      hintMaxLines: 1,
-                      counterText: '',
-                      filled: false,
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      disabledBorder: InputBorder.none,
-                      contentPadding: const EdgeInsets.fromLTRB(8, 14, 8, 14),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: _composerLine),
+                  // Desktop's compact density would trim the field's padding
+                  // and lift the text off the buttons' center line.
+                  child: Theme(
+                    data: Theme.of(
+                      context,
+                    ).copyWith(visualDensity: VisualDensity.standard),
+                    child: Focus(
+                      onKeyEvent: _handleComposerKey,
+                      child: TextField(
+                        key: const Key('comment-composer'),
+                        controller: _text,
+                        focusNode: _focus,
+                        enabled: !c.sending,
+                        minLines: 1,
+                        maxLines: 6,
+                        maxLength: 100000,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.send,
+                        onEditingComplete: _text.clearComposing,
+                        onSubmitted: (_) => _send(),
+                        textCapitalization: TextCapitalization.sentences,
+                        textAlignVertical: TextAlignVertical.center,
+                        style: const TextStyle(fontSize: 15, height: 1.4),
+                        // A fixed line height on every platform keeps one line
+                        // exactly as tall as the button slots.
+                        strutStyle: const StrutStyle(
+                          fontSize: 15,
+                          height: 1.4,
+                          forceStrutHeight: true,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: internal
+                              ? 'Hidden from the Agent…'
+                              : c.task?.agentId == null
+                              ? 'Leave a comment…'
+                              : 'Message the Agent…',
+                          // One line, so changing it never resizes the composer.
+                          hintMaxLines: 1,
+                          counterText: '',
+                          filled: false,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: (_composerLine - 15 * 1.4) / 2,
+                          ),
+                        ),
+                        onChanged: (v) => c.setDraft(c.draft.copyWith(text: v)),
+                      ),
                     ),
-                    onChanged: (v) => c.setDraft(c.draft.copyWith(text: v)),
                   ),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(0, 0, 8, 7),
-                child: Tooltip(
+              slot(
+                Tooltip(
                   message: sendLabel,
                   child: AnimatedOpacity(
                     opacity: _canSend ? 1 : .4,
@@ -2301,6 +2298,7 @@ class _ComposerState extends State<Composer> {
                   ),
                 ),
               ),
+              const SizedBox(width: 6),
             ],
           ),
         ],
@@ -2345,9 +2343,9 @@ class _ComposerState extends State<Composer> {
                           : SkillSuggestions(
                               text: _text,
                               skills: c.session?['commands'] is List
-                                  ? objects(c.session?['commands'])
-                                        .map(SkillCommand.fromJson)
-                                        .toList()
+                                  ? objects(
+                                      c.session?['commands'],
+                                    ).map(SkillCommand.fromJson).toList()
                                   : c.agents
                                             .where(
                                               (a) => a.id == c.task?.agentId,

@@ -3,6 +3,7 @@ import 'package:claude_task_mobile/src/app.dart';
 import 'package:claude_task_mobile/src/controller.dart';
 import 'package:claude_task_mobile/src/models.dart';
 import 'package:claude_task_mobile/src/settings.dart';
+import 'package:claude_task_mobile/src/ui/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -242,11 +243,19 @@ Future<void> tap(WidgetTester tester, Finder finder) async {
   await tester.pumpAndSettle();
 }
 
-Finder input(String label) => find.byWidgetPredicate(
-  (w) =>
-      w is TextField &&
-      (w.decoration?.labelText == label || w.decoration?.hintText == label),
-);
+/// The text field labelled [label], above it or inside it.
+Finder input(String label) {
+  final labelled = find.descendant(
+    of: find.ancestor(of: find.text(label), matching: find.byType(LabeledField)),
+    matching: find.byType(TextField),
+  );
+  if (labelled.evaluate().isNotEmpty) return labelled;
+  return find.byWidgetPredicate(
+    (w) =>
+        w is TextField &&
+        (w.decoration?.labelText == label || w.decoration?.hintText == label),
+  );
+}
 
 void expectWrite(
   (String, String, Json?) actual,
@@ -306,7 +315,7 @@ void main() {
   ) async {
     final api = InfrastructureApi();
     await openSettings(tester, api, showExtensionsSettings);
-    await tap(tester, find.text('Add Plugin'));
+    await tap(tester, find.byTooltip('Add Plugin'));
     await tester.enterText(input('Plugin name'), 'helper@team');
     await tester.enterText(input('Description'), 'More tools');
     await tap(tester, find.text('Save Plugin'));
@@ -353,7 +362,7 @@ void main() {
   ) async {
     final api = InfrastructureApi();
     await openSettings(tester, api, showExtensionsSettings);
-    await tap(tester, find.text('Import Skills'));
+    await tap(tester, find.byTooltip('Import Skills'));
     await tester.enterText(find.byType(TextField).first, 'team/new-skills');
     await tester.pump();
     await tap(tester, find.text('Import Skills'));
@@ -419,7 +428,7 @@ void main() {
         showExtensionsSettings,
         size: const Size(390, 844),
       );
-      await tap(tester, find.text('Add MCP Server'));
+      await tap(tester, find.byTooltip('Add MCP Server'));
       await tester.enterText(find.byType(TextField).first, 'local-tools');
       await tap(tester, find.text('stdio'));
       await tester.enterText(find.byType(TextField).at(2), 'npx');

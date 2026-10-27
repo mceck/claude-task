@@ -60,47 +60,60 @@ class _ImageUploadState extends State<ImageUpload> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      FieldLabel(widget.title),
-      widget.preview(_url),
-      const SizedBox(height: 10),
-      const Text(
-        'PNG, JPEG, GIF or WebP · up to 2 MB',
-        style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
-      ),
-      const SizedBox(height: 10),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          AppButton(
-            label: _url == null ? widget.uploadLabel : widget.replaceLabel,
-            icon: Icons.upload_rounded,
-            tone: Tone.secondary,
-            busy: _saving,
-            onPressed: widget.enabled && !_saving ? _change : null,
-          ),
-          if (_url != null)
-            AppButton(
-              label: widget.removeLabel,
-              icon: Icons.delete_outline_rounded,
-              tone: Tone.danger,
-              onPressed: widget.enabled && !_saving
-                  ? () => _change(remove: true)
-                  : null,
+  Widget build(BuildContext context) => LabeledField(
+    label: widget.title,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            widget.preview(_url),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'PNG, JPEG, GIF or WebP · up to 2 MB',
+                    style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      AppButton(
+                        label: _url == null
+                            ? widget.uploadLabel
+                            : widget.replaceLabel,
+                        icon: Icons.upload_rounded,
+                        tone: Tone.secondary,
+                        compact: true,
+                        busy: _saving,
+                        onPressed: widget.enabled && !_saving ? _change : null,
+                      ),
+                      if (_url != null)
+                        AppButton(
+                          label: widget.removeLabel,
+                          icon: Icons.delete_outline_rounded,
+                          tone: Tone.danger,
+                          compact: true,
+                          onPressed: widget.enabled && !_saving
+                              ? () => _change(remove: true)
+                              : null,
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-        ],
-      ),
-      if (_error != null) ...[
-        const SizedBox(height: 10),
-        Notice(
-          message: _error!,
-          color: Palette.danger,
-          icon: Icons.error_outline_rounded,
+          ],
         ),
+        if (_error != null) ...[
+          const SizedBox(height: 10),
+          Notice.error(_error!),
+        ],
       ],
-    ],
+    ),
   );
 }

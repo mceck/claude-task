@@ -3,6 +3,10 @@ import 'package:flutter/services.dart';
 
 import 'theme.dart';
 
+import 'layout.dart';
+
+export 'layout.dart';
+
 /// Fades and slides its child in once, after [delay]. No timers: the delay is
 /// part of the animation, so nothing stays pending when it's disposed early.
 class FadeSlideIn extends StatefulWidget {
@@ -387,12 +391,15 @@ class AppButton extends StatelessWidget {
   }
 }
 
-class IconAction extends StatelessWidget {
+class IconAction extends StatefulWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback? onPressed;
   final bool active, filled, badge;
   final Color? color;
+
+  /// Tints the icon and its background while the pointer is over it.
+  final Color? hoverColor;
   final double size;
   const IconAction({
     super.key,
@@ -403,47 +410,58 @@ class IconAction extends StatelessWidget {
     this.filled = false,
     this.badge = false,
     this.color,
+    this.hoverColor,
     this.size = 38,
   });
   @override
+  State<IconAction> createState() => _IconActionState();
+}
+
+class _IconActionState extends State<IconAction> {
+  bool _hover = false;
+  @override
   Widget build(BuildContext context) {
-    final enabled = onPressed != null;
-    final foreground = filled
+    final w = widget, enabled = w.onPressed != null;
+    final accent = enabled && _hover && !w.filled ? w.hoverColor : null;
+    final foreground = w.filled
         ? Palette.onPrimary
-        : active
-        ? Palette.primarySoft
-        : color ?? Palette.fgMuted;
+        : accent ??
+              (w.active ? Palette.primarySoft : w.color ?? Palette.fgMuted);
     return Tooltip(
-      message: tooltip,
-      child: AnimatedOpacity(
-        opacity: enabled ? 1 : .4,
-        duration: const Duration(milliseconds: 150),
-        child: Pressable(
-          onTap: onPressed,
-          semanticLabel: tooltip,
-          pressedScale: .9,
-          color: filled
-              ? Palette.primary
-              : active
-              ? Palette.primary.withValues(alpha: .14)
-              : Colors.transparent,
-          hoverColor: filled
-              ? const Color(0x1fffffff)
-              : const Color(0x12ffffff),
-          borderRadius: BorderRadius.circular(size / 3.2),
-          child: SizedBox.square(
-            dimension: size,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Icon(icon, size: size * .5, color: foreground),
-                if (badge)
-                  Positioned(
-                    top: size * .2,
-                    right: size * .2,
-                    child: const Dot(color: Palette.primary, size: 7),
-                  ),
-              ],
+      message: w.tooltip,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: AnimatedOpacity(
+          opacity: enabled ? 1 : .4,
+          duration: const Duration(milliseconds: 150),
+          child: Pressable(
+            onTap: w.onPressed,
+            semanticLabel: w.tooltip,
+            pressedScale: .9,
+            color: w.filled
+                ? Palette.primary
+                : w.active
+                ? Palette.primary.withValues(alpha: .14)
+                : Colors.transparent,
+            hoverColor: w.filled
+                ? const Color(0x1fffffff)
+                : accent?.withValues(alpha: .12) ?? const Color(0x12ffffff),
+            borderRadius: BorderRadius.circular(w.size / 3.2),
+            child: SizedBox.square(
+              dimension: w.size,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Icon(w.icon, size: w.size * .5, color: foreground),
+                  if (w.badge)
+                    Positioned(
+                      top: w.size * .2,
+                      right: w.size * .2,
+                      child: const Dot(color: Palette.primary, size: 7),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -845,6 +863,18 @@ class Notice extends StatelessWidget {
     this.onClose,
     this.messageKey,
   });
+
+  /// A failure, shown where it happened.
+  const Notice.error(
+    this.message, {
+    super.key,
+    this.actionLabel,
+    this.onAction,
+    this.onClose,
+    this.messageKey,
+  }) : icon = Icons.error_outline_rounded,
+       color = Palette.danger;
+
   @override
   Widget build(BuildContext context) => Container(
     padding: EdgeInsets.fromLTRB(12, 8, onClose == null ? 8 : 4, 8),
@@ -1172,11 +1202,13 @@ Future<T?> showAppSheet<T>(
 }
 
 /// Consistent sheet layout: grabber, title, scrollable body, footer.
+/// Footer [actions] end with the primary one; [headerActions] sit beside
+/// Close.
 class SheetScaffold extends StatelessWidget {
   final String title;
   final String? subtitle;
   final Widget body;
-  final List<Widget> actions;
+  final List<Widget> actions, headerActions;
   final bool scroll;
   const SheetScaffold({
     super.key,
@@ -1184,6 +1216,7 @@ class SheetScaffold extends StatelessWidget {
     required this.body,
     this.subtitle,
     this.actions = const [],
+    this.headerActions = const [],
     this.scroll = true,
   });
   @override
@@ -1228,6 +1261,7 @@ class SheetScaffold extends StatelessWidget {
                   ],
                 ),
               ),
+              ...headerActions,
               IconAction(
                 icon: Icons.close_rounded,
                 tooltip: 'Close',
@@ -1474,6 +1508,219 @@ Future<T?> showPicker<T>(
     ),
   ),
 );
+
+/// Picks any number of [options]. Returns the chosen set on Save, or null
+/// when dismissed. With [onCreate], typing a name that matches no option
+/// offers to create it as a new [createNoun], chosen right away.
+Future<Set<T>?> showMultiPicker<T>(
+  BuildContext context, {
+  required String title,
+  required List<PickerOption<T>> options,
+  required Set<T> selected,
+  String? empty,
+  Future<PickerOption<T>> Function(String name)? onCreate,
+  String createNoun = 'option',
+}) => showAppSheet<Set<T>>(
+  context,
+  maxWidth: 420,
+  builder: (_) => _MultiPicker<T>(
+    title: title,
+    options: options,
+    selected: selected,
+    empty: empty,
+    onCreate: onCreate,
+    createNoun: createNoun,
+  ),
+);
+
+class _MultiPicker<T> extends StatefulWidget {
+  final String title, createNoun;
+  final String? empty;
+  final List<PickerOption<T>> options;
+  final Set<T> selected;
+  final Future<PickerOption<T>> Function(String name)? onCreate;
+  const _MultiPicker({
+    required this.title,
+    required this.options,
+    required this.selected,
+    required this.createNoun,
+    this.empty,
+    this.onCreate,
+  });
+  @override
+  State<_MultiPicker<T>> createState() => _MultiPickerState<T>();
+}
+
+class _MultiPickerState<T> extends State<_MultiPicker<T>> {
+  late final options = [...widget.options];
+  late final chosen = {...widget.selected};
+  final query = TextEditingController();
+  bool creating = false;
+  String? error;
+
+  @override
+  void dispose() {
+    query.dispose();
+    super.dispose();
+  }
+
+  String get typed => query.text.trim();
+
+  Future<void> create() async {
+    final name = typed;
+    setState(() {
+      creating = true;
+      error = null;
+    });
+    try {
+      final option = await widget.onCreate!(name);
+      if (!mounted) return;
+      setState(() {
+        options.add(option);
+        chosen.add(option.value);
+        query.clear();
+      });
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => creating = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final search = widget.onCreate != null || options.length > 6;
+    final shown = [
+      for (final o in options)
+        if (o.label.toLowerCase().contains(typed.toLowerCase())) o,
+    ];
+    final canCreate =
+        widget.onCreate != null &&
+        typed.isNotEmpty &&
+        !options.any((o) => o.label.toLowerCase() == typed.toLowerCase());
+    return SheetScaffold(
+      title: widget.title,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (search) ...[
+            TextField(
+              controller: query,
+              enabled: !creating,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                hintText:
+                    '${widget.onCreate != null ? 'Search or create' : 'Search'} ${widget.title.toLowerCase()}…',
+                prefixIcon: const Icon(Icons.search_rounded, size: 19),
+              ),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) {
+                if (canCreate && !creating) create();
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Notice.error(error!),
+            ),
+          if (options.isEmpty && typed.isEmpty && widget.empty != null)
+            EmptyHint(widget.empty!),
+          for (final o in shown)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Pressable(
+                onTap: () => setState(() {
+                  if (!chosen.remove(o.value)) chosen.add(o.value);
+                }),
+                semanticLabel: o.label,
+                pressedScale: .99,
+                color: chosen.contains(o.value)
+                    ? Palette.primary.withValues(alpha: .12)
+                    : Colors.transparent,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 11,
+                ),
+                child: Row(
+                  children: [
+                    if (o.leading != null) ...[
+                      o.leading!,
+                      const SizedBox(width: 12),
+                    ],
+                    Expanded(
+                      child: Text(
+                        o.label,
+                        style: const TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      chosen.contains(o.value)
+                          ? Icons.check_box_rounded
+                          : Icons.check_box_outline_blank_rounded,
+                      size: 20,
+                      color: chosen.contains(o.value)
+                          ? Palette.primarySoft
+                          : Palette.fgSubtle,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (canCreate)
+            Pressable(
+              key: const Key('multi-picker-create'),
+              onTap: creating ? null : create,
+              semanticLabel: 'Create ${widget.createNoun} “$typed”',
+              pressedScale: .99,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              child: Row(
+                children: [
+                  creating
+                      ? const Spinner(size: 18)
+                      : const Icon(
+                          Icons.add_rounded,
+                          size: 20,
+                          color: Palette.primarySoft,
+                        ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Create ${widget.createNoun} “$typed”',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w500,
+                        color: Palette.primarySoft,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (search && typed.isNotEmpty && shown.isEmpty)
+            const EmptyHint('Nothing found.'),
+        ],
+      ),
+      actions: [
+        AppButton(
+          label: 'Cancel',
+          tone: Tone.secondary,
+          onPressed: () => Navigator.pop(context),
+        ),
+        AppButton(
+          label: 'Save',
+          onPressed: creating ? null : () => Navigator.pop(context, chosen),
+        ),
+      ],
+    );
+  }
+}
 
 Future<bool> confirm(
   BuildContext context, {

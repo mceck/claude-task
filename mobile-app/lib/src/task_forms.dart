@@ -46,7 +46,7 @@ Color priorityColor(String p) => switch (p) {
 Color tagColor(Tag tag) =>
     tag.color == null ? tint(tag.name) : hexColor(tag.color!, tint(tag.name));
 
-Widget _agentAvatar(TaskApi? api, Agent? agent, {double size = 28}) =>
+Widget agentAvatar(TaskApi? api, Agent? agent, {double size = 28}) =>
     agent == null
     ? Container(
         width: size,
@@ -80,45 +80,16 @@ Future<String?> _pickAgent(
   title: 'Agent',
   selected: selected,
   options: [
-    PickerOption('', 'No Agent', leading: _agentAvatar(api, null)),
+    PickerOption('', 'No Agent', leading: agentAvatar(api, null)),
     for (final a in agents)
       PickerOption(
         a.id,
         a.name,
         detail: a.enabled ? null : 'Disabled',
-        leading: _agentAvatar(api, a),
+        leading: agentAvatar(api, a),
       ),
   ],
 );
-
-/// A tappable field that shows its value and opens a picker.
-class _SelectField extends StatelessWidget {
-  final Widget leading;
-  final String label;
-  final VoidCallback? onTap;
-  const _SelectField({
-    super.key,
-    required this.leading,
-    required this.label,
-    this.onTap,
-  });
-  @override
-  Widget build(BuildContext context) => Pressable(
-    onTap: onTap,
-    pressedScale: .99,
-    color: Palette.surface,
-    border: Border.all(color: Palette.border),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    child: Row(
-      children: [
-        leading,
-        const SizedBox(width: 12),
-        Expanded(child: Text(label, style: const TextStyle(fontSize: 14.5))),
-        const Icon(Icons.unfold_more_rounded, size: 18),
-      ],
-    ),
-  );
-}
 
 Future<void> showCreateTask(BuildContext context, TaskController c) async {
   final title = TextEditingController(), description = TextEditingController();
@@ -146,56 +117,57 @@ Future<void> showCreateTask(BuildContext context, TaskController c) async {
                 if (error != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 14),
-                    child: Notice(
-                      message: error!,
-                      color: Palette.danger,
-                      icon: Icons.error_outline_rounded,
+                    child: Notice.error(error!),
+                  ),
+                LabeledField(
+                  label: 'Title',
+                  child: TextFormField(
+                    key: const Key('new-task-title'),
+                    controller: title,
+                    autofocus: true,
+                    maxLength: 500,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: const InputDecoration(
+                      hintText: 'What needs to be done?',
+                      counterText: '',
                     ),
+                    validator: (v) => v == null || v.trim().isEmpty
+                        ? 'Title is required'
+                        : null,
                   ),
-                const FieldLabel('Title'),
-                TextFormField(
-                  key: const Key('new-task-title'),
-                  controller: title,
-                  autofocus: true,
-                  maxLength: 500,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(
-                    hintText: 'What needs to be done?',
-                    counterText: '',
-                  ),
-                  validator: (v) => v == null || v.trim().isEmpty
-                      ? 'Title is required'
-                      : null,
                 ),
-                const SizedBox(height: 16),
-                const FieldLabel('Description', hint: 'Markdown'),
-                MarkdownEditor(controller: description, enabled: !saving),
-                const SizedBox(height: 16),
-                const FieldLabel('Agent', hint: 'optional'),
-                _SelectField(
-                  key: const Key('new-task-agent'),
-                  leading: _agentAvatar(c.api, agent, size: 26),
-                  label: agent?.name ?? 'No Agent',
-                  onTap: saving
+                LabeledField(
+                  label: 'Description',
+                  hint: 'Markdown',
+                  child: MarkdownEditor(
+                    controller: description,
+                    enabled: !saving,
+                  ),
+                ),
+                LabeledField(
+                  label: 'Agent',
+                  hint: 'optional',
+                  description: agent == null
                       ? null
-                      : () async {
-                          final picked = await _pickAgent(
-                            context,
-                            c.api,
-                            agents,
-                            agentId,
-                          );
-                          if (picked != null) set(() => agentId = picked);
-                        },
-                ),
-                if (agent != null)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8, left: 2),
-                    child: Text(
-                      'The Agent starts working on your first Comment.',
-                      style: TextStyle(fontSize: 12.5, color: Palette.fgSubtle),
-                    ),
+                      : 'The Agent starts working on your first Comment.',
+                  child: SelectField(
+                    key: const Key('new-task-agent'),
+                    leading: agentAvatar(c.api, agent, size: 26),
+                    label: agent?.name ?? 'No Agent',
+                    placeholder: agent == null,
+                    onTap: saving
+                        ? null
+                        : () async {
+                            final picked = await _pickAgent(
+                              context,
+                              c.api,
+                              agents,
+                              agentId,
+                            );
+                            if (picked != null) set(() => agentId = picked);
+                          },
                   ),
+                ),
               ],
             ),
           ),
@@ -267,383 +239,454 @@ class TaskDetails extends StatelessWidget {
     final edit = c.online ? () => showEditTask(context, c) : null;
     // The sheet or pane already animates in: sections stay put.
     Widget section(int index, Widget child) => child;
-    return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(20, inSheet ? 12 : 18, 20, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (inSheet && isCompact(context))
-            Center(
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                width: 38,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Palette.borderStrong,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ),
-          Row(
+    final editAction = IconAction(
+      icon: Icons.edit_outlined,
+      tooltip: 'Edit Task',
+      onPressed: edit,
+    );
+    final closedStatus = c.statuses
+        .where((s) => s.category == 'closed')
+        .firstOrNull;
+    final closeAction = closedStatus == null || status?.category == 'closed'
+        ? null
+        : IconAction(
+            icon: Icons.check_circle_outline_rounded,
+            tooltip: 'Close Task',
+            hoverColor: Palette.success,
+            onPressed: c.online
+                ? () => confirmCloseTask(context, c, closedStatus)
+                : null,
+          );
+    final body = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        section(
+          0,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
-                child: Text(
-                  'Task details',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Palette.fgMuted,
+              Row(
+                children: [
+                  Text(
+                    c.project?.name ?? '',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Palette.fgSubtle,
+                    ),
                   ),
-                ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(
+                      '/',
+                      style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
+                    ),
+                  ),
+                  SelectableText(
+                    t.key,
+                    style: const TextStyle(
+                      fontFamily: mono,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: Palette.primarySoft,
+                    ),
+                  ),
+                ],
               ),
-              IconAction(
-                icon: Icons.edit_outlined,
-                tooltip: 'Edit Task',
-                size: 34,
-                onPressed: edit,
-              ),
-              if (inSheet)
-                IconAction(
-                  icon: Icons.close_rounded,
-                  tooltip: 'Close',
-                  size: 34,
-                  onPressed: () => Navigator.maybePop(context),
-                ),
+              const SizedBox(height: 6),
+              Text(t.title, style: Theme.of(context).textTheme.titleLarge),
             ],
           ),
-          const SizedBox(height: 10),
-          section(
-            0,
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+        const SizedBox(height: 18),
+        section(
+          1,
+          Container(
+            decoration: BoxDecoration(
+              color: Palette.surface,
+              borderRadius: BorderRadius.circular(Radii.lg),
+              border: Border.all(color: Palette.border),
+            ),
+            padding: const EdgeInsets.all(4),
+            child: Column(
               children: [
-                Row(
-                  children: [
-                    Text(
-                      c.project?.name ?? '',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Palette.fgSubtle,
-                      ),
-                    ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 6),
-                      child: Text(
-                        '/',
-                        style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
-                      ),
-                    ),
-                    SelectableText(
-                      t.key,
-                      style: const TextStyle(
-                        fontFamily: mono,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Palette.primarySoft,
-                      ),
-                    ),
-                  ],
+                _Property(
+                  label: 'Status',
+                  icon: Icons.radio_button_checked_rounded,
+                  value: Row(
+                    children: [
+                      StatusDot(color: hexColor(status?.color ?? '#888888')),
+                      const SizedBox(width: 8),
+                      Flexible(child: Text(status?.name ?? '—')),
+                    ],
+                  ),
+                  onTap: c.online
+                      ? () async {
+                          final v = await showPicker<String>(
+                            context,
+                            title: 'Status',
+                            selected: t.statusId,
+                            options: [
+                              for (final s in c.statuses)
+                                PickerOption(
+                                  s.id,
+                                  s.name,
+                                  leading: StatusDot(color: hexColor(s.color)),
+                                ),
+                            ],
+                          );
+                          if (v != null && v != t.statusId && context.mounted) {
+                            await perform(
+                              context,
+                              () => c.updateTask({'statusId': v}),
+                            );
+                          }
+                        }
+                      : null,
                 ),
-                const SizedBox(height: 6),
-                Text(t.title, style: Theme.of(context).textTheme.titleLarge),
+                _Property(
+                  label: 'Priority',
+                  icon: Icons.flag_outlined,
+                  value: Row(
+                    children: [
+                      Icon(
+                        priorityIcon(t.priority),
+                        size: 16,
+                        color: priorityColor(t.priority),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(priorityLabel(t.priority)),
+                    ],
+                  ),
+                  onTap: c.online
+                      ? () async {
+                          final v = await showPicker<String>(
+                            context,
+                            title: 'Priority',
+                            selected: t.priority,
+                            options: [
+                              for (final p in priorities)
+                                PickerOption(
+                                  p,
+                                  priorityLabel(p),
+                                  leading: Icon(
+                                    priorityIcon(p),
+                                    size: 18,
+                                    color: priorityColor(p),
+                                  ),
+                                ),
+                            ],
+                          );
+                          if (v != null && v != t.priority && context.mounted) {
+                            await perform(
+                              context,
+                              () => c.updateTask({'priority': v}),
+                            );
+                          }
+                        }
+                      : null,
+                ),
+                _Property(
+                  label: 'Agent',
+                  icon: Icons.smart_toy_outlined,
+                  value: Row(
+                    children: [
+                      if (agent != null) ...[
+                        agentAvatar(c.api, agent, size: 20),
+                        const SizedBox(width: 8),
+                      ],
+                      Flexible(
+                        child: Text(
+                          agent?.name ?? 'No Agent',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: agent == null ? Palette.fgSubtle : null,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  onTap: c.online
+                      ? () async {
+                          final v = await _pickAgent(
+                            context,
+                            c.api,
+                            c.agents,
+                            t.agentId ?? '',
+                          );
+                          if (v != null &&
+                              v != (t.agentId ?? '') &&
+                              context.mounted) {
+                            await perform(
+                              context,
+                              () => c.updateTask({
+                                'agentId': v.isEmpty ? null : v,
+                              }),
+                            );
+                          }
+                        }
+                      : null,
+                ),
+                _Property(
+                  label: 'Assignees',
+                  icon: Icons.person_outline_rounded,
+                  value: assignees.isEmpty
+                      ? const Text(
+                          'Unassigned',
+                          style: TextStyle(color: Palette.fgSubtle),
+                        )
+                      : Wrap(
+                          spacing: 10,
+                          runSpacing: 6,
+                          children: [
+                            for (final user in assignees)
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  UserAvatar(
+                                    label: user.displayName,
+                                    userId: user.id,
+                                    imageUrl: user.avatarImageUrl,
+                                    api: c.api,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(user.displayName),
+                                ],
+                              ),
+                          ],
+                        ),
+                  onTap: c.online
+                      ? () => _pickInline(
+                          context,
+                          c,
+                          field: 'assigneeIds',
+                          title: 'Assignees',
+                          current: t.assigneeIds,
+                          empty: 'No Users to assign.',
+                          options: [
+                            for (final u in c.users)
+                              if (u.active || t.assigneeIds.contains(u.id))
+                                PickerOption(
+                                  u.id,
+                                  u.displayName,
+                                  leading: UserAvatar(
+                                    label: u.displayName,
+                                    userId: u.id,
+                                    imageUrl: u.avatarImageUrl,
+                                    api: c.api,
+                                    size: 24,
+                                  ),
+                                ),
+                          ],
+                        )
+                      : null,
+                ),
+                _Property(
+                  label: 'Tags',
+                  icon: Icons.sell_outlined,
+                  value: tags.isEmpty
+                      ? const Text(
+                          'No tags',
+                          style: TextStyle(color: Palette.fgSubtle),
+                        )
+                      : Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [for (final tag in tags) TagChip(tag: tag)],
+                        ),
+                  onTap: c.online
+                      ? () => _pickInline(
+                          context,
+                          c,
+                          field: 'tagIds',
+                          title: 'Tags',
+                          current: t.tagIds,
+                          empty:
+                              'This Project has no Tags yet. Type a name to create one.',
+                          createNoun: 'tag',
+                          onCreate: (name) async {
+                            final tag = await c.createTag(name);
+                            return PickerOption(
+                              tag.id,
+                              tag.name,
+                              leading: Dot(color: tagColor(tag), size: 9),
+                            );
+                          },
+                          options: [
+                            for (final tag in c.tags)
+                              PickerOption(
+                                tag.id,
+                                tag.name,
+                                leading: Dot(color: tagColor(tag), size: 9),
+                              ),
+                          ],
+                        )
+                      : null,
+                ),
               ],
             ),
           ),
-          const SizedBox(height: 18),
-          section(
-            1,
-            Container(
-              decoration: BoxDecoration(
-                color: Palette.surface,
-                borderRadius: BorderRadius.circular(Radii.lg),
-                border: Border.all(color: Palette.border),
-              ),
-              padding: const EdgeInsets.all(4),
-              child: Column(
-                children: [
-                  _Property(
-                    label: 'Status',
-                    icon: Icons.radio_button_checked_rounded,
-                    value: Row(
-                      children: [
-                        StatusDot(color: hexColor(status?.color ?? '#888888')),
-                        const SizedBox(width: 8),
-                        Flexible(child: Text(status?.name ?? '—')),
-                      ],
-                    ),
-                    onTap: c.online
-                        ? () async {
-                            final v = await showPicker<String>(
-                              context,
-                              title: 'Status',
-                              selected: t.statusId,
-                              options: [
-                                for (final s in c.statuses)
-                                  PickerOption(
-                                    s.id,
-                                    s.name,
-                                    leading: StatusDot(
-                                      color: hexColor(s.color),
-                                    ),
-                                  ),
-                              ],
-                            );
-                            if (v != null &&
-                                v != t.statusId &&
-                                context.mounted) {
-                              await perform(
-                                context,
-                                () => c.updateTask({'statusId': v}),
-                              );
-                            }
-                          }
-                        : null,
-                  ),
-                  _Property(
-                    label: 'Priority',
-                    icon: Icons.flag_outlined,
-                    value: Row(
-                      children: [
-                        Icon(
-                          priorityIcon(t.priority),
-                          size: 16,
-                          color: priorityColor(t.priority),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(priorityLabel(t.priority)),
-                      ],
-                    ),
-                    onTap: c.online
-                        ? () async {
-                            final v = await showPicker<String>(
-                              context,
-                              title: 'Priority',
-                              selected: t.priority,
-                              options: [
-                                for (final p in priorities)
-                                  PickerOption(
-                                    p,
-                                    priorityLabel(p),
-                                    leading: Icon(
-                                      priorityIcon(p),
-                                      size: 18,
-                                      color: priorityColor(p),
-                                    ),
-                                  ),
-                              ],
-                            );
-                            if (v != null &&
-                                v != t.priority &&
-                                context.mounted) {
-                              await perform(
-                                context,
-                                () => c.updateTask({'priority': v}),
-                              );
-                            }
-                          }
-                        : null,
-                  ),
-                  _Property(
-                    label: 'Agent',
-                    icon: Icons.smart_toy_outlined,
-                    value: Row(
-                      children: [
-                        if (agent != null) ...[
-                          _agentAvatar(c.api, agent, size: 20),
-                          const SizedBox(width: 8),
-                        ],
-                        Flexible(
-                          child: Text(
-                            agent?.name ?? 'No Agent',
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: agent == null ? Palette.fgSubtle : null,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    onTap: c.online
-                        ? () async {
-                            final v = await _pickAgent(
-                              context,
-                              c.api,
-                              c.agents,
-                              t.agentId ?? '',
-                            );
-                            if (v != null &&
-                                v != (t.agentId ?? '') &&
-                                context.mounted) {
-                              await perform(
-                                context,
-                                () => c.updateTask({
-                                  'agentId': v.isEmpty ? null : v,
-                                }),
-                              );
-                            }
-                          }
-                        : null,
-                  ),
-                  _Property(
-                    label: 'Assignees',
-                    icon: Icons.person_outline_rounded,
-                    value: assignees.isEmpty
-                        ? const Text(
-                            'Unassigned',
-                            style: TextStyle(color: Palette.fgSubtle),
-                          )
-                        : Wrap(
-                            spacing: 10,
-                            runSpacing: 6,
-                            children: [
-                              for (final user in assignees)
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    UserAvatar(
-                                      label: user.displayName,
-                                      userId: user.id,
-                                      imageUrl: user.avatarImageUrl,
-                                      api: c.api,
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(user.displayName),
-                                  ],
-                                ),
-                            ],
-                          ),
-                    onTap: edit,
-                  ),
-                  _Property(
-                    label: 'Tags',
-                    icon: Icons.sell_outlined,
-                    value: tags.isEmpty
-                        ? const Text(
-                            'No tags',
-                            style: TextStyle(color: Palette.fgSubtle),
-                          )
-                        : Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: [
-                              for (final tag in tags) TagChip(tag: tag),
-                            ],
-                          ),
-                    onTap: edit,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (t.branchName != null || t.pullRequestUrl != null) ...[
-            const SizedBox(height: 22),
-            section(
-              2,
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SectionLabel('Code'),
-                  if (t.branchName != null)
-                    _LinkCard(
-                      icon: Icons.account_tree_outlined,
-                      label: t.branchName!,
-                      monospace: true,
-                      onTap: () => openLink(t.branchUrl),
-                    ),
-                  if (t.pullRequestUrl != null)
-                    _LinkCard(
-                      icon: Icons.merge_rounded,
-                      label: 'Open Pull Request',
-                      color: Palette.success,
-                      onTap: () => openLink(t.pullRequestUrl),
-                    ),
-                  if (t.canMergePullRequest && edit != null)
-                    AppButton(
-                      label: 'Merge ${t.pullRequestNoun}',
-                      icon: Icons.merge_rounded,
-                      tone: Tone.ghost,
-                      onPressed: () =>
-                          confirmMergePullRequest(context, controller),
-                    ),
-                ],
-              ),
-            ),
-          ],
+        ),
+        if (t.branchName != null || t.pullRequestUrl != null) ...[
           const SizedBox(height: 22),
           section(
-            3,
+            2,
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SectionLabel(
-                  'Description',
-                  trailing: edit == null
-                      ? null
-                      : AppButton(
-                          label: 'Edit',
-                          icon: Icons.edit_outlined,
-                          tone: Tone.ghost,
-                          compact: true,
-                          onPressed: edit,
-                        ),
-                ),
-                Container(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-                  decoration: BoxDecoration(
-                    color: Palette.surface.withValues(alpha: .6),
-                    borderRadius: BorderRadius.circular(Radii.lg),
-                    border: Border.all(color: Palette.border),
+                const SectionLabel('Code'),
+                if (t.branchName != null)
+                  AppTile(
+                    leading: const IconBadge(
+                      Icons.account_tree_outlined,
+                      color: Palette.primarySoft,
+                      size: 28,
+                    ),
+                    title: t.branchName!,
+                    monospace: true,
+                    trailing: externalMark,
+                    onTap: () => openLink(t.branchUrl),
                   ),
-                  child: t.description.isEmpty
-                      ? const Text(
-                          'No description yet.',
-                          style: TextStyle(
-                            color: Palette.fgSubtle,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        )
-                      : Md(
-                          t.description,
-                          onLink: openLink,
-                          onAttachment: (url, filename) => perform(
-                            context,
-                            () async {
+                if (t.pullRequestUrl != null)
+                  AppTile(
+                    leading: const IconBadge(
+                      Icons.merge_rounded,
+                      color: Palette.success,
+                      size: 28,
+                    ),
+                    title: 'Open Pull Request',
+                    trailing: externalMark,
+                    onTap: () => openLink(t.pullRequestUrl),
+                  ),
+                if (t.canMergePullRequest && edit != null)
+                  AppButton(
+                    label: 'Merge ${t.pullRequestNoun}',
+                    icon: Icons.merge_rounded,
+                    tone: Tone.ghost,
+                    onPressed: () =>
+                        confirmMergePullRequest(context, controller),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 22),
+        section(
+          3,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SectionLabel(
+                'Description',
+                trailing: edit == null
+                    ? null
+                    : AppButton(
+                        label: 'Edit',
+                        icon: Icons.edit_outlined,
+                        tone: Tone.ghost,
+                        compact: true,
+                        onPressed: edit,
+                      ),
+              ),
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                decoration: BoxDecoration(
+                  color: Palette.surface.withValues(alpha: .6),
+                  borderRadius: BorderRadius.circular(Radii.lg),
+                  border: Border.all(color: Palette.border),
+                ),
+                child: t.description.isEmpty
+                    ? const Text(
+                        'No description yet.',
+                        style: TextStyle(
+                          color: Palette.fgSubtle,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      )
+                    : Md(
+                        t.description,
+                        onLink: openLink,
+                        onAttachment: (url, filename) =>
+                            perform(context, () async {
                               final file = await controller.downloadAttachment({
                                 'id': Uri.parse(url).pathSegments.last,
                                 'filename': filename,
                                 'url': url,
                               });
                               await OpenFilex.open(file.path);
-                            },
-                          ),
-                        ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 26),
-          Row(
-            children: [
-              const Icon(
-                Icons.notifications_none_rounded,
-                size: 15,
-                color: Palette.fgSubtle,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  c.push.status,
-                  style: const TextStyle(fontSize: 12, color: Palette.fgSubtle),
-                ),
+                            }),
+                      ),
               ),
             ],
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 26),
+        Row(
+          children: [
+            const Icon(
+              Icons.notifications_none_rounded,
+              size: 15,
+              color: Palette.fgSubtle,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                c.push.status,
+                style: const TextStyle(fontSize: 12, color: Palette.fgSubtle),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+    if (inSheet) {
+      return SheetScaffold(
+        title: 'Task details',
+        headerActions: [?closeAction, editAction],
+        body: body,
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PageHeader(title: 'Task details', actions: [?closeAction, editAction]),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(Space.page, 16, Space.page, 28),
+            child: body,
+          ),
+        ),
+      ],
     );
   }
+}
+
+/// Changes one multi-value field of the open Task from a picker, saving it
+/// right away when the selection changed.
+Future<void> _pickInline(
+  BuildContext context,
+  TaskController c, {
+  required String field,
+  required String title,
+  required List<String> current,
+  required List<PickerOption<String>> options,
+  required String empty,
+  Future<PickerOption<String>> Function(String name)? onCreate,
+  String createNoun = 'option',
+}) async {
+  final chosen = await showMultiPicker<String>(
+    context,
+    title: title,
+    options: options,
+    selected: current.toSet(),
+    empty: empty,
+    onCreate: onCreate,
+    createNoun: createNoun,
+  );
+  if (chosen == null || !context.mounted) return;
+  if (chosen.length == current.length && chosen.containsAll(current)) return;
+  await perform(context, () => c.updateTask({field: chosen.toList()}));
 }
 
 /// A Tag as a rounded chip with its color dot, like the web `TagChip`.
@@ -741,65 +784,10 @@ class _Property extends StatelessWidget {
   );
 }
 
-class _LinkCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool monospace;
-  final Color color;
-  const _LinkCard({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.monospace = false,
-    this.color = Palette.primarySoft,
-  });
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Pressable(
-      onTap: onTap,
-      color: Palette.surface,
-      border: Border.all(color: Palette.border),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-      child: Row(
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: .14),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, size: 15, color: color),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13.5,
-                fontFamily: monospace ? mono : null,
-              ),
-            ),
-          ),
-          const Icon(
-            Icons.open_in_new_rounded,
-            size: 15,
-            color: Palette.fgSubtle,
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
 Future<void> showEditTask(BuildContext context, TaskController c) async {
   final task = c.task!,
       title = TextEditingController(text: c.task!.title),
       description = TextEditingController(text: c.task!.description);
-  final tagIds = task.tagIds.toSet(), assigneeIds = task.assigneeIds.toSet();
   bool saving = false, uploading = false;
   String? error;
   await showAppSheet<void>(
@@ -816,118 +804,75 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
             if (error != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 14),
-                child: Notice(
-                  message: error!,
-                  color: Palette.danger,
-                  icon: Icons.error_outline_rounded,
-                ),
+                child: Notice.error(error!),
               ),
-            const FieldLabel('Title'),
-            TextField(
-              controller: title,
-              maxLength: 500,
-              decoration: const InputDecoration(counterText: ''),
-              onChanged: (_) => set(() {}),
+            LabeledField(
+              label: 'Title',
+              child: TextField(
+                controller: title,
+                maxLength: 500,
+                decoration: const InputDecoration(counterText: ''),
+                onChanged: (_) => set(() {}),
+              ),
             ),
-            const SizedBox(height: 16),
-            const FieldLabel('Description', hint: 'Markdown'),
-            AppButton(
-              label: 'Upload images or files',
-              icon: Icons.attach_file_rounded,
-              tone: Tone.secondary,
-              busy: uploading,
-              onPressed: saving || uploading || !c.online
-                  ? null
-                  : () async {
-                      set(() => error = null);
-                      try {
-                        final files = await pickAppAttachments(sheet);
-                        if (files.isEmpty || !sheet.mounted) return;
-                        set(() => uploading = true);
-                        final uploaded = await c.uploadTaskFiles(
-                          task.id,
-                          files,
-                        );
-                        if (!sheet.mounted) return;
-                        final links = uploaded
-                            .map(attachmentMarkdown)
-                            .join('\n\n');
-                        final text = description.text;
-                        final selection = description.selection;
-                        final start = selection.isValid
-                            ? selection.start
-                            : text.length;
-                        final end = selection.isValid
-                            ? selection.end
-                            : text.length;
-                        final insertion = '\n\n$links\n\n';
-                        description.value = TextEditingValue(
-                          text: text.replaceRange(start, end, insertion),
-                          selection: TextSelection.collapsed(
-                            offset: start + insertion.length,
-                          ),
-                        );
-                      } catch (e) {
-                        if (sheet.mounted) set(() => error = e.toString());
-                      } finally {
-                        if (sheet.mounted) set(() => uploading = false);
-                      }
-                    },
-            ),
-            const SizedBox(height: 8),
-            MarkdownEditor(
-              controller: description,
-              enabled: !saving && !uploading,
-            ),
-            if (c.tags.isNotEmpty) ...[
-              const SizedBox(height: 22),
-              const SectionLabel('Tags'),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
+            LabeledField(
+              label: 'Description',
+              hint: 'Markdown',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (final l in c.tags)
-                    ChoiceChipX(
-                      label: l.name,
-                      leading: Dot(color: tagColor(l), size: 7),
-                      selected: tagIds.contains(l.id),
-                      onChanged: (v) => set(() {
-                        if (v) {
-                          tagIds.add(l.id);
-                        } else {
-                          tagIds.remove(l.id);
-                        }
-                      }),
-                    ),
+                  AppButton(
+                    label: 'Upload images or files',
+                    icon: Icons.attach_file_rounded,
+                    tone: Tone.secondary,
+                    busy: uploading,
+                    onPressed: saving || uploading || !c.online
+                        ? null
+                        : () async {
+                            set(() => error = null);
+                            try {
+                              final files = await pickAppAttachments(sheet);
+                              if (files.isEmpty || !sheet.mounted) return;
+                              set(() => uploading = true);
+                              final uploaded = await c.uploadTaskFiles(
+                                task.id,
+                                files,
+                              );
+                              if (!sheet.mounted) return;
+                              final links = uploaded
+                                  .map(attachmentMarkdown)
+                                  .join('\n\n');
+                              final text = description.text;
+                              final selection = description.selection;
+                              final start = selection.isValid
+                                  ? selection.start
+                                  : text.length;
+                              final end = selection.isValid
+                                  ? selection.end
+                                  : text.length;
+                              final insertion = '\n\n$links\n\n';
+                              description.value = TextEditingValue(
+                                text: text.replaceRange(start, end, insertion),
+                                selection: TextSelection.collapsed(
+                                  offset: start + insertion.length,
+                                ),
+                              );
+                            } catch (e) {
+                              if (sheet.mounted) {
+                                set(() => error = e.toString());
+                              }
+                            } finally {
+                              if (sheet.mounted) set(() => uploading = false);
+                            }
+                          },
+                  ),
+                  const SizedBox(height: 8),
+                  MarkdownEditor(
+                    controller: description,
+                    enabled: !saving && !uploading,
+                  ),
                 ],
               ),
-            ],
-            const SizedBox(height: 22),
-            const SectionLabel('User assignees'),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final u in c.users)
-                  ChoiceChipX(
-                    label: u.displayName,
-                    leading: UserAvatar(
-                      label: u.displayName,
-                      userId: u.id,
-                      imageUrl: u.avatarImageUrl,
-                      api: c.api,
-                      size: 18,
-                    ),
-                    selected: assigneeIds.contains(u.id),
-                    onChanged: (v) => set(() {
-                      if (v) {
-                        assigneeIds.add(u.id);
-                      } else {
-                        assigneeIds.remove(u.id);
-                      }
-                    }),
-                  ),
-              ],
             ),
           ],
         ),
@@ -948,8 +893,6 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
                       await c.updateTask({
                         'title': title.text.trim(),
                         'description': description.text,
-                        'tagIds': tagIds.toList(),
-                        'assigneeIds': assigneeIds.toList(),
                       });
                       if (sheet.mounted) Navigator.pop(sheet);
                     } catch (e) {
@@ -977,11 +920,41 @@ Future<void> confirmMergePullRequest(
   final accepted = await confirm(
     context,
     title: 'Merge $noun?',
-    message: 'It is merged into the base branch with the provider\'s default merge method.',
+    message:
+        'It is merged into the base branch with the provider\'s default merge method.',
     confirmLabel: 'Merge',
   );
   if (accepted && context.mounted) {
     await perform(context, controller.mergePullRequest);
+  }
+}
+
+/// Moves the Task to [closed], ending its Session. Asks first only while the
+/// Agent is working, since closing cancels that work.
+Future<void> confirmCloseTask(
+  BuildContext context,
+  TaskController controller,
+  TaskStatus closed,
+) async {
+  final task = controller.task!, session = controller.session;
+  final working =
+      session?['state'] == 'running' || session?['queuePosition'] != null;
+  if (working &&
+      !await confirm(
+        context,
+        title: 'Close ${task.key}?',
+        message:
+            'The Agent is working on it: closing stops its work and ends the Session. The Task moves to “${closed.name}”.',
+        confirmLabel: 'Close Task',
+        destructive: false,
+      )) {
+    return;
+  }
+  if (context.mounted) {
+    await perform(
+      context,
+      () => controller.updateTask({'statusId': closed.id}),
+    );
   }
 }
 

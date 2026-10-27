@@ -1,7 +1,10 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:claude_task_mobile/src/app.dart';
+import 'package:claude_task_mobile/src/ui/theme.dart';
+import 'package:claude_task_mobile/src/ui/widgets.dart';
 
 import 'support.dart';
 
@@ -374,4 +377,200 @@ void main() {
     expect(find.text('Show less'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  for (final running in [false, true]) {
+    testWidgets(
+      'Task details close the Task in one tap${running ? ', asking first while the Agent works' : ''}',
+      (tester) async {
+        tester.view.physicalSize = const Size(1600, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        // A running Session pulses forever: pump fixed frames instead of settling.
+        Future<void> settle() async {
+          for (var i = 0; i < 5; i++) {
+            await tester.pump(const Duration(milliseconds: 200));
+          }
+        }
+
+        final h = Harness();
+        addTearDown(h.dispose);
+        if (running) {
+          h.api.session = {
+            'state': 'running',
+            'queuePosition': null,
+            'held': false,
+            'unseenChanges': false,
+          };
+        }
+        await h.login();
+        await h.openTask();
+        await tester.pumpWidget(TaskApp(controller: h.controller));
+        await settle();
+        await tester.tap(find.byTooltip('Close Task'));
+        await settle();
+        if (running) {
+          expect(h.api.currentTask['statusId'], isNot('status-2'));
+          expect(find.textContaining('closing stops its work'), findsOneWidget);
+          await tester.tap(find.widgetWithText(AppButton, 'Close Task'));
+          await settle();
+        }
+        expect(h.api.currentTask['statusId'], 'status-2');
+        expect(find.byTooltip('Close Task'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('Close Task turns green under the pointer', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final h = Harness();
+    addTearDown(h.dispose);
+    await h.login();
+    await h.openTask();
+    await tester.pumpWidget(TaskApp(controller: h.controller));
+    await tester.pumpAndSettle();
+    final action = find.byTooltip('Close Task');
+    Color iconColor() => tester
+        .widget<Icon>(find.descendant(of: action, matching: find.byType(Icon)))
+        .color!;
+    expect(iconColor(), Palette.fgMuted);
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(action));
+    await tester.pumpAndSettle();
+    expect(iconColor(), Palette.success);
+    await mouse.moveTo(Offset.zero);
+    await tester.pumpAndSettle();
+    expect(iconColor(), Palette.fgMuted);
+  });
+
+  testWidgets(
+    'Task details change assignees and Tags inline, creating Tags there',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final h = Harness();
+      addTearDown(h.dispose);
+      await h.login();
+      await h.openTask();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Unassigned'));
+      await tester.pumpAndSettle();
+      // The picker edits only this field: no title or description.
+      expect(find.text('Edit Task'), findsNothing);
+      await tester.tap(find.text('Ada').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(AppButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(h.api.currentTask['assigneeIds'], ['user-1']);
+      expect(find.text('Unassigned'), findsNothing);
+
+      // Dismissing without Save changes nothing.
+      final before = h.api.calls.where((c) => c == 'PATCH /tasks/task-1');
+      final patches = before.length;
+      await tester.tap(find.text('No tags'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('no Tags yet'), findsOneWidget);
+      await tester.tap(find.widgetWithText(AppButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      expect(
+        h.api.calls.where((c) => c == 'PATCH /tasks/task-1').length,
+        patches,
+      );
+
+      // A new Tag is created from the picker, like on the web, and chosen.
+      await tester.tap(find.text('No tags'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'Bug');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create tag “Bug”'));
+      await tester.pumpAndSettle();
+      expect(h.api.createdTags.single, {
+        'id': 'tag-1',
+        'name': 'Bug',
+        'color': '#6366f1',
+      });
+      expect(find.text('Create tag “Bug”'), findsNothing);
+      // An existing name offers no creation.
+      await tester.enterText(find.byType(TextField).last, 'bug');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Create tag'), findsNothing);
+      await tester.tap(find.widgetWithText(AppButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(h.api.currentTask['tagIds'], ['tag-1']);
+      expect(h.controller.tags.single.name, 'Bug');
+      expect(find.text('Bug'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'composer buttons stay centered on the text line and inside the box',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final h = Harness();
+      addTearDown(h.dispose);
+      await h.login();
+      await h.openTask();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+
+      final box = tester.getRect(find.byKey(const Key('composer-box')));
+      final send = tester.getRect(find.byKey(const Key('send-comment')));
+      final attach = tester.getRect(
+        find.descendant(
+          of: find.byTooltip('Attach local files'),
+          matching: find.byType(Pressable),
+        ),
+      );
+      final toggle = tester.getRect(
+        find.descendant(
+          of: find.byKey(const Key('internal-toggle')),
+          matching: find.byType(Pressable),
+        ),
+      );
+      final text = tester.getRect(
+        find.descendant(
+          of: find.byKey(const Key('comment-composer')),
+          matching: find.byType(EditableText),
+        ),
+      );
+      for (final rect in [attach, toggle, send]) {
+        expect(rect.center.dy, moreOrLessEquals(text.center.dy, epsilon: 1));
+      }
+      expect(send.center.dy, moreOrLessEquals(box.center.dy, epsilon: 1));
+      expect(send.right, lessThanOrEqualTo(box.right - 6));
+      expect(send.top, greaterThanOrEqualTo(box.top + 5));
+      expect(send.bottom, lessThanOrEqualTo(box.bottom - 5));
+
+      // Longer text grows the box; the buttons stay on its last line.
+      await tester.enterText(
+        find.byKey(const Key('comment-composer')),
+        'one\ntwo\nthree',
+      );
+      await tester.pumpAndSettle();
+      final tall = tester.getRect(find.byKey(const Key('composer-box')));
+      final sendAfter = tester.getRect(find.byKey(const Key('send-comment')));
+      expect(tall.height, greaterThan(box.height));
+      expect(sendAfter.bottom, lessThanOrEqualTo(tall.bottom - 5));
+      expect(sendAfter.top, greaterThan(tall.center.dy));
+      expect(tester.takeException(), isNull);
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.android,
+      TargetPlatform.macOS,
+    }),
+  );
 }

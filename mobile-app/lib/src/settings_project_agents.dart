@@ -9,18 +9,19 @@ class _ProjectAgentSettings extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => _Screen(
+  Widget build(BuildContext context) => _RemotePage<List<Json>>(
     title: 'Agent setup',
     subtitle: project.name,
-    body: _Remote<List<Json>>(
-      load: () => Future.wait([
-        controller.settingsRequest(
-          'GET',
-          '/projects/${project.id}/agent-settings',
-        ),
-        controller.settingsRequest('GET', '/agents'),
-      ]),
-      builder: (context, data, _) => _ProjectAgentEditor(
+    load: () => Future.wait([
+      controller.settingsRequest(
+        'GET',
+        '/projects/${project.id}/agent-settings',
+      ),
+      controller.settingsRequest('GET', '/agents'),
+    ]),
+    builder: (context, data, _) => (
+      actions: const <Widget>[],
+      body: _ProjectAgentEditor(
         key: ValueKey(project.id),
         controller: controller,
         project: project,
@@ -258,102 +259,145 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
         });
       },
       child: _list([
-        const SectionLabel('Agent setup'),
-        _Item(
-          title: 'Default Agent',
-          subtitle: selected == null
-              ? 'No Agent'
-              : '${selected['name']}${selected['enabled'] == true ? '' : ' (disabled)'}',
-          onTap: _pickAgent,
-        ),
-        const Text(
-          'Assigned to new Tasks while enabled. The first User Comment starts the Agent.',
-          style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
-        ),
-        const SizedBox(height: 16),
-        _autoField(
-          'Worktree Setup Script',
-          _script,
-          hint: 'Runs once for each new Worktree, before Claude starts.',
-          code: true,
-        ),
-        const SizedBox(height: 16),
-        _autoField(
-          'Agent Instructions',
-          _instructions,
-          hint: 'Applied to every Agent working on this Project, alongside the Repository instructions.',
-        ),
-        const SizedBox(height: 10),
-        if (_saveError != null)
-          Notice(
-            message: _saveError!,
-            color: Palette.danger,
-            icon: Icons.error_outline_rounded,
-            actionLabel: 'Retry',
-            onAction: _saving ? null : _flush,
-          )
-        else
-          Semantics(
-            liveRegion: true,
-            child: Text(
-              _saving
-                  ? 'Saving…'
-                  : _dirty
-                  ? 'Unsaved changes'
-                  : 'Saved',
-              style: const TextStyle(fontSize: 12, color: Palette.fgSubtle),
-            ),
-          ),
-        const SizedBox(height: 24),
-        const SectionLabel('Environment variables & secrets'),
-        const Text(
-          'Sent only to Jobs for this Project. Admins manage variables and secrets.',
-          style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
-        ),
-        const SizedBox(height: 12),
-        if (_envError != null)
-          Notice(
-            message: _envError!,
-            color: Palette.danger,
-            icon: Icons.error_outline_rounded,
-          ),
-        if (objects(_settings['env']).isEmpty) const Text('No variables yet.'),
-        for (final variable in objects(_settings['env']))
-          _Item(
-            title: variable['name'] as String,
-            subtitle: variable['secret'] == true
-                ? 'Secret${variable['last4'] == null || variable['last4'] == '' ? '' : ' · …${variable['last4']}'}'
-                : variable['value'] as String? ?? '',
-            onTap: _admin && !_envBusy ? () => _editVariable(variable) : null,
-            trailing: _admin
-                ? IconAction(
-                    icon: Icons.delete_outline_rounded,
-                    tooltip: 'Delete ${variable['name']}',
-                    onPressed: _envBusy
-                        ? null
-                        : () => _removeVariable(variable),
-                  )
-                : null,
-          ),
-        if (_admin) ...[
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              AppButton(
-                label: 'Add variable',
-                icon: Icons.add_rounded,
-                onPressed: _envBusy ? null : _editVariable,
+        Section(
+          title: 'Agent setup',
+          children: [
+            LabeledField(
+              label: 'Default Agent',
+              description:
+                  'Assigned to new Tasks while enabled. The first User Comment starts the Agent.',
+              child: SelectField(
+                leading: selected == null
+                    ? null
+                    : UserAvatar(
+                        label: selected['name'] as String,
+                        userId: selected['id'] as String,
+                        imageUrl: selected['avatarImageUrl'] as String?,
+                        emoji: selected['avatarEmoji'] as String? ?? '🤖',
+                        api: widget.controller.api,
+                        size: 26,
+                        circle: false,
+                      ),
+                label: selected == null
+                    ? 'No Agent'
+                    : '${selected['name']}${selected['enabled'] == true ? '' : ' (disabled)'}',
+                placeholder: selected == null,
+                onTap: _pickAgent,
               ),
-              AppButton(
-                label: 'Import .env',
-                tone: Tone.secondary,
-                onPressed: _envBusy ? null : _importEnv,
+            ),
+            _autoField(
+              'Worktree Setup Script',
+              _script,
+              hint: 'Runs once for each new Worktree, before Claude starts.',
+              code: true,
+            ),
+            _autoField(
+              'Agent Instructions',
+              _instructions,
+              hint:
+                  'Applied to every Agent working on this Project, alongside the Repository instructions.',
+            ),
+            if (_saveError != null)
+              Notice.error(
+                _saveError!,
+                actionLabel: 'Retry',
+                onAction: _saving ? null : _flush,
+              )
+            else
+              Semantics(
+                liveRegion: true,
+                child: Row(
+                  children: [
+                    Icon(
+                      _saving
+                          ? Icons.sync_rounded
+                          : _dirty
+                          ? Icons.edit_note_rounded
+                          : Icons.check_circle_outline_rounded,
+                      size: 15,
+                      color: _saving || _dirty
+                          ? Palette.fgSubtle
+                          : Palette.success,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _saving
+                          ? 'Saving…'
+                          : _dirty
+                          ? 'Unsaved changes'
+                          : 'Saved',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Palette.fgSubtle,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        Section(
+          title: 'Environment variables & secrets',
+          description:
+              'Sent only to Jobs for this Project. Admins manage variables and secrets.',
+          trailing: _admin
+              ? SectionAdd(
+                  tooltip: 'Add variable',
+                  onPressed: _envBusy ? null : _editVariable,
+                )
+              : null,
+          children: [
+            if (_envError != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: Space.row),
+                child: Notice.error(_envError!),
+              ),
+            if (objects(_settings['env']).isEmpty)
+              const EmptyHint('No variables yet.'),
+            for (final variable in objects(_settings['env']))
+              AppTile(
+                leading: IconBadge(
+                  variable['secret'] == true
+                      ? Icons.lock_outline_rounded
+                      : Icons.data_object_rounded,
+                  color: variable['secret'] == true
+                      ? Palette.warning
+                      : Palette.info,
+                ),
+                title: variable['name'] as String,
+                monospace: true,
+                subtitle: variable['secret'] == true
+                    ? 'Secret${variable['last4'] == null || variable['last4'] == '' ? '' : ' · …${variable['last4']}'}'
+                    : variable['value'] as String? ?? '',
+                onTap: _admin && !_envBusy
+                    ? () => _editVariable(variable)
+                    : null,
+                trailing: _admin
+                    ? IconAction(
+                        icon: Icons.delete_outline_rounded,
+                        tooltip: 'Delete ${variable['name']}',
+                        size: 32,
+                        onPressed: _envBusy
+                            ? null
+                            : () => _removeVariable(variable),
+                      )
+                    : null,
+              ),
+            if (_admin) ...[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: AppButton(
+                  label: 'Import .env',
+                  icon: Icons.upload_file_rounded,
+                  tone: Tone.secondary,
+                  compact: true,
+                  onPressed: _envBusy ? null : _importEnv,
+                ),
               ),
             ],
-          ),
-        ],
+          ],
+        ),
       ]),
     );
   }
@@ -363,27 +407,24 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
     TextEditingController controller, {
     required String hint,
     bool code = false,
-  }) => Focus(
-    onFocusChange: (focused) {
-      if (!focused && _dirty) unawaited(_flush());
-    },
-    child: TextField(
-      key: ValueKey(label),
-      controller: controller,
-      decoration: InputDecoration(
-        labelText: label,
-        helperText: hint,
-        helperMaxLines: 3,
-        alignLabelWithHint: true,
+  }) => LabeledField(
+    label: label,
+    description: hint,
+    child: Focus(
+      onFocusChange: (focused) {
+        if (!focused && _dirty) unawaited(_flush());
+      },
+      child: TextField(
+        key: ValueKey(label),
+        controller: controller,
+        decoration: const InputDecoration(counterText: ''),
+        minLines: 4,
+        maxLines: 8,
+        maxLength: 100000,
+        autocorrect: !code,
+        enableSuggestions: !code,
+        style: code ? const TextStyle(fontFamily: mono, fontSize: 12.5) : null,
       ),
-      minLines: 4,
-      maxLines: 8,
-      maxLength: 100000,
-      autocorrect: !code,
-      enableSuggestions: !code,
-      style: code
-          ? const TextStyle(fontFamily: 'GeistMono', fontSize: 12)
-          : null,
     ),
   );
 }
@@ -442,54 +483,49 @@ class _ProjectEnvSheetState extends State<_ProjectEnvSheet> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_error != null)
-            Notice(
-              message: _error!,
-              color: Palette.danger,
-              icon: Icons.error_outline_rounded,
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Notice.error(_error!),
             ),
-          TextFormField(
-            controller: _name,
-            enabled: !_busy && widget.variable == null,
-            decoration: const InputDecoration(labelText: 'Variable name'),
-            maxLength: 128,
-            autocorrect: false,
-            enableSuggestions: false,
-            validator: (v) => validateProjectEnvName(v?.trim() ?? ''),
+          LabeledField(
+            label: 'Variable name',
+            child: TextFormField(
+              controller: _name,
+              enabled: !_busy && widget.variable == null,
+              maxLength: 128,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(counterText: ''),
+              style: const TextStyle(fontFamily: mono),
+              validator: (v) => validateProjectEnvName(v?.trim() ?? ''),
+            ),
           ),
-          const SizedBox(height: 12),
-          if (widget.variable?['secret'] == true)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 12),
-              child: Text(
-                'Stored secrets are write-only. Enter a replacement value to update this variable.',
-              ),
-            ),
-          TextFormField(
-            controller: _value,
-            enabled: !_busy,
-            decoration: InputDecoration(
-              labelText: widget.variable?['secret'] == true
-                  ? 'New value'
-                  : 'Value',
-            ),
-            maxLength: 100000,
-            obscureText: _secret,
-            autocorrect: false,
-            enableSuggestions: false,
-            validator: (v) =>
-                (_secret || widget.variable?['secret'] == true) &&
-                    (v == null || v.isEmpty)
-                ? 'Enter a new value.'
+          LabeledField(
+            label: widget.variable?['secret'] == true ? 'New value' : 'Value',
+            description: widget.variable?['secret'] == true
+                ? 'Stored secrets are write-only. Enter a replacement value to update this variable.'
                 : null,
+            child: TextFormField(
+              controller: _value,
+              enabled: !_busy,
+              decoration: const InputDecoration(counterText: ''),
+              maxLength: 100000,
+              obscureText: _secret,
+              autocorrect: false,
+              enableSuggestions: false,
+              validator: (v) =>
+                  (_secret || widget.variable?['secret'] == true) &&
+                      (v == null || v.isEmpty)
+                  ? 'Enter a new value.'
+                  : null,
+            ),
           ),
-          Row(
-            children: [
-              const Expanded(child: Text('Secret')),
-              Switch(
-                value: _secret,
-                onChanged: _busy ? null : (v) => setState(() => _secret = v),
-              ),
-            ],
+          SwitchRow(
+            label: 'Secret',
+            description:
+                'Write-only once saved; only the last 4 characters show.',
+            value: _secret,
+            onChanged: _busy ? null : (v) => setState(() => _secret = v),
           ),
         ],
       ),
@@ -580,26 +616,44 @@ class _ProjectEnvImportState extends State<_ProjectEnvImport> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_error != null)
-            Notice(
-              message: _error!,
-              color: Palette.danger,
-              icon: Icons.error_outline_rounded,
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Notice.error(_error!),
             ),
-          TextField(
-            controller: _content,
-            enabled: !_busy,
-            decoration: const InputDecoration(
-              labelText: '.env content',
-              hintText: 'API_URL=https://example.com',
+          LabeledField(
+            label: '.env content',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: _content,
+                  enabled: !_busy,
+                  style: const TextStyle(fontFamily: mono, fontSize: 12.5),
+                  decoration: const InputDecoration(
+                    hintText: 'API_URL=https://example.com',
+                    counterText: '',
+                  ),
+                  minLines: 4,
+                  maxLines: 8,
+                  maxLength: 500000,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: AppButton(
+                    label: 'Choose file',
+                    icon: Icons.folder_open_outlined,
+                    tone: Tone.secondary,
+                    compact: true,
+                    onPressed: _busy ? null : _chooseFile,
+                  ),
+                ),
+              ],
             ),
-            minLines: 4,
-            maxLines: 8,
-            maxLength: 500000,
-            autocorrect: false,
-            enableSuggestions: false,
-            onChanged: (_) => setState(() {}),
           ),
-          const SizedBox(height: 12),
           if (_content.text.trim().isNotEmpty)
             if (preview.errors.isNotEmpty)
               Text(
@@ -621,19 +675,11 @@ class _ProjectEnvImportState extends State<_ProjectEnvImport> {
                     ),
                 ],
               ),
-          Row(
-            children: [
-              const Expanded(child: Text('Import as secrets')),
-              Switch(
-                value: _secret,
-                onChanged: _busy ? null : (v) => setState(() => _secret = v),
-              ),
-            ],
-          ),
-          AppButton(
-            label: 'Choose file',
-            tone: Tone.secondary,
-            onPressed: _busy ? null : _chooseFile,
+          const SizedBox(height: 12),
+          SwitchRow(
+            label: 'Import as secrets',
+            value: _secret,
+            onChanged: _busy ? null : (v) => setState(() => _secret = v),
           ),
         ],
       ),

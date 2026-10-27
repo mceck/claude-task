@@ -204,6 +204,7 @@ class FakeApi implements TaskApi {
   bool hasOlder = false;
   Json? session;
   int createCount = 0, sendCount = 0, readCount = 0;
+  final createdTags = <Json>[];
   @override
   Future<Json> request(
     String method,
@@ -283,6 +284,11 @@ class FakeApi implements TaskApi {
       return {
         'preferences': [pref],
       };
+    }
+    if (path == '/projects/project-1/tags' && method == 'POST') {
+      final tag = {'id': 'tag-${createdTags.length + 1}', ...body!};
+      createdTags.add(tag);
+      return {'tag': tag};
     }
     if (path == '/projects/project-1/tasks' && method == 'POST') {
       createCount++;

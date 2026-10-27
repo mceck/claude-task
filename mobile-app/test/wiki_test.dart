@@ -188,7 +188,10 @@ void main() {
     await tester.tap(find.widgetWithText(AppButton, 'New wiki'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'Product wiki');
+    await tester.tap(find.byKey(const Key('wiki-agent')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Ada Bot'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Choose a repository'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('acme/wiki').last);

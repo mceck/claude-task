@@ -201,6 +201,22 @@ test('hides closed statuses until toggled, and combines filters', async ({ page 
   await expect.poll(() => cardTitles(page, 'Todo')).toEqual(['Urgent login bug']);
 });
 
+test('closes a task from its header in one click', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Wrap me up', 'Todo');
+  const closedId = project.statuses.find((s) => s.name === 'Closed')!.id;
+  await page.goto(`/t/${task.key}`);
+
+  const close = page.getByRole('button', { name: 'Close task' });
+  await expect(close).toBeVisible();
+  await close.click();
+  await expect.poll(async () => (await (await page.request.get(`/api/v1/tasks/${task.id}`)).json()).task.statusId).toBe(closedId);
+  await expect(page.getByRole('combobox', { name: 'Status' })).toContainText('Closed');
+  // An already closed Task offers no Close.
+  await expect(close).toHaveCount(0);
+});
+
 test('forces a new user to change their temporary password', async ({ page, browser }) => {
   const admin = await loggedInContext(browser);
   const res = await admin.request.post('/api/v1/users', {

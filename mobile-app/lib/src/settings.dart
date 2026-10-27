@@ -7,7 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'controller.dart';
 import 'models.dart';
 import 'project_env.dart';
-import 'task_forms.dart' show openLink;
+import 'task_forms.dart' show agentAvatar, openLink;
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 import 'ui/image_upload.dart';
@@ -80,154 +80,34 @@ Color _hex(String value) {
 
 // ---------------------------------------------------------------- scaffolding
 
-class _Screen extends StatelessWidget {
-  final String title;
-  final String? subtitle;
-  final Widget body;
-  final Widget? action;
-  const _Screen({
-    required this.title,
-    required this.body,
-    this.subtitle,
-    this.action,
-  });
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: Palette.bg,
-    body: SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    IconAction(
-                      icon: Icons.arrow_back_rounded,
-                      tooltip: 'Back',
-                      onPressed: () => Navigator.maybePop(context),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          if (subtitle != null)
-                            Text(
-                              subtitle!,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Palette.fgSubtle,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    ?action,
-                  ],
-                ),
-              ),
-              const Divider(),
-              Expanded(child: body),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-class _Item extends StatelessWidget {
-  final Widget? leading;
-  final String title;
-  final String? subtitle;
-  final Widget? trailing;
-  final VoidCallback? onTap;
-  const _Item({
-    required this.title,
-    this.subtitle,
-    this.leading,
-    this.trailing,
-    this.onTap,
-  });
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Pressable(
-      onTap: onTap,
-      padding: const EdgeInsets.all(14),
-      color: Palette.surface,
-      border: Border.all(color: Palette.border),
-      child: Row(
-        children: [
-          if (leading != null) ...[leading!, const SizedBox(width: 12)],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                if (subtitle != null && subtitle!.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle!,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Palette.fgSubtle,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          ?trailing,
-          if (onTap != null && trailing == null)
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: Palette.fgSubtle,
-              size: 20,
-            ),
-        ],
-      ),
-    ),
-  );
-}
-
 Widget _swatch(String color, {double size = 18}) => Container(
   width: size,
   height: size,
   decoration: BoxDecoration(color: _hex(color), shape: BoxShape.circle),
 );
 
-/// Loads data once, shows the failure with a retry, and rebuilds on [reload].
-class _Remote<T> extends StatefulWidget {
+typedef _Content = ({List<Widget> actions, Widget body});
+
+/// A settings screen whose data loads on entry. Its header and Back stay
+/// usable while loading and after a failure, which offers Retry; pull to
+/// refresh reloads, and a failed reload keeps the loaded data visible.
+class _RemotePage<T> extends StatefulWidget {
+  final String title;
+  final String? subtitle;
   final Future<T> Function() load;
-  final Widget Function(BuildContext, T, Future<void> Function() reload)
+  final _Content Function(BuildContext, T, Future<void> Function() reload)
   builder;
-  const _Remote({required this.load, required this.builder});
+  const _RemotePage({
+    required this.title,
+    required this.load,
+    required this.builder,
+    this.subtitle,
+  });
   @override
-  State<_Remote<T>> createState() => _RemoteState<T>();
+  State<_RemotePage<T>> createState() => _RemotePageState<T>();
 }
 
-class _RemoteState<T> extends State<_Remote<T>> {
+class _RemotePageState<T> extends State<_RemotePage<T>> {
   T? data;
   Object? error;
   @override
@@ -252,57 +132,62 @@ class _RemoteState<T> extends State<_Remote<T>> {
 
   @override
   Widget build(BuildContext context) {
-    if (data != null) {
-      return RefreshIndicator(
-        onRefresh: reload,
-        child: Column(
-          children: [
-            if (error != null)
-              Notice(
-                message: error.toString(),
-                color: Palette.danger,
-                icon: Icons.error_outline_rounded,
+    final content = data == null
+        ? null
+        : widget.builder(context, data as T, reload);
+    return AppPage(
+      title: widget.title,
+      subtitle: widget.subtitle,
+      actions: content?.actions ?? const [],
+      body: content != null
+          ? AppRefresh(
+              onRefresh: reload,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (error != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        Space.page,
+                        12,
+                        Space.page,
+                        0,
+                      ),
+                      child: Notice.error(error.toString()),
+                    ),
+                  Expanded(child: content.body),
+                ],
               ),
-            Expanded(child: widget.builder(context, data as T, reload)),
-          ],
-        ),
-      );
-    }
-    if (error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Notice(
-                message: error.toString(),
-                color: Palette.danger,
-                icon: Icons.error_outline_rounded,
-              ),
-              const SizedBox(height: 12),
-              AppButton(
-                label: 'Retry',
-                tone: Tone.secondary,
-                onPressed: () {
-                  setState(() => error = null);
-                  unawaited(reload());
-                },
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    return const Center(child: Spinner());
+            )
+          : error != null
+          ? LoadError(
+              error: error!,
+              onRetry: () {
+                setState(() => error = null);
+                unawaited(reload());
+              },
+            )
+          : const Center(child: Spinner()),
+    );
   }
 }
 
-ListView _list(List<Widget> children) => ListView(
-  physics: const AlwaysScrollableScrollPhysics(),
-  padding: const EdgeInsets.all(12),
-  children: children,
-);
+Widget _list(List<Widget> children) => PageList(children: children);
+
+/// The screen shown to Members on Admin-only settings.
+class _AdminOnly extends StatelessWidget {
+  final String title;
+  const _AdminOnly(this.title);
+  @override
+  Widget build(BuildContext context) => AppPage(
+    title: title,
+    body: const EmptyState(
+      icon: Icons.lock_outline_rounded,
+      title: 'Admin access required.',
+      message: 'Ask an Admin to change these settings.',
+    ),
+  );
+}
 
 // --------------------------------------------------------------------- forms
 
@@ -466,108 +351,87 @@ class _FormSheetState extends State<_FormSheet> {
   }
 
   @override
-  Widget build(BuildContext context) => SheetScaffold(
-    title: widget.title,
-    subtitle: widget.subtitle,
-    body: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (error != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Notice(
-              message: error!,
-              color: Palette.danger,
-              icon: Icons.error_outline_rounded,
+  Widget build(BuildContext context) {
+    final extra = widget.extra?.call(context) ?? const [];
+    return SheetScaffold(
+      title: widget.title,
+      subtitle: widget.subtitle,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Notice.error(error!),
             ),
-          ),
-        ?widget.header,
-        for (final f in visibleFields)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: switch (f) {
-              _Text() => Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  FieldLabel(f.label),
-                  if (f.hint != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        f.hint!,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Palette.fgSubtle,
-                        ),
+          ?widget.header,
+          for (final f in visibleFields)
+            switch (f) {
+              _Text() => LabeledField(
+                label: f.label,
+                description: f.hint,
+                child: TextField(
+                  controller: texts[f.key],
+                  enabled: !saving,
+                  obscureText: f.secret,
+                  minLines: f.lines,
+                  maxLines: f.secret ? 1 : f.lines,
+                  autocorrect: !f.secret,
+                  enableSuggestions: !f.secret,
+                  style: f.lines > 4
+                      ? const TextStyle(fontFamily: mono, fontSize: 12.5)
+                      : null,
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              _Choice() => LabeledField(
+                label: f.label,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final (value, label) in f.options)
+                      ChoiceChipX(
+                        label: label,
+                        selected: values[f.key] == value,
+                        onChanged: saving
+                            ? null
+                            : (_) => setState(() => values[f.key] = value),
                       ),
-                    ),
-                  TextField(
-                    decoration: InputDecoration(labelText: f.label),
-                    controller: texts[f.key],
-                    enabled: !saving,
-                    obscureText: f.secret,
-                    minLines: f.lines,
-                    maxLines: f.secret ? 1 : f.lines,
-                    autocorrect: !f.secret,
-                    enableSuggestions: !f.secret,
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ],
+                  ],
+                ),
               ),
-              _Choice() => Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  FieldLabel(f.label),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final (value, label) in f.options)
-                        ChoiceChipX(
-                          label: label,
-                          selected: values[f.key] == value,
-                          onChanged: saving
-                              ? null
-                              : (_) => setState(() => values[f.key] = value),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-              _MultiChoice() => Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  FieldLabel(f.label),
-                  if (f.options.isEmpty)
-                    const Text('No entries in the shared catalog.'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final (id, label) in f.options)
-                        ChoiceChipX(
-                          label: label,
-                          selected: (values[f.key] as List<String>).contains(
-                            id,
-                          ),
-                          onChanged: saving
-                              ? null
-                              : (_) {
-                                  final selected =
-                                      values[f.key] as List<String>;
-                                  setState(
-                                    () => values[f.key] = selected.contains(id)
-                                        ? selected
-                                              .where((v) => v != id)
-                                              .toList()
-                                        : [...selected, id],
-                                  );
-                                },
-                        ),
-                    ],
-                  ),
-                ],
+              _MultiChoice() => LabeledField(
+                label: f.label,
+                child: f.options.isEmpty
+                    ? const EmptyHint('No entries in the shared catalog.')
+                    : Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final (id, label) in f.options)
+                            ChoiceChipX(
+                              label: label,
+                              selected: (values[f.key] as List<String>)
+                                  .contains(id),
+                              onChanged: saving
+                                  ? null
+                                  : (_) {
+                                      final selected =
+                                          values[f.key] as List<String>;
+                                      setState(
+                                        () => values[f.key] =
+                                            selected.contains(id)
+                                            ? selected
+                                                  .where((v) => v != id)
+                                                  .toList()
+                                            : [...selected, id],
+                                      );
+                                    },
+                            ),
+                        ],
+                      ),
               ),
               _KeyValues() => _McpValuesEditor(
                 key: ValueKey(f.key),
@@ -576,65 +440,68 @@ class _FormSheetState extends State<_FormSheet> {
                 enabled: !saving,
                 onChanged: (rows) => setState(() => values[f.key] = rows),
               ),
-              _Toggle() => Row(
-                children: [
-                  Expanded(child: Text(f.label)),
-                  Switch(
-                    value: values[f.key] as bool,
-                    onChanged: saving
-                        ? null
-                        : (v) => setState(() => values[f.key] = v),
-                  ),
-                ],
+              _Toggle() => SwitchRow(
+                label: f.label,
+                value: values[f.key] as bool,
+                onChanged: saving
+                    ? null
+                    : (v) => setState(() => values[f.key] = v),
               ),
-              _Color() => Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  FieldLabel(f.label),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      for (final color in {
-                        ..._swatches,
-                        f.initial.toLowerCase(),
-                      })
-                        Pressable(
-                          onTap: saving
-                              ? null
-                              : () => setState(() => values[f.key] = color),
-                          borderRadius: BorderRadius.circular(99),
-                          semanticLabel: 'Color $color',
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: values[f.key] == color
-                                    ? Palette.fg
-                                    : Colors.transparent,
-                                width: 2,
-                              ),
+              _Color() => LabeledField(
+                label: f.label,
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final color in {..._swatches, f.initial.toLowerCase()})
+                      Pressable(
+                        onTap: saving
+                            ? null
+                            : () => setState(() => values[f.key] = color),
+                        borderRadius: BorderRadius.circular(99),
+                        semanticLabel: 'Color $color',
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: values[f.key] == color
+                                  ? Palette.fg
+                                  : Colors.transparent,
+                              width: 2,
                             ),
-                            child: _swatch(color, size: 24),
                           ),
+                          child: _swatch(color, size: 24),
                         ),
-                    ],
-                  ),
-                ],
+                      ),
+                  ],
+                ),
               ),
             },
-          ),
-        ...?widget.extra?.call(context),
-        const SizedBox(height: 10),
+          // Secondary and destructive actions on the entry being edited.
+          if (extra.isNotEmpty) ...[
+            const Divider(height: 24),
+            for (final (i, action) in extra.indexed) ...[
+              if (i > 0) const SizedBox(height: 8),
+              action,
+            ],
+          ],
+        ],
+      ),
+      actions: [
+        AppButton(
+          label: 'Cancel',
+          tone: Tone.secondary,
+          onPressed: saving ? null : () => Navigator.pop(context),
+        ),
         AppButton(
           label: widget.submit,
           busy: saving,
           onPressed: saving || !valid ? null : submit,
         ),
       ],
-    ),
-  );
+    );
+  }
 }
 
 /// Runs [action] and reports failure as a toast; true when it succeeded.
@@ -656,66 +523,83 @@ class _SettingsHub extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller, admin = c.user?.isAdmin ?? false;
-    void open(Widget page) =>
-        Navigator.of(context)
-            .push<void>(MaterialPageRoute(builder: (_) => page));
-    return _Screen(
+    void open(Widget page) => Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute(builder: (_) => page));
+    return AppPage(
       title: 'Settings',
       subtitle: c.user?.email,
       body: _list([
-        const SectionLabel('Workspace'),
-        _Item(
-          leading: const Icon(
-            Icons.folder_open_outlined,
-            color: Palette.primary,
-          ),
-          title: 'Projects',
-          subtitle: 'Details, Statuses, Tags and archiving',
-          onTap: () => open(_ProjectsSettings(controller: c)),
+        Section(
+          title: 'Workspace',
+          children: [
+            AppTile(
+              leading: const IconBadge(
+                Icons.folder_open_outlined,
+                color: Palette.primary,
+              ),
+              title: 'Projects',
+              subtitle: 'Details, Statuses, Tags and archiving',
+              onTap: () => open(_ProjectsSettings(controller: c)),
+            ),
+            AppTile(
+              leading: const IconBadge(
+                Icons.smart_toy_outlined,
+                color: Palette.agent,
+              ),
+              title: 'Agents',
+              subtitle: admin
+                  ? 'Create and configure Agents'
+                  : 'Only Admins can change Agents',
+              onTap: () => open(_AgentsSettings(controller: c)),
+            ),
+          ],
         ),
-        _Item(
-          leading: const Icon(Icons.smart_toy_outlined, color: Palette.agent),
-          title: 'Agents',
-          subtitle: admin
-              ? 'Create and configure Agents'
-              : 'Only Admins can change Agents',
-          onTap: () => open(_AgentsSettings(controller: c)),
-        ),
-        if (admin) ...[
-          const SizedBox(height: 8),
-          const SectionLabel('Administration'),
-          _Item(
-            leading: const Icon(Icons.group_outlined, color: Palette.info),
-            title: 'Users',
-            subtitle: 'Accounts, roles and temporary passwords',
-            onTap: () => open(_UsersSettings(controller: c)),
+        if (admin)
+          Section(
+            title: 'Administration',
+            children: [
+              AppTile(
+                leading: const IconBadge(
+                  Icons.group_outlined,
+                  color: Palette.info,
+                ),
+                title: 'Users',
+                subtitle: 'Accounts, roles and temporary passwords',
+                onTap: () => open(_UsersSettings(controller: c)),
+              ),
+              AppTile(
+                leading: const IconBadge(
+                  Icons.key_outlined,
+                  color: Palette.warning,
+                ),
+                title: 'Credentials',
+                subtitle: 'Claude tokens and API keys used by Agents',
+                onTap: () => open(_CredentialsSettings(controller: c)),
+              ),
+              AppTile(
+                leading: const IconBadge(
+                  Icons.extension_outlined,
+                  color: Palette.agent,
+                ),
+                title: 'Extensions',
+                subtitle: 'Shared Skills, MCP Servers and Plugins',
+                onTap: () => open(_ExtensionsSettings(controller: c)),
+              ),
+              AppTile(
+                leading: const IconBadge(
+                  Icons.code_rounded,
+                  color: Palette.info,
+                ),
+                title: 'Git Connections',
+                subtitle: 'GitHub Apps and GitLab instances',
+                onTap: () => open(_GitSettings(controller: c)),
+              ),
+            ],
           ),
-          _Item(
-            leading: const Icon(Icons.key_outlined, color: Palette.warning),
-            title: 'Credentials',
-            subtitle: 'Claude tokens and API keys used by Agents',
-            onTap: () => open(_CredentialsSettings(controller: c)),
-          ),
-          _Item(
-            leading: const Icon(Icons.extension_outlined, color: Palette.agent),
-            title: 'Extensions',
-            subtitle: 'Shared Skills, MCP Servers and Plugins',
-            onTap: () => open(_ExtensionsSettings(controller: c)),
-          ),
-          _Item(
-            leading: const Icon(Icons.code_rounded, color: Palette.info),
-            title: 'Git Connections',
-            subtitle: 'GitHub Apps and GitLab instances',
-            onTap: () => open(_GitSettings(controller: c)),
-          ),
-        ],
-        const SizedBox(height: 8),
-        const Padding(
-          padding: EdgeInsets.all(8),
-          child: Text(
-            'Dockerfiles, builds and Project secret variables are managed in the web app.',
-            style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
-          ),
+        const Text(
+          'Dockerfiles, builds and Project secret variables are managed in the web app.',
+          style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
         ),
       ]),
     );
@@ -730,31 +614,38 @@ class _ProjectsSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: controller,
-    builder: (context, _) => _Screen(
+    builder: (context, _) => AppPage(
       title: 'Projects',
-      action: IconAction(
-        icon: Icons.add_rounded,
-        tooltip: 'New project',
-        onPressed: controller.online
-            ? () => showProjectForm(context, controller, selectCreated: false)
-            : null,
-      ),
-      body: _list([
-        if (controller.projects.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'No projects yet.',
-              style: TextStyle(color: Palette.fgSubtle),
-            ),
-          ),
-        for (final p in controller.projects)
-          _Item(
-            title: p.name,
-            subtitle: '${p.key} · ${p.taskTotal} tasks',
-            onTap: () => showProjectSettings(context, controller, p),
-          ),
-      ]),
+      actions: [
+        IconAction(
+          icon: Icons.add_rounded,
+          tooltip: 'New project',
+          filled: true,
+          size: 36,
+          onPressed: controller.online
+              ? () => showProjectForm(context, controller, selectCreated: false)
+              : null,
+        ),
+      ],
+      body: controller.projects.isEmpty
+          ? const EmptyState(
+              icon: Icons.folder_off_outlined,
+              title: 'No Projects',
+              message: 'Create a Project to organize your Tasks.',
+            )
+          : _list([
+              for (final p in controller.projects)
+                AppTile(
+                  leading: ProjectLogo(
+                    project: p,
+                    api: controller.api,
+                    size: 32,
+                  ),
+                  title: p.name,
+                  subtitle: '${p.key} · ${p.taskTotal} tasks',
+                  onTap: () => showProjectSettings(context, controller, p),
+                ),
+            ]),
     ),
   );
 }
@@ -766,370 +657,378 @@ class _ProjectSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
-    return _Screen(
+    return _RemotePage<Json>(
       title: '${project.name} settings',
       subtitle: project.key,
-      body: _Remote<Json>(
-        load: () => c.settingsRequest('GET', '/projects/${project.id}'),
-        builder: (context, bundle, reload) {
-          final info = bundle['project'] as Json;
-          final archived = info['archivedAt'] != null;
-          final statuses = objects(bundle['statuses'])
-            ..sort(
-              (a, b) => ((a['position'] as num?) ?? 0).compareTo(
-                (b['position'] as num?) ?? 0,
-              ),
-            );
-          final tags = objects(bundle['tags']);
-          Future<void> change(String method, String path, [Json? body]) async {
-            await c.settingsRequest(method, path, body: body);
-            await reload();
-            unawaited(c.refresh().catchError((Object _) {}));
-          }
+      load: () => c.settingsRequest('GET', '/projects/${project.id}'),
+      builder: (context, bundle, reload) {
+        final info = bundle['project'] as Json;
+        final archived = info['archivedAt'] != null;
+        final statuses = objects(bundle['statuses'])
+          ..sort(
+            (a, b) => ((a['position'] as num?) ?? 0).compareTo(
+              (b['position'] as num?) ?? 0,
+            ),
+          );
+        final tags = objects(bundle['tags']);
+        Future<void> change(String method, String path, [Json? body]) async {
+          await c.settingsRequest(method, path, body: body);
+          await reload();
+          unawaited(c.refresh().catchError((Object _) {}));
+        }
 
-          Future<void> reorder(int i, int j) => _run(context, () {
-            final ids = [for (final s in statuses) s['id'] as String];
-            final t = ids[i];
-            ids[i] = ids[j];
-            ids[j] = t;
-            return change('PUT', '/projects/${project.id}/statuses/order', {
-              'statusIds': ids,
-            });
+        Future<void> reorder(int i, int j) => _run(context, () {
+          final ids = [for (final s in statuses) s['id'] as String];
+          final t = ids[i];
+          ids[i] = ids[j];
+          ids[j] = t;
+          return change('PUT', '/projects/${project.id}/statuses/order', {
+            'statusIds': ids,
           });
-          return _list([
-            ListenableBuilder(
-              listenable: c,
-              builder: (context, _) => ImageUpload(
-                key: ValueKey('project-logo:${project.id}'),
-                title: 'Project logo',
-                uploadLabel: 'Upload logo',
-                replaceLabel: 'Replace logo',
-                removeLabel: 'Remove logo',
-                imageUrl: info['logoUrl'] as String?,
-                enabled: c.online,
-                preview: (url) => ProjectLogo(
-                  project: Project.fromJson({...info, 'logoUrl': url}),
-                  api: c.api,
-                  size: 72,
-                ),
-                onChange: (file) async {
-                  final result = await c.settingsRequest(
-                    file == null ? 'DELETE' : 'PUT',
-                    '/projects/${project.id}/logo',
-                    files: file == null ? const [] : [file],
-                  );
-                  unawaited(c.refresh().catchError((Object _) {}));
-                  return (result['project'] as Json)['logoUrl'] as String?;
-                },
-              ),
-            ),
-            const SizedBox(height: 20),
-            const SectionLabel('Details'),
-            _Item(
-              title: info['name'] as String,
-              subtitle: (info['description'] as String?) ?? '',
-              trailing: const Icon(
-                Icons.edit_outlined,
-                size: 18,
-                color: Palette.fgSubtle,
-              ),
-              onTap: () => _form(
-                context,
-                title: 'Project details',
-                subtitle: project.key,
-                fields: [
-                  _Text(
-                    'name',
-                    'Name',
-                    initial: info['name'] as String,
-                    required: true,
-                  ),
-                  _Text(
-                    'description',
-                    'Description',
-                    initial: (info['description'] as String?) ?? '',
-                    lines: 3,
-                  ),
-                ],
-                submit: 'Save changes',
-                onSubmit: (v) => change('PATCH', '/projects/${project.id}', {
-                  'name': (v['name'] as String).trim(),
-                  'description': v['description'],
-                }),
-              ),
-            ),
-            Row(
+        });
+        return (
+          actions: const <Widget>[],
+          body: _list([
+            Section(
+              title: 'Details',
               children: [
-                AppButton(
-                  label: archived ? 'Unarchive' : 'Archive',
-                  icon: archived
-                      ? Icons.unarchive_outlined
-                      : Icons.archive_outlined,
-                  tone: archived ? Tone.secondary : Tone.danger,
-                  onPressed: () => _run(
-                    context,
-                    () => change(
-                      'POST',
-                      '/projects/${project.id}/${archived ? 'unarchive' : 'archive'}',
+                ListenableBuilder(
+                  listenable: c,
+                  builder: (context, _) => ImageUpload(
+                    key: ValueKey('project-logo:${project.id}'),
+                    title: 'Project logo',
+                    uploadLabel: 'Upload logo',
+                    replaceLabel: 'Replace logo',
+                    removeLabel: 'Remove logo',
+                    imageUrl: info['logoUrl'] as String?,
+                    enabled: c.online,
+                    preview: (url) => ProjectLogo(
+                      project: Project.fromJson({...info, 'logoUrl': url}),
+                      api: c.api,
+                      size: 72,
                     ),
-                  ),
-                ),
-                if (archived && (c.user?.isAdmin ?? false)) ...[
-                  const SizedBox(width: 8),
-                  AppButton(
-                    label: 'Delete permanently',
-                    tone: Tone.danger,
-                    onPressed: () async {
-                      if (!await confirm(
-                        context,
-                        title: 'Delete ${project.key} permanently?',
-                        message: 'All its tasks, comments and attachments are deleted. This cannot be undone.',
-                        confirmLabel: 'Delete project',
-                      )) {
-                        return;
-                      }
-                      if (!context.mounted) return;
-                      final nav = Navigator.of(context);
-                      final ok = await _run(context, () async {
-                        await c.settingsRequest(
-                          'DELETE',
-                          '/projects/${project.id}',
-                        );
-                        await c.refresh();
-                      });
-                      if (ok) nav.pop();
+                    onChange: (file) async {
+                      final result = await c.settingsRequest(
+                        file == null ? 'DELETE' : 'PUT',
+                        '/projects/${project.id}/logo',
+                        files: file == null ? const [] : [file],
+                      );
+                      unawaited(c.refresh().catchError((Object _) {}));
+                      return (result['project'] as Json)['logoUrl'] as String?;
                     },
                   ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                const Expanded(child: SectionLabel('Statuses')),
-                IconAction(
-                  icon: Icons.add_rounded,
-                  tooltip: 'Add status',
-                  onPressed: () => _form(
+                ),
+                AppTile(
+                  title: info['name'] as String,
+                  subtitle: (info['description'] as String?) ?? '',
+                  trailing: const Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: Palette.fgSubtle,
+                  ),
+                  onTap: () => _form(
                     context,
-                    title: 'New status',
+                    title: 'Project details',
+                    subtitle: project.key,
                     fields: [
-                      const _Text('name', 'Name', required: true),
-                      const _Color('color', 'Color', '#64748b'),
-                      _Choice('category', 'Category', [
-                        for (final k in _categories) (k, k),
-                      ], 'active'),
+                      _Text(
+                        'name',
+                        'Name',
+                        initial: info['name'] as String,
+                        required: true,
+                      ),
+                      _Text(
+                        'description',
+                        'Description',
+                        initial: (info['description'] as String?) ?? '',
+                        lines: 3,
+                      ),
                     ],
-                    submit: 'Add status',
+                    submit: 'Save changes',
                     onSubmit: (v) =>
-                        change('POST', '/projects/${project.id}/statuses', {
+                        change('PATCH', '/projects/${project.id}', {
                           'name': (v['name'] as String).trim(),
-                          'color': v['color'],
-                          'category': v['category'],
+                          'description': v['description'],
                         }),
                   ),
                 ),
               ],
             ),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8, left: 2),
-              child: Text(
-                'A project keeps at least one open and one closed status.',
-                style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
-              ),
-            ),
-            for (final (i, s) in statuses.indexed)
-              _Item(
-                leading: _swatch(s['color'] as String),
-                title: s['name'] as String,
-                subtitle: s['category'] as String,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconAction(
-                      icon: Icons.arrow_upward_rounded,
-                      tooltip: 'Move ${s['name']} up',
-                      onPressed: i == 0 ? null : () => reorder(i, i - 1),
-                    ),
-                    IconAction(
-                      icon: Icons.arrow_downward_rounded,
-                      tooltip: 'Move ${s['name']} down',
-                      onPressed: i == statuses.length - 1
-                          ? null
-                          : () => reorder(i, i + 1),
-                    ),
-                  ],
-                ),
-                onTap: () => _form(
+            Section(
+              title: 'Statuses',
+              description:
+                  'A project keeps at least one open and one closed status.',
+              trailing: SectionAdd(
+                tooltip: 'Add status',
+                onPressed: () => _form(
                   context,
-                  title: 'Edit status',
+                  title: 'New status',
                   fields: [
-                    _Text(
-                      'name',
-                      'Name',
-                      initial: s['name'] as String,
-                      required: true,
-                    ),
-                    _Color('color', 'Color', s['color'] as String),
+                    const _Text('name', 'Name', required: true),
+                    const _Color('color', 'Color', '#64748b'),
                     _Choice('category', 'Category', [
                       for (final k in _categories) (k, k),
-                    ], s['category'] as String),
+                    ], 'active'),
                   ],
-                  submit: 'Save status',
-                  onSubmit: (v) => change('PATCH', '/statuses/${s['id']}', {
-                    'name': (v['name'] as String).trim(),
-                    'color': v['color'],
-                    'category': v['category'],
-                  }),
-                  extra: (sheet) => [
-                    AppButton(
-                      label: 'Delete status',
-                      tone: Tone.danger,
-                      onPressed: statuses.length < 2
-                          ? null
-                          : () async {
-                              final others = [
-                                for (final o in statuses)
-                                  if (o['id'] != s['id']) o,
-                              ];
-                              final target = await showPicker<String>(
-                                sheet,
-                                title: 'Move its tasks to',
-                                selected: others.first['id'] as String,
-                                options: [
-                                  for (final o in others)
-                                    PickerOption(
-                                      o['id'] as String,
-                                      o['name'] as String,
-                                      detail: o['category'] as String,
-                                    ),
-                                ],
-                              );
-                              if (target == null || !sheet.mounted) return;
-                              final nav = Navigator.of(sheet);
-                              if (await _run(
-                                sheet,
-                                () => change(
-                                  'DELETE',
-                                  '/statuses/${s['id']}?targetStatusId=$target',
-                                ),
-                              )) {
-                                nav.pop();
-                              }
-                            },
-                    ),
-                  ],
+                  submit: 'Add status',
+                  onSubmit: (v) =>
+                      change('POST', '/projects/${project.id}/statuses', {
+                        'name': (v['name'] as String).trim(),
+                        'color': v['color'],
+                        'category': v['category'],
+                      }),
                 ),
               ),
-            const SizedBox(height: 20),
-            Row(
               children: [
-                const Expanded(child: SectionLabel('Tags')),
-                IconAction(
-                  icon: Icons.add_rounded,
-                  tooltip: 'Add tag',
-                  onPressed: () => _form(
+                for (final (i, s) in statuses.indexed)
+                  AppTile(
+                    leading: _swatch(s['color'] as String),
+                    title: s['name'] as String,
+                    subtitle: s['category'] as String,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconAction(
+                          icon: Icons.arrow_upward_rounded,
+                          size: 32,
+                          tooltip: 'Move ${s['name']} up',
+                          onPressed: i == 0 ? null : () => reorder(i, i - 1),
+                        ),
+                        IconAction(
+                          icon: Icons.arrow_downward_rounded,
+                          size: 32,
+                          tooltip: 'Move ${s['name']} down',
+                          onPressed: i == statuses.length - 1
+                              ? null
+                              : () => reorder(i, i + 1),
+                        ),
+                      ],
+                    ),
+                    onTap: () => _form(
+                      context,
+                      title: 'Edit status',
+                      fields: [
+                        _Text(
+                          'name',
+                          'Name',
+                          initial: s['name'] as String,
+                          required: true,
+                        ),
+                        _Color('color', 'Color', s['color'] as String),
+                        _Choice('category', 'Category', [
+                          for (final k in _categories) (k, k),
+                        ], s['category'] as String),
+                      ],
+                      submit: 'Save status',
+                      onSubmit: (v) => change('PATCH', '/statuses/${s['id']}', {
+                        'name': (v['name'] as String).trim(),
+                        'color': v['color'],
+                        'category': v['category'],
+                      }),
+                      extra: (sheet) => [
+                        AppButton(
+                          label: 'Delete status',
+                          tone: Tone.danger,
+                          onPressed: statuses.length < 2
+                              ? null
+                              : () async {
+                                  final others = [
+                                    for (final o in statuses)
+                                      if (o['id'] != s['id']) o,
+                                  ];
+                                  final target = await showPicker<String>(
+                                    sheet,
+                                    title: 'Move its tasks to',
+                                    selected: others.first['id'] as String,
+                                    options: [
+                                      for (final o in others)
+                                        PickerOption(
+                                          o['id'] as String,
+                                          o['name'] as String,
+                                          detail: o['category'] as String,
+                                        ),
+                                    ],
+                                  );
+                                  if (target == null || !sheet.mounted) return;
+                                  final nav = Navigator.of(sheet);
+                                  if (await _run(
+                                    sheet,
+                                    () => change(
+                                      'DELETE',
+                                      '/statuses/${s['id']}?targetStatusId=$target',
+                                    ),
+                                  )) {
+                                    nav.pop();
+                                  }
+                                },
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            Section(
+              title: 'Tags',
+              trailing: SectionAdd(
+                tooltip: 'Add tag',
+                onPressed: () => _form(
+                  context,
+                  title: 'New tag',
+                  fields: const [
+                    _Text('name', 'Name', required: true),
+                    _Color('color', 'Color', '#6366f1'),
+                  ],
+                  submit: 'Add tag',
+                  onSubmit: (v) => change(
+                    'POST',
+                    '/projects/${project.id}/tags',
+                    {'name': (v['name'] as String).trim(), 'color': v['color']},
+                  ),
+                ),
+              ),
+              children: [
+                if (tags.isEmpty) const EmptyHint('No tags yet.'),
+                for (final t in tags)
+                  AppTile(
+                    leading: _swatch((t['color'] as String?) ?? '#64748b'),
+                    title: t['name'] as String,
+                    onTap: () => _form(
+                      context,
+                      title: 'Edit tag',
+                      fields: [
+                        _Text(
+                          'name',
+                          'Name',
+                          initial: t['name'] as String,
+                          required: true,
+                        ),
+                        _Color(
+                          'color',
+                          'Color',
+                          (t['color'] as String?) ?? '#6366f1',
+                        ),
+                      ],
+                      submit: 'Save tag',
+                      onSubmit: (v) => change('PATCH', '/tags/${t['id']}', {
+                        'name': (v['name'] as String).trim(),
+                        'color': v['color'],
+                      }),
+                      extra: (sheet) => [
+                        AppButton(
+                          label: 'Delete tag',
+                          tone: Tone.danger,
+                          onPressed: () async {
+                            if (!await confirm(
+                              sheet,
+                              title: 'Delete tag “${t['name']}”?',
+                              message: 'It is removed from every task.',
+                              confirmLabel: 'Delete tag',
+                            )) {
+                              return;
+                            }
+                            if (!sheet.mounted) return;
+                            final nav = Navigator.of(sheet);
+                            if (await _run(
+                              sheet,
+                              () => change('DELETE', '/tags/${t['id']}'),
+                            )) {
+                              nav.pop();
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            Section(
+              title: 'Agents and code',
+              children: [
+                AppTile(
+                  title: 'Agent setup',
+                  subtitle:
+                      'Default Agent, Setup Script, instructions and environment',
+                  leading: const IconBadge(
+                    Icons.smart_toy_outlined,
+                    color: Palette.agent,
+                  ),
+                  onTap: () => _push(
                     context,
-                    title: 'New tag',
-                    fields: const [
-                      _Text('name', 'Name', required: true),
-                      _Color('color', 'Color', '#6366f1'),
-                    ],
-                    submit: 'Add tag',
-                    onSubmit: (v) =>
-                        change('POST', '/projects/${project.id}/tags', {
-                          'name': (v['name'] as String).trim(),
-                          'color': v['color'],
-                        }),
+                    _ProjectAgentSettings(controller: c, project: project),
+                  ),
+                ),
+                AppTile(
+                  title: 'Repository',
+                  subtitle: 'Repository, Base Branch and protection',
+                  leading: const IconBadge(
+                    Icons.code_rounded,
+                    color: Palette.info,
+                  ),
+                  onTap: () => _push(
+                    context,
+                    _RepositorySettings(controller: c, project: project),
                   ),
                 ),
               ],
             ),
-            if (tags.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(8),
-                child: Text(
-                  'No tags yet.',
-                  style: TextStyle(color: Palette.fgSubtle),
-                ),
-              ),
-            for (final t in tags)
-              _Item(
-                leading: _swatch((t['color'] as String?) ?? '#64748b'),
-                title: t['name'] as String,
-                onTap: () => _form(
-                  context,
-                  title: 'Edit tag',
-                  fields: [
-                    _Text(
-                      'name',
-                      'Name',
-                      initial: t['name'] as String,
-                      required: true,
-                    ),
-                    _Color(
-                      'color',
-                      'Color',
-                      (t['color'] as String?) ?? '#6366f1',
-                    ),
-                  ],
-                  submit: 'Save tag',
-                  onSubmit: (v) => change('PATCH', '/tags/${t['id']}', {
-                    'name': (v['name'] as String).trim(),
-                    'color': v['color'],
-                  }),
-                  extra: (sheet) => [
+            Section(
+              title: 'Archive',
+              description: archived
+                  ? 'This Project is archived and hidden from the Projects list.'
+                  : 'Archiving hides the Project from the Projects list. It can be restored.',
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
                     AppButton(
-                      label: 'Delete tag',
-                      tone: Tone.danger,
-                      onPressed: () async {
-                        if (!await confirm(
-                          sheet,
-                          title: 'Delete tag “${t['name']}”?',
-                          message: 'It is removed from every task.',
-                          confirmLabel: 'Delete tag',
-                        )) {
-                          return;
-                        }
-                        if (!sheet.mounted) return;
-                        final nav = Navigator.of(sheet);
-                        if (await _run(
-                          sheet,
-                          () => change('DELETE', '/tags/${t['id']}'),
-                        )) {
-                          nav.pop();
-                        }
-                      },
+                      label: archived ? 'Unarchive' : 'Archive',
+                      icon: archived
+                          ? Icons.unarchive_outlined
+                          : Icons.archive_outlined,
+                      tone: archived ? Tone.secondary : Tone.danger,
+                      onPressed: () => _run(
+                        context,
+                        () => change(
+                          'POST',
+                          '/projects/${project.id}/${archived ? 'unarchive' : 'archive'}',
+                        ),
+                      ),
                     ),
+                    if (archived && (c.user?.isAdmin ?? false)) ...[
+                      AppButton(
+                        label: 'Delete permanently',
+                        tone: Tone.danger,
+                        onPressed: () async {
+                          if (!await confirm(
+                            context,
+                            title: 'Delete ${project.key} permanently?',
+                            message:
+                                'All its tasks, comments and attachments are deleted. This cannot be undone.',
+                            confirmLabel: 'Delete project',
+                          )) {
+                            return;
+                          }
+                          if (!context.mounted) return;
+                          final nav = Navigator.of(context);
+                          final ok = await _run(context, () async {
+                            await c.settingsRequest(
+                              'DELETE',
+                              '/projects/${project.id}',
+                            );
+                            await c.refresh();
+                          });
+                          if (ok) nav.pop();
+                        },
+                      ),
+                    ],
                   ],
                 ),
-              ),
-            const SizedBox(height: 20),
-            _Item(
-              title: 'Agent setup',
-              subtitle:
-                  'Default Agent, Setup Script, instructions and environment',
-              leading: const Icon(
-                Icons.smart_toy_outlined,
-                color: Palette.agent,
-              ),
-              onTap: () => _push(
-                context,
-                _ProjectAgentSettings(controller: c, project: project),
-              ),
+              ],
             ),
-            _Item(
-              title: 'Repository',
-              subtitle: 'Repository, Base Branch and protection',
-              leading: const Icon(Icons.code_rounded, color: Palette.info),
-              onTap: () => _push(
-                context,
-                _RepositorySettings(controller: c, project: project),
-              ),
-            ),
-          ]);
-        },
-      ),
+          ]),
+        );
+      },
     );
   }
 }
@@ -1142,9 +1041,10 @@ class _AgentsSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller, admin = c.user?.isAdmin ?? false;
-    return _Remote<
+    return _RemotePage<
       (List<Json>, List<Json>, List<Json>, List<Json>, List<Json>)
     >(
+      title: 'Agents',
       load: () async {
         final results = await Future.wait([
           c.settingsRequest('GET', '/agents'),
@@ -1216,9 +1116,12 @@ class _AgentsSettings extends StatelessWidget {
             ('', 'default'),
             for (final e in _efforts) (e, e),
           ], (a?['effort'] as String?) ?? ''),
-          _Choice('permissionMode', 'Permission mode', [
-            for (final m in _permissionModes) (m, m),
-          ], (a?['permissionMode'] as String?) ?? 'bypassPermissions'),
+          _Choice(
+            'permissionMode',
+            'Permission mode',
+            [for (final m in _permissionModes) (m, m)],
+            (a?['permissionMode'] as String?) ?? 'bypassPermissions',
+          ),
           _Text(
             'systemPrompt',
             'System prompt',
@@ -1257,151 +1160,143 @@ class _AgentsSettings extends StatelessWidget {
                 ))
               key: v[key],
         };
-        return _Screen(
-          title: 'Agents',
-          action: admin
-              ? IconAction(
-                  icon: Icons.add_rounded,
-                  tooltip: 'New agent',
-                  onPressed: credentials.isEmpty
-                      ? () => toast(context, 'Create a Credential first')
-                      : () => _form(
-                          context,
-                          title: 'New agent',
-                          subtitle: 'Starts from the default Dockerfile; edit it in the web app',
-                          fields: fields(null),
-                          submit: 'Create agent',
-                          onSubmit: (v) => change('POST', '/agents', {
-                            ...body(v),
-                            'dockerfile':
-                                'FROM claude-task/agent-base\nUSER agent\n',
-                          }),
-                        ),
-                )
-              : null,
-          body: RefreshIndicator(
-            onRefresh: reload,
-            child: _list([
-              for (final a in agents) ...[
-                _AgentExtensionStatus(controller: c, agent: a),
-                _Item(
-                  leading: UserAvatar(
-                    label: a['name'] as String,
-                    userId: a['id'] as String,
-                    imageUrl: a['avatarImageUrl'] as String?,
-                    emoji: a['avatarEmoji'] as String? ?? '🤖',
-                    api: c.api,
-                  ),
-                  title: a['name'] as String,
-                  subtitle:
-                      '${a['state']} · ${a['credentialName'] ?? ''} · queue ${a['queueLength'] ?? 0}',
-                  onTap: !admin
-                      ? null
-                      : () => _form(
-                          context,
-                          title: 'Edit agent',
-                          subtitle: a['name'] as String,
-                          header: Padding(
-                            padding: const EdgeInsets.only(bottom: 16),
-                            child: ListenableBuilder(
-                              listenable: c,
-                              builder: (context, _) => ImageUpload(
-                                title: 'Agent image',
-                                uploadLabel: 'Upload image',
-                                replaceLabel: 'Replace image',
-                                removeLabel: 'Remove image',
-                                imageUrl: a['avatarImageUrl'] as String?,
-                                enabled: c.online,
-                                preview: (url) => UserAvatar(
-                                  label: a['name'] as String,
-                                  userId: a['id'] as String,
-                                  imageUrl: url,
-                                  emoji: a['avatarEmoji'] as String? ?? '🤖',
-                                  api: c.api,
-                                  size: 72,
-                                ),
-                                onChange: (file) async {
-                                  final result = await c.settingsRequest(
-                                    file == null ? 'DELETE' : 'PUT',
-                                    '/agents/${a['id']}/avatar',
-                                    files: file == null ? const [] : [file],
-                                  );
-                                  unawaited(reload().catchError((Object _) {}));
-                                  unawaited(
-                                    c.refresh().catchError((Object _) {}),
-                                  );
-                                  return (result['agent']
-                                          as Json)['avatarImageUrl']
-                                      as String?;
-                                },
-                              ),
-                            ),
-                          ),
-                          fields: fields(a),
-                          submit: 'Save agent',
-                          onSubmit: (v) =>
-                              change('PATCH', '/agents/${a['id']}', body(v, a)),
-                          extra: (sheet) => [
-                            AppButton(
-                              label: 'Manage shared Extensions',
-                              tone: Tone.secondary,
-                              onPressed: () async {
-                                Navigator.pop(sheet);
-                                await _push(
-                                  context,
-                                  _ExtensionsSettings(controller: c),
-                                );
-                                await reload();
-                              },
-                            ),
-                            const SizedBox(height: 8),
-                            AppButton(
-                              label: 'Duplicate',
-                              tone: Tone.secondary,
-                              onPressed: () async {
-                                final nav = Navigator.of(sheet);
-                                if (await _run(
-                                  sheet,
-                                  () => change(
-                                    'POST',
-                                    '/agents/${a['id']}/duplicate',
-                                    {},
-                                  ),
-                                )) {
-                                  nav.pop();
-                                }
-                              },
-                            ),
-                            const SizedBox(height: 8),
-                            AppButton(
-                              label: 'Delete agent',
-                              tone: Tone.danger,
-                              onPressed: () async {
-                                if (!await confirm(
-                                  sheet,
-                                  title: 'Delete ${a['name']}?',
-                                  message:
-                                      'Its container and image are removed.',
-                                  confirmLabel: 'Delete agent',
-                                )) {
-                                  return;
-                                }
-                                if (!sheet.mounted) return;
-                                final nav = Navigator.of(sheet);
-                                if (await _run(
-                                  sheet,
-                                  () => change('DELETE', '/agents/${a['id']}'),
-                                )) {
-                                  nav.pop();
-                                }
-                              },
-                            ),
-                          ],
-                        ),
+        return (
+          actions: [
+            if (admin)
+              IconAction(
+                icon: Icons.add_rounded,
+                tooltip: 'New agent',
+                filled: true,
+                size: 36,
+                onPressed: credentials.isEmpty
+                    ? () => toast(context, 'Create a Credential first')
+                    : () => _form(
+                        context,
+                        title: 'New agent',
+                        subtitle:
+                            'Starts from the default Dockerfile; edit it in the web app',
+                        fields: fields(null),
+                        submit: 'Create agent',
+                        onSubmit: (v) => change('POST', '/agents', {
+                          ...body(v),
+                          'dockerfile':
+                              'FROM claude-task/agent-base\nUSER agent\n',
+                        }),
+                      ),
+              ),
+          ],
+          body: _list([
+            if (agents.isEmpty) const EmptyHint('No Agents yet.'),
+            for (final a in agents) ...[
+              _AgentExtensionStatus(controller: c, agent: a),
+              AppTile(
+                leading: UserAvatar(
+                  label: a['name'] as String,
+                  userId: a['id'] as String,
+                  imageUrl: a['avatarImageUrl'] as String?,
+                  emoji: a['avatarEmoji'] as String? ?? '🤖',
+                  api: c.api,
                 ),
-              ],
-            ]),
-          ),
+                title: a['name'] as String,
+                subtitle:
+                    '${a['state']} · ${a['credentialName'] ?? ''} · queue ${a['queueLength'] ?? 0}',
+                onTap: !admin
+                    ? null
+                    : () => _form(
+                        context,
+                        title: 'Edit agent',
+                        subtitle: a['name'] as String,
+                        header: ListenableBuilder(
+                          listenable: c,
+                          builder: (context, _) => ImageUpload(
+                            title: 'Agent image',
+                            uploadLabel: 'Upload image',
+                            replaceLabel: 'Replace image',
+                            removeLabel: 'Remove image',
+                            imageUrl: a['avatarImageUrl'] as String?,
+                            enabled: c.online,
+                            preview: (url) => UserAvatar(
+                              label: a['name'] as String,
+                              userId: a['id'] as String,
+                              imageUrl: url,
+                              emoji: a['avatarEmoji'] as String? ?? '🤖',
+                              api: c.api,
+                              size: 72,
+                            ),
+                            onChange: (file) async {
+                              final result = await c.settingsRequest(
+                                file == null ? 'DELETE' : 'PUT',
+                                '/agents/${a['id']}/avatar',
+                                files: file == null ? const [] : [file],
+                              );
+                              unawaited(reload().catchError((Object _) {}));
+                              unawaited(c.refresh().catchError((Object _) {}));
+                              return (result['agent'] as Json)['avatarImageUrl']
+                                  as String?;
+                            },
+                          ),
+                        ),
+                        fields: fields(a),
+                        submit: 'Save agent',
+                        onSubmit: (v) =>
+                            change('PATCH', '/agents/${a['id']}', body(v, a)),
+                        extra: (sheet) => [
+                          AppButton(
+                            label: 'Manage shared Extensions',
+                            tone: Tone.secondary,
+                            onPressed: () async {
+                              Navigator.pop(sheet);
+                              await _push(
+                                context,
+                                _ExtensionsSettings(controller: c),
+                              );
+                              await reload();
+                            },
+                          ),
+                          AppButton(
+                            label: 'Duplicate',
+                            tone: Tone.secondary,
+                            onPressed: () async {
+                              final nav = Navigator.of(sheet);
+                              if (await _run(
+                                sheet,
+                                () => change(
+                                  'POST',
+                                  '/agents/${a['id']}/duplicate',
+                                  {},
+                                ),
+                              )) {
+                                nav.pop();
+                              }
+                            },
+                          ),
+                          AppButton(
+                            label: 'Delete agent',
+                            tone: Tone.danger,
+                            onPressed: () async {
+                              if (!await confirm(
+                                sheet,
+                                title: 'Delete ${a['name']}?',
+                                message: 'Its container and image are removed.',
+                                confirmLabel: 'Delete agent',
+                              )) {
+                                return;
+                              }
+                              if (!sheet.mounted) return;
+                              final nav = Navigator.of(sheet);
+                              if (await _run(
+                                sheet,
+                                () => change('DELETE', '/agents/${a['id']}'),
+                              )) {
+                                nav.pop();
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+              ),
+            ],
+          ]),
         );
       },
     );
@@ -1431,7 +1326,8 @@ class _UsersSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
-    return _Remote<List<Json>>(
+    return _RemotePage<List<Json>>(
+      title: 'Users',
       load: () async =>
           objects((await c.settingsRequest('GET', '/users'))['users']),
       builder: (context, users, reload) {
@@ -1442,52 +1338,61 @@ class _UsersSettings extends StatelessWidget {
           return result;
         }
 
-        return _Screen(
-          title: 'Users',
-          action: IconAction(
-            icon: Icons.person_add_alt_1_outlined,
-            tooltip: 'New user',
-            onPressed: () => _form(
-              context,
-              title: 'New user',
-              subtitle: 'A temporary password is generated when left blank',
-              fields: const [
-                _Text('email', 'Email', required: true),
-                _Text('displayName', 'Name', required: true),
-                _Choice('role', 'Role', [
-                  ('member', 'member'),
-                  ('admin', 'admin'),
-                ], 'member'),
-                _Text(
-                  'password',
-                  'Temporary password',
-                  secret: true,
-                  hint: 'optional, 8+ characters',
-                ),
-              ],
-              submit: 'Create user',
-              onSubmit: (v) async {
-                final password = (v['password'] as String);
-                final result = await change('POST', '/users', {
-                  'email': (v['email'] as String).trim(),
-                  'displayName': (v['displayName'] as String).trim(),
-                  'role': v['role'],
-                  if (password.isNotEmpty) 'temporaryPassword': password,
-                });
-                if (context.mounted) {
-                  unawaited(
-                    _showPassword(
-                      context,
-                      result['temporaryPassword'] as String? ?? password,
-                    ),
-                  );
-                }
-              },
+        return (
+          actions: [
+            IconAction(
+              icon: Icons.person_add_alt_1_outlined,
+              tooltip: 'New user',
+              filled: true,
+              size: 36,
+              onPressed: () => _form(
+                context,
+                title: 'New user',
+                subtitle: 'A temporary password is generated when left blank',
+                fields: const [
+                  _Text('email', 'Email', required: true),
+                  _Text('displayName', 'Name', required: true),
+                  _Choice('role', 'Role', [
+                    ('member', 'member'),
+                    ('admin', 'admin'),
+                  ], 'member'),
+                  _Text(
+                    'password',
+                    'Temporary password',
+                    secret: true,
+                    hint: 'optional, 8+ characters',
+                  ),
+                ],
+                submit: 'Create user',
+                onSubmit: (v) async {
+                  final password = (v['password'] as String);
+                  final result = await change('POST', '/users', {
+                    'email': (v['email'] as String).trim(),
+                    'displayName': (v['displayName'] as String).trim(),
+                    'role': v['role'],
+                    if (password.isNotEmpty) 'temporaryPassword': password,
+                  });
+                  if (context.mounted) {
+                    unawaited(
+                      _showPassword(
+                        context,
+                        result['temporaryPassword'] as String? ?? password,
+                      ),
+                    );
+                  }
+                },
+              ),
             ),
-          ),
+          ],
           body: _list([
             for (final u in users)
-              _Item(
+              AppTile(
+                leading: UserAvatar(
+                  label: u['displayName'] as String? ?? '',
+                  userId: u['id'] as String,
+                  imageUrl: u['avatarImageUrl'] as String?,
+                  api: c.api,
+                ),
                 title: u['displayName'] as String? ?? '',
                 subtitle:
                     '${u['email']} · ${u['role']}${u['active'] == false ? ' · deactivated' : ''}',
@@ -1524,7 +1429,8 @@ class _UsersSettings extends StatelessWidget {
                         if (!await confirm(
                           sheet,
                           title: 'Reset password?',
-                          message: 'Signs the User out everywhere and generates a temporary password.',
+                          message:
+                              'Signs the User out everywhere and generates a temporary password.',
                           confirmLabel: 'Reset password',
                         )) {
                           return;
@@ -1571,7 +1477,8 @@ class _CredentialsSettings extends StatelessWidget {
     ];
     String kindLabel(String? k) =>
         kinds.where((e) => e.$1 == k).firstOrNull?.$2 ?? '$k';
-    return _Remote<List<Json>>(
+    return _RemotePage<List<Json>>(
+      title: 'Credentials',
       load: () async => objects(
         (await c.settingsRequest('GET', '/credentials'))['credentials'],
       ),
@@ -1582,32 +1489,43 @@ class _CredentialsSettings extends StatelessWidget {
           unawaited(c.refresh().catchError((Object _) {}));
         }
 
-        return _Screen(
-          title: 'Credentials',
-          subtitle: 'Secrets are write-only; only the last 4 characters show',
-          action: IconAction(
-            icon: Icons.add_rounded,
-            tooltip: 'New credential',
-            onPressed: () => _form(
-              context,
-              title: 'New credential',
-              fields: const [
-                _Text('name', 'Name', required: true),
-                _Choice('kind', 'Kind', kinds, 'claude_oauth_token'),
-                _Text('secret', 'Secret', secret: true, required: true),
-              ],
-              submit: 'Create credential',
-              onSubmit: (v) => change('POST', '/credentials', {
-                'name': (v['name'] as String).trim(),
-                'kind': v['kind'],
-                'secret': (v['secret'] as String).trim(),
-              }),
+        return (
+          actions: [
+            IconAction(
+              icon: Icons.add_rounded,
+              tooltip: 'New credential',
+              filled: true,
+              size: 36,
+              onPressed: () => _form(
+                context,
+                title: 'New credential',
+                fields: const [
+                  _Text('name', 'Name', required: true),
+                  _Choice('kind', 'Kind', kinds, 'claude_oauth_token'),
+                  _Text('secret', 'Secret', secret: true, required: true),
+                ],
+                submit: 'Create credential',
+                onSubmit: (v) => change('POST', '/credentials', {
+                  'name': (v['name'] as String).trim(),
+                  'kind': v['kind'],
+                  'secret': (v['secret'] as String).trim(),
+                }),
+              ),
             ),
-          ),
+          ],
           body: _list([
+            const Text(
+              'Secrets are write-only; only the last 4 characters show.',
+              style: TextStyle(fontSize: 12.5, color: Palette.fgSubtle),
+            ),
+            const SizedBox(height: 12),
+            if (credentials.isEmpty) const EmptyHint('No Credentials yet.'),
             for (final k in credentials)
-              _Item(
-                leading: const Icon(Icons.key_outlined, color: Palette.warning),
+              AppTile(
+                leading: const IconBadge(
+                  Icons.key_outlined,
+                  color: Palette.warning,
+                ),
                 title: k['name'] as String,
                 subtitle:
                     '${kindLabel(k['kind'] as String?)} · …${k['last4']} · used by ${objects(k['usedBy']).length}',
@@ -1645,7 +1563,9 @@ class _CredentialsSettings extends StatelessWidget {
                         if (!await confirm(
                           sheet,
                           title: 'Delete ${k['name']}?',
-                          message: objects(k['usedBy']).isEmpty ? null : 'It is still used by Agents; the server may refuse.',
+                          message: objects(k['usedBy']).isEmpty
+                              ? null
+                              : 'It is still used by Agents; the server may refuse.',
                           confirmLabel: 'Delete credential',
                         )) {
                           return;

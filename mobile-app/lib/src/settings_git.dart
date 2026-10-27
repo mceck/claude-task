@@ -7,12 +7,10 @@ class _GitSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (controller.user?.isAdmin != true) {
-      return const _Screen(
-        title: 'Git Connections',
-        body: Center(child: Text('Admin access required.')),
-      );
+      return const _AdminOnly('Git Connections');
     }
-    return _Remote<List<Json>>(
+    return _RemotePage<List<Json>>(
+      title: 'Git Connections',
       load: () async => objects(
         (await controller.settingsRequest(
           'GET',
@@ -23,7 +21,8 @@ class _GitSettings extends StatelessWidget {
         Future<void> edit([Json? entry]) => _form(
           context,
           title: entry == null ? 'Add connection' : 'Edit / rotate connection',
-          subtitle: 'Secrets are encrypted and cannot be read back. Leave a new secret empty to keep the saved one.',
+          subtitle:
+              'Secrets are encrypted and cannot be read back. Leave a new secret empty to keep the saved one.',
           fields: [
             if (entry == null)
               const _Choice('provider', 'Provider', [
@@ -41,7 +40,8 @@ class _GitSettings extends StatelessWidget {
               'GitHub App ID',
               initial: entry?['appId'] as String? ?? '',
               required: true,
-              hint: 'Numeric App ID. Grant Contents and Pull requests read/write, Metadata read.',
+              hint:
+                  'Numeric App ID. Grant Contents and Pull requests read/write, Metadata read.',
             ),
             _Text(
               'privateKey',
@@ -61,7 +61,8 @@ class _GitSettings extends StatelessWidget {
               'GitLab token',
               secret: true,
               required: entry == null,
-              hint: 'api and write_repository scopes; saved tokens rotate automatically',
+              hint:
+                  'api and write_repository scopes; saved tokens rotate automatically',
             ),
           ],
           visible: (f, v) {
@@ -114,15 +115,18 @@ class _GitSettings extends StatelessWidget {
           await reload();
         }
 
-        return _Screen(
-          title: 'Git Connections',
-          action: IconAction(
-            icon: Icons.add_rounded,
-            tooltip: 'Add connection',
-            onPressed: () => edit(),
-          ),
+        return (
+          actions: [
+            IconAction(
+              icon: Icons.add_rounded,
+              tooltip: 'Add connection',
+              filled: true,
+              size: 36,
+              onPressed: () => edit(),
+            ),
+          ],
           body: _list([
-            if (connections.isEmpty) const Text('No Git Connections yet.'),
+            if (connections.isEmpty) const EmptyHint('No Git Connections yet.'),
             for (final entry in connections)
               _SettingsCard(
                 key: ValueKey(entry['id']),
@@ -171,15 +175,16 @@ class _RepositorySettings extends StatelessWidget {
   final Project project;
   const _RepositorySettings({required this.controller, required this.project});
   @override
-  Widget build(BuildContext context) => _Screen(
+  Widget build(BuildContext context) => _RemotePage<List<Json>>(
     title: 'Repository',
     subtitle: project.name,
-    body: _Remote<List<Json>>(
-      load: () => Future.wait([
-        controller.settingsRequest('GET', '/projects/${project.id}/repository'),
-        controller.settingsRequest('GET', '/git/repositories'),
-      ]),
-      builder: (context, data, reload) => _RepositoryEditor(
+    load: () => Future.wait([
+      controller.settingsRequest('GET', '/projects/${project.id}/repository'),
+      controller.settingsRequest('GET', '/git/repositories'),
+    ]),
+    builder: (context, data, reload) => (
+      actions: const <Widget>[],
+      body: _RepositoryEditor(
         key: ValueKey(project.id),
         controller: controller,
         project: project,
@@ -225,10 +230,6 @@ class _RepositoryEditorState extends State<_RepositoryEditor> {
     super.dispose();
   }
 
-  bool sameRepository(Json a, Json b) =>
-      a['connectionId'] == b['connectionId'] &&
-      a['providerRepoId'] == b['providerRepoId'];
-
   Future<void> save({bool check = false}) async {
     setState(() {
       busy = true;
@@ -267,109 +268,133 @@ class _RepositoryEditorState extends State<_RepositoryEditor> {
     final protection = current?['protection'] as Json?;
     return _list([
       if (error != null)
-        Notice(
-          message: error!,
-          color: Palette.danger,
-          icon: Icons.error_outline_rounded,
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Notice.error(error!),
         ),
       if (locked)
-        const Notice(
-          message: 'Close every non-closed Session, including paused and pending Sessions, before changing the Repository. The Base Branch can still change.',
-          color: Palette.info,
-          icon: Icons.info_outline_rounded,
-        ),
-      if (selected != null)
-        _Item(
-          title: '${selected!['owner']}/${selected!['name']}',
-          subtitle: 'Selected Repository',
-          leading: const Icon(Icons.check_rounded, color: Palette.primary),
-        ),
-      if (widget.groups.isEmpty)
-        const Text(
-          'An Admin must add a Git Connection before a Repository can be linked.',
-        ),
-      const FieldLabel('Search repositories'),
-      TextField(
-        enabled: !busy && !locked,
-        decoration: const InputDecoration(
-          hintText: 'Owner, group or Repository name',
-        ),
-        onChanged: (v) => setState(() => search = v.toLowerCase()),
-      ),
-      const SizedBox(height: 12),
-      for (final group in widget.groups) ...[
-        SectionLabel(
-          '${(group['connection'] as Map)['name']} · ${(group['connection'] as Map)['host']}',
-        ),
-        if (group['error'] != null)
-          Notice(
-            message: group['error'] as String,
-            color: Palette.danger,
-            icon: Icons.error_outline_rounded,
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Notice(
+            message:
+                'Close every non-closed Session, including paused and pending Sessions, before changing the Repository. The Base Branch can still change.',
+            color: Palette.info,
+            icon: Icons.info_outline_rounded,
           ),
-        if (objects(group['repositories']).isEmpty && group['error'] == null)
-          const Text('No accessible Repositories.'),
-        for (final repository in objects(group['repositories']))
-          if ('${repository['owner']}/${repository['name']}'
-              .toLowerCase()
-              .contains(search))
-            _Item(
-              title: '${repository['owner']}/${repository['name']}',
-              subtitle:
-                  '${repository['defaultBranch']}${repository['private'] == true ? ' · private' : ''}',
-              trailing:
-                  selected != null && sameRepository(selected!, repository)
-                  ? const Icon(Icons.check_rounded, color: Palette.primary)
-                  : null,
-              onTap: busy || locked
+        ),
+      Section(
+        title: 'Repository',
+        description: widget.groups.isEmpty
+            ? 'An Admin must add a Git Connection before a Repository can be linked.'
+            : null,
+        children: [
+          if (selected != null)
+            AppTile(
+              leading: const IconBadge(
+                Icons.check_rounded,
+                color: Palette.primary,
+              ),
+              title: '${selected!['owner']}/${selected!['name']}',
+              subtitle: 'Selected Repository',
+              selected: true,
+            ),
+          TextField(
+            enabled: !busy && !locked,
+            decoration: const InputDecoration(
+              hintText: 'Search owner, group or Repository name',
+              prefixIcon: Icon(Icons.search_rounded, size: 19),
+            ),
+            onChanged: (v) => setState(() => search = v.toLowerCase()),
+          ),
+          for (final group in widget.groups)
+            _RepositoryGroup(
+              group: group,
+              search: search,
+              selected: selected,
+              onSelect: busy || locked
                   ? null
-                  : () => setState(() {
+                  : (repository) => setState(() {
                       selected = repository;
                       base.text = repository['defaultBranch'] as String? ?? '';
                     }),
             ),
-      ],
-      const FieldLabel('Base Branch'),
-      TextField(controller: base, enabled: !busy, maxLength: 250),
-      const SizedBox(height: 12),
-      AppButton(
-        label: 'Save repository',
-        busy: busy,
-        onPressed: busy || selected == null ? null : () => save(),
+        ],
       ),
-      if (current != null) ...[
-        const SizedBox(height: 16),
-        _Item(
-          title: 'Open Repository',
-          subtitle: current['webUrl'] as String?,
-          onTap: () => openLink(current['webUrl'] as String?),
+      Section(
+        title: 'Base Branch',
+        children: [
+          TextField(
+            controller: base,
+            enabled: !busy,
+            maxLength: 250,
+            decoration: const InputDecoration(counterText: ''),
+          ),
+          const SizedBox(height: 12),
+          AppButton(
+            label: 'Save repository',
+            busy: busy,
+            onPressed: busy || selected == null ? null : () => save(),
+          ),
+          if (current != null) ...[
+            const SizedBox(height: 12),
+            AppTile(
+              leading: const IconBadge(Icons.code_rounded, color: Palette.info),
+              title: 'Open Repository',
+              subtitle: current['webUrl'] as String?,
+              trailing: externalMark,
+              onTap: () => openLink(current['webUrl'] as String?),
+            ),
+          ],
+        ],
+      ),
+      if (protection != null)
+        Section(
+          title: 'Base Branch Protection',
+          description:
+              'Pushes to the Base Branch are always blocked by the platform. Provider protection is an optional second line of defense.',
+          children: [
+            AppTile(
+              leading: IconBadge(
+                switch (protection['protected']) {
+                  true => Icons.verified_user_outlined,
+                  false => Icons.gpp_maybe_outlined,
+                  _ => Icons.help_outline_rounded,
+                },
+                color: switch (protection['protected']) {
+                  true => Palette.success,
+                  false => Palette.warning,
+                  _ => Palette.fgSubtle,
+                },
+              ),
+              title:
+                  '${switch (protection['protected']) {
+                    true => 'Protected',
+                    false => 'Not protected',
+                    _ => 'Unknown',
+                  }} · ${current!['baseBranch']}',
+              subtitle: protection['details'] as String?,
+              subtitleLines: 4,
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 2, bottom: 12),
+              child: Text(
+                'Checked ${protection['checkedAt']}',
+                style: const TextStyle(fontSize: 12, color: Palette.fgSubtle),
+              ),
+            ),
+            AppTile(
+              title: 'Provider branch settings',
+              trailing: externalMark,
+              onTap: () => openLink(protection['settingsUrl'] as String?),
+            ),
+            AppButton(
+              label: 'Re-check protection',
+              icon: Icons.refresh_rounded,
+              tone: Tone.secondary,
+              onPressed: busy ? null : () => save(check: true),
+            ),
+          ],
         ),
-      ],
-      if (protection != null) ...[
-        const SectionLabel('Base Branch Protection'),
-        const Text(
-          'Pushes to the Base Branch are always blocked by the platform. Provider protection is an optional second line of defense.',
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '${switch (protection['protected']) {
-            true => 'Protected',
-            false => 'Not protected',
-            _ => 'Unknown',
-          }} · ${current!['baseBranch']}',
-        ),
-        Text(protection['details'] as String? ?? ''),
-        Text('Checked ${protection['checkedAt']}'),
-        _Item(
-          title: 'Provider branch settings',
-          onTap: () => openLink(protection['settingsUrl'] as String?),
-        ),
-        AppButton(
-          label: 'Re-check protection',
-          tone: Tone.secondary,
-          onPressed: busy ? null : () => save(check: true),
-        ),
-      ],
     ]);
   }
 }

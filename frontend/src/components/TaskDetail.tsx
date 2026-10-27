@@ -2,7 +2,7 @@ import { BranchLink, PullRequestBadge, capitalize, withProvider } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { CircleCheck, Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
@@ -131,6 +131,23 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     }
   };
 
+  // Closing moves the Task to the first closed-category Status, which ends its Session.
+  const closedStatus = statuses.find((s) => s.category === 'closed');
+  const closed = statuses.find((s) => s.id === task.statusId)?.category === 'closed';
+  const close = async () => {
+    if (!closedStatus) return;
+    const working = session.data && (session.data.state === 'running' || session.data.queuePosition !== null);
+    if (working) {
+      const ok = await confirm({
+        title: `Close ${task.key}?`,
+        description: `The agent is working on it: closing stops its work and ends the session. The task moves to “${closedStatus.name}”.`,
+        confirmLabel: 'Close task',
+      });
+      if (!ok) return;
+    }
+    await moveTo(closedStatus.id);
+  };
+
   const mergePullRequest = async (pr: NonNullable<Task['pullRequest']>) => {
     const noun = pullRequestNoun(pr.provider);
     const ok = await confirm({
@@ -191,6 +208,22 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1">
           <div className="mr-2 flex flex-wrap items-center gap-2">
+            {closedStatus && !closed && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    aria-label="Close task"
+                    className="text-muted-foreground hover:bg-emerald-500/10 hover:text-emerald-500 dark:hover:bg-emerald-500/10"
+                    onClick={close}
+                  >
+                    <CircleCheck /> Close
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Move to “{closedStatus.name}” and end the agent session</TooltipContent>
+              </Tooltip>
+            )}
             <Button
               size="xs"
               variant="ghost"

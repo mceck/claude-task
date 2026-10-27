@@ -160,8 +160,14 @@ class _ProjectAgentApi extends FakeApi {
   }
 }
 
-Finder _field(String label) => find.byWidgetPredicate(
-  (w) => w is TextField && w.decoration?.labelText == label,
+Finder _choice(String label) => find.descendant(
+  of: find.ancestor(of: find.text(label), matching: find.byType(LabeledField)),
+  matching: find.byType(SelectField),
+);
+
+Finder _field(String label) => find.descendant(
+  of: find.ancestor(of: find.text(label), matching: find.byType(LabeledField)),
+  matching: find.byType(TextField),
 );
 
 void _expectWrite(
@@ -223,7 +229,7 @@ void main() {
     final api = _ProjectAgentApi();
     await _open(tester, api, phone: true);
     expect(find.text('Previous Agent (disabled)'), findsOneWidget);
-    await _tap(tester, find.text('Default Agent'));
+    await _tap(tester, _choice('Default Agent'));
     expect(find.text('Previous Agent'), findsOneWidget);
     expect(find.text('Other disabled Agent'), findsNothing);
     await _tap(tester, find.text('Ada Bot'));
@@ -232,7 +238,7 @@ void main() {
       '/projects/project-1/agent-settings',
       {'defaultAgentId': 'agent-1'},
     ));
-    await _tap(tester, find.text('Default Agent'));
+    await _tap(tester, _choice('Default Agent'));
     await _tap(tester, find.text('No Agent'));
     expect(api.writes.last.$3, {'defaultAgentId': null});
     expect(tester.takeException(), isNull);
@@ -261,7 +267,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.writes.last.$3, {'agentInstructions': 'Use Flutter.'});
     expect(find.text('Saved'), findsOneWidget);
-    expect(find.text('Add variable'), findsNothing);
+    expect(find.byTooltip('Add variable'), findsNothing);
     expect(find.text('Import .env'), findsNothing);
     expect(find.byTooltip('Delete TOKEN'), findsNothing);
     expect(find.text('Secret · …abcd'), findsOneWidget);
@@ -352,7 +358,7 @@ void main() {
     await tester.enterText(_field('Agent Instructions'), 'First draft');
     await tester.pump(const Duration(milliseconds: 600));
     await tester.enterText(_field('Agent Instructions'), 'Latest draft');
-    await _tap(tester, find.text('Add variable'));
+    await _tap(tester, find.byTooltip('Add variable'));
     await tester.enterText(_field('Variable name'), 'NEW_VAR');
     await tester.enterText(_field('Value'), 'value');
     await _tap(tester, find.text('Save variable'));
@@ -370,7 +376,7 @@ void main() {
   testWidgets('Admin adds and deletes Project variables', (tester) async {
     final api = _ProjectAgentApi();
     await _open(tester, api, admin: true);
-    await _tap(tester, find.text('Add variable'));
+    await _tap(tester, find.byTooltip('Add variable'));
     await tester.enterText(_field('Variable name'), 'SERVICE_URL');
     await tester.enterText(_field('Value'), 'https://service.example.com');
     await _tap(tester, find.text('Save variable'));
@@ -423,7 +429,7 @@ void main() {
   testWidgets('reserved names are rejected before sending', (tester) async {
     final api = _ProjectAgentApi();
     await _open(tester, api, admin: true);
-    await _tap(tester, find.text('Add variable'));
+    await _tap(tester, find.byTooltip('Add variable'));
     await tester.enterText(_field('Variable name'), 'ANTHROPIC_API_KEY');
     await tester.enterText(_field('Value'), 'key');
     await _tap(tester, find.text('Save variable'));
