@@ -1123,7 +1123,9 @@ Future<T?> showAppSheet<T>(
         padding: EdgeInsets.only(
           bottom: MediaQuery.viewInsetsOf(context).bottom,
         ),
-        child: builder(context),
+        // The route's useSafeArea covers only the top and sides. Keep the
+        // content above system navigation as well, inside the sheet surface.
+        child: SafeArea(top: false, child: Builder(builder: builder)),
       ),
     );
   }

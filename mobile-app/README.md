@@ -46,7 +46,7 @@ The integration smoke has a separate Keychain service and temporary cache, so it
 
 ## Settings
 
-On phones, tap the app icon in the Projects or Wiki header to open the navigation drawer, or swipe from the left edge. On desktop, use the Settings button at the bottom of the Project rail. Settings cover Projects (details, archive, Statuses, Tags, new Project, Repository, Base Branch and protection) and Agents. Admins also manage Users, Credentials, the Extensions catalog (Skills, MCP Servers and Plugins), Git Connections and Agent Extension assignments. Dockerfiles, Builds, Development Services, resource limits, Project environment variables and the Project’s Default Agent are configured in the web app. See [the user manual](../docs/manual/native-app-and-notifications.md).
+On phones, tap the app icon in the Projects or Wiki header to open the navigation drawer, or swipe from the left edge. On desktop, use the Settings button at the bottom of the Project rail. Settings cover Projects (details, archive, Statuses, Tags, new Project, Repository, Base Branch and protection) and Agents. A Project's **Agent setup** includes its Default Agent, Worktree Setup Script and Agent Instructions, with automatic saving. Admins also manage Project environment variables and secrets, including `.env` imports from pasted text or a file, Users, Credentials, the Extensions catalog (Skills, MCP Servers and Plugins), Git Connections and Agent Extension assignments. Dockerfiles, Builds, Development Services and resource limits are configured in the web app. See [the user manual](../docs/manual/native-app-and-notifications.md).
 
 ## Task description editor
 

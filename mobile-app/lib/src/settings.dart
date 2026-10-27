@@ -1,15 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'controller.dart';
 import 'models.dart';
+import 'project_env.dart';
 import 'task_forms.dart' show openLink;
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 
 part 'settings_extensions.dart';
 part 'settings_git.dart';
+part 'settings_project_agents.dart';
 
 /// Native settings share the web app's API and role permissions.
 Future<void> showSettings(BuildContext context, TaskController c) =>
@@ -1084,6 +1088,19 @@ class _ProjectSettings extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 20),
+            _Item(
+              title: 'Agent setup',
+              subtitle:
+                  'Default Agent, Setup Script, instructions and environment',
+              leading: const Icon(
+                Icons.smart_toy_outlined,
+                color: Palette.agent,
+              ),
+              onTap: () => _push(
+                context,
+                _ProjectAgentSettings(controller: c, project: project),
+              ),
+            ),
             _Item(
               title: 'Repository',
               subtitle: 'Repository, Base Branch and protection',

@@ -24,7 +24,7 @@ On a phone, tap the teal Claude Task icon at the top left of **Projects** or **W
 
 The drawer shows your profile, Projects, Wikis and Settings. Tap a Project or Wiki to open it and close the drawer. Tap your profile to manage your photo, notifications or Login.
 
-- **Projects settings** opens Project details, Statuses, Tags, archiving and Repository settings.
+- **Projects settings** opens Project details, Statuses, Tags, archiving, **Agent setup** and Repository settings.
 - **Agents** lists Agents. Admins can create or edit them and select their Extensions.
 - Admins also see **Users**, **Credentials**, **Extensions** and **Git Connections**.
 
@@ -46,7 +46,11 @@ Open **Git Connections** to add GitHub Apps or GitLab instances, inspect their h
 
 Every User can open **Projects settings**, choose a Project, and open **Repository**. Search the Repositories grouped by connection, select one, check **Base Branch**, and choose **Save repository**. Open Sessions lock the Repository choice while leaving the Base Branch editable. The screen also shows provider protection and offers **Re-check protection**.
 
-Dockerfiles, Builds, Development Services, resource limits and Project environment variables are configured in the web app.
+Open **Projects settings**, choose a Project, then open **Agent setup** to choose its **Default Agent**, edit its **Worktree Setup Script** or change its **Agent Instructions**. Choose **No Agent** to clear the default. Changes save after a short pause, when leaving a field or before going back. If saving fails, your edits stay on screen and **Retry** submits them again.
+
+Everyone can read the Project's environment variables. Admins can choose **Add variable**, tap an existing variable to edit it, or use its delete button. Secret values stay hidden; editing a saved secret requires a replacement value. Choose **Import .env** to paste configuration or **Choose file** to load it. Review the variable names and overwrite indicators, optionally enable **Import as secrets**, then choose **Import variables**. Existing secrets stay secret during imports.
+
+Dockerfiles, Builds, Development Services and resource limits are configured in the web app.
 
 ## Find and update work
 
