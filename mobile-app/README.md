@@ -46,7 +46,7 @@ The integration smoke has a separate Keychain service and temporary cache, so it
 
 ## Settings
 
-Profile → Settings edits Projects (details, archive, Statuses, Tags, new Project), Agents (identity, Credential, model, effort, permission mode, system prompt, enabled; duplicate and delete) and, for Admins, Users and Credentials. Dockerfiles, builds, Git Connections, Extensions and secret variables remain in the web app.
+On phones, tap the app icon in the Projects or Wiki header to open the navigation drawer, or swipe from the left edge. On desktop, use the Settings button at the bottom of the Project rail. Settings cover Projects (details, archive, Statuses, Tags, new Project, Repository, Base Branch and protection) and Agents. Admins also manage Users, Credentials, the Extensions catalog (Skills, MCP Servers and Plugins), Git Connections and Agent Extension assignments. Dockerfiles, Builds, Development Services, resource limits, Project environment variables and the Project’s Default Agent are configured in the web app. See [the user manual](../docs/manual/native-app-and-notifications.md).
 
 ## Task description editor
 

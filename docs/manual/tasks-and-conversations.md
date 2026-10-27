@@ -21,6 +21,8 @@ The Conversation occupies the main panel by default, with Task details beside it
 
 You can assign several Users and one Agent. User assignees identify the people responsible for the Task. Assigning an Agent prepares its Session; post a regular Comment to start its work.
 
+A Project can have a **Default agent**, configured in its web **Settings** → **Agents**. New Tasks inherit that Agent when it is enabled. A disabled or removed default leaves new Tasks unassigned. Existing Tasks keep their assignment. In the native creation form, choosing another Agent assigns that Agent to the new Task. Your first regular Comment starts work in every case.
+
 The Tag picker can create and apply a new Tag while you type. Tags belong to the Project.
 
 If **Someone else changed this task** appears, the Task has refreshed and your conflicting change was not saved. Review the new value before editing again. A conflicting description draft stays available, with options to save it over the other edit or **discard your changes**.
@@ -40,6 +42,8 @@ An unsent web draft, including its files and Internal chat choice, survives clos
 Turn on **Internal chat**, write the Internal Note, then click **Send**. Every User can see it. Agents never receive it or its files. Its lock, dashed border and **Internal chat** label distinguish it from regular Comments.
 
 The Internal Note choice cannot be changed after posting.
+
+In the native app, use the speech-bubble icon beside Attach to switch to Internal chat. Its tooltip reads **Comment · switch to Internal chat**. Internal mode shows a lock icon, **Hidden from the Agent…**, and the tooltip **Internal chat · switch to Comment**. Switching modes keeps your text, files and focus. See [native Conversations](native-app-and-notifications.md#join-the-conversation) for sending and keyboard controls.
 
 ### Check whether the Agent received it
 
@@ -68,6 +72,10 @@ New output stays in view while you are at the bottom. Scroll up to read older ac
 When **Notify agent** appears after you change the title, description, priority or Tags, click it to send the changes the Agent has not seen. It is available for an existing idle or running Session. Editing a field by itself does not deliver those changes to the Agent.
 
 Type `/` to see the Agent's available commands and Skills. Use arrow keys and Enter or Tab to choose a suggestion, then finish and post the Comment. Native commands at the start of a Comment wait until the current Turn ends.
+
+## Review code changes
+
+The Task's details show its branch and Pull Request when available. For an open, non-draft Pull Request, use the merge action after checking the changes. The app asks you to confirm **Merge** and applies the code host's own review and check requirements. Merging leaves the Task's Status unchanged. See [Git repositories and pull requests](git-repositories.md#review-and-merge-changes) for web and native controls.
 
 ## Delete a Task
 

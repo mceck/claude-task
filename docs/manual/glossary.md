@@ -27,6 +27,7 @@ These are the terms you will meet while using Claude Task.
 | Delivery | Whether a Comment is queued, delivered or not delivered to the Agent. |
 | Timeline | Comments, Revisions and Agent work shown together in time order. |
 | Agent | A named Claude Code worker with its own instructions and environment. |
+| Default Agent | A Project’s Agent choice assigned to new Tasks when enabled. The first regular Comment starts work. |
 | Assignment | Linking an Agent to a Task; a regular Comment starts its work. |
 | Session | One Agent's continuing Claude Code conversation on one Task. |
 | Job | A period when an Agent runs work for a Session. |

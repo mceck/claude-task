@@ -2,7 +2,7 @@
 
 # Connect a Repository and review Agent changes
 
-Link a Project to GitHub or GitLab so its Agents can work on code and propose changes for review. Admins manage Git Connections; every User can link a Project's Repository.
+Link a Project to GitHub or GitLab so its Agents can work on code and propose changes for review. Admins manage Git Connections; every User can link a Project's Repository. Both are available in the web and native apps. The first procedures use the web labels; see [native Git settings](#use-git-settings-in-the-native-app) for phone and desktop controls.
 
 ## Add a Git Connection (Admins)
 
@@ -46,6 +46,38 @@ You can change the Base Branch later. To change the Repository, first close ever
 **Base branch protection** shows **Protected**, **Not protected** or **Unknown**, based on what the code host reports. Use **Re-check protection** after changing provider settings.
 
 The platform's Push Policy allows an Agent to push its own Task Branch, including force pushes. It blocks pushes to other branches, tags and branch deletions. The provider's Base Branch Protection is an additional control; **Unknown** means the application could not determine that control's state.
+
+## Use Git settings in the native app
+
+On a phone, tap the app icon at the top left of **Projects** or **Wiki** to open the drawer. On desktop, open **Settings** at the bottom of the Project rail.
+
+### Manage connections (Admins)
+
+1. Choose **Git Connections**.
+2. Choose **Add connection**, select **GitHub App** or **GitLab**, and enter **Connection name**.
+3. For GitHub, enter **GitHub App ID** and **Private key (PEM)**. For GitLab, enter **GitLab URL** and **GitLab token**. Use the access permissions described above.
+4. Choose **Save connection**.
+
+Each card shows health, expiry when available, access links and the linked Project count. Choose **Edit / rotate** to rename a stored connection or replace its secret; leave the replacement empty to retain the saved one. **Environment · read-only** connections are maintained by the installation operator. **Delete connection** becomes available after every linked Project and Wiki has moved elsewhere.
+
+![Native Git Connections showing a stored GitLab connection and a read-only GitHub connection](images/git-repositories/native-connections.png)
+
+### Link a Repository
+
+1. Choose **Projects settings** in the phone drawer, or **Projects** in the desktop Settings hub.
+2. Open the Project, scroll to **Repository**, and open it.
+3. Use **Search repositories** to filter by owner, group or name. Select a Repository from its connection’s group.
+4. Check **Base Branch** and choose **Save repository**.
+
+A failed connection shows its own error while other connections remain available. The currently linked Repository stays selected if its connection is unavailable. Pending, paused or active Sessions lock Repository changes; you can still save another Base Branch for the current Repository.
+
+**Base Branch Protection** shows the result, explanation and last check time. **Provider branch settings** opens the code host’s settings. **Re-check protection** refreshes the result while keeping any Repository or Base Branch edits you have not saved yet.
+
+![Native Repository settings with the Base Branch and provider protection result](images/git-repositories/native-repository.png)
+
+### Merge from the native app
+
+Open a Task, then **Task details**. Under **Code**, open the branch or **Open Pull Request** to review the changes on the code host. For an open, non-draft request, choose **Merge Pull Request** or **Merge Merge Request** on GitLab, then confirm **Merge**. If the provider refuses because of required reviews, checks or conflicts, its error appears and you can retry after resolving the cause. Merging keeps the Task’s current Status.
 
 ## Review and merge changes
 

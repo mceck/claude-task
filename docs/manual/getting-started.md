@@ -21,7 +21,9 @@ Ask an Admin for a password reset if you cannot sign in. There is no self-servic
 
 ![The Projects page and sidebar for the fictional Customer Portal team](images/getting-started/projects.png)
 
-Click your name at the bottom of the sidebar to choose **Dark**, **Light** or **System** under **Theme**, **Change password**, or **Log out**. Changing your password ends your other Logins.
+In the native app on a phone, tap the teal app icon at the top left of **Projects** or **Wiki** to open navigation and Settings. On native desktop, use the Project rail and its **Settings** button. See [Native app and notifications](native-app-and-notifications.md#open-navigation-and-settings) for the available settings.
+
+Click your name at the bottom of the web sidebar to choose **Dark**, **Light** or **System** under **Theme**, **Change password**, or **Log out**. Changing your password ends your other Logins.
 
 ## Create a Task
 

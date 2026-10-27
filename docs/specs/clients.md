@@ -229,9 +229,11 @@ The layout adapts to the window width.
 
 | Width | Layout |
 | --- | --- |
-| Below 1000 px (phones, narrow windows) | Successive screens: Projects list, then the Project's Tasks, then the conversation. Back (button, gesture or system back) returns one level. Task details open on demand. A navigation drawer, opened from the menu button in the Projects and Wiki headers or by swiping from the left edge, holds the profile, Projects, Wikis and Settings. |
+| Below 1000 px (phones, narrow windows) | Successive screens: Projects list, then the Project's Tasks, then the conversation. Back (button, gesture or system back) returns one level. Task details open on demand. A navigation drawer, opened by tapping the app icon in the Projects and Wiki headers or by swiping from the left edge, holds the profile, Projects, Wikis and Settings. |
 | 1000 px to 1499 px | Three panes: a 76 px Project rail, a 340 px Task list, the conversation. Task details open on demand from the conversation header. |
 | 1500 px and wider | The same three panes plus a 360 px Task details panel next to the conversation. |
+
+On phones, the app icon at the left of the Projects and Wiki headers opens the navigation drawer, with a 44 px touch target and the accessible label "Menu". On wider windows, the Wiki header keeps its decorative app icon and navigation uses the Project rail.
 
 The **Project rail** lists Projects as badges, with a button for the Wiki section at the top and, at the bottom, a Settings button (online only) above the Profile avatar. The phone's **drawer** shows the User's avatar, name and email (opening the Profile sheet), the Projects and the Wikis (selecting one closes the drawer and opens it), and the Settings screens listed directly instead of behind a hub: Projects, Agents and, for Admins, Users, Credentials, Extensions and Git Connections (online only). The phone's **Projects list** shows each Project's key, name, Task count and a completion bar (done and closed Tasks over all Tasks). Empty panes say what to pick next ("Select a Project", "Select a Task to join the conversation").
 

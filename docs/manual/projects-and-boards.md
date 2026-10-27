@@ -54,7 +54,7 @@ Multiple choices in one filter match any selected value. Different filters must 
 
 ## Customize Statuses and Tags
 
-Open the Board's **Settings**.
+Open the Board's **Settings**. In the native app, open **Projects settings** from the phone drawer, or **Settings** → **Projects** on desktop, then choose the Project. Native settings include details, Statuses, Tags, archiving and **Repository**; the procedures below use web controls.
 
 - In **General**, edit the Name or Description and click **Save changes**.
 - In **Statuses**, enter **New status name**, choose its color and Category, then click **Add**. Existing names save when you leave their field. Use the up and down arrows to change column order.
@@ -64,6 +64,16 @@ Open the Board's **Settings**.
 Each Project needs at least one `open` and one `closed` Status. Changing a Status's Category to `closed` closes the Sessions of every Task in it, so review the affected Tasks first.
 
 The **Agents** and **Repository** tabs configure how Agents prepare and work on the Project. See [environment settings](admin-extensions.md) and [Git repositories](git-repositories.md).
+
+## Set a Project logo and Default Agent
+
+Every User can open the Project’s web **Settings** → **General** and use **Upload logo** or **Replace logo** under **Project logo**. Choose PNG, JPEG, GIF or WebP up to 2 MB. It saves immediately and appears in Project lists, headers and the native app. **Remove logo** restores the Project Key badge.
+
+![Web Project settings with logo upload and General details](images/projects-and-boards/project-settings.png)
+
+Open **Settings** → **Agents** and choose **Default agent** to assign an Agent to each new Task in that Project. The selection saves immediately. Choose **No agent** to clear it. An enabled Default Agent is assigned when a Task is created in either client; a disabled or removed Default Agent leaves new Tasks unassigned. Assignment creates a pending Session; the first regular User Comment starts work.
+
+The native Create Task form can explicitly assign a different Agent after creating the Task. Configuring the Project’s Default Agent is available in the web app.
 
 ## Archive or delete a Project
 

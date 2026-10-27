@@ -23,6 +23,8 @@ Use this reference when an action is unavailable or an input is rejected. All ac
 | Create, import or delete Project environment variables | No | Yes |
 | Manage own notification preferences | Yes | Yes |
 
+The same role permissions apply in the web and native apps. Native Settings include Project Repositories and Base Branches for every User, and Extensions, Git Connections and Agent configuration for Admins. Use the web app for Docker configuration, Builds, Development Services, resource limits and Project environment variables.
+
 Members can read Project environment variable names and plain values, but secret values are redacted. Internal Notes are visible to every User, including Members. Admins cannot edit someone else's Comment.
 
 ## Input and file limits
@@ -44,6 +46,7 @@ Members can read Project environment variable names and plain values, but secret
 | Wiki name | 200 characters |
 | Wiki description | 100,000 characters |
 | Agent avatar upload | 2 MB; PNG, JPEG, GIF or WebP |
+| Project logo or User profile image | 2 MB; PNG, JPEG, GIF or WebP |
 | Setup Script or Agent Instructions | 100,000 characters each |
 
 ## Work and access limits

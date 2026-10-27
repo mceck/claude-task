@@ -40,6 +40,7 @@ These are backend environment settings. The supplied Compose file exposes a subs
 | `DOCKER_SOCKET` | Docker socket; default `/var/run/docker.sock`. |
 | `AGENT_BACKEND_URL` | Backend URL reachable from Agent Containers; host-mode default `http://host.docker.internal:3000`, Compose `http://app:3000`. |
 | `AGENT_NETWORK` | Agent Docker network; empty uses Docker's default bridge. |
+| `AGENT_STOP_ON_SHUTDOWN` | Stop this installation's Agent Containers on graceful backend shutdown. Defaults to `true` in local development and `false` with `NODE_ENV=production`; the supplied Compose stack explicitly defaults to `true`. Set `false` to keep Agents running through backend restarts. |
 | `CLAUDE_CODE_VERSION` | Pinned Claude Code version used in Agent Images; current default `2.1.310`. |
 | `AGENT_COMMIT_EMAIL_DOMAIN` | Email domain used for Agent commits; default `agents.claude-task.local`. |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` | Optional environment-managed GitHub App connection. The key accepts literal `\n` line breaks. |
@@ -48,6 +49,28 @@ These are backend environment settings. The supplied Compose file exposes a subs
 | `AGENT_RUNTIME` | Default `docker`. `fake` simulates containers for tests and demos and does not run Claude. |
 
 Terminate HTTPS at your reverse proxy and forward both HTTP and WebSocket traffic. The normal web frontend and backend share the same origin. Set public and Agent-facing URLs separately when only the proxy is reachable to Users.
+
+## Stop or restart the backend
+
+The backend handles `SIGINT` and `SIGTERM` as graceful shutdown requests. Whether Agent Containers stop with it depends on `AGENT_STOP_ON_SHUTDOWN`.
+
+With this setting enabled, the backend stops scheduling new work, finishes in-flight scheduling and maintenance operations, and stops the containers belonging to its stored Agents. Active Jobs are interrupted when their containers stop. Each container has 10 seconds to stop its processes. The supplied Compose stack allows 30 seconds for the app's shutdown. Missing or already stopped containers are accepted; failed stops are logged and make the shutdown finish with an error.
+
+Stopping keeps the containers, images and Agent Volumes, including Worktrees, Claude transcripts and Development Service data. On the next backend start, stopped containers are started again and interrupted work recovers through the normal Session resume flow.
+
+With the setting disabled, Agent Containers keep running while the backend restarts and their Runners reconnect afterward. Closing a browser or native app leaves both the backend and its Agents running.
+
+## Local development services
+
+The repository's `monade.yaml` starts the backend, frontend and a local Mailpit service automatically when used with the team's local service manager:
+
+| Service | Command | Port | Local domain |
+| --- | --- | --- | --- |
+| Backend | `pnpm dev:backend` | `3000` | `claude-task-api.localhost` |
+| Web app | `pnpm dev:frontend` | `5173` | `claude-task.localhost` |
+| Mailpit | `mailpit` | `8025` | `mailpit.test` |
+
+This host-side Mailpit service is separate from Mailpit selected under an Agent's **Services**. An Agent's Mailpit runs inside its own container and keeps its data in that Agent's Volume. See [Agents and credentials](admin-agents.md#prepare-the-development-environment) for the Agent environment.
 
 ## Recover Admin access
 

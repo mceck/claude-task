@@ -20,6 +20,8 @@ An Agent runs one Job at a time across all its Tasks. Waiting work goes into tha
 
 Assigning an Agent alone starts no work. An Internal Note never starts it. Moving a Task to **In Progress** also starts no work.
 
+New Tasks may already have the Project's **Default agent** assigned. Check the Agent shown in the Task's details before sending your first Comment; change it there if another Agent should do the work. The default applies to new Tasks and leaves existing assignments unchanged.
+
 A Comment on the Agent's current Task can reach it during the Turn. Comments for other Tasks wait in its Queue. Several queued Comments for one Task are usually delivered together in posting order. Native commands wait between Turns.
 
 ![A Task with Rowan assigned and its Session waiting for the first Comment](images/agent-sessions-and-queues/assigned-agent.png)
@@ -65,6 +67,8 @@ Reopening restores the assigned Agent's Session. It starts no work until you pos
 Choose **No agent** in the Agent picker to pause its Session. Choose another Agent to hand over the Task. A new Agent starts with the Task and its non-internal Conversation when you next post a Comment. Assigning an earlier Agent again resumes its own previous Session and queues a catch-up Message if that Session had already started.
 
 ## Manage an Agent's Queue
+
+The Queue, Job details, Builds and usage controls described here are in the web app. Native **Agents** settings show configuration and Extension synchronization notices; use the Task or Wiki Conversation there for **Stop** and **Retry**.
 
 1. Open **Agents** in the sidebar.
 2. Select the Agent.

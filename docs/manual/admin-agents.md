@@ -46,13 +46,15 @@ You can upload PNG, JPEG, GIF or WebP avatar images up to 2 MB. **Remove image**
 
 The Dockerfile must start from `claude-task/agent-base` and finish as `USER agent`. Install your toolchains and any stdio MCP servers there. The platform pins the Base Image version during the Build.
 
-Under **Services**, select PostgreSQL, Redis, MySQL, Mailpit or RustFS. PostgreSQL and Redis are selected by default. Each Agent has its own local Development Services; all its Tasks share them, so give different Projects distinct databases, namespaces and buckets.
+Under **Services**, select PostgreSQL, Redis, MySQL, Mailpit or RustFS. Mailpit receives test email on SMTP port 1025; its mailbox interface is available inside the Agent Container on port 8025. PostgreSQL and Redis are selected by default. Each Agent has its own local Development Services; all its Tasks share them, so give different Projects distinct databases, namespaces and buckets.
 
 Repositories, Worktrees, Claude transcripts, installed tools and Development Service data persist across container recreation. Deselecting a Development Service keeps its data for later use.
 
 ## Change configuration
 
-Open the Agent's **Configuration** tab, make your changes and click **Save agent**.
+In the web app, open the Agent's **Configuration** tab. General settings and Extension selections save automatically; wait for **All changes saved** before leaving. If saving fails, your edits stay visible and **Retry** sends them again. Apply Dockerfile, Services and resource-limit changes with **Save Docker configuration**.
+
+![The web Agent Configuration tab with automatic save status](images/admin-agents/configuration.png)
 
 | Change | When it applies |
 | --- | --- |
@@ -63,6 +65,16 @@ Open the Agent's **Configuration** tab, make your changes and click **Save agent
 | Avatar or description | Display change. |
 
 A failed Build leaves the previous successful container available. Fix the Dockerfile or service choice and save, or use **Rebuild image**. A synchronization error appears on the Agent page and holds new work until synchronization succeeds.
+
+## Configure an Agent in the native app
+
+On a phone, tap the app icon in **Projects** or **Wiki** and choose **Agents** from the drawer. On desktop, open **Settings** → **Agents**.
+
+Admins can choose **New agent** or open an existing Agent. Fill in its name, emoji, color, description, Credential, model, effort, permission mode, System prompt and Enabled choice. Select any **Skills**, **MCP Servers** and **Plugins** it needs from the shared catalog. Choose **Create agent** or **Save agent** to apply the form.
+
+New Agents use the default Dockerfile. Use the web app to configure Dockerfiles, Development Services and resource limits, or inspect Builds and container logs. The native form also offers **Duplicate**, **Delete agent** and **Manage shared Extensions**. Save your edits before opening the shared catalog.
+
+The Agents list shows pending Extension changes and synchronization errors. Updates reach the next Job once synchronization succeeds. See [native Extension management](admin-extensions.md#use-extensions-in-the-native-app) for imports, MCP secrets and Plugin updates.
 
 ## Maintain or remove an Agent
 

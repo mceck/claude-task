@@ -516,7 +516,7 @@ class ProjectList extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
           child: Row(
             children: [
-              const BrandMark(size: 32),
+              const DrawerBrandMark(),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -540,11 +540,6 @@ class ProjectList extends StatelessWidget {
                     ),
                   ],
                 ),
-              ),
-              IconAction(
-                icon: Icons.menu_rounded,
-                tooltip: 'Menu',
-                onPressed: () => Scaffold.of(context).openDrawer(),
               ),
             ],
           ),

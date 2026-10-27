@@ -20,7 +20,7 @@ class WikiList extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
           child: Row(
             children: [
-              const BrandMark(size: 32),
+              const DrawerBrandMark(),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -50,12 +50,6 @@ class WikiList extends StatelessWidget {
                 tooltip: 'New wiki',
                 onPressed: c.online ? () => showWikiForm(context, c) : null,
               ),
-              if (Scaffold.maybeOf(context)?.hasDrawer ?? false)
-                IconAction(
-                  icon: Icons.menu_rounded,
-                  tooltip: 'Menu',
-                  onPressed: () => Scaffold.of(context).openDrawer(),
-                ),
             ],
           ),
         ),

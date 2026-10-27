@@ -2,7 +2,7 @@
 
 # Work from the native app and receive notifications
 
-Use the native app to read Conversations, create and edit Tasks, work with Wikis and receive phone alerts. Administration is available in the web application.
+Use the native app to read Conversations, create and edit Tasks, work with Wikis and receive phone alerts. Settings also let you manage Projects and their Repositories. Admins can configure Agents, Credentials, Users, Extensions and Git Connections.
 
 ## Sign in
 
@@ -14,7 +14,39 @@ Ask your Admin for the native application and your installation's address.
 
 One installation and one User are active at a time. Open **Profile** and choose **Log out** before switching. Logging out clears that profile's cached Conversations, Drafts and downloaded Attachments on the device.
 
-<!-- screenshot: Native app at 1280×800 showing a fictional Project's grouped Task list and open Conversation. -->
+![The native desktop app showing a Project’s Tasks and Conversation](images/native-app-and-notifications/workspace-desktop.png)
+
+## Open navigation and Settings
+
+On a phone, tap the teal Claude Task icon at the top left of **Projects** or **Wiki** to open the navigation drawer. You can also swipe in from the left edge. The icon is labelled **Menu** for accessibility. Back from a Task returns to its Project; Back again returns to Projects and its app icon.
+
+![The phone Projects screen with the app icon at the top left](images/native-app-and-notifications/projects-phone.png)
+
+The drawer shows your profile, Projects, Wikis and Settings. Tap a Project or Wiki to open it and close the drawer. Tap your profile to manage your photo, notifications or Login.
+
+- **Projects settings** opens Project details, Statuses, Tags, archiving and Repository settings.
+- **Agents** lists Agents. Admins can create or edit them and select their Extensions.
+- Admins also see **Users**, **Credentials**, **Extensions** and **Git Connections**.
+
+![The phone drawer with Projects, Wikis and administration entries](images/native-app-and-notifications/drawer-phone.png)
+
+On desktop, choose Projects and Wikis from the left rail. The **Settings** button at the bottom of the rail opens the same Settings screens. Settings actions are available while online.
+
+## Change your profile photo
+
+Open your profile from the phone drawer or the avatar at the bottom of the desktop rail. Choose **Change photo**, select a PNG, JPEG, GIF or WebP image up to 2 MB, and wait for it to save. **Remove photo** restores your initials. Your photo appears in profile controls, assignee lists and Conversations. Agents show their own image, or their emoji when no image is set.
+
+![The native Profile sheet with photo and notification controls](images/native-app-and-notifications/profile-phone.png)
+
+## Configure Extensions and Git
+
+Admins can open **Extensions** from the drawer or desktop Settings hub to import Skills, manage Plugins and configure MCP Servers. Open **Agents**, choose an Agent and select its **Skills**, **MCP Servers** and **Plugins**, then choose **Save agent**. Pending changes and synchronization errors appear in the Agents list. See [Extensions and environment](admin-extensions.md#use-extensions-in-the-native-app).
+
+Open **Git Connections** to add GitHub Apps or GitLab instances, inspect their health and rotate stored secrets. An empty replacement field keeps the saved secret. **Environment · read-only** connections are managed by the installation operator. See [Git repositories](git-repositories.md#use-git-settings-in-the-native-app).
+
+Every User can open **Projects settings**, choose a Project, and open **Repository**. Search the Repositories grouped by connection, select one, check **Base Branch**, and choose **Save repository**. Open Sessions lock the Repository choice while leaving the Base Branch editable. The screen also shows provider protection and offers **Re-check protection**.
+
+Dockerfiles, Builds, Development Services, resource limits and Project environment variables are configured in the web app.
 
 ## Find and update work
 
@@ -24,7 +56,7 @@ On a phone, open a Project, then a Task to reach its Conversation. Back returns 
 - Open **Filters** to choose priority, Tag or assignee. Use **Clear** to remove those filters.
 - Enable **Archive** to show Tasks in closed-category Statuses.
 - Open **Task details** to change Status, priority or Agent, or use **Edit Task** for title, description, assignees and Tags.
-- Choose **Create Task** to add work. If you choose an Agent, **Create and assign** creates the Task and assigns it. Your first Comment starts the Agent.
+- Choose **Create Task** to add work. The Project’s Default Agent, when enabled, is assigned automatically. Choosing another Agent explicitly with **Create and assign** overrides it. Your first Comment starts the Agent.
 
 If assignment fails after creating a Task, use **Retry assignment** on the created Task. It retries the assignment without creating another Task.
 
@@ -32,7 +64,7 @@ In the description editor, **Write**, **Markdown** and **Preview** share the sam
 
 ## Join the Conversation
 
-Write in the composer and send. On a hardware keyboard, Enter sends, Shift+Enter inserts a newline, and Ctrl+Enter or Cmd+Enter also sends. Turn on **Internal chat** for an Internal Note that Users can read and the Agent never receives.
+Write in the composer and send. On a hardware keyboard, Enter sends, Shift+Enter inserts a newline, and Ctrl+Enter or Cmd+Enter also sends. Use the speech-bubble icon beside **Attach local files** to switch to **Internal chat**. It changes to a lock and keeps your text and attachments in place. Use the lock to switch back to a regular Comment. An Internal Note is visible to Users and hidden from the Agent.
 
 Use **Attach local files** to stage files. They stay with your Draft until you send. Download received Attachments to open them with the device's viewer; downloaded images also have previews.
 
@@ -62,7 +94,7 @@ Following determines which Tasks can notify you. Muting silences a followed Task
 3. Open **Profile** and choose **Enable notifications** on an iOS or Android phone.
 4. Grant the operating system's notification permission.
 
-<!-- screenshot: Native Profile sheet showing Enable notifications and a configured phone notification status. -->
+The Profile screenshot above shows the notification controls. Your status depends on the phone build and installation configuration.
 
 Your installation and phone build must have push configured. If you see **Phone push is not configured on this installation**, ask your Admin. Declining permission leaves unread indicators available.
 
@@ -71,6 +103,8 @@ Alerts are sent for completed or failed Agent Turns and failed Jobs requiring at
 ## Related
 
 - [Getting started](getting-started.md): access and your first useful result.
+- [Extensions and environment](admin-extensions.md): manage the shared catalog and Agent assignments.
+- [Git repositories](git-repositories.md): configure connections and Project Repositories.
 - [Tasks and conversations](tasks-and-conversations.md): Comments, Attachments and delivery.
 - [Troubleshooting](troubleshooting.md): resolve sign-in and Agent problems.
 

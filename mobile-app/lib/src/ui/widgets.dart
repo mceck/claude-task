@@ -1032,6 +1032,26 @@ class SectionLabel extends StatelessWidget {
   );
 }
 
+/// The header's app icon opens navigation when a drawer is available.
+class DrawerBrandMark extends StatelessWidget {
+  const DrawerBrandMark({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scaffold = Scaffold.maybeOf(context);
+    if (scaffold?.hasDrawer != true) return const BrandMark(size: 32);
+    return Tooltip(
+      message: 'Menu',
+      child: Pressable(
+        semanticLabel: 'Menu',
+        padding: const EdgeInsets.all(6),
+        onTap: scaffold!.openDrawer,
+        child: const BrandMark(size: 32),
+      ),
+    );
+  }
+}
+
 /// The app's mark: the web logo's three board columns on the accent gradient.
 class BrandMark extends StatelessWidget {
   final double size;

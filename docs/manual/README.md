@@ -1,5 +1,7 @@
 # Claude Task manual
 
+**Last updated:** 27 October 2026.
+
 Claude Task is your team's shared board for planning work and working with Claude Code Agents. Organize Tasks, discuss them with colleagues, ask Agents to make changes, and maintain shared Wikis backed by Git repositories.
 
 Every active User can work on every Project and Wiki. Admins also configure access, Agents and the installation.
@@ -19,7 +21,7 @@ Every active User can work on every Project and Wiki. Admins also configure acce
 4. [Agent sessions and queues](agent-sessions-and-queues.md): start, steer, stop and retry Agent work.
 5. [Wikis](wikis.md): ask questions and maintain shared knowledge.
 6. [Git repositories and pull requests](git-repositories.md): connect repositories and review changes.
-7. [Native app and notifications](native-app-and-notifications.md): use multiple installations, cached conversations and phone alerts.
+7. [Native app and notifications](native-app-and-notifications.md): open phone navigation, configure Extensions and Git, read cached conversations and receive phone alerts.
 
 ## Administer the installation
 
@@ -34,4 +36,4 @@ Every active User can work on every Project and Wiki. Admins also configure acce
 13. [Glossary](glossary.md): understand the terms used by the app.
 14. [Troubleshooting](troubleshooting.md): resolve sign-in, delivery and Agent problems.
 
-Screenshots use fictional demo data, a dark theme and a 1280 × 800 browser viewport. Agent and Git connections in the demo are simulated; the screens are captured from the running application.
+Screenshots use fictional demo data and a dark theme. Browser and native desktop views use 1280 × 800; phone views use 390 × 844. Native screenshots render the Flutter application against a simulated demo installation. Agent and Git connections in all demo views are simulated.

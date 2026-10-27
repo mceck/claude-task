@@ -55,6 +55,12 @@ If the Agent was working, it stops first. Comments sent during that stop wait un
 
 Deletion removes the Wiki and its Conversation from the application. The remote Repository, its branch and pull request remain on the code host.
 
+## Use Wikis on a phone
+
+Tap the app icon in **Projects** or **Wiki** to open the navigation drawer, then choose an existing Wiki. Back from its Conversation opens the Wiki list; its app icon opens the drawer again, and **New wiki** starts another Wiki.
+
+If the installation has no Wikis yet, create its first Wiki in the web app. It then appears in the phone drawer. Desktop native users can open the Wiki list directly from the Project rail.
+
 ## Related
 
 - [Tasks and conversations](tasks-and-conversations.md): compose Comments, attach files and use Internal Notes.

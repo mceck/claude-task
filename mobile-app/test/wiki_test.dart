@@ -132,7 +132,8 @@ void main() {
       await tester.pumpAndSettle();
       if (width < 1000) {
         // The phone reaches Wikis from the drawer.
-        await tester.tap(find.byTooltip('Menu'));
+        expect(find.byIcon(Icons.menu_rounded), findsNothing);
+        await tester.tap(find.byType(DrawerBrandMark));
         await tester.pumpAndSettle();
       } else {
         await tester.tap(find.byTooltip('Wiki').first);
@@ -150,6 +151,15 @@ void main() {
       await tester.pumpAndSettle();
       expect((h.api as WikiApi).resets, 1);
       expect(find.text('Hello team'), findsNothing);
+      if (width < 1000) {
+        await tester.tap(find.byTooltip('Back'));
+        await tester.pumpAndSettle();
+        expect(find.byType(WikiList), findsOneWidget);
+        await tester.tap(find.byType(DrawerBrandMark));
+        await tester.pumpAndSettle();
+        expect(find.text('Agents'), findsOneWidget);
+        expect(find.byIcon(Icons.menu_rounded), findsNothing);
+      }
       expect(tester.takeException(), isNull);
     });
   }

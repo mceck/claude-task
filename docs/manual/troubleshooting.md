@@ -60,6 +60,18 @@ An Internal Note never reaches the Agent. Editing an already delivered Comment a
 
 ## Native app and Wiki issues
 
+| Problem | Next action |
+| --- | --- |
+| You cannot find phone navigation | Tap the teal app icon at the top left of **Projects** or **Wiki**, or swipe in from the left edge. Back from a Task returns toward those screens. |
+| Extensions or Git Connections is missing | These entries are available to Admins in the drawer or desktop Settings hub while online. Ask an Admin if your role is Member. |
+| Extension changes are pending | Check the Agents list for synchronization errors. Changes apply before the next Job once synchronization succeeds. |
+| A catalog entry cannot be deleted | Remove its assignment from every Agent first, then retry deletion. |
+| **Duplicate variable or header name** | Give each MCP header or environment variable a distinct name. Your form stays open. |
+| Renaming a saved MCP secret requires a replacement | Enter the new secret for the renamed header or variable, or restore the original name to preserve the saved secret. |
+| A Git Connection says **Environment · read-only** | Ask the installation operator to update it. Stored connections offer **Edit / rotate**. |
+| Repository choice is locked | Close every non-closed Session in the Project, including pending and paused Sessions. The current Repository’s Base Branch stays editable. |
+
+
 Use [Native app and notifications](native-app-and-notifications.md) to check connection status, pending Comments and phone permissions. Offline cached content can be read, but new server actions need a connection.
 
 **Reset chat** removes a Wiki's Conversation for everyone. Its repository files remain. It is not a way to undo file changes or reset Git history.
