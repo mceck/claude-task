@@ -7,6 +7,7 @@ import 'controller.dart';
 import 'conversation.dart';
 import 'models.dart';
 import 'task_forms.dart';
+import 'settings.dart';
 import 'wiki.dart';
 import 'ui/theme.dart';
 import 'ui/project_logo.dart';
@@ -698,6 +699,17 @@ class _ProfileSheetState extends State<_ProfileSheet> {
           ],
         ),
         actions: [
+          AppButton(
+            label: 'Settings',
+            icon: Icons.settings_outlined,
+            tone: Tone.secondary,
+            onPressed: c.online
+                ? () {
+                    Navigator.pop(sheet);
+                    showSettings(context, c);
+                  }
+                : null,
+          ),
           AppButton(
             label: 'Log out',
             icon: Icons.logout_rounded,

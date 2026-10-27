@@ -224,6 +224,10 @@ class TaskController extends ChangeNotifier {
     if (project != null) 'project:${project!.id}',
     if (task != null) 'task:${task!.id}',
   });
+  /// Settings screens call the same API as the web app's administration pages.
+  Future<Json> settingsRequest(String method, String path, {Json? body}) =>
+      _request(method, path, body: body);
+
   Future<Json> _request(
     String method,
     String path, {
