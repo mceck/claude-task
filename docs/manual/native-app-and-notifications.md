@@ -70,6 +70,8 @@ In the description editor, **Write**, **Markdown** and **Preview** share the sam
 
 Write in the composer and send. On a hardware keyboard, Enter sends, Shift+Enter inserts a newline, and Ctrl+Enter or Cmd+Enter also sends. Use the speech-bubble icon beside **Attach local files** to switch to **Internal chat**. It changes to a lock and keeps your text and attachments in place. Use the lock to switch back to a regular Comment. An Internal Note is visible to Users and hidden from the Agent.
 
+Answer an Agent's Questions and Surveys directly in the Conversation; this needs a connection. See [Agent questions and files](agent-questions-and-files.md).
+
 Use **Attach local files** to stage files. They stay with your Draft until you send. Download received Attachments to open them with the device's viewer; downloaded images also have previews.
 
 Scroll to the latest entry to mark the Conversation read while online and in the foreground. A bold Task row with a dot means it has unread entries. Read state is shared with your other devices and the web app. While reading older entries, use **Jump to latest** to return to the bottom.

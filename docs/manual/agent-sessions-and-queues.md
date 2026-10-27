@@ -85,13 +85,14 @@ If the Agent is disabled, offline, building, awaiting container recreation or ap
 
 On the Agent page, **Recent jobs** lists recent work and its state, Turn count and cost. Click **Details** to read **Job details**, including setup output, process diagnostics and the Claude version. Use **Builds** to inspect image build output and **Usage** to review token and cost totals.
 
-The Task Timeline shows the human-facing result, expandable Thinking and Activity, and Turn Summaries. Agent errors appear as System Comments. After a restart or lost connection, interrupted work can resume automatically; look for its recovery notice before sending duplicate instructions.
+The Task Timeline shows the human-facing result, files the Agent posts, its Questions and Surveys, expandable Thinking and Activity, and Turn Summaries. Agent errors appear as System Comments. After a restart or lost connection, interrupted work can resume automatically; look for its recovery notice before sending duplicate instructions.
 
 ## Related
 
 - [Tasks and conversations](tasks-and-conversations.md): delivery badges, Internal Notes and notifying the Agent of edits.
+- [Agent questions and files](agent-questions-and-files.md): answer the Agent's Questions and Surveys, and see the files it posts.
 - [Admin: agents and credentials](admin-agents.md): make an Agent ready to accept work.
 
 ---
 
-← [Tasks and conversations](tasks-and-conversations.md) · [Wikis](wikis.md) →
+← [Tasks and conversations](tasks-and-conversations.md) · [Agent questions and files](agent-questions-and-files.md) →

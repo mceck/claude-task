@@ -43,6 +43,9 @@ Members can read Project environment variable names and plain values, but secret
 | Attachment | 25 MB per file |
 | Attachments per Comment | 10 |
 | Description files per Task | 100 |
+| Files an Agent posts at once | 10, up to 25 MB each |
+| Items in an Agent Question or Survey | 1 to 4, each with 2 to 4 options plus **Other** |
+| **Other** answer | 2,000 characters |
 | Wiki name | 200 characters |
 | Wiki description | 100,000 characters |
 | Agent avatar upload | 2 MB; PNG, JPEG, GIF or WebP |

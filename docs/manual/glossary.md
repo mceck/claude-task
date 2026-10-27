@@ -23,7 +23,10 @@ These are the terms you will meet while using Claude Task.
 | Conversation | The Comments and Agent output on a Task or Wiki. |
 | Comment | Text or files posted by a User, Agent or the system. |
 | Internal Note | A Comment marked Internal chat, visible to Users and never delivered to Agents. |
-| Attachment | A file added to a Comment or Task description. |
+| Attachment | A file added to a Comment or Task description, by a User or an Agent. |
+| Question | A multiple-choice question an Agent asks in the Conversation. The first User who answers decides, and the answer reaches the Agent as a Message. |
+| Survey | A set of multiple-choice items an Agent uses to collect answers from several Users, on request. Its results reach the Agent in one Message. |
+| Expected Respondent | A User assigned to the Task when a Survey was created; the Survey closes by itself once all of them have answered. |
 | Delivery | Whether a Comment is queued, delivered or not delivered to the Agent. |
 | Timeline | Comments, Revisions and Agent work shown together in time order. |
 | Agent | A named Claude Code worker with its own instructions and environment. |

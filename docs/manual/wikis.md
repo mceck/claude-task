@@ -69,4 +69,4 @@ If the installation has no Wikis yet, create its first Wiki in the web app. It t
 
 ---
 
-← [Agent sessions and queues](agent-sessions-and-queues.md) · [Git repositories and pull requests](git-repositories.md) →
+← [Agent questions and files](agent-questions-and-files.md) · [Git repositories and pull requests](git-repositories.md) →

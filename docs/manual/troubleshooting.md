@@ -47,6 +47,15 @@ If you see **waiting for retry**, open the Agent's **Work & queue** and inspect 
 
 An Internal Note never reaches the Agent. Editing an already delivered Comment also does not update the Agent's copy. Post a correction as another regular Comment. After changing the Task's description or other supported fields, use **Notify agent** when offered.
 
+## Questions and Surveys
+
+- **"Someone answered first" or "This question was already answered by …" when sending an answer.** Another User answered the Question a moment before you, and their answer is the one the Agent receives. If you disagree, post a regular Comment.
+- **"This survey is closed".** Every Expected Respondent had answered, or someone clicked **Send now**. The Agent already has the results; post a Comment to add something.
+- **You can't edit your answer.** Answers to a Question are final. Post a regular Comment with the correction.
+- **A Survey keeps waiting for someone who is away.** Click **Send now** to close it with the answers so far.
+- **The Agent says the Task has no assignees for a Survey.** Assign the people who should answer, then ask again.
+- **The Agent couldn't post a file.** It names the files it couldn't read, or says its environment didn't upload them in time. Ask it to check the path or try again.
+
 ## Credential, Git and setup failures
 
 | Problem | Next action |
