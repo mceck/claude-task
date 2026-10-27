@@ -1,7 +1,9 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import 'app.dart';
 import 'controller.dart';
+import 'ui/user_avatar.dart';
 import 'models.dart';
 import 'ui/markdown.dart';
 import 'ui/markdown_editor.dart';
@@ -485,9 +487,11 @@ class TaskDetails extends StatelessWidget {
                                 Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Avatar(
+                                    UserAvatar(
                                       label: user.displayName,
-                                      seed: user.id,
+                                      userId: user.id,
+                                      imageUrl: user.avatarImageUrl,
+                                      api: c.api,
                                       size: 20,
                                     ),
                                     const SizedBox(width: 6),
@@ -824,7 +828,13 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
                 for (final u in c.users)
                   ChoiceChipX(
                     label: u.displayName,
-                    leading: Avatar(label: u.displayName, size: 18),
+                    leading: UserAvatar(
+                      label: u.displayName,
+                      userId: u.id,
+                      imageUrl: u.avatarImageUrl,
+                      api: c.api,
+                      size: 18,
+                    ),
                     selected: assigneeIds.contains(u.id),
                     onChanged: (v) => set(() {
                       if (v) {

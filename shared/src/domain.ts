@@ -5,6 +5,9 @@ import type { AgentItemPayload, Delivery, SessionState } from './agents';
 export const ROLES = ['admin', 'member'] as const;
 export type Role = (typeof ROLES)[number];
 
+export const USER_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+export const USER_AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+
 export const CATEGORIES = ['open', 'active', 'review', 'done', 'closed'] as const;
 export type Category = (typeof CATEGORIES)[number];
 
@@ -28,6 +31,7 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
+  avatarImageUrl: string | null;
   role: Role;
   active: boolean;
   mustChangePassword: boolean;

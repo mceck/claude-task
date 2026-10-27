@@ -41,6 +41,8 @@ export interface AgentsConfig {
   runnerReconnectTimeoutMs: number;
   /** How often the backend pings each Runner; one missed round drops the connection (default 30s). */
   runnerPingIntervalMs?: number;
+  /** Stop this Installation's Agent Containers on graceful backend shutdown. */
+  stopOnShutdown?: boolean;
 }
 
 /** The Claude Code version the Base Image installs, verified against the stream-json format in tests. */
@@ -86,6 +88,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       commitEmailDomain: env.AGENT_COMMIT_EMAIL_DOMAIN?.trim() || 'agents.claude-task.local',
       reconcileIntervalMs: 30_000,
       runnerReconnectTimeoutMs: 5 * 60_000,
+      stopOnShutdown: bool(env.AGENT_STOP_ON_SHUTDOWN, env.NODE_ENV !== 'production'),
     },
   };
 }

@@ -15,6 +15,7 @@ import 'wiki.dart';
 import 'ui/markdown.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
+import 'ui/user_avatar.dart';
 import 'ui/skill_suggestions.dart';
 
 class Conversation extends StatefulWidget {
@@ -1277,6 +1278,15 @@ class _CommentView extends StatelessWidget {
                       color: Palette.warning,
                     ),
                   )
+                : !isAgent
+                ? UserAvatar(
+                    key: ValueKey('comment-avatar:${e.id}'),
+                    label: e.author,
+                    userId: e.authorId,
+                    imageUrl: controller.users.byId(e.authorId)?.avatarImageUrl,
+                    api: controller.api,
+                    size: 32,
+                  )
                 : Avatar(
                     label: e.author,
                     emoji: isAgent ? agent?.emoji ?? '🤖' : null,
@@ -2120,35 +2130,6 @@ class _ComposerState extends State<Composer> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 14, 0),
-            child: Row(
-              children: [
-                Flexible(
-                  child: Segmented<bool>(
-                    key: const Key('internal-toggle'),
-                    value: internal,
-                    onChanged: c.sending
-                        ? null
-                        : (v) => c.setDraft(c.draft.copyWith(internal: v)),
-                    segments: const [
-                      Segment(
-                        false,
-                        'Comment',
-                        icon: Icons.chat_bubble_outline_rounded,
-                      ),
-                      Segment(
-                        true,
-                        'Internal chat',
-                        icon: Icons.lock_outline_rounded,
-                        color: Palette.slate,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
           if (draft.files.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
@@ -2187,6 +2168,36 @@ class _ComposerState extends State<Composer> {
                   tooltip: 'Attach local files',
                   size: 36,
                   onPressed: c.sending ? null : _attach,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 7),
+                child: Semantics(
+                  key: const Key('internal-toggle'),
+                  toggled: internal,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: internal
+                          ? Palette.slate.withValues(alpha: .12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: IconAction(
+                      icon: internal
+                          ? Icons.lock_outline_rounded
+                          : Icons.chat_bubble_outline_rounded,
+                      tooltip: internal
+                          ? 'Internal chat · switch to Comment'
+                          : 'Comment · switch to Internal chat',
+                      color: internal ? Palette.slate : Palette.fgSubtle,
+                      size: 36,
+                      onPressed: c.sending
+                          ? null
+                          : () => c.setDraft(
+                              c.draft.copyWith(internal: !internal),
+                            ),
+                    ),
+                  ),
                 ),
               ),
               Expanded(

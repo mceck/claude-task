@@ -3,6 +3,7 @@ import 'package:claude_task_mobile/src/models.dart';
 import 'package:claude_task_mobile/src/ui/skill_suggestions.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+
 import 'support.dart';
 
 void main() {
@@ -109,7 +110,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(h.controller.draft.text, '/compact ');
       await tester.enterText(find.byKey(const Key('comment-composer')), '/re');
-      await tester.tap(find.byKey(const ValueKey('segment:true')));
+      await tester.tap(find.byKey(const Key('internal-toggle')));
       await tester.pumpAndSettle();
       expect(find.text('/review'), findsNothing);
       expect(tester.takeException(), isNull);

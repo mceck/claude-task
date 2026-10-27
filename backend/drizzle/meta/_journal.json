@@ -127,6 +127,13 @@
       "when": 1793060000000,
       "tag": "0017_project_logo",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793076773668,
+      "tag": "0018_user_avatar",
+      "breakpoints": true
     }
   ]
 }

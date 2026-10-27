@@ -29,6 +29,7 @@ describe('migration upgrades', () => {
       ALTER TABLE sessions ALTER COLUMN claude_session_id SET NOT NULL;
       ALTER TABLE tasks DROP COLUMN chat_generation;
       ALTER TABLE projects DROP COLUMN logo_blob_id;
+      ALTER TABLE users DROP COLUMN avatar_blob_id;
     `);
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.when]);
     expect((await db.$client.query('SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1')).rows[0].hash)
@@ -61,15 +62,24 @@ describe('migration upgrades', () => {
     const uploaded = await admin.request('PUT', `/projects/${project.id}/logo`, { form });
     expect(uploaded.status).toBe(200);
     const { db } = app.server.ctx;
-    const original = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1')).rows[0];
+    const journal = JSON.parse(await readFile(path.join(migrationsFolder(), 'meta/_journal.json'), 'utf8')) as {
+      entries: { tag: string; when: number }[];
+    };
+    const logoMigration = journal.entries.find((entry) => entry.tag === '0017_project_logo')!;
+    const original = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations WHERE created_at = $1', [logoMigration.when])).rows[0];
     try {
+      // Recreate the schema before User avatars so the newer migration is applied during the upgrade.
+      await db.$client.query('ALTER TABLE users DROP COLUMN avatar_blob_id');
+      await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.created_at]);
       await db.$client.query('UPDATE drizzle.__drizzle_migrations SET hash = $1, created_at = $2 WHERE id = $3', [hash, when, original.id]);
       const before = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows;
 
       await runMigrations(db);
       await runMigrations(db);
 
-      expect((await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows).toEqual(before);
+      const after = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows;
+      expect(after.slice(0, before.length)).toEqual(before);
+      expect(after).toHaveLength(journal.entries.length);
       expect((await admin.get(`/projects/${project.id}`)).body.project.logoUrl).toBe(uploaded.body.project.logoUrl);
       const downloaded = await admin.get(`/projects/${project.id}/logo`);
       expect(downloaded.status).toBe(200);

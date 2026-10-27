@@ -17,7 +17,7 @@ void main() {
         await tester.pumpWidget(TaskApp(controller: h.controller));
         await tester.pumpAndSettle();
         if (internal) {
-          await tester.tap(find.byKey(const ValueKey('segment:true')));
+          await tester.tap(find.byKey(const Key('internal-toggle')));
           await tester.pumpAndSettle();
         }
         final field = find.byKey(const Key('comment-composer'));
@@ -176,7 +176,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const Key('internal-toggle')),
-          matching: find.text('Internal chat'),
+          matching: find.byTooltip('Comment · switch to Internal chat'),
         ),
         findsOneWidget,
       );
@@ -184,7 +184,7 @@ void main() {
         find.byKey(const Key('comment-composer')),
         'A draft for humans',
       );
-      await tester.tap(find.byKey(const ValueKey('segment:true')));
+      await tester.tap(find.byKey(const Key('internal-toggle')));
       await tester.pumpAndSettle();
       expect(h.controller.draft.internal, true);
       await tester.tap(find.byTooltip('Back'));
@@ -314,12 +314,15 @@ void main() {
       await tester.pumpAndSettle();
       final field = find.byKey(const Key('comment-composer'));
       await tester.tap(field);
+      await tester.enterText(field, 'Keep this draft');
       await tester.pumpAndSettle();
       final before = tester.getRect(field);
+      final toggle = find.byKey(const Key('internal-toggle'));
+      expect(tester.getSize(toggle), const Size(36, 36));
       final editable = tester.state<EditableTextState>(
         find.descendant(of: field, matching: find.byType(EditableText)),
       );
-      await tester.tap(find.byKey(const ValueKey('segment:true')));
+      await tester.tap(find.byKey(const Key('internal-toggle')));
       await tester.pump();
       expect(tester.getRect(field), before);
       await tester.pumpAndSettle();
@@ -330,6 +333,19 @@ void main() {
         ),
         same(editable),
       );
+      expect(h.controller.draft.text, 'Keep this draft');
+      expect(h.controller.draft.internal, isTrue);
+      expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+      expect(tester.widget<Semantics>(toggle).properties.toggled, isTrue);
+      expect(
+        find.byTooltip('Internal chat · switch to Comment'),
+        findsOneWidget,
+      );
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(h.controller.draft.internal, isFalse);
+      expect(h.controller.draft.text, 'Keep this draft');
+      expect(tester.getRect(field), before);
       expect(tester.takeException(), isNull);
     },
   );

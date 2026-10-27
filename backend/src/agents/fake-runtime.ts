@@ -77,6 +77,10 @@ export class FakeRuntime implements AgentRuntime {
     if (c) c.state = 'running';
   }
 
+  async stopContainer(agentId: string): Promise<void> {
+    this.setState(agentId, 'exited');
+  }
+
   async removeAgent(agentId: string): Promise<void> {
     this.containers.delete(agentId);
     this.removed.push(agentId);

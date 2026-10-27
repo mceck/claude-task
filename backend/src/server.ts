@@ -19,6 +19,7 @@ import type { Config } from './config';
 import type { AppContext } from './context';
 import { createDb, runMigrations } from './db/client';
 import { resetInterruptedBuilds } from './modules/agents/builds';
+import { agents } from './db/schema';
 import { bootstrapAdmin } from './modules/users/service';
 import { RealtimeHub } from './realtime/hub';
 
@@ -64,20 +65,41 @@ export async function createServer(
     }
     const purge = setInterval(() => purgeExpiredLogins(db).catch((err) => app.log.warn(err)), 60 * 60 * 1000);
     purge.unref();
+    let closing: Promise<void> | undefined;
     return {
       app,
       ctx,
-      async close() {
-        clearInterval(purge);
-        ctx.pushDispatcher.stop();
-        await ctx.pushDispatcher.settle();
-        await ctx.push.close?.();
-        ctx.scheduler.stop();
-        ctx.gitSync.stop();
-        await ctx.gitSync.settle();
-        await app.close();
-        await ctx.scheduler.settle();
-        await pool.end();
+      close() {
+        return closing ??= (async () => {
+          clearInterval(purge);
+          ctx.scheduler.stop();
+          ctx.gitSync.stop();
+          ctx.pushDispatcher.stop();
+          await ctx.pushDispatcher.settle();
+          await ctx.push.close?.();
+          await ctx.gitSync.settle();
+          await app.close();
+          await ctx.scheduler.settle();
+          try {
+            if (config.agents.stopOnShutdown) {
+              const rows = await db.select({ id: agents.id }).from(agents);
+              const results = await Promise.allSettled(rows.map(async ({ id }) => {
+                await ctx.runtime.stopContainer(id);
+                app.log.info({ agentId: id }, 'stopped Agent Container for backend shutdown');
+              }));
+              const errors: unknown[] = [];
+              for (const [index, result] of results.entries()) {
+                if (result.status === 'rejected') {
+                  app.log.error({ err: result.reason, agentId: rows[index]!.id }, 'failed to stop Agent Container for backend shutdown');
+                  errors.push(result.reason);
+                }
+              }
+              if (errors.length) throw new AggregateError(errors, 'Some Agent Containers could not be stopped');
+            }
+          } finally {
+            await pool.end();
+          }
+        })();
       },
     };
   } catch (err) {

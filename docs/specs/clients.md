@@ -239,7 +239,9 @@ Project badges, Project list rows and the phone Task list header show the Projec
 
 The **Task list** groups Tasks under their Status, in Status order, with collapsible group headers. Closed-category Statuses appear when the "Archive" chip is on. A search field matches Task Key and title; a filter sheet offers one priority, one Tag and one assignee (or "Unassigned") at a time, with a count on the "Filters" chip and a "Clear" action. While searching or filtering, empty groups are hidden. Each row shows priority, Task Key, title (bold with a dot when unread), Tags, up to two assignee avatars, the Agent's badge with Session state and Queue position, and the Comment count. "Create Task" opens the creation form.
 
-The **Profile** sheet shows the User, "Enable notifications" with the current push status, and "Log out".
+The **Profile** sheet shows the User and their avatar, "Change photo", "Remove photo" when a photo is present, "Enable notifications" with the current push status, and "Log out". Photo changes are available while online, accept PNG, JPEG, GIF or WebP up to 2 MB, and update the User's avatars immediately after saving. Failures are shown in the sheet and leave the previous image visible.
+
+User avatars show the profile image and fall back to initials while loading or after a download or decoding failure. Images use the authenticated API client with the current Installation's origin validation. Profile images appear in profile controls, User pickers, assignees and conversations. The Users list refresh supplies updated images, including changes made by an Admin from the web app.
 
 The app uses a dark charcoal theme with neon teal accents, orange for Agents, slate for Internal Notes and amber for System Comments.
 
@@ -247,13 +249,15 @@ The app uses a dark charcoal theme with neon teal accents, orange for Agents, sl
 
 The conversation shows the Task's Timeline oldest first, with day separators ("Today", "Yesterday", dates), and Comments by the same author, of the same kind and visibility, within 5 minutes grouped under one header. Markdown and code are rendered; long Comments are clamped with "Show more". Revisions are hidden behind a "Changes" toggle and read as sentences, with identical consecutive ones folded. Thinking and Activity are collapsed; Turn Summaries read "Turn completed" or "Turn failed" with duration and tool calls. Delivery state shows on User Comments. The Live Turn preview shows the Agent's text and "Thinking · streaming" as they arrive, and "Agent retrying request" during API retries.
 
+Own Comments remain aligned to the right and show their body, timestamp and Delivery indicators. Other User avatars appear on the left at the start of each group. Consecutive grouped Comments reserve the same avatar space to keep their bubbles aligned. Internal Notes use the same presentation rules.
+
 - While the reader is within 80 px of the bottom, new content keeps the view at the bottom. When they read older entries, their position is kept as content arrives and a "Jump to latest" button appears. "Load older entries" fetches the previous page.
 - The header shows the Task Key and title, the Session state, Stop, Retry and Notify agent when they apply, a details button, Mute or Unmute, and an actions menu with Follow or Unfollow, the Session actions, and Delete Task.
 - An empty conversation says "Your first Comment starts the Agent" when an Agent is assigned.
 - Own User Comments offer copy, edit and delete while online.
 - Attachments are listed with name and size. They download on request into the profile; a downloaded image shows a preview and any downloaded file opens with the system's viewer.
 
-The **composer** stays visible at the bottom. Enter sends and Shift+Enter inserts a newline at the caret; Ctrl or Cmd+Enter also sends, and the phone keyboard shows a Send action. Text being composed by an input method is left to it. The "Internal chat" switch makes the Comment an Internal Note, with a dashed slate style and the hint "Hidden from the Agent…". Attaching files copies them into the profile (up to 10 files of 25 MB each), so they survive restarts; they are uploaded only as part of a manual send. Chat command suggestions work as in the web app.
+The **composer** stays visible at the bottom. Enter sends and Shift+Enter inserts a newline at the caret; Ctrl or Cmd+Enter also sends, and the phone keyboard shows a Send action. Text being composed by an input method is left to it. A compact 36 px icon button beside Attach switches between Comment and Internal chat within the composer row. Its speech-bubble icon changes to a lock with a muted slate background in Internal chat; its tooltip names the current mode and the action, and accessibility exposes the toggle state. Switching preserves the draft, focus, keyboard and composer position. Internal chat makes the Comment an Internal Note, with a dashed slate style and the hint "Hidden from the Agent…". Attaching files copies them into the profile (up to 10 files of 25 MB each), so they survive restarts; they are uploaded only as part of a manual send. Chat command suggestions work as in the web app.
 
 #### Creating and editing Tasks
 

@@ -296,6 +296,35 @@ class TaskController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> changeAvatar([DraftFile? file]) async {
+    final profile = _profileEpoch;
+    final id = user!.id;
+    final result = await _request(
+      file == null ? 'DELETE' : 'PUT',
+      '/users/$id/avatar',
+      files: file == null ? const [] : [file],
+    );
+    if (profile != _profileEpoch || _login == null) return;
+    _login!['user'] = result['user'];
+    user = User.fromJson(result['user'] as Json);
+    users = [
+      for (final u in users)
+        if (u.id == id) user! else u,
+    ];
+    await storage.writeLogin(_login);
+    final cached = storage.read('global');
+    if (cached != null) {
+      await storage.write('global', {
+        ...cached,
+        'users': [
+          for (final u in objects(cached['users']))
+            if (u['id'] == id) result['user'] else u,
+        ],
+      });
+    }
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     _profileEpoch++;
     final login = _login;
@@ -363,6 +392,7 @@ class TaskController extends ChangeNotifier {
       'wikis': results[3]['wikis'],
     });
     _hydrateGlobal();
+    user = users.byId(user!.id) ?? user;
     final selectedProject = project;
     if (selectedProject != null) await _fetchProject(selectedProject.id);
     final selectedTask = task;

@@ -10,14 +10,14 @@ import {
 } from '@claude-task/shared';
 import type { AgentUsage, JobDetail } from '@claude-task/shared';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
 import { agentBuilds, agents, credentials, jobs, queueEntries, sessions } from '../../db/schema';
-import { badRequest, conflict, HttpError, notFound, parse } from '../../errors';
+import { badRequest, conflict, notFound, parse } from '../../errors';
 import { latestRateLimits } from '../credentials/service';
 import { getTaskRow, unassignDeletedAgent } from '../tasks/service';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
@@ -28,6 +28,7 @@ import { getAgentRow, loadAgent, loadAgents, loadBuilds, loadJobs, serializeBuil
 import type { AgentRow } from './service';
 import { agentExtensions, setAssignments } from '../extensions/service';
 import { idOrKey } from '../../ids';
+import { receiveAvatar } from '../avatar';
 
 const params = z.object({ id: z.uuid() });
 const entryParams = z.object({ id: z.uuid(), entryId: z.uuid() });
@@ -50,9 +51,6 @@ async function getQueueEntry(db: Executor, agentId: string, entryId: string) {
   if (!entry) throw notFound('Queue entry');
   return entry;
 }
-
-const avatarTooLarge = () =>
-  new HttpError(413, 'file_too_large', `The avatar must be at most ${AGENT_AVATAR_MAX_BYTES / 1024 / 1024} MB`);
 
 export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   const admin = { config: { auth: 'admin' as const } };
@@ -117,7 +115,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.put('/agents/:id/avatar', admin, async (request) => {
     const { id } = parse(params, request.params);
     await getAgentRow(ctx.db, id);
-    const blobId = await receiveAvatar(ctx, request);
+    const blobId = await receiveAvatar(ctx, request, AGENT_AVATAR_MAX_BYTES, AGENT_AVATAR_TYPES);
     // Read the previous image under the row lock, so concurrent replacements each delete exactly the blob they replaced.
     const before = await ctx.db.transaction(async (tx) => {
       const row = await getAgentRow(tx, id, { lock: true });
@@ -362,39 +360,6 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     await transact(ctx, (tx, after) => notifyAgent(tx, after, task.id, actor));
     return { session: await loadTaskSession(ctx.db, task.id) };
   });
-}
-
-
-/** Stores the single uploaded image in the BlobStore and returns its id. */
-async function receiveAvatar(ctx: AppContext, request: FastifyRequest): Promise<string> {
-  if (!request.isMultipart()) throw badRequest('Send the image as multipart/form-data');
-  let blobId: string | null = null;
-  try {
-    for await (const part of request.parts({ limits: { fileSize: AGENT_AVATAR_MAX_BYTES, files: 1 } })) {
-      if (part.type !== 'file') continue;
-      if (blobId) {
-        part.file.resume();
-        continue;
-      }
-      const contentType = part.mimetype;
-      if (!(AGENT_AVATAR_TYPES as readonly string[]).includes(contentType)) {
-        part.file.resume();
-        throw badRequest('The avatar must be a PNG, JPEG, GIF or WebP image');
-      }
-      blobId = (await ctx.blobs.put(part.file, { filename: 'avatar', contentType })).id;
-      if (part.file.truncated) {
-        throw avatarTooLarge();
-      }
-    }
-    if (!blobId) throw badRequest('Missing image file');
-    return blobId;
-  } catch (err) {
-    if (blobId) await ctx.blobs.delete(blobId);
-    if ((err as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') {
-      throw avatarTooLarge();
-    }
-    throw err;
-  }
 }
 
 /** `<name> (copy)`, then `(copy 2)`, … : the first one free, within the 100-character limit. */

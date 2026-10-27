@@ -272,6 +272,14 @@ Every Agent with a successful image gets a container, enabled or not. A containe
 
 Recreating a container replaces it with a new one on the same Agent Volume, so repositories, Worktrees, Session transcripts, service data, tool installs and Skills survive. Recreation generates a new Runner token, closes the old Runner connection, and marks the Extensions as needing synchronization in the new container. Because recreating kills whatever runs inside, it waits until the Agent has no active Job, unless the container is missing or an Admin forced it. A pending recreation runs right after the Job ends, before the next Job is dispatched.
 
+### Backend shutdown
+
+On a graceful backend shutdown, the Agent Containers of this Installation are stopped when `AGENT_STOP_ON_SHUTDOWN` is enabled. The setting defaults to enabled during local development and disabled when `NODE_ENV=production`; an explicit true or false overrides that default. The supplied local Compose stack enables it and allows 30 seconds for shutdown. Closing a web or native client leaves the backend and its Agents running.
+
+The backend stops scheduling new Jobs, Builds and reconciliations, drains work already started, then stops the containers belonging to the Installation's stored Agents concurrently. Docker gets 10 seconds per container to stop its processes before terminating them. Missing and already stopped containers count as stopped. An error stopping one container is logged, the remaining stops are attempted, and backend cleanup finishes with a failed shutdown result.
+
+Stopping preserves containers, images and Agent Volumes, including repositories, Worktrees, Session transcripts and Development Service data. At the next backend start the reconciler restarts stopped containers; running Jobs interrupted by the stop recover through the existing Runner reconnection and Session resume rules. With the setting disabled, containers continue running through backend restarts and their Runners reconnect.
+
 ### Restart and recreate
 
 Admins have three container actions:
@@ -498,6 +506,8 @@ Sessions, Jobs and Queue Entries belong to [Agent sessions](agent-sessions.md).
 - **Observability**: Build logs stream live and are kept per Build; container logs are available to Admins; the Agent view shows image, container, Runner and Extension status with their errors.
 
 ## Decisions
+
+- **Stop local Agent Containers with the backend, preserving their volumes.** Local development releases CPU and memory when the backend exits, while production defaults to keeping Agents alive through backend restarts. An environment setting selects either lifecycle explicitly. Container selection follows the Installation's Agent records, so other Docker workloads keep their own lifecycle.
 
 - **Automatic saves for Agent settings, explicit application of Docker configuration.** Saving only edited fields keeps other Users' settings and Extension assignments intact, and serializing saves preserves the latest edits during slow requests. Dockerfile, Development Services and resource limits share an explicit action because applying them can build an image or recreate a container.
 

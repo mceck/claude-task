@@ -18,11 +18,13 @@ class User implements Identified {
   @override
   final String id;
   final String email, displayName;
+  final String? avatarImageUrl;
   final bool mustChangePassword;
   User.fromJson(Json json)
     : id = json['id'] as String,
       email = json['email'] as String? ?? '',
       displayName = json['displayName'] as String? ?? '',
+      avatarImageUrl = json['avatarImageUrl'] as String?,
       mustChangePassword = json['mustChangePassword'] == true;
 }
 

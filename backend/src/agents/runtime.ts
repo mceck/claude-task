@@ -37,6 +37,8 @@ export interface AgentRuntime {
   /** Creates the container, replacing an existing one. The Agent Volume is kept. */
   createContainer(agentId: string, spec: ContainerSpec): Promise<void>;
   restartContainer(agentId: string): Promise<void>;
+  /** Stops processes while preserving the container, images and Agent Volume. */
+  stopContainer(agentId: string): Promise<void>;
   /** Container, images and volume. */
   removeAgent(agentId: string): Promise<void>;
   inspect(agentId: string): Promise<ContainerInfo>;

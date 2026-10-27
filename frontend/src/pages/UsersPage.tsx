@@ -1,18 +1,20 @@
+import { USER_AVATAR_MAX_BYTES, USER_AVATAR_TYPES } from '@claude-task/shared';
 import type { Role, User, UserWithTemporaryPassword } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, KeyRound, MoreHorizontal, Plus, UserCheck, UserX } from 'lucide-react';
+import { Camera, Check, Copy, KeyRound, MoreHorizontal, Plus, UserCheck, UserX } from 'lucide-react';
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { errorMessage, patch, post } from '../api/client';
+import { del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useMe, useUsers } from '../api/queries';
 import { ErrorText, Loading, useConfirm, UserAvatar } from '../components/common';
 import { NotFoundPage } from './NotFoundPage';
@@ -24,6 +26,7 @@ export function UsersPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [creating, setCreating] = useState(false);
+  const [avatarUser, setAvatarUser] = useState<User | null>(null);
   const [issued, setIssued] = useState<UserWithTemporaryPassword | null>(null);
 
   if (me.data?.role !== 'admin') return <NotFoundPage />;
@@ -129,12 +132,17 @@ export function UsersPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onSelect={() => reset(u)}>
-                          <KeyRound /> Reset password
-                        </DropdownMenuItem>
-                        <DropdownMenuItem variant={u.active ? 'destructive' : 'default'} onSelect={() => toggleActive(u)}>
-                          {u.active ? <UserX /> : <UserCheck />} {u.active ? 'Deactivate' : 'Reactivate'}
-                        </DropdownMenuItem>
+                        <DropdownMenuGroup>
+                          <DropdownMenuItem onSelect={() => setAvatarUser(u)}>
+                            <Camera /> Change photo
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => reset(u)}>
+                            <KeyRound /> Reset password
+                          </DropdownMenuItem>
+                          <DropdownMenuItem variant={u.active ? 'destructive' : 'default'} onSelect={() => toggleActive(u)}>
+                            {u.active ? <UserX /> : <UserCheck />} {u.active ? 'Deactivate' : 'Reactivate'}
+                          </DropdownMenuItem>
+                        </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -154,7 +162,66 @@ export function UsersPage() {
         }}
       />
       <TemporaryPasswordDialog issued={issued} onClose={() => setIssued(null)} />
+      {avatarUser ? <UserAvatarDialog user={avatarUser} onClose={() => setAvatarUser(null)} /> : null}
     </div>
+  );
+}
+
+function UserAvatarDialog({ user, onClose }: { user: User; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [current, setCurrent] = useState(user);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async (file?: File) => {
+    setError(null);
+    if (file && (!(USER_AVATAR_TYPES as readonly string[]).includes(file.type) || file.size > USER_AVATAR_MAX_BYTES)) {
+      setError('Choose a PNG, JPEG, GIF or WebP image up to 2 MB.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const form = new FormData();
+      if (file) form.set('file', file);
+      const result = file
+        ? await put<{ user: User }>(`/users/${user.id}/avatar`, form)
+        : await del<{ user: User }>(`/users/${user.id}/avatar`);
+      setCurrent(result.user);
+      qc.setQueryData<User[]>(keys.users, (rows) => rows?.map((u) => u.id === user.id ? result.user : u));
+      qc.setQueryData<User | null>(keys.me, (me) => me?.id === user.id ? result.user : me);
+      toast.success(file ? 'Photo updated' : 'Photo removed');
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Photo of {user.displayName}</DialogTitle>
+          <DialogDescription>Shown next to their comments and assignments.</DialogDescription>
+        </DialogHeader>
+        <UserAvatar user={current} size="md" />
+        <Field>
+          <FieldLabel htmlFor="user-photo">Profile image</FieldLabel>
+          <Input id="user-photo" type="file" accept={USER_AVATAR_TYPES.join(',')} disabled={saving}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void save(file);
+            }} />
+          <FieldDescription>PNG, JPEG, GIF or WebP, up to 2 MB.</FieldDescription>
+        </Field>
+        <ErrorText>{error}</ErrorText>
+        <DialogFooter>
+          {current.avatarImageUrl ? <Button variant="outline" disabled={saving} onClick={() => save()}>Remove photo</Button> : null}
+          <Button disabled={saving} onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

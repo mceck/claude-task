@@ -30,6 +30,7 @@ export class Scheduler {
   private readonly buildAgain = new Set<string>();
   private readonly reconciling = new Map<string, Promise<void>>();
   private timer: NodeJS.Timeout | null = null;
+  private stopping = false;
 
   // Coalesced real-time publishing, flushed in order.
   private pendingQueues = new Set<string>();
@@ -44,6 +45,7 @@ export class Scheduler {
 
   /** Periodic reconcile, recovery of abandoned Jobs and dispatch, plus one pass right away. */
   start(): void {
+    this.stopping = false;
     const tick = () => this.track(this.tick());
     this.timer = setInterval(tick, this.ctx.config.agents.reconcileIntervalMs);
     this.timer.unref();
@@ -51,6 +53,9 @@ export class Scheduler {
   }
 
   stop(): void {
+    this.stopping = true;
+    this.dispatchAgain.clear();
+    this.buildAgain.clear();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }
@@ -58,11 +63,11 @@ export class Scheduler {
   /** Resolves once no background work is left (used by tests). */
   async settle(): Promise<void> {
     for (let i = 0; i < 50; i++) {
-      if (this.inflight.size === 0 && !this.flushScheduled) {
+      if (this.inflight.size === 0 && this.reconciling.size === 0 && !this.flushScheduled) {
         await this.flushChain;
-        if (this.inflight.size === 0 && !this.flushScheduled) return;
+        if (this.inflight.size === 0 && this.reconciling.size === 0 && !this.flushScheduled) return;
       }
-      await Promise.allSettled([...this.inflight, this.flushChain]);
+      await Promise.allSettled([...this.inflight, ...this.reconciling.values(), this.flushChain]);
       await new Promise((r) => setImmediate(r));
     }
   }
@@ -89,6 +94,7 @@ export class Scheduler {
   // Dispatching
 
   kick(agentId: string): void {
+    if (this.stopping) return;
     if (this.dispatching.has(agentId)) {
       this.dispatchAgain.add(agentId);
       return;
@@ -97,7 +103,7 @@ export class Scheduler {
       do {
         this.dispatchAgain.delete(agentId);
         await dispatchNext(this.ctx, agentId).catch((err) => this.ctx.log.error({ err, agentId }, 'dispatch failed'));
-      } while (this.dispatchAgain.has(agentId));
+      } while (!this.stopping && this.dispatchAgain.has(agentId));
     })().finally(() => this.dispatching.delete(agentId));
     this.dispatching.set(agentId, run);
     this.track(run);
@@ -123,6 +129,7 @@ export class Scheduler {
 
   /** Builds the Agent's image from its current Dockerfile; a build already running is followed by another. */
   build(agentId: string): void {
+    if (this.stopping) return;
     if (this.building.has(agentId)) {
       this.buildAgain.add(agentId);
       return;
@@ -201,6 +208,7 @@ export class Scheduler {
   // Containers
 
   reconcileAll(): Promise<void> {
+    if (this.stopping) return Promise.resolve();
     return this.track(
       (async () => {
         const rows = await this.ctx.db.select({ id: agents.id }).from(agents);
@@ -211,6 +219,7 @@ export class Scheduler {
 
   /** Brings one Agent's image and container in line with its configuration. Serialized per Agent. */
   reconcile(agentId: string): Promise<void> {
+    if (this.stopping) return Promise.resolve();
     const previous = this.reconciling.get(agentId) ?? Promise.resolve();
     const next = previous.then(() => this.reconcileOnce(agentId)).catch((err) => this.ctx.log.error({ err, agentId }, 'reconcile failed'));
     this.reconciling.set(agentId, next);
@@ -221,6 +230,7 @@ export class Scheduler {
   }
 
   private async reconcileOnce(agentId: string): Promise<void> {
+    if (this.stopping) return;
     const { db, runtime } = this.ctx;
     const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
     if (!agent) return;

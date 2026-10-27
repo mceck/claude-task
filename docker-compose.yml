@@ -34,6 +34,8 @@ services:
       AGENT_COMMIT_EMAIL_DOMAIN: ${AGENT_COMMIT_EMAIL_DOMAIN:-agents.claude-task.local}
       AGENT_BACKEND_URL: http://app:3000
       AGENT_NETWORK: claude-task-agents
+      AGENT_STOP_ON_SHUTDOWN: ${AGENT_STOP_ON_SHUTDOWN:-true}
+    stop_grace_period: 30s
     group_add:
       - ${DOCKER_GID:-0}
     networks: [default, agents]

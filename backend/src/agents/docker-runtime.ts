@@ -100,6 +100,12 @@ export class DockerRuntime implements AgentRuntime {
     await this.docker.getContainer(containerName(agentId)).restart();
   }
 
+  async stopContainer(agentId: string): Promise<void> {
+    await this.docker.getContainer(containerName(agentId)).stop({ t: 10 }).catch((err: unknown) => {
+      if (![304, 404].includes((err as { statusCode?: number }).statusCode ?? 0)) throw err;
+    });
+  }
+
   async configureSkills(agentId: string, revision: number, skills: import('@claude-task/shared').InstalledSkill[]): Promise<void> {
     const { archive, script } = await skillArchive(revision, skills);
     const container = this.docker.getContainer(containerName(agentId));

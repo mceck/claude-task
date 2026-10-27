@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:file_picker/file_picker.dart';
 
 import 'api.dart';
 import 'app.dart';
@@ -10,6 +11,7 @@ import 'wiki.dart';
 import 'ui/theme.dart';
 import 'ui/project_logo.dart';
 import 'ui/widgets.dart';
+import 'ui/user_avatar.dart';
 
 class Workspace extends StatelessWidget {
   final TaskController controller;
@@ -194,9 +196,11 @@ class ProjectRail extends StatelessWidget {
                 onTap: () => showProfile(context, c),
                 borderRadius: BorderRadius.circular(99),
                 semanticLabel: 'Profile',
-                child: Avatar(
+                child: UserAvatar(
                   label: c.user!.displayName,
-                  seed: c.user!.id,
+                  userId: c.user!.id,
+                  imageUrl: c.user!.avatarImageUrl,
+                  api: c.api,
                   size: 38,
                 ),
               ),
@@ -337,9 +341,11 @@ class ProjectList extends StatelessWidget {
                   onTap: () => showProfile(context, c),
                   borderRadius: BorderRadius.circular(99),
                   semanticLabel: 'Profile',
-                  child: Avatar(
+                  child: UserAvatar(
                     label: c.user!.displayName,
-                    seed: c.user!.id,
+                    userId: c.user!.id,
+                    imageUrl: c.user!.avatarImageUrl,
+                    api: c.api,
                     size: 32,
                   ),
                 ),
@@ -538,16 +544,70 @@ Future<void> showProfile(BuildContext context, TaskController c) =>
     showAppSheet<void>(
       context,
       maxWidth: 400,
-      builder: (sheet) => SheetScaffold(
+      builder: (sheet) => _ProfileSheet(controller: c),
+    );
+
+class _ProfileSheet extends StatefulWidget {
+  final TaskController controller;
+  const _ProfileSheet({required this.controller});
+
+  @override
+  State<_ProfileSheet> createState() => _ProfileSheetState();
+}
+
+class _ProfileSheetState extends State<_ProfileSheet> {
+  bool _saving = false;
+  String? _error;
+
+  Future<void> _changePhoto({bool remove = false}) async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      DraftFile? file;
+      if (!remove) {
+        final picked = await FilePicker.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+        );
+        if (picked.isEmpty) return;
+        final selected = picked.single;
+        if ((await selected.length() ?? 0) > 2 * 1024 * 1024) {
+          throw const FormatException('The avatar must be at most 2 MB');
+        }
+        if (selected.path == null) {
+          throw const FormatException('The selected image is unavailable');
+        }
+        file = DraftFile(selected.path!, selected.name);
+      }
+      if (!mounted) return;
+      await widget.controller.changeAvatar(file);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.controller,
+    builder: (sheet, _) {
+      final c = widget.controller;
+      if (c.user == null) return const SizedBox.shrink();
+      return SheetScaffold(
         title: 'Profile',
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Avatar(
+                UserAvatar(
                   label: c.user!.displayName,
-                  seed: c.user!.id,
+                  userId: c.user!.id,
+                  imageUrl: c.user!.avatarImageUrl,
+                  api: c.api,
                   size: 52,
                   selected: true,
                 ),
@@ -572,6 +632,36 @@ Future<void> showProfile(BuildContext context, TaskController c) =>
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            AppButton(
+              label: 'Change photo',
+              icon: Icons.photo_camera_outlined,
+              tone: Tone.secondary,
+              onPressed: _saving || !c.online ? null : () => _changePhoto(),
+            ),
+            if (c.user!.avatarImageUrl != null) ...[
+              const SizedBox(height: 8),
+              AppButton(
+                label: 'Remove photo',
+                tone: Tone.secondary,
+                onPressed: _saving || !c.online
+                    ? null
+                    : () => _changePhoto(remove: true),
+              ),
+            ],
+            if (_saving)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('Saving photo…'),
+              ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(color: Palette.danger),
+                ),
+              ),
             const SizedBox(height: 20),
             Container(
               padding: const EdgeInsets.all(14),
@@ -626,8 +716,10 @@ Future<void> showProfile(BuildContext context, TaskController c) =>
             },
           ),
         ],
-      ),
-    );
+      );
+    },
+  );
+}
 
 class TaskList extends StatefulWidget {
   final TaskController controller;
@@ -935,9 +1027,11 @@ class _TaskListState extends State<TaskList> {
                   for (final u in c.users)
                     ChoiceChipX(
                       label: u.displayName,
-                      leading: Avatar(
+                      leading: UserAvatar(
                         label: u.displayName,
-                        seed: u.id,
+                        userId: u.id,
+                        imageUrl: u.avatarImageUrl,
+                        api: c.api,
                         size: 18,
                       ),
                       selected: _assignee == u.id,
@@ -1154,9 +1248,11 @@ class _TaskRow extends StatelessWidget {
                             padding: const EdgeInsets.only(left: 4),
                             child: Tooltip(
                               message: user.displayName,
-                              child: Avatar(
+                              child: UserAvatar(
                                 label: user.displayName,
-                                seed: user.id,
+                                userId: user.id,
+                                imageUrl: user.avatarImageUrl,
+                                api: c.api,
                                 size: 16,
                               ),
                             ),

@@ -13,7 +13,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { useUsers } from '../api/queries';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
@@ -35,11 +36,15 @@ export function UserAvatar({
   size = 'sm',
   className,
 }: {
-  user?: Pick<User, 'id' | 'displayName'>;
+  user?: Pick<User, 'id' | 'displayName'> & Partial<Pick<User, 'avatarImageUrl'>>;
   name?: string;
   size?: 'xs' | 'sm' | 'md';
   className?: string;
 }) {
+  const users = useUsers();
+  const imageUrl = user?.avatarImageUrl === undefined
+    ? users.data?.find((u) => u.id === user?.id)?.avatarImageUrl
+    : user.avatarImageUrl;
   const label = user?.displayName ?? name ?? '?';
   const seed = [...(user?.id ?? label)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
   const hue = AVATAR_HUES[seed % AVATAR_HUES.length]!;
@@ -52,6 +57,7 @@ export function UserAvatar({
         className,
       )}
     >
+      {imageUrl ? <AvatarImage src={imageUrl} alt="" className="object-cover" /> : null}
       <AvatarFallback
         className={cn('font-semibold text-white', size === 'md' ? 'text-xs' : 'text-[10px]')}
         style={{ background: `linear-gradient(135deg, oklch(0.62 0.15 ${hue}), oklch(0.5 0.16 ${hue + 25}))` }}

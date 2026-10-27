@@ -63,6 +63,7 @@ export const users = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     email: text('email').notNull(),
     displayName: text('display_name').notNull(),
+    avatarBlobId: text('avatar_blob_id'),
     passwordHash: text('password_hash').notNull(),
     role: roleEnum('role').notNull().default('member'),
     active: boolean('active').notNull().default(true),

@@ -12,6 +12,14 @@ This area establishes who is using the platform and what they may do. It covers 
 
 ## Behaviour
 
+### User avatars
+
+Every User has an optional profile image. A signed-in User can upload, replace or remove their own image; an Admin can do the same for any User through the web Users page. The native Profile sheet offers image selection and removal. Uploads accept one PNG, JPEG, GIF or WebP file up to 2 MB. Unsupported types and missing files answer `400`; larger files answer `413`. A rejected upload preserves the current image.
+
+The User returned by login, the current-User check and the Users list includes a nullable avatar image URL. All signed-in Users can fetch an avatar. Downloads carry the declared image type, MIME-sniffing protection, a sandbox content policy and private caching. Each replacement changes the URL. The previous image is removed after the User update commits, and failed updates remove the newly uploaded file.
+
+Clients show profile images wherever Users have avatars, including earlier Comments. Initials remain visible while an image loads, when it is absent or when loading fails. The native app shows avatars beside other Users' Comments and keeps the current User's Comments aligned to the right with their body, timestamp and Delivery indicators.
+
 ### Logging in
 
 A User logs in with email and password.
@@ -158,7 +166,7 @@ There are no per-Project permissions: every active User sees and works on every 
 
 | Area | Every User | Admins only |
 | --- | --- | --- |
-| Users | List all Users; change own password | Create Users, edit display name, role and active flag, reset passwords |
+| Users | List all Users; change own password and avatar; view User avatars | Create Users, edit display name, role, active flag and any User's avatar, reset passwords |
 | Projects | Create, edit, archive, unarchive; manage Statuses and Tags; link the Repository; edit the Setup Script and Agent Instructions; read environment variables (secret values redacted) | Permanently delete an archived Project; create, import, overwrite and delete environment variables and secrets |
 | Tasks | Create, edit, move, delete; assign Users and Agents | |
 | Comments | Post Comments and Internal Notes; edit own Comments; delete own Comments | Delete any Comment |
@@ -183,7 +191,7 @@ The **command-line entry point** runs outside the web server, connects to the sa
 
 ## Data model
 
-- **User**: email (unique case-insensitively), display name, password hash, role (`admin` or `member`, default `member`), active (default true), must change password (default false), created at, updated at.
+- **User**: email (unique case-insensitively), display name, optional avatar image in the Blob store, password hash, role (`admin` or `member`, default `member`), active (default true), must change password (default false), created at, updated at.
 - **Login**: id (SHA-256 of the cookie token), User, created at, last seen at, expires at. Deleted when it ends; removed together with its User's push device registrations.
 - **Actor** (used by other areas): a type (`user`, `agent`, `system`) and, for Users and Agents, an id. The display name is resolved at read time: "System" for the system, "Unknown user" or "Deleted agent" when the referenced record is gone.
 
@@ -196,6 +204,8 @@ The **command-line entry point** runs outside the web server, connects to the sa
 - Secrets handled by other areas are encrypted at rest and never logged; responses leave out password hashes, and temporary passwords appear only in the response that issues them.
 
 ## Decisions
+
+- **User avatars share the Blob store and raster-image limits used by Agent avatars.** Profile images stay within the Installation's authenticated storage, and versioned URLs refresh changed images without storing pictures on individual Comments. Users control their own image; Admins retain the ability to manage any User's image.
 
 - **Server-side Logins with an opaque cookie token.** Logout, password changes, resets and deactivation must end access at once, including open WebSocket connections. A database row per Login gives that directly; stateless tokens would need a revocation list consulted on every request anyway.
 - **Sliding expiry written at most once a minute.** A Login in use never expires, while the database sees one write per minute per active Login instead of one per request.
