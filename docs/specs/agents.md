@@ -351,7 +351,7 @@ Changing the selection rebuilds the image. A failed Build keeps the previous con
 
 ### Extensions
 
-Admins manage a shared catalog of Skills, MCP servers and Plugins on the Extensions page, and select entries per Agent in the Agent's configuration. Duplicating an Agent copies its selection. A catalog entry assigned to any Agent is deleted only after it is unassigned everywhere; otherwise the deletion is answered with `409`.
+Admins manage a shared catalog of Skills, MCP servers and Plugins on the Extensions screen in either client, and select entries per Agent in the Agent's configuration. The native app offers the catalog actions and Agent selections through Settings, with the same role permissions, secret preservation and synchronization notices as the web app. Duplicating an Agent copies its selection. A catalog entry assigned to any Agent is deleted only after it is unassigned everywhere; otherwise the deletion is answered with `409`.
 
 #### Skills
 

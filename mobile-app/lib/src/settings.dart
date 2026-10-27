@@ -4,12 +4,14 @@ import 'package:material_ui/material_ui.dart';
 
 import 'controller.dart';
 import 'models.dart';
+import 'task_forms.dart' show openLink;
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 
-/// Settings: the Project, Agent, User and Credential screens of the web app
-/// that can be edited from the phone. Infrastructure (Dockerfiles, builds,
-/// Git Connections, Extensions, secret variables) stays in the web app.
+part 'settings_extensions.dart';
+part 'settings_git.dart';
+
+/// Native settings share the web app's API and role permissions.
 Future<void> showSettings(BuildContext context, TaskController c) =>
     Navigator.of(context).push<void>(
       MaterialPageRoute(builder: (_) => _SettingsHub(controller: c)),
@@ -29,6 +31,12 @@ Future<void> showUsersSettings(BuildContext context, TaskController c) =>
 
 Future<void> showCredentialsSettings(BuildContext context, TaskController c) =>
     _push(context, _CredentialsSettings(controller: c));
+
+Future<void> showExtensionsSettings(BuildContext context, TaskController c) =>
+    _push(context, _ExtensionsSettings(controller: c));
+
+Future<void> showGitSettings(BuildContext context, TaskController c) =>
+    _push(context, _GitSettings(controller: c));
 
 const _swatches = [
   '#6366f1',
@@ -233,7 +241,17 @@ class _RemoteState<T> extends State<_Remote<T>> {
     if (data != null) {
       return RefreshIndicator(
         onRefresh: reload,
-        child: widget.builder(context, data as T, reload),
+        child: Column(
+          children: [
+            if (error != null)
+              Notice(
+                message: error.toString(),
+                color: Palette.danger,
+                icon: Icons.error_outline_rounded,
+              ),
+            Expanded(child: widget.builder(context, data as T, reload)),
+          ],
+        ),
       );
     }
     if (error != null) {
@@ -311,6 +329,17 @@ class _Color extends _Field {
   const _Color(super.key, super.label, this.initial);
 }
 
+class _MultiChoice extends _Field {
+  final List<(String, String)> options;
+  final List<String> initial;
+  const _MultiChoice(super.key, super.label, this.options, this.initial);
+}
+
+class _KeyValues extends _Field {
+  final Json initial;
+  const _KeyValues(super.key, super.label, this.initial);
+}
+
 typedef _Values = Map<String, Object?>;
 
 Future<void> _form(
@@ -321,6 +350,7 @@ Future<void> _form(
   required String submit,
   required Future<void> Function(_Values values) onSubmit,
   List<Widget> Function(BuildContext sheet)? extra,
+  bool Function(_Field field, _Values values)? visible,
 }) => showAppSheet<void>(
   context,
   maxWidth: 580,
@@ -331,6 +361,7 @@ Future<void> _form(
     submit: submit,
     onSubmit: onSubmit,
     extra: extra,
+    visible: visible,
   ),
 );
 
@@ -340,6 +371,7 @@ class _FormSheet extends StatefulWidget {
   final List<_Field> fields;
   final Future<void> Function(_Values) onSubmit;
   final List<Widget> Function(BuildContext)? extra;
+  final bool Function(_Field, _Values)? visible;
   const _FormSheet({
     required this.title,
     required this.fields,
@@ -347,6 +379,7 @@ class _FormSheet extends StatefulWidget {
     required this.onSubmit,
     this.subtitle,
     this.extra,
+    this.visible,
   });
   @override
   State<_FormSheet> createState() => _FormSheetState();
@@ -364,6 +397,16 @@ class _FormSheetState extends State<_FormSheet> {
         _Toggle() => f.initial,
         _Color() => f.initial,
         _Text() => null,
+        _MultiChoice() => [...f.initial],
+        _KeyValues() => [
+          for (final entry in f.initial.entries)
+            {
+              'key': entry.key,
+              'savedKey': entry.key,
+              ...entry.value as Json,
+              'identity': Object(),
+            },
+        ],
       },
   };
   String? error;
@@ -376,7 +419,10 @@ class _FormSheetState extends State<_FormSheet> {
     super.dispose();
   }
 
-  bool get valid => widget.fields.whereType<_Text>().every(
+  Iterable<_Field> get visibleFields =>
+      widget.fields.where((f) => widget.visible?.call(f, values) ?? true);
+
+  bool get valid => visibleFields.whereType<_Text>().every(
     (f) => !f.required || texts[f.key]!.text.trim().isNotEmpty,
   );
 
@@ -418,20 +464,34 @@ class _FormSheetState extends State<_FormSheet> {
               icon: Icons.error_outline_rounded,
             ),
           ),
-        for (final f in widget.fields)
+        for (final f in visibleFields)
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
             child: switch (f) {
               _Text() => Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  FieldLabel(f.label, hint: f.hint),
+                  FieldLabel(f.label),
+                  if (f.hint != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        f.hint!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Palette.fgSubtle,
+                        ),
+                      ),
+                    ),
                   TextField(
+                    decoration: InputDecoration(labelText: f.label),
                     controller: texts[f.key],
                     enabled: !saving,
                     obscureText: f.secret,
                     minLines: f.lines,
                     maxLines: f.secret ? 1 : f.lines,
+                    autocorrect: !f.secret,
+                    enableSuggestions: !f.secret,
                     onChanged: (_) => setState(() {}),
                   ),
                 ],
@@ -455,6 +515,47 @@ class _FormSheetState extends State<_FormSheet> {
                     ],
                   ),
                 ],
+              ),
+              _MultiChoice() => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  FieldLabel(f.label),
+                  if (f.options.isEmpty)
+                    const Text('No entries in the shared catalog.'),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final (id, label) in f.options)
+                        ChoiceChipX(
+                          label: label,
+                          selected: (values[f.key] as List<String>).contains(
+                            id,
+                          ),
+                          onChanged: saving
+                              ? null
+                              : (_) {
+                                  final selected =
+                                      values[f.key] as List<String>;
+                                  setState(
+                                    () => values[f.key] = selected.contains(id)
+                                        ? selected
+                                              .where((v) => v != id)
+                                              .toList()
+                                        : [...selected, id],
+                                  );
+                                },
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+              _KeyValues() => _McpValuesEditor(
+                key: ValueKey(f.key),
+                label: f.label,
+                read: () => values[f.key] as List<Json>,
+                enabled: !saving,
+                onChanged: (rows) => setState(() => values[f.key] = rows),
               ),
               _Toggle() => Row(
                 children: [
@@ -576,12 +677,24 @@ class _SettingsHub extends StatelessWidget {
             subtitle: 'Claude tokens and API keys used by Agents',
             onTap: () => open(_CredentialsSettings(controller: c)),
           ),
+          _Item(
+            leading: const Icon(Icons.extension_outlined, color: Palette.agent),
+            title: 'Extensions',
+            subtitle: 'Shared Skills, MCP Servers and Plugins',
+            onTap: () => open(_ExtensionsSettings(controller: c)),
+          ),
+          _Item(
+            leading: const Icon(Icons.code_rounded, color: Palette.info),
+            title: 'Git Connections',
+            subtitle: 'GitHub Apps and GitLab instances',
+            onTap: () => open(_GitSettings(controller: c)),
+          ),
         ],
         const SizedBox(height: 8),
         const Padding(
           padding: EdgeInsets.all(8),
           child: Text(
-            'Dockerfiles, builds, Git Connections, Extensions and secret variables are managed in the web app.',
+            'Dockerfiles, builds and Project secret variables are managed in the web app.',
             style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
           ),
         ),
@@ -970,6 +1083,16 @@ class _ProjectSettings extends StatelessWidget {
                   ],
                 ),
               ),
+            const SizedBox(height: 20),
+            _Item(
+              title: 'Repository',
+              subtitle: 'Repository, Base Branch and protection',
+              leading: const Icon(Icons.code_rounded, color: Palette.info),
+              onTap: () => _push(
+                context,
+                _RepositorySettings(controller: c, project: project),
+              ),
+            ),
           ]);
         },
       ),
@@ -985,16 +1108,29 @@ class _AgentsSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller, admin = c.user?.isAdmin ?? false;
-    return _Remote<(List<Json>, List<Json>)>(
+    return _Remote<
+      (List<Json>, List<Json>, List<Json>, List<Json>, List<Json>)
+    >(
       load: () async {
-        final agents = await c.settingsRequest('GET', '/agents');
-        final credentials = admin
-            ? await c.settingsRequest('GET', '/credentials')
-            : <String, dynamic>{};
-        return (objects(agents['agents']), objects(credentials['credentials']));
+        final results = await Future.wait([
+          c.settingsRequest('GET', '/agents'),
+          if (admin) ...[
+            c.settingsRequest('GET', '/credentials'),
+            c.settingsRequest('GET', '/skills'),
+            c.settingsRequest('GET', '/mcp-servers'),
+            c.settingsRequest('GET', '/plugins'),
+          ],
+        ]);
+        return (
+          objects(results[0]['agents']),
+          admin ? objects(results[1]['credentials']) : <Json>[],
+          admin ? objects(results[2]['skills']) : <Json>[],
+          admin ? objects(results[3]['mcpServers']) : <Json>[],
+          admin ? objects(results[4]['plugins']) : <Json>[],
+        );
       },
       builder: (context, data, reload) {
-        final (agents, credentials) = data;
+        final (agents, credentials, skills, mcpServers, plugins) = data;
         Future<void> change(String method, String path, [Json? body]) async {
           await c.settingsRequest(method, path, body: body);
           await reload();
@@ -1056,8 +1192,17 @@ class _AgentsSettings extends StatelessWidget {
             lines: 5,
           ),
           _Toggle('enabled', 'Enabled', a?['enabled'] != false),
+          for (final (key, label, entries) in [
+            ('skillIds', 'Skills', skills),
+            ('mcpServerIds', 'MCP Servers', mcpServers),
+            ('pluginIds', 'Plugins', plugins),
+          ])
+            _MultiChoice(key, label, [
+              for (final entry in entries)
+                (entry['id'] as String, entry['name'] as String),
+            ], List<String>.from(a?[key] as List? ?? const [])),
         ];
-        Json body(_Values v) => {
+        Json body(_Values v, [Json? previous]) => {
           'name': (v['name'] as String).trim(),
           'avatarEmoji': (v['avatarEmoji'] as String).trim(),
           'avatarColor': v['avatarColor'],
@@ -1070,6 +1215,13 @@ class _AgentsSettings extends StatelessWidget {
           'permissionMode': v['permissionMode'],
           'systemPrompt': v['systemPrompt'],
           'enabled': v['enabled'],
+          for (final key in ['skillIds', 'mcpServerIds', 'pluginIds'])
+            if (previous == null ||
+                !_sameSelection(
+                  v[key] as List<String>,
+                  List<String>.from(previous[key] as List? ?? const []),
+                ))
+              key: v[key],
         };
         return _Screen(
           title: 'Agents',
@@ -1096,7 +1248,8 @@ class _AgentsSettings extends StatelessWidget {
           body: RefreshIndicator(
             onRefresh: reload,
             child: _list([
-              for (final a in agents)
+              for (final a in agents) ...[
+                _AgentExtensionStatus(controller: c, agent: a),
                 _Item(
                   leading: Text(
                     (a['avatarEmoji'] as String?) ?? '🤖',
@@ -1114,8 +1267,21 @@ class _AgentsSettings extends StatelessWidget {
                           fields: fields(a),
                           submit: 'Save agent',
                           onSubmit: (v) =>
-                              change('PATCH', '/agents/${a['id']}', body(v)),
+                              change('PATCH', '/agents/${a['id']}', body(v, a)),
                           extra: (sheet) => [
+                            AppButton(
+                              label: 'Manage shared Extensions',
+                              tone: Tone.secondary,
+                              onPressed: () async {
+                                Navigator.pop(sheet);
+                                await _push(
+                                  context,
+                                  _ExtensionsSettings(controller: c),
+                                );
+                                await reload();
+                              },
+                            ),
+                            const SizedBox(height: 8),
                             AppButton(
                               label: 'Duplicate',
                               tone: Tone.secondary,
@@ -1160,6 +1326,7 @@ class _AgentsSettings extends StatelessWidget {
                           ],
                         ),
                 ),
+              ],
             ]),
           ),
         );

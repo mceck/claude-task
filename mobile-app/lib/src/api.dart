@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:http/http.dart' as http;
 import 'package:mime/mime.dart';
 import 'package:http_parser/http_parser.dart';
+
 import 'models.dart';
 
 class ApiException implements Exception {
@@ -110,9 +112,13 @@ class HttpTaskApi implements TaskApi {
       request = plain;
     }
     request.headers.addAll(_headers);
+    // Skill imports can fetch remote sources for up to two minutes server-side.
+    final timeout = method == 'POST' && path == '/skills/import'
+        ? const Duration(seconds: 150)
+        : const Duration(seconds: 30);
     final response = await http.Response.fromStream(
-      await _client.send(request).timeout(const Duration(seconds: 30)),
-    ).timeout(const Duration(seconds: 30));
+      await _client.send(request).timeout(timeout),
+    ).timeout(timeout);
     // Native clients handle HttpOnly cookies explicitly and keep them in secure storage.
     final setCookie = response.headers['set-cookie'];
     if (setCookie != null) {

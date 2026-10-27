@@ -318,6 +318,18 @@ class AppDrawer extends StatelessWidget {
                   'Credentials',
                   showCredentialsSettings,
                 ),
+                setting(
+                  Icons.extension_outlined,
+                  Palette.agent,
+                  'Extensions',
+                  showExtensionsSettings,
+                ),
+                setting(
+                  Icons.code_rounded,
+                  Palette.info,
+                  'Git Connections',
+                  showGitSettings,
+                ),
               ],
             ],
           ),

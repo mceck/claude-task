@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -10,6 +11,41 @@ import 'package:claude_task_mobile/src/storage.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets(
+    'Skill imports allow the backend fetch timeout while ordinary requests time out after 30 seconds',
+    (tester) async {
+      final responses = <Completer<http.Response>>[];
+      final api = HttpTaskApi(
+        Uri.parse('https://tasks.example.com'),
+        client: MockClient((_) {
+          final response = Completer<http.Response>();
+          responses.add(response);
+          return response.future;
+        }),
+      );
+      addTearDown(api.close);
+      final imported = api.request(
+        'POST',
+        '/skills/import',
+        body: {'source': 'team/skills'},
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 120));
+      responses.first.complete(http.Response('{"skills": []}', 201));
+      await tester.pump();
+      expect(await imported, {'skills': <dynamic>[]});
+
+      final ordinary = expectLater(
+        api.request('GET', '/git/connections'),
+        throwsA(isA<TimeoutException>()),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 31));
+      await ordinary;
+      responses.last.complete(http.Response('{}', 200));
+      await tester.pump();
+    },
+  );
   test(
     'native HTTP keeps HttpOnly cookies and sends authentication plus CSRF headers',
     () async {

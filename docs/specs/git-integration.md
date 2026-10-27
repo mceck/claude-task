@@ -34,7 +34,7 @@ flowchart LR
 
 ### Managing Git Connections
 
-Git Connections are managed by Admins on the **Git** page of the sidebar. Members see the Git Connections only through the repository picker.
+Git Connections are managed by Admins on the **Git** page of the web sidebar and the **Git Connections** screen of native Settings. Both clients offer connection creation, editing, secret rotation and deletion with the same health information and read-only Environment Connections. Members see Git Connections through the Repository picker in Project settings in either client.
 
 The page lists every connection, environment ones first, then stored ones by creation time. Each card shows:
 

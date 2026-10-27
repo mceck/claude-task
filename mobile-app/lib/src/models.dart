@@ -78,6 +78,8 @@ class Agent implements Identified {
   final String name, emoji;
   final String? avatarImageUrl;
   final bool enabled;
+  final bool extensionsPending;
+  final String? extensionsError;
   final List<SkillCommand> skillCommands;
   Agent.fromJson(Json json)
     : id = json['id'] as String,
@@ -85,6 +87,8 @@ class Agent implements Identified {
       emoji = json['avatarEmoji'] as String? ?? '🤖',
       avatarImageUrl = json['avatarImageUrl'] as String?,
       enabled = json['enabled'] == true,
+      extensionsPending = json['extensionsPending'] == true,
+      extensionsError = json['extensionsError'] as String?,
       skillCommands = objects(json['skillCommands'])
           .map(SkillCommand.fromJson)
           .toList();
