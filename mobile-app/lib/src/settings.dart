@@ -15,6 +15,21 @@ Future<void> showSettings(BuildContext context, TaskController c) =>
       MaterialPageRoute(builder: (_) => _SettingsHub(controller: c)),
     );
 
+Future<void> _push(BuildContext context, Widget page) =>
+    Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => page));
+
+Future<void> showProjectsSettings(BuildContext context, TaskController c) =>
+    _push(context, _ProjectsSettings(controller: c));
+
+Future<void> showAgentsSettings(BuildContext context, TaskController c) =>
+    _push(context, _AgentsSettings(controller: c));
+
+Future<void> showUsersSettings(BuildContext context, TaskController c) =>
+    _push(context, _UsersSettings(controller: c));
+
+Future<void> showCredentialsSettings(BuildContext context, TaskController c) =>
+    _push(context, _CredentialsSettings(controller: c));
+
 const _swatches = [
   '#6366f1',
   '#0ea5e9',

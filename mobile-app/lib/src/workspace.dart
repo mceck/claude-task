@@ -25,6 +25,7 @@ class Workspace extends StatelessWidget {
       if (c.wikiSection) {
         if (wide) {
           return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(width: 76, child: ProjectRail(controller: c)),
               SizedBox(width: 340, child: WikiList(controller: c)),
@@ -135,6 +136,197 @@ class Workspace extends StatelessWidget {
   );
 }
 
+/// Mobile navigation drawer: Projects, Wikis and the Settings screens.
+class AppDrawer extends StatelessWidget {
+  final TaskController controller;
+
+  /// A context that outlives the drawer, used to push screens after it closes.
+  final BuildContext host;
+  const AppDrawer({super.key, required this.controller, required this.host});
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: controller,
+    builder: (context, _) {
+      final c = controller, user = c.user;
+      if (user == null) return const SizedBox.shrink();
+      final admin = user.isAdmin;
+      void go(VoidCallback action) {
+        Navigator.pop(context);
+        action();
+      }
+
+      Widget row({
+        required Widget leading,
+        required String title,
+        required VoidCallback? onTap,
+        bool selected = false,
+      }) => Pressable(
+        onTap: onTap,
+        semanticLabel: title,
+        color: selected ? Palette.muted : Colors.transparent,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            leading,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 14.5),
+              ),
+            ),
+          ],
+        ),
+      );
+      Widget setting(
+        IconData icon,
+        Color color,
+        String title,
+        Future<void> Function(BuildContext, TaskController) open,
+      ) => row(
+        leading: Icon(icon, size: 22, color: color),
+        title: title,
+        onTap: c.online ? () => go(() => open(host, c)) : null,
+      );
+
+      return Drawer(
+        backgroundColor: Palette.sidebar,
+        child: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
+            children: [
+              Pressable(
+                onTap: () => go(() => showProfile(host, c)),
+                semanticLabel: 'Profile',
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    UserAvatar(
+                      label: user.displayName,
+                      userId: user.id,
+                      imageUrl: user.avatarImageUrl,
+                      api: c.api,
+                      size: 44,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            user.email,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Palette.fgSubtle,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 24),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
+                child: SectionLabel('Projects'),
+              ),
+              if (c.projects.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: Text(
+                    'No Projects',
+                    style: TextStyle(fontSize: 12.5, color: Palette.fgSubtle),
+                  ),
+                ),
+              for (final p in c.projects)
+                row(
+                  leading: ProjectLogo(project: p, api: c.api, size: 28),
+                  title: p.name,
+                  selected: !c.wikiSection && c.project?.id == p.id,
+                  onTap: () => go(() {
+                    if (c.wikiSection || c.project?.id != p.id) {
+                      c.selectProject(p);
+                    }
+                  }),
+                ),
+              const SizedBox(height: 12),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
+                child: SectionLabel('Wikis'),
+              ),
+              if (c.wikis.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: Text(
+                    'No Wikis',
+                    style: TextStyle(fontSize: 12.5, color: Palette.fgSubtle),
+                  ),
+                ),
+              for (final w in c.wikis)
+                row(
+                  leading: const Icon(
+                    Icons.menu_book_outlined,
+                    size: 22,
+                    color: Palette.fgMuted,
+                  ),
+                  title: w.name,
+                  selected: c.wikiSection && c.wiki?.id == w.id,
+                  onTap: () => go(() => perform(host, () => c.selectWiki(w))),
+                ),
+              const Divider(height: 24),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
+                child: SectionLabel('Settings'),
+              ),
+              setting(
+                Icons.folder_open_outlined,
+                Palette.primary,
+                'Projects settings',
+                showProjectsSettings,
+              ),
+              setting(
+                Icons.smart_toy_outlined,
+                Palette.agent,
+                'Agents',
+                showAgentsSettings,
+              ),
+              if (admin) ...[
+                setting(
+                  Icons.group_outlined,
+                  Palette.info,
+                  'Users',
+                  showUsersSettings,
+                ),
+                setting(
+                  Icons.key_outlined,
+                  Palette.warning,
+                  'Credentials',
+                  showCredentialsSettings,
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
 class ProjectRail extends StatelessWidget {
   final TaskController controller;
   const ProjectRail({super.key, required this.controller});
@@ -188,6 +380,12 @@ class ProjectRail extends StatelessWidget {
                   ),
               ],
             ),
+          ),
+          const SizedBox(height: 8),
+          IconAction(
+            icon: Icons.settings_outlined,
+            tooltip: 'Settings',
+            onPressed: c.online ? () => showSettings(context, c) : null,
           ),
           Padding(
             padding: const EdgeInsets.only(bottom: 16, top: 8),
@@ -332,24 +530,9 @@ class ProjectList extends StatelessWidget {
                 ),
               ),
               IconAction(
-                icon: Icons.menu_book_outlined,
-                tooltip: 'Wiki',
-                onPressed: c.showWikis,
-              ),
-              Tooltip(
-                message: 'Profile',
-                child: Pressable(
-                  onTap: () => showProfile(context, c),
-                  borderRadius: BorderRadius.circular(99),
-                  semanticLabel: 'Profile',
-                  child: UserAvatar(
-                    label: c.user!.displayName,
-                    userId: c.user!.id,
-                    imageUrl: c.user!.avatarImageUrl,
-                    api: c.api,
-                    size: 32,
-                  ),
-                ),
+                icon: Icons.menu_rounded,
+                tooltip: 'Menu',
+                onPressed: () => Scaffold.of(context).openDrawer(),
               ),
             ],
           ),
@@ -699,17 +882,6 @@ class _ProfileSheetState extends State<_ProfileSheet> {
           ],
         ),
         actions: [
-          AppButton(
-            label: 'Settings',
-            icon: Icons.settings_outlined,
-            tone: Tone.secondary,
-            onPressed: c.online
-                ? () {
-                    Navigator.pop(sheet);
-                    showSettings(context, c);
-                  }
-                : null,
-          ),
           AppButton(
             label: 'Log out',
             icon: Icons.logout_rounded,

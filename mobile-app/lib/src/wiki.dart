@@ -20,6 +20,14 @@ class WikiList extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
+              if (Scaffold.maybeOf(context)?.hasDrawer ?? false) ...[
+                IconAction(
+                  icon: Icons.menu_rounded,
+                  tooltip: 'Menu',
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                ),
+                const SizedBox(width: 8),
+              ],
               IconAction(
                 icon: Icons.folder_open_outlined,
                 tooltip: 'Projects',

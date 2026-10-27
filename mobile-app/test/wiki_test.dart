@@ -130,9 +130,15 @@ void main() {
       await h.login();
       await tester.pumpWidget(TaskApp(controller: h.controller));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Wiki').first);
-      await tester.pumpAndSettle();
-      expect(find.byType(WikiList), findsOneWidget);
+      if (width < 1000) {
+        // The phone reaches Wikis from the drawer.
+        await tester.tap(find.byTooltip('Menu'));
+        await tester.pumpAndSettle();
+      } else {
+        await tester.tap(find.byTooltip('Wiki').first);
+        await tester.pumpAndSettle();
+        expect(find.byType(WikiList), findsOneWidget);
+      }
       await tester.tap(find.text('Team knowledge'));
       await tester.pumpAndSettle();
       expect(find.byType(Conversation), findsOneWidget);

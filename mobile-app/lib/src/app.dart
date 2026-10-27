@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:fleather/fleather.dart' show FleatherLocalizations;
+
 import 'api.dart' as api;
 import 'auth_view.dart';
 import 'controller.dart';
@@ -59,6 +60,12 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
         final offline =
             c.user != null && c.connection != api.ConnectionState.connected;
         return Scaffold(
+          drawer:
+              c.user != null &&
+                  !c.user!.mustChangePassword &&
+                  MediaQuery.sizeOf(context).width < 1000
+              ? AppDrawer(controller: c, host: context)
+              : null,
           // All four edges: on edge-to-edge Android and notched devices
           // screens must not draw under the cutout or system navigation bar.
           body: SafeArea(
