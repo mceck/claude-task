@@ -85,7 +85,7 @@ While a recreation waits for the running Job to end, the Agent view shows "Conta
 
 ### Avatar image
 
-An Admin uploads the avatar image as a single file. Files of another type are answered with `400`, files over 2 MB with `413`. Replacing the image deletes the previous one; removing it brings back the emoji and color. The image is served with a URL that changes whenever the image changes, so clients cache it indefinitely, and it is served with a sandboxing content policy and without content sniffing.
+An Admin uploads, replaces or removes the avatar image from the web Configuration tab or the native app's Agent editor. The native editor shows the current image with its emoji fallback, accepts a single PNG, JPEG, GIF or WebP file up to 2 MB and reports upload failures beside the controls. Image changes save independently of the other Agent fields, preserving edits in the open form. An Admin uploads the avatar image as a single file. Files of another type are answered with `400`, files over 2 MB with `413`. Replacing the image deletes the previous one; removing it brings back the emoji and color. The image is served with a URL that changes whenever the image changes, so clients cache it indefinitely, and it is served with a sandboxing content policy and without content sniffing.
 
 ### Duplicating an Agent
 

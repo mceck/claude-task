@@ -390,12 +390,6 @@ class ProjectRail extends StatelessWidget {
             ),
           ),
           IconAction(
-            icon: Icons.add_rounded,
-            tooltip: 'New project',
-            onPressed: c.online ? () => showProjectForm(context, c) : null,
-          ),
-          const SizedBox(height: 8),
-          IconAction(
             icon: Icons.menu_book_outlined,
             tooltip: 'Wiki',
             active: c.wikiSection,
@@ -420,6 +414,15 @@ class ProjectRail extends StatelessWidget {
                       },
                     ),
                   ),
+                Center(
+                  child: IconAction(
+                    icon: Icons.add_rounded,
+                    tooltip: 'New project',
+                    onPressed: c.online
+                        ? () => showProjectForm(context, c)
+                        : null,
+                  ),
+                ),
               ],
             ),
           ),
@@ -967,7 +970,8 @@ class _TaskListState extends State<TaskList> {
   final _collapsed = <String>{};
   String _search = '', _priority = '', _tag = '', _assignee = '';
   int get _filterCount =>
-      [_priority, _tag, _assignee].where((v) => v.isNotEmpty).length;
+      [_priority, _tag, _assignee].where((v) => v.isNotEmpty).length +
+      (widget.controller.includeClosed ? 1 : 0);
 
   /// Rows play their entrance only the first time this Project's list opens,
   /// never while searching, filtering or coming back from a conversation.
@@ -1040,11 +1044,26 @@ class _TaskListState extends State<TaskList> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      c.project!.name,
-                      style: Theme.of(context).textTheme.titleLarge,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            c.project!.name,
+                            style: Theme.of(context).textTheme.titleLarge,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        IconAction(
+                          icon: Icons.edit_outlined,
+                          tooltip: 'Edit project',
+                          size: 32,
+                          onPressed: c.online
+                              ? () =>
+                                    showProjectSettings(context, c, c.project!)
+                              : null,
+                        ),
+                      ],
                     ),
                     Text(
                       '${c.tasks.length} Tasks',
@@ -1096,13 +1115,6 @@ class _TaskListState extends State<TaskList> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             children: [
               ChoiceChipX(
-                label: 'Archive',
-                icon: Icons.inventory_2_outlined,
-                selected: c.includeClosed,
-                onChanged: (v) => setState(() => c.includeClosed = v),
-              ),
-              const SizedBox(width: 8),
-              ChoiceChipX(
                 label: 'Filters',
                 icon: Icons.tune_rounded,
                 selected: _filterCount > 0,
@@ -1122,6 +1134,7 @@ class _TaskListState extends State<TaskList> {
                       _priority = '';
                       _tag = '';
                       _assignee = '';
+                      c.includeClosed = false;
                     }),
                   ),
                 ),
@@ -1222,6 +1235,17 @@ class _TaskListState extends State<TaskList> {
             body: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Row(
+                  children: [
+                    const Expanded(child: Text('Show closed tasks')),
+                    Switch(
+                      value: c.includeClosed,
+                      onChanged: (value) =>
+                          update(() => c.includeClosed = value),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
                 group('Priority', [
                   for (final p in ['', ...priorities])
                     ChoiceChipX(
@@ -1281,6 +1305,7 @@ class _TaskListState extends State<TaskList> {
                   _priority = '';
                   _tag = '';
                   _assignee = '';
+                  c.includeClosed = false;
                 }),
               ),
               AppButton(label: 'Apply', onPressed: () => Navigator.pop(sheet)),

@@ -52,13 +52,26 @@ class Md extends StatelessWidget {
   final bool selectable;
   final double size;
   final void Function(String? href)? onLink;
+  final void Function(String href, String filename)? onAttachment;
   const Md(
     this.data, {
     super.key,
     this.selectable = true,
     this.size = 14.5,
     this.onLink,
+    this.onAttachment,
   });
+
+  void _open(String? href, String label) {
+    if (href != null &&
+        onAttachment != null &&
+        RegExp(r'^/api/v1/attachments/[^/?#]+$').hasMatch(href)) {
+      onAttachment!(href, label);
+    } else {
+      onLink?.call(href);
+    }
+  }
+
   @override
   // flutter_markdown_plus still uses the SDK's Material theme and localizations.
   // Keep its compatibility scope here until the package migrates to material_ui.
@@ -69,11 +82,13 @@ class Md extends StatelessWidget {
         data: data,
         selectable: selectable,
         styleSheet: markdownStyle(context, size: size),
-        onTapLink: (_, href, _) => onLink?.call(href),
+        onTapLink: (text, href, _) => _open(href, text),
         imageBuilder: (uri, title, alt) => Semantics(
           link: true,
           child: InkWell(
-            onTap: onLink == null ? null : () => onLink!(uri.toString()),
+            onTap: onLink == null && onAttachment == null
+                ? null
+                : () => _open(uri.toString(), alt ?? 'image'),
             borderRadius: BorderRadius.circular(Radii.sm),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

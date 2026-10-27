@@ -1,11 +1,13 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:open_filex/open_filex.dart';
 
 import 'api.dart';
 import 'app.dart';
 import 'controller.dart';
 import 'ui/user_avatar.dart';
 import 'models.dart';
+import 'uploads.dart';
 import 'ui/markdown.dart';
 import 'ui/markdown_editor.dart';
 import 'ui/theme.dart';
@@ -602,7 +604,21 @@ class TaskDetails extends StatelessWidget {
                             fontStyle: FontStyle.italic,
                           ),
                         )
-                      : Md(t.description, onLink: openLink),
+                      : Md(
+                          t.description,
+                          onLink: openLink,
+                          onAttachment: (url, filename) => perform(
+                            context,
+                            () async {
+                              final file = await controller.downloadAttachment({
+                                'id': Uri.parse(url).pathSegments.last,
+                                'filename': filename,
+                                'url': url,
+                              });
+                              await OpenFilex.open(file.path);
+                            },
+                          ),
+                        ),
                 ),
               ],
             ),
@@ -784,7 +800,7 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
       title = TextEditingController(text: c.task!.title),
       description = TextEditingController(text: c.task!.description);
   final tagIds = task.tagIds.toSet(), assigneeIds = task.assigneeIds.toSet();
-  bool saving = false;
+  bool saving = false, uploading = false;
   String? error;
   await showAppSheet<void>(
     context,
@@ -815,7 +831,54 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
             ),
             const SizedBox(height: 16),
             const FieldLabel('Description', hint: 'Markdown'),
-            MarkdownEditor(controller: description, enabled: !saving),
+            AppButton(
+              label: 'Upload images or files',
+              icon: Icons.attach_file_rounded,
+              tone: Tone.secondary,
+              busy: uploading,
+              onPressed: saving || uploading || !c.online
+                  ? null
+                  : () async {
+                      set(() => error = null);
+                      try {
+                        final files = await pickAppAttachments(sheet);
+                        if (files.isEmpty || !sheet.mounted) return;
+                        set(() => uploading = true);
+                        final uploaded = await c.uploadTaskFiles(
+                          task.id,
+                          files,
+                        );
+                        if (!sheet.mounted) return;
+                        final links = uploaded
+                            .map(attachmentMarkdown)
+                            .join('\n\n');
+                        final text = description.text;
+                        final selection = description.selection;
+                        final start = selection.isValid
+                            ? selection.start
+                            : text.length;
+                        final end = selection.isValid
+                            ? selection.end
+                            : text.length;
+                        final insertion = '\n\n$links\n\n';
+                        description.value = TextEditingValue(
+                          text: text.replaceRange(start, end, insertion),
+                          selection: TextSelection.collapsed(
+                            offset: start + insertion.length,
+                          ),
+                        );
+                      } catch (e) {
+                        if (sheet.mounted) set(() => error = e.toString());
+                      } finally {
+                        if (sheet.mounted) set(() => uploading = false);
+                      }
+                    },
+            ),
+            const SizedBox(height: 8),
+            MarkdownEditor(
+              controller: description,
+              enabled: !saving && !uploading,
+            ),
             if (c.tags.isNotEmpty) ...[
               const SizedBox(height: 22),
               const SectionLabel('Tags'),
@@ -872,12 +935,12 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
           AppButton(
             label: 'Cancel',
             tone: Tone.secondary,
-            onPressed: saving ? null : () => Navigator.pop(sheet),
+            onPressed: saving || uploading ? null : () => Navigator.pop(sheet),
           ),
           AppButton(
             label: 'Save',
             busy: saving,
-            onPressed: title.text.trim().isEmpty
+            onPressed: saving || uploading || title.text.trim().isEmpty
                 ? null
                 : () async {
                     set(() => saving = true);

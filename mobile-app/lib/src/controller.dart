@@ -224,9 +224,14 @@ class TaskController extends ChangeNotifier {
     if (project != null) 'project:${project!.id}',
     if (task != null) 'task:${task!.id}',
   });
+
   /// Settings screens call the same API as the web app's administration pages.
-  Future<Json> settingsRequest(String method, String path, {Json? body}) =>
-      _request(method, path, body: body);
+  Future<Json> settingsRequest(
+    String method,
+    String path, {
+    Json? body,
+    List<DraftFile> files = const [],
+  }) => _request(method, path, body: body, files: files);
 
   Future<Json> _request(
     String method,
@@ -664,6 +669,18 @@ class TaskController extends ChangeNotifier {
     _olderLoaded = true;
     await _cacheTask();
     notifyListeners();
+  }
+
+  Future<List<Json>> uploadTaskFiles(
+    String taskId,
+    List<DraftFile> files,
+  ) async {
+    final result = await _request(
+      'POST',
+      '/tasks/$taskId/attachments',
+      files: files,
+    );
+    return objects(result['attachments']);
   }
 
   Future<Task?> createTask({

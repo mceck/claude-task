@@ -182,6 +182,7 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
     );
   }
   await tester.ensureVisible(finder.last);
+  await tester.pumpAndSettle();
   await tester.tap(finder.last);
   await tester.pumpAndSettle();
 }

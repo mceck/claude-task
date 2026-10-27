@@ -10,6 +10,9 @@ import 'project_env.dart';
 import 'task_forms.dart' show openLink;
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
+import 'ui/image_upload.dart';
+import 'ui/project_logo.dart';
+import 'ui/user_avatar.dart';
 
 part 'settings_extensions.dart';
 part 'settings_git.dart';
@@ -27,6 +30,12 @@ Future<void> _push(BuildContext context, Widget page) =>
 
 Future<void> showProjectsSettings(BuildContext context, TaskController c) =>
     _push(context, _ProjectsSettings(controller: c));
+
+Future<void> showProjectSettings(
+  BuildContext context,
+  TaskController c,
+  Project project,
+) => _push(context, _ProjectSettings(controller: c, project: project));
 
 Future<void> showAgentsSettings(BuildContext context, TaskController c) =>
     _push(context, _AgentsSettings(controller: c));
@@ -355,6 +364,7 @@ Future<void> _form(
   required String submit,
   required Future<void> Function(_Values values) onSubmit,
   List<Widget> Function(BuildContext sheet)? extra,
+  Widget? header,
   bool Function(_Field field, _Values values)? visible,
 }) => showAppSheet<void>(
   context,
@@ -366,6 +376,7 @@ Future<void> _form(
     submit: submit,
     onSubmit: onSubmit,
     extra: extra,
+    header: header,
     visible: visible,
   ),
 );
@@ -376,6 +387,7 @@ class _FormSheet extends StatefulWidget {
   final List<_Field> fields;
   final Future<void> Function(_Values) onSubmit;
   final List<Widget> Function(BuildContext)? extra;
+  final Widget? header;
   final bool Function(_Field, _Values)? visible;
   const _FormSheet({
     required this.title,
@@ -384,6 +396,7 @@ class _FormSheet extends StatefulWidget {
     required this.onSubmit,
     this.subtitle,
     this.extra,
+    this.header,
     this.visible,
   });
   @override
@@ -469,6 +482,7 @@ class _FormSheetState extends State<_FormSheet> {
               icon: Icons.error_outline_rounded,
             ),
           ),
+        ?widget.header,
         for (final f in visibleFields)
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
@@ -738,12 +752,7 @@ class _ProjectsSettings extends StatelessWidget {
           _Item(
             title: p.name,
             subtitle: '${p.key} · ${p.taskTotal} tasks',
-            onTap: () => Navigator.of(context).push<void>(
-              MaterialPageRoute(
-                builder: (_) =>
-                    _ProjectSettings(controller: controller, project: p),
-              ),
-            ),
+            onTap: () => showProjectSettings(context, controller, p),
           ),
       ]),
     ),
@@ -788,6 +797,33 @@ class _ProjectSettings extends StatelessWidget {
             });
           });
           return _list([
+            ListenableBuilder(
+              listenable: c,
+              builder: (context, _) => ImageUpload(
+                key: ValueKey('project-logo:${project.id}'),
+                title: 'Project logo',
+                uploadLabel: 'Upload logo',
+                replaceLabel: 'Replace logo',
+                removeLabel: 'Remove logo',
+                imageUrl: info['logoUrl'] as String?,
+                enabled: c.online,
+                preview: (url) => ProjectLogo(
+                  project: Project.fromJson({...info, 'logoUrl': url}),
+                  api: c.api,
+                  size: 72,
+                ),
+                onChange: (file) async {
+                  final result = await c.settingsRequest(
+                    file == null ? 'DELETE' : 'PUT',
+                    '/projects/${project.id}/logo',
+                    files: file == null ? const [] : [file],
+                  );
+                  unawaited(c.refresh().catchError((Object _) {}));
+                  return (result['project'] as Json)['logoUrl'] as String?;
+                },
+              ),
+            ),
+            const SizedBox(height: 20),
             const SectionLabel('Details'),
             _Item(
               title: info['name'] as String,
@@ -829,7 +865,7 @@ class _ProjectSettings extends StatelessWidget {
                   icon: archived
                       ? Icons.unarchive_outlined
                       : Icons.archive_outlined,
-                  tone: Tone.secondary,
+                  tone: archived ? Tone.secondary : Tone.danger,
                   onPressed: () => _run(
                     context,
                     () => change(
@@ -1249,9 +1285,12 @@ class _AgentsSettings extends StatelessWidget {
               for (final a in agents) ...[
                 _AgentExtensionStatus(controller: c, agent: a),
                 _Item(
-                  leading: Text(
-                    (a['avatarEmoji'] as String?) ?? '🤖',
-                    style: const TextStyle(fontSize: 24),
+                  leading: UserAvatar(
+                    label: a['name'] as String,
+                    userId: a['id'] as String,
+                    imageUrl: a['avatarImageUrl'] as String?,
+                    emoji: a['avatarEmoji'] as String? ?? '🤖',
+                    api: c.api,
                   ),
                   title: a['name'] as String,
                   subtitle:
@@ -1262,6 +1301,42 @@ class _AgentsSettings extends StatelessWidget {
                           context,
                           title: 'Edit agent',
                           subtitle: a['name'] as String,
+                          header: Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: ListenableBuilder(
+                              listenable: c,
+                              builder: (context, _) => ImageUpload(
+                                title: 'Agent image',
+                                uploadLabel: 'Upload image',
+                                replaceLabel: 'Replace image',
+                                removeLabel: 'Remove image',
+                                imageUrl: a['avatarImageUrl'] as String?,
+                                enabled: c.online,
+                                preview: (url) => UserAvatar(
+                                  label: a['name'] as String,
+                                  userId: a['id'] as String,
+                                  imageUrl: url,
+                                  emoji: a['avatarEmoji'] as String? ?? '🤖',
+                                  api: c.api,
+                                  size: 72,
+                                ),
+                                onChange: (file) async {
+                                  final result = await c.settingsRequest(
+                                    file == null ? 'DELETE' : 'PUT',
+                                    '/agents/${a['id']}/avatar',
+                                    files: file == null ? const [] : [file],
+                                  );
+                                  unawaited(reload().catchError((Object _) {}));
+                                  unawaited(
+                                    c.refresh().catchError((Object _) {}),
+                                  );
+                                  return (result['agent']
+                                          as Json)['avatarImageUrl']
+                                      as String?;
+                                },
+                              ),
+                            ),
+                          ),
                           fields: fields(a),
                           submit: 'Save agent',
                           onSubmit: (v) =>

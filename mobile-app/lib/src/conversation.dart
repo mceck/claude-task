@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -12,6 +11,7 @@ import 'controller.dart';
 import 'models.dart';
 import 'task_forms.dart';
 import 'wiki.dart';
+import 'uploads.dart';
 import 'ui/markdown.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
@@ -2014,6 +2014,7 @@ class Composer extends StatefulWidget {
 }
 
 class _ComposerState extends State<Composer> {
+  bool _attaching = false;
   late final TextEditingController _text;
   final _focus = FocusNode();
   final _link = LayerLink();
@@ -2091,24 +2092,35 @@ class _ComposerState extends State<Composer> {
     return KeyEventResult.handled;
   }
 
-  Future<void> _attach() => perform(context, () async {
-    final c = widget.controller;
-    final result = await FilePicker.pickFiles();
-    if (result.isEmpty) return;
-    final files = result
-        .where((f) => f.path != null)
-        .map((f) => DraftFile(f.path!, f.name))
-        .toList();
-    if (c.draft.files.length + files.length > 10 ||
-        result.any((f) => (f.lengthSync() ?? 0) > 25 * 1024 * 1024)) {
-      throw StateError('At most 10 files, 25 MB each');
+  Future<void> _attach() async {
+    setState(() => _attaching = true);
+    try {
+      await perform(context, () async {
+        final c = widget.controller;
+        final taskId = c.task?.id, client = c.api;
+        final files = await pickAppAttachments(
+          context,
+          maxFiles: 10 - c.draft.files.length,
+        );
+        if (!mounted ||
+            c.task?.id != taskId ||
+            c.api != client ||
+            files.isEmpty) {
+          return;
+        }
+        final staged = <DraftFile>[];
+        for (final file in files) {
+          staged.add(await c.storage.stageAttachment(file));
+        }
+        if (!mounted || c.task?.id != taskId || c.api != client) return;
+        await c.setDraft(
+          c.draft.copyWith(files: [...c.draft.files, ...staged]),
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _attaching = false);
     }
-    final staged = <DraftFile>[];
-    for (final file in files) {
-      staged.add(await c.storage.stageAttachment(file));
-    }
-    await c.setDraft(c.draft.copyWith(files: [...c.draft.files, ...staged]));
-  });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2171,7 +2183,7 @@ class _ComposerState extends State<Composer> {
                   icon: Icons.attach_file_rounded,
                   tooltip: 'Attach local files',
                   size: 36,
-                  onPressed: c.sending ? null : _attach,
+                  onPressed: c.sending || _attaching ? null : _attach,
                 ),
               ),
               Padding(

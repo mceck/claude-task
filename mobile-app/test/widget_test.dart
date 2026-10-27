@@ -167,7 +167,10 @@ void main() {
       expect(find.text('OPEN'), findsOneWidget);
       expect(find.text('Fix login'), findsOneWidget);
       expect(find.text('Archived Task'), findsNothing);
-      await tester.tap(find.text('Archive'));
+      await tester.tap(find.text('Filters'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Switch));
+      await tester.tap(find.text('Apply'));
       await tester.pumpAndSettle();
       expect(find.text('Archived Task'), findsOneWidget);
       await tester.tap(find.text('Fix login'));
