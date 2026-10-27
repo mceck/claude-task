@@ -87,8 +87,7 @@ test('groups agent skills by source, selects hidden skills in bulk and persists 
   await expect(selector.getByRole('checkbox', { name: 'review-ui', exact: true })).toBeHidden();
   await selector.getByRole('button', { name: 'Expand acme/frontend' }).click();
 
-  await page.getByRole('button', { name: 'Save agent', exact: true }).click();
-  await expect(page.getByText('Agent saved', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Agent configuration save status' })).toHaveText('All changes saved');
   const saved = await (await page.request.get(`/api/v1/agents/${agent.id}`)).json();
   expect(saved.agent.skillIds.sort()).toEqual([entries[0]!.id, entries[1]!.id].sort());
   await page.reload();

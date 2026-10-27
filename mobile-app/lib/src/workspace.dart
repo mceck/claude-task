@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'api.dart';
 import 'app.dart';
 import 'controller.dart';
 import 'conversation.dart';
@@ -7,6 +8,7 @@ import 'models.dart';
 import 'task_forms.dart';
 import 'wiki.dart';
 import 'ui/theme.dart';
+import 'ui/project_logo.dart';
 import 'ui/widgets.dart';
 
 class Workspace extends StatelessWidget {
@@ -174,6 +176,7 @@ class ProjectRail extends StatelessWidget {
                     offset: const Offset(-.25, 0),
                     child: _RailItem(
                       project: p,
+                      api: c.api,
                       selected: c.project?.id == p.id,
                       onTap: () {
                         if (c.project?.id != p.id) c.selectProject(p);
@@ -207,10 +210,12 @@ class ProjectRail extends StatelessWidget {
 
 class _RailItem extends StatelessWidget {
   final Project project;
+  final TaskApi? api;
   final bool selected;
   final VoidCallback onTap;
   const _RailItem({
     required this.project,
+    required this.api,
     required this.selected,
     required this.onTap,
   });
@@ -255,12 +260,10 @@ class _RailItem extends StatelessWidget {
                         ]
                       : const [],
                 ),
-                child: Avatar(
-                  label: project.key,
-                  seed: project.name,
+                child: ProjectLogo(
+                  project: project,
+                  api: api,
                   size: 48,
-                  circle: false,
-                  initials: false,
                   selected: selected,
                 ),
               ),
@@ -366,6 +369,7 @@ class ProjectList extends StatelessWidget {
                     ),
                     itemBuilder: (context, i) => _ProjectRow(
                       project: c.projects[i],
+                      api: c.api,
                       onTap: () => c.selectProject(c.projects[i]),
                     ),
                   ),
@@ -379,7 +383,12 @@ class ProjectList extends StatelessWidget {
 class _ProjectRow extends StatelessWidget {
   final Project project;
   final VoidCallback onTap;
-  const _ProjectRow({required this.project, required this.onTap});
+  final TaskApi? api;
+  const _ProjectRow({
+    required this.project,
+    required this.api,
+    required this.onTap,
+  });
   @override
   Widget build(BuildContext context) {
     final p = project, total = p.taskTotal;
@@ -398,13 +407,7 @@ class _ProjectRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Avatar(
-            label: p.key,
-            seed: p.name,
-            size: 40,
-            circle: false,
-            initials: false,
-          ),
+          ProjectLogo(project: p, api: api),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -700,12 +703,10 @@ class _TaskListState extends State<TaskList> {
                 ),
               if (widget.onBack != null) ...[
                 const SizedBox(width: 4),
-                Avatar(
-                  label: c.project!.key,
-                  seed: c.project!.name,
+                ProjectLogo(
+                  project: c.project!,
+                  api: c.api,
                   size: 32,
-                  circle: false,
-                  initials: false,
                   selected: true,
                 ),
                 const SizedBox(width: 10),

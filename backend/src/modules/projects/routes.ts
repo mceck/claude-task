@@ -1,12 +1,12 @@
-import { createProjectBody, listProjectsQuery, projectTopic, updateProjectBody } from '@claude-task/shared';
+import { createProjectBody, listProjectsQuery, PROJECT_LOGO_MAX_BYTES, PROJECT_LOGO_TYPES, projectTopic, updateProjectBody } from '@claude-task/shared';
 import { eq, sql } from 'drizzle-orm';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { transact } from '../../context';
 import type { AfterCommit, AppContext } from '../../context';
 import type { Executor } from '../../db/client';
 import { attachments, comments, projects, tasks } from '../../db/schema';
-import { badRequest, parse } from '../../errors';
+import { badRequest, HttpError, notFound, parse } from '../../errors';
 import { removeDeletedWorktrees } from '../../sessions/lifecycle';
 import { listTags } from '../tags/service';
 import { listStatuses } from '../statuses/service';
@@ -43,6 +43,45 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
     });
   });
 
+  app.get('/projects/:id/logo', async (request, reply) => {
+    const { id } = parse(params, request.params);
+    const project = await getBoardProject(ctx.db, id);
+    const blob = project.logoBlobId ? await ctx.blobs.get(project.logoBlobId) : null;
+    if (!blob) throw notFound('Logo');
+    return reply
+      .header('content-type', blob.metadata.contentType)
+      .header('content-length', String(blob.metadata.size))
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'; sandbox")
+      .header('cache-control', 'private, max-age=0, must-revalidate')
+      .send(blob.stream);
+  });
+
+  app.put('/projects/:id/logo', async (request) => {
+    const { id } = parse(params, request.params);
+    await getBoardProject(ctx.db, id);
+    const blobId = await receiveLogo(ctx, request);
+    return transact(ctx, async (tx, after) => {
+      const previous = await getBoardProject(tx, id, { lock: true });
+      const result = await updateProject(tx, after, previous.id, { logoBlobId: blobId });
+      if (previous.logoBlobId) after.run(() => ctx.blobs.delete(previous.logoBlobId!));
+      return result;
+    }).catch(async (err) => {
+      await ctx.blobs.delete(blobId);
+      throw err;
+    });
+  });
+
+  app.delete('/projects/:id/logo', async (request) => {
+    const { id } = parse(params, request.params);
+    return transact(ctx, async (tx, after) => {
+      const previous = await getBoardProject(tx, id, { lock: true });
+      const result = await updateProject(tx, after, previous.id, { logoBlobId: null });
+      if (previous.logoBlobId) after.run(() => ctx.blobs.delete(previous.logoBlobId!));
+      return result;
+    });
+  });
+
   for (const action of ['archive', 'unarchive'] as const) {
     app.post(`/projects/:id/${action}`, async (request) => {
       const { id } = parse(params, request.params);
@@ -72,10 +111,36 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
       // Tasks reference statuses without cascade, so remove them first.
       await tx.delete(tasks).where(eq(tasks.projectId, project.id));
       await tx.delete(projects).where(eq(projects.id, project.id));
+      if (project.logoBlobId) after.run(() => ctx.blobs.delete(project.logoBlobId!));
       for (const b of blobs) after.run(() => ctx.blobs.delete(b.blobId));
     });
     return reply.status(204).send();
   });
+}
+
+async function receiveLogo(ctx: AppContext, request: FastifyRequest): Promise<string> {
+  if (!request.isMultipart()) throw badRequest('Send the image as multipart/form-data');
+  const tooLarge = () => new HttpError(413, 'file_too_large', 'The logo must be at most 2 MB');
+  let blobId: string | null = null;
+  try {
+    for await (const part of request.parts({ limits: { fileSize: PROJECT_LOGO_MAX_BYTES, files: 1 } })) {
+      if (part.type !== 'file') continue;
+      if (!(PROJECT_LOGO_TYPES as readonly string[]).includes(part.mimetype)) {
+        part.file.resume();
+        throw badRequest('The logo must be a PNG, JPEG, GIF or WebP image');
+      }
+      const stored = await ctx.blobs.put(part.file, { filename: 'logo', contentType: part.mimetype });
+      blobId = stored.id;
+      if (part.file.truncated) throw tooLarge();
+      if (stored.size === 0) throw badRequest('The image file is empty');
+    }
+    if (!blobId) throw badRequest('Missing image file');
+    return blobId;
+  } catch (err) {
+    if (blobId) await ctx.blobs.delete(blobId);
+    if ((err as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') throw tooLarge();
+    throw err;
+  }
 }
 
 async function updateProject(tx: Executor, after: AfterCommit, id: string, patch: Partial<typeof projects.$inferInsert>) {

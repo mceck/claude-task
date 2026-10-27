@@ -1,4 +1,4 @@
-import { CATEGORIES } from '@claude-task/shared';
+import { API_PREFIX, CATEGORIES } from '@claude-task/shared';
 import type { Category, CategoryCounts, Project, ProjectSummary } from '@claude-task/shared';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client';
@@ -20,6 +20,7 @@ export const DEFAULT_STATUSES: { name: string; color: string; category: Category
 export function serializeProject(p: ProjectRow): Project {
   return {
     id: p.id,
+    logoUrl: p.logoBlobId ? `${API_PREFIX}/projects/${p.id}/logo?v=${p.logoBlobId}` : null,
     key: p.key,
     repository: p.repository,
     name: p.name,

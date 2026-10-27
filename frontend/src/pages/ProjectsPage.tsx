@@ -1,3 +1,4 @@
+import { ProjectLogo } from '../components/ProjectLogo';
 import { CATEGORIES, PROJECT_KEY_PATTERN } from '@claude-task/shared';
 import type { Category, ProjectBundle, ProjectSummary } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
@@ -93,9 +94,7 @@ function ProjectCard({ project: p }: { project: ProjectSummary }) {
       className="group flex h-full flex-col rounded-xl border bg-card p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5"
     >
       <div className="flex items-start gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 font-mono text-xs font-semibold text-primary ring-1 ring-primary/20">
-          {p.key}
-        </span>
+        <ProjectLogo project={p} className="size-10" />
         <div className="min-w-0">
           <p className="truncate font-medium group-hover:text-primary">{p.name}</p>
           <p className="line-clamp-2 text-sm text-muted-foreground">{p.description || 'No description'}</p>

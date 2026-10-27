@@ -29,6 +29,7 @@ describe('migration upgrades', () => {
       UPDATE sessions SET claude_session_id = gen_random_uuid(), started = true, state = 'idle';
       ALTER TABLE sessions ALTER COLUMN claude_session_id SET NOT NULL;
       ALTER TABLE tasks DROP COLUMN chat_generation;
+      ALTER TABLE projects DROP COLUMN logo_blob_id;
     `);
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.when]);
     expect((await db.$client.query('SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1')).rows[0].hash)

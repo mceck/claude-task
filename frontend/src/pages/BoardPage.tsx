@@ -1,3 +1,4 @@
+import { ProjectLogo } from '../components/ProjectLogo';
 import { PullRequestBadge } from '../components/Git';
 import { AGENTS_TOPIC, emptyBoardFilter, isFilterActive, matchesBoardFilter, PRIORITIES, projectTopic } from '@claude-task/shared';
 import type { BoardFilter, Tag, Priority, Status, Task, TaskCard, User } from '@claude-task/shared';
@@ -77,9 +78,7 @@ export function BoardPage() {
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b px-6">
-          <span className="flex size-7 items-center justify-center rounded-md bg-primary/15 font-mono text-[10px] font-semibold text-primary ring-1 ring-primary/20">
-            {project!.key}
-          </span>
+          <ProjectLogo project={project!} className="size-7" />
           <h1 className="truncate font-semibold tracking-tight">{project!.name}</h1>
           {project!.archivedAt && (
             <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-500">

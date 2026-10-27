@@ -28,6 +28,7 @@ class User implements Identified {
 
 class Project {
   final String id, key, name, description;
+  final String? logoUrl;
 
   /// Task counts per Status category, from the Projects list.
   final Map<String, int> taskCounts;
@@ -36,6 +37,7 @@ class Project {
       key = json['key'] as String,
       name = json['name'] as String,
       description = json['description'] as String? ?? '',
+      logoUrl = json['logoUrl'] as String?,
       taskCounts = {
         for (final e in (json['taskCounts'] as Map? ?? {}).entries)
           e.key as String: (e.value as num).toInt(),

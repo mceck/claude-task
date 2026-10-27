@@ -120,6 +120,13 @@
       "when": 1793058884857,
       "tag": "0016_preserve_existing_claude_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793070354010,
+      "tag": "0017_project_logo",
+      "breakpoints": true
     }
   ]
 }

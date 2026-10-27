@@ -38,6 +38,7 @@ export interface User {
 export type CategoryCounts = Record<Category, number>;
 
 export interface Project {
+  logoUrl: string | null;
   repository: ProjectRepository | null;
   id: string;
   key: string;

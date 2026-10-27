@@ -145,8 +145,7 @@ test('adds a marketplace plugin to the catalog and assigns it to an agent', asyn
   await page.goto(`/agents/${agent.id}`);
   await page.getByRole('tab', { name: 'Configuration' }).click();
   await page.getByRole('checkbox', { name: new RegExp(`^${name}`) }).check();
-  await page.getByRole('button', { name: 'Save agent', exact: true }).click();
-  await expect(page.getByText('Agent saved', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Agent configuration save status' })).toHaveText('All changes saved');
   const saved = (await (await page.request.get(`/api/v1/agents/${agent.id}`)).json()).agent;
   expect(saved.pluginIds).toHaveLength(1);
 
@@ -197,8 +196,9 @@ test('creates and rotates write-only credentials, configures an agent and reads 
   }
   await page.getByLabel('Model', { exact: true }).fill('claude-sonnet-5-5');
   await page.getByLabel('Effort').selectOption('high');
-  await page.getByRole('button', { name: 'Save agent', exact: true }).click();
-  await expect(page.getByText('Agent saved', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Save Docker configuration', exact: true }).click();
+  await expect(page.getByText('Docker configuration saved', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Agent configuration save status' })).toHaveText('All changes saved');
   await page.reload();
   await page.getByRole('tab', { name: 'Configuration' }).click();
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('claude-sonnet-5-5');
@@ -323,8 +323,8 @@ test('saves project setup, instructions and write-only environment secrets', asy
   await page.getByRole('tab', { name: 'Agents', exact: true }).click();
   await page.getByLabel('Worktree setup script').fill('npm ci');
   await page.getByLabel('Agent instructions').fill('Always add regression tests.');
-  await page.getByRole('button', { name: 'Save agent settings' }).click();
-  await expect(page.getByText('Agent settings saved', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save agent settings' })).toHaveCount(0);
+  await expect(page.getByRole('status', { name: 'Project agent settings save status' })).toHaveText('All changes saved');
   await page.getByLabel('Variable name').fill('DEPLOY_SECRET');
   await page.getByLabel('Variable value').fill('private-value-6789');
   await page.getByRole('checkbox', { name: 'Secret', exact: true }).check();

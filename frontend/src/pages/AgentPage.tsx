@@ -186,12 +186,13 @@ function AgentDetail({ agent }: { agent: Agent }) {
             <TabsContent value="config">
               <div className="rounded-xl border bg-card p-5">
                 <AgentForm
+                  key={agent.id}
                   agent={agent}
-                  onSave={async (body, avatar) => {
-                    await patch(`/agents/${agent.id}`, body);
+                  onUpdate={async (body, avatar) => {
+                    if (Object.keys(body).length) await patch(`/agents/${agent.id}`, body);
                     await applyAvatarChange(agent.id, avatar);
                     await refresh();
-                    toast.success('Agent saved');
+                    if (body.dockerfile !== undefined) toast.success('Docker configuration saved');
                   }}
                 />
               </div>

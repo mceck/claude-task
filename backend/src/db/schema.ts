@@ -95,6 +95,7 @@ export const projects = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     key: text('key').notNull(),
     kind: text('kind').notNull().default('project'),
+    logoBlobId: uuid('logo_blob_id'),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     archivedAt: timestamp('archived_at', { withTimezone: true }),

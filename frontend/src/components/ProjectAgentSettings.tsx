@@ -10,6 +10,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useAgentSettings, useMe } from '../api/queries';
 import { Field, ErrorText, Loading, useConfirm } from './common';
+import { useAutosave } from '../lib/useAutosave';
+import { AutosaveStatus } from './AutosaveStatus';
 
 export function ProjectAgentSettings({ projectId }: { projectId: string }) {
   const query = useAgentSettings(projectId);
@@ -29,6 +31,10 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
   const [secret, setSecret] = useState(false);
   const [editing, setEditing] = useState<ProjectEnvVar | null>(null);
   const [busy, setBusy] = useState(false);
+  const autosave = useAutosave({ setupScript, agentInstructions }, async (changes) => {
+    await patch(`/projects/${projectId}/agent-settings`, changes);
+    qc.setQueryData<Settings>(keys.agentSettings(projectId), (current) => current ? { ...current, ...changes } : current);
+  });
   const run = async (fn: () => Promise<{ settings: Settings }>): Promise<boolean> => {
     setBusy(true);
     try {
@@ -41,10 +47,6 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
     } finally {
       setBusy(false);
     }
-  };
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
-    if (await run(() => patch(`/projects/${projectId}/agent-settings`, { setupScript, agentInstructions }))) toast.success('Agent settings saved');
   };
   const saveEnv = async (e: FormEvent) => {
     e.preventDefault();
@@ -69,7 +71,7 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
   };
   return (
     <div className="space-y-4">
-      <form onSubmit={save} className="space-y-4 rounded-xl border bg-card p-5">
+      <section onBlur={() => void autosave.flush()} className="flex flex-col gap-4 rounded-xl border bg-card p-5">
         <h2 className="font-medium">Agent setup</h2>
         <Field label="Worktree setup script" hint="Runs once for each new worktree, before Claude starts.">
           <Textarea
@@ -84,10 +86,8 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
         <Field label="Agent instructions" hint="Applied to every agent working on this project, in addition to the repository’s CLAUDE.md.">
           <Textarea aria-label="Agent instructions" rows={6} value={agentInstructions} onChange={(e) => setInstructions(e.target.value)} maxLength={100000} />
         </Field>
-        <Button type="submit" disabled={busy}>
-          Save agent settings
-        </Button>
-      </form>
+        <AutosaveStatus {...autosave} label="Project agent settings save status" />
+      </section>
       <section className="space-y-4 rounded-xl border bg-card p-5">
         <h2 className="font-medium">Environment variables & secrets</h2>
         <p className="text-sm text-muted-foreground">Sent only to jobs for this project. Secrets are write-only. Admins manage variables and secrets.</p>

@@ -137,6 +137,8 @@ A fixed sidebar holds the product name, links to Projects, Wiki and Agents for e
 
 Projects appear as cards with key, name and a bar of Task counts per Category. A "Show archived" switch swaps to archived Projects. "New project" opens a creation dialog. Project rules (keys, archiving, deletion) are in [Board](board.md).
 
+The Project logo appears on its card, sidebar entry and Board header. General settings offers upload, replacement and removal with an image preview, format and size guidance, and feedback when saving succeeds or fails. The controls stay disabled while a logo change is being saved. Image loading failures show the Project Key. Accepted formats and lifecycle rules are in [Board](board.md#projects).
+
 #### Board
 
 The Board shows one column per Status in Status order, closed-category Statuses included only while "Show closed" is on (kept in the address so it survives reloads and links). Each column shows its colour dot, name and the number of cards currently shown, the cards in their stored order, and an "Add task" button.
@@ -189,6 +191,8 @@ Resetting from this page empties the Timeline and Live Turn preview at once, wit
 
 The Agents list (everyone) shows each Agent's avatar, state, current Task, Queue length, Credential and last activity; Admins see "New agent". The Agent detail page has tabs for current work and Queue (Members can reorder by dragging and remove entries), builds with live logs, usage, container logs (the last 500 lines, refreshed every 3 seconds while the tab is open) and configuration. Project settings has tabs for General, Statuses, Tags, Agents and Repository. Admin pages manage Users, Credentials, Extensions (Skills, Plugins, MCP servers) and Git Connections. The behaviour behind each of these is in [Users and auth](users-and-auth.md), [Board](board.md), [Agents](agents.md) and [Git integration](git-integration.md).
 
+Project Setup Scripts and Agent Instructions, and the non-Docker fields of an existing Agent's Configuration tab, save automatically after a 600 ms pause or when focus leaves a field. Pending edits are also submitted when switching settings tabs or navigating to another app view. Each section shows whether changes are being saved, have been saved or failed, with a Retry action on failure. Dockerfile, Development Services and CPU and memory limits share a separate explicit save action. Creating an Agent and managing Project environment variables and imports use their own submit actions. See [Agents](agents.md#editing-an-agent).
+
 #### Theme
 
 The web app uses a dark theme by default, with Light and System as alternatives in the User menu. The choice is stored per browser and applied before the first paint, so the first paint already uses it; when storage is unavailable the choice lasts for the open page. The UI kit and colour tokens are shared across pages.
@@ -230,6 +234,8 @@ The layout adapts to the window width.
 | 1500 px and wider | The same three panes plus a 360 px Task details panel next to the conversation. |
 
 The **Project rail** lists Projects as badges, with buttons for the Wiki section and the Profile. The phone's **Projects list** shows each Project's key, name, Task count and a completion bar (done and closed Tasks over all Tasks). Empty panes say what to pick next ("Select a Project", "Select a Task to join the conversation").
+
+Project badges, Project list rows and the phone Task list header show the Project's logo when available, falling back to its key while loading, offline or after an image error. Logo downloads use the native client's authenticated API connection and the current Installation's origin validation. The selected Project refreshes its logo from the Project details alongside its Statuses and Tasks.
 
 The **Task list** groups Tasks under their Status, in Status order, with collapsible group headers. Closed-category Statuses appear when the "Archive" chip is on. A search field matches Task Key and title; a filter sheet offers one priority, one Tag and one assignee (or "Unassigned") at a time, with a count on the "Filters" chip and a "Clear" action. While searching or filtering, empty groups are hidden. Each row shows priority, Task Key, title (bold with a dot when unread), Tags, up to two assignee avatars, the Agent's badge with Session state and Queue position, and the Comment count. "Create Task" opens the creation form.
 

@@ -66,7 +66,9 @@ The model, effort, permission mode and system prompt travel with each Job, and t
 
 ### Editing an Agent
 
-Admins edit every field from the Agent's Configuration tab. Each change takes effect in the way that matches where the setting lives:
+Admins edit every field from the Agent's Configuration tab. Identity, description, Credential, model, effort, permission mode, system prompt, enabled flag and Extension selections save automatically after 600 ms without edits or when a field loses focus. Avatar image changes also save automatically. The form shows saving, saved or failed state and offers Retry after an error, keeping the edits visible. Saves send only changed fields and run in order, including further edits made while a save is in progress. Switching settings tabs or navigating to another app view starts saving any pending changes.
+
+Docker configuration groups the Dockerfile, Development Services and CPU and memory limits. These fields are applied together through "Save Docker configuration", after validation, so editing an unfinished Dockerfile or changing other settings leaves the running container configuration intact until the Admin applies it. New Agents are created through "Create agent", which submits the complete form. Each saved change takes effect in the way that matches where the setting lives:
 
 | Change | Effect |
 | --- | --- |
@@ -77,7 +79,7 @@ Admins edit every field from the Agent's Configuration tab. Each change takes ef
 | Enabled | Switching it off stops new Jobs; switching it on lets the Agent dispatch again right away |
 | Description, avatar | Display only |
 
-Saving the configuration form always sends the full Extensions selection, so every save also runs one synchronization round before the next Job.
+Saving a changed Extension selection sends that selection and runs a synchronization round before the next Job. Edits to other fields preserve the Agent's existing Extension assignments.
 
 While a recreation waits for the running Job to end, the Agent view shows "Container recreation is waiting for the current job to finish". While an Extension synchronization is pending it shows that skill, MCP and plugin changes will apply before the next Job, and a failed synchronization shows its error.
 
@@ -169,6 +171,8 @@ The Job's environment is the Project's variables, then the Credential's variable
 ### Project environment variables
 
 Each Project has an "Agents" settings section holding its Setup Script and Agent Instructions (editable by every User; their use is described in [Git integration](git-integration.md) and [Agent sessions](agent-sessions.md)) and its environment variables (managed by Admins).
+
+The Setup Script and Agent Instructions save automatically after 600 ms without edits, on leaving a field, or when switching settings tabs or navigating to another app view. Each save carries only the fields that changed. Saves run in order and include newer edits made during a request. The section shows saving, saved or failed state, preserves failed edits and offers Retry. Environment variables, secrets and imports use their own add, update, delete and import actions.
 
 - A name matches a shell variable name of up to 128 characters (a letter or underscore, then letters, digits or underscores) and is unique within the Project.
 - A value holds up to 100,000 characters. Saving a variable sets both its value and its secret flag.
@@ -494,6 +498,8 @@ Sessions, Jobs and Queue Entries belong to [Agent sessions](agent-sessions.md).
 - **Observability**: Build logs stream live and are kept per Build; container logs are available to Admins; the Agent view shows image, container, Runner and Extension status with their errors.
 
 ## Decisions
+
+- **Automatic saves for Agent settings, explicit application of Docker configuration.** Saving only edited fields keeps other Users' settings and Extension assignments intact, and serializing saves preserves the latest edits during slow requests. Dockerfile, Development Services and resource limits share an explicit action because applying them can build an image or recreate a container.
 
 - **One long-lived container per Agent, one Job at a time.** An Agent behaves like one teammate doing one thing at a time, and its Dockerfile, not the Project's, defines the toolchains. Tasks in one container would otherwise share ports, local databases and background processes. More throughput comes from duplicating an Agent. A container per Task was rejected (more images and volumes to manage, and it breaks the teammate model), as was a container per Project shared by its Agents (Agents are global and bring their own environment). The cost: feedback on one Task can wait behind a long Job on another, which Users mitigate by reordering the Queue.
 - **Sessions live on the Agent Volume.** Claude's transcripts and the Worktrees survive any container recreation because they live on the volume, and resume needs the same working directory, so Worktree paths are deterministic per Project and Task. Deleting an Agent deletes its volume and with it its transcripts.

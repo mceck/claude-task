@@ -1,5 +1,5 @@
 import { RepositorySettings } from '../components/RepositorySettings';
-import { CATEGORIES, projectTopic } from '@claude-task/shared';
+import { CATEGORIES, PROJECT_LOGO_MAX_BYTES, PROJECT_LOGO_TYPES, projectTopic } from '@claude-task/shared';
 import type { Category, Tag as TagT, Project, ProjectBundle, Status } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2 } from 'lucide-react';
@@ -21,6 +21,7 @@ import { useTopic } from '../lib/realtime';
 import { NotFoundPage } from './NotFoundPage';
 import { CATEGORY_COLOR, PageHeader } from './ProjectsPage';
 import { ProjectAgentSettings } from '../components/ProjectAgentSettings';
+import { ProjectLogo } from '../components/ProjectLogo';
 
 export function ProjectSettingsPage() {
   const { projectKey } = useParams();
@@ -93,10 +94,39 @@ function useRun(project: Project) {
 function General({ project }: { project: Project }) {
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
+  const [logoBusy, setLogoBusy] = useState(false);
   const me = useMe();
   const run = useRun(project);
   const confirm = useConfirm();
   const navigate = useNavigate();
+
+  const uploadLogo = async (file: File) => {
+    if (!(PROJECT_LOGO_TYPES as readonly string[]).includes(file.type)) {
+      toast.error('The logo must be a PNG, JPEG, GIF or WebP image');
+      return;
+    }
+    if (file.size > PROJECT_LOGO_MAX_BYTES) {
+      toast.error('The logo must be at most 2 MB');
+      return;
+    }
+    setLogoBusy(true);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      await run(() => put(`/projects/${project.id}/logo`, form), 'Project logo updated');
+    } finally {
+      setLogoBusy(false);
+    }
+  };
+
+  const removeLogo = async () => {
+    setLogoBusy(true);
+    try {
+      await run(() => del(`/projects/${project.id}/logo`), 'Project logo removed');
+    } finally {
+      setLogoBusy(false);
+    }
+  };
 
   const save = (e: FormEvent) => {
     e.preventDefault();
@@ -115,6 +145,23 @@ function General({ project }: { project: Project }) {
 
   return (
     <div className="space-y-4">
+      <Section title="Project logo" description="Shown on the web and in the app. PNG, JPEG, GIF or WebP, up to 2 MB.">
+        <div className="flex items-center gap-4" aria-busy={logoBusy}>
+          <ProjectLogo project={project} className="size-16" />
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <Label htmlFor="project-logo">{project.logoUrl ? 'Replace logo' : 'Upload logo'}</Label>
+            <Input id="project-logo" type="file" accept={PROJECT_LOGO_TYPES.join(',')} disabled={logoBusy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void uploadLogo(file);
+              }} />
+            {project.logoUrl && <Button type="button" variant="outline" size="sm" className="self-start" disabled={logoBusy} onClick={removeLogo}>
+              <Trash2 data-icon="inline-start" /> Remove logo
+            </Button>}
+          </div>
+        </div>
+      </Section>
       <Section title="Details">
         <form onSubmit={save} className="space-y-4">
           <div className="grid grid-cols-[8rem_1fr] gap-3">

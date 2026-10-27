@@ -47,6 +47,10 @@ The answer, `201`, bundles the Project with its Statuses and Tags, and the web a
 
 **Editing.** Any User can change a Project's name and description. The key is fixed: a request that includes it is rejected with `400`. Every Project change is published on the Project's realtime topic as `project.updated`.
 
+**Logo.** Any User can upload, replace or remove a Project's optional logo from General settings in the web app. An upload contains one PNG, JPEG, GIF or WebP image of up to 2 MB. Unsupported formats, empty files and missing files receive `400`; oversized uploads and uploads with several files receive `413`. A failed upload preserves the current logo. Reading a logo requires a valid Login and returns `404` when the Project has no logo. Project details and list entries include the logo URL, or an empty value when absent. The URL changes on replacement. The logo appears on Project cards, in the sidebar and in the Board header on the web, and in the native app's Project list, rail and phone Task list header. Loading failures and Projects without a logo show the Project Key instead.
+
+Logo changes use the same realtime event as other Project edits. Concurrent replacements and removals are serialized with other Project edits. Archiving preserves the logo; replacement, removal and permanent Project deletion clean up the old stored image after the database change commits.
+
 **Listing.** The Projects list shows the non-archived Projects of kind `project`, ordered by name; a "Show archived" switch shows the archived ones instead. Each Project comes with its number of Tasks per Category. The web page shows one card per Project with key, name, description, total Tasks, the share done (Tasks in `done` and `closed` Statuses over all Tasks), a bar split by Category and the count per Category. The sidebar lists the non-archived Projects under "Boards" for quick access.
 
 **Archiving.** Any User can archive a Project, which hides it from the Projects list and the sidebar while keeping everything: its Board stays reachable by URL with an "Archived" badge, and its Tasks, Comments and Agent work carry on as before. Archiving an already archived Project keeps its original archive time. Unarchiving brings it back to the list.
@@ -55,9 +59,9 @@ The answer, `201`, bundles the Project with its Statuses and Tags, and the web a
 
 **Settings.** A Project's settings page has five tabs:
 
-- **General**: name, description (the key is shown read-only), archive and unarchive, and for Admins on archived Projects, "Delete permanently".
+- **General**: logo upload, replacement and removal, name, description (the key is shown read-only), archive and unarchive, and for Admins on archived Projects, "Delete permanently".
 - **Statuses** and **Tags**: described below.
-- **Agents**: the Setup Script and Agent Instructions (each up to 100,000 characters, editable by any User) and the Project's environment variables and secrets (Admins only). See [Agents](agents.md) and [Agent Sessions](agent-sessions.md).
+- **Agents**: the Setup Script and Agent Instructions (each up to 100,000 characters, editable by any User and saved automatically after a 600 ms pause or when leaving the field or view) and the Project's environment variables and secrets (Admins only). The section shows save progress and errors with a Retry action. See [Agents](agents.md) and [Agent Sessions](agent-sessions.md).
 - **Repository**: the linked Repository and its Base Branch. See [Git integration](git-integration.md).
 
 ### Statuses
@@ -239,6 +243,8 @@ Deleting a Project removes its Statuses, Tags and Tasks; deleting a Task removes
 - The Board list is one query per request, whatever the number of Tasks.
 
 ## Decisions
+
+- **Project-owned logos in the shared file store.** The Project stores a reference to its own image. Authenticated downloads reuse the existing file store and Login rules, while changing the URL on replacement lets both clients refresh the image. Cleanup runs after commit so failed edits keep the existing logo available.
 
 - **Fixed Project Keys and per-Project sequential numbers.** Task Keys appear in branch names, links and conversations, so they never change and are never reused. The counter lives on the Project row, whose lock serializes creation and keeps numbers gapless.
 - **Categories give Statuses a fixed meaning.** Teams name and arrange Statuses freely, while the platform and Agents rely on the Category. Only `closed` has an effect on Agents: Status never starts or steers an Agent, and entering a `closed` Status ends its Session. A Project always keeps an `open` and a `closed` Status, so there is always an entry point and an exit.

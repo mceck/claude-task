@@ -275,6 +275,9 @@ export type UpdateAgentBody = z.infer<typeof updateAgentBody>;
 export const AGENT_AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 export const AGENT_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 
+export const PROJECT_LOGO_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+export const PROJECT_LOGO_MAX_BYTES = 2 * 1024 * 1024;
+
 export const duplicateAgentBody = z.strictObject({ name: name.optional() });
 
 /** Recreate the container now even if the Agent is working (kills the running Job). */

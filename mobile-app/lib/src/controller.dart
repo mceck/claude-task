@@ -506,7 +506,10 @@ class TaskController extends ChangeNotifier {
       'tasks': result[1]['tasks'],
       'preferences': result[2]['preferences'],
     });
-    if (project?.id == id) _hydrateProject(id);
+    if (project?.id == id) {
+      project = Project.fromJson(result[0]['project'] as Json);
+      _hydrateProject(id);
+    }
   }
 
   Future<void> selectTask(Task value) async {

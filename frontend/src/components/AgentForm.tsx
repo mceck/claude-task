@@ -1,5 +1,5 @@
-import { AGENT_SERVICES, AGENT_SERVICE_INFO, DEFAULT_AGENT_SERVICES, checkAgentDockerfile, EFFORT_LEVELS, PERMISSION_MODES } from '@claude-task/shared';
-import type { Agent, AgentService, CreateAgentBody, EffortLevel, PermissionMode } from '@claude-task/shared';
+import { AGENT_SERVICES, AGENT_SERVICE_INFO, DEFAULT_AGENT_SERVICES, checkAgentDockerfile, EFFORT_LEVELS, PERMISSION_MODES, updateAgentBody } from '@claude-task/shared';
+import type { Agent, AgentService, CreateAgentBody, EffortLevel, PermissionMode, UpdateAgentBody } from '@claude-task/shared';
 import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { Link } from 'react-router';
@@ -12,6 +12,8 @@ import { AgentAvatar } from './agents';
 import { Field } from './common';
 import { AgentSkillSelector } from './AgentSkillSelector';
 import { api, del, errorMessage } from '../api/client';
+import { useAutosave } from '../lib/useAutosave';
+import { AutosaveStatus } from './AutosaveStatus';
 
 /** What the form wants done with the Agent's image once the Agent is saved. */
 type AvatarChange = { file: File } | { remove: true } | null;
@@ -79,7 +81,11 @@ function DockerfileEditor({ value, onChange }: { value: string; onChange: (s: st
   );
 }
 
-export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: CreateAgentBody, avatar: AvatarChange) => Promise<void> }) {
+export function AgentForm({ agent, onSave, onUpdate }: {
+  agent?: Agent;
+  onSave?: (body: CreateAgentBody, avatar: AvatarChange) => Promise<void>;
+  onUpdate?: (body: UpdateAgentBody, avatar: AvatarChange) => Promise<void>;
+}) {
   const credentials = useCredentials();
   const mcpServers = useMcpServers();
   const plugins = usePlugins();
@@ -101,17 +107,35 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
   const [memory, setMemory] = useState(agent?.memoryMb?.toString() ?? '');
   const [enabled, setEnabled] = useState(agent?.enabled ?? true);
   const [avatar, setAvatar] = useState<AvatarChange>(null);
+  const [avatarRevision, setAvatarRevision] = useState(0);
   const [preview, setPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const autosave = useAutosave({
+    skillIds, mcpServerIds, pluginIds, name, avatarEmoji: emoji, avatarColor: color,
+    description, credentialId, model: model.trim() || null, effort: effort || null,
+    permissionMode, systemPrompt, enabled,
+  }, async (changes) => {
+    const checked = updateAgentBody.safeParse(changes);
+    if (!checked.success) throw new Error(checked.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', '));
+    await onUpdate!(checked.data, null);
+  }, !!agent);
+  const avatarAutosave = useAutosave({ revision: avatarRevision }, async () => {
+    await onUpdate!({}, avatar);
+  }, !!agent);
+  const flush = () => {
+    void autosave.flush();
+    void avatarAutosave.flush();
+  };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (agent) return;
     const check = checkAgentDockerfile(dockerfile);
     if (!check.ok) return setError(check.error);
     setSaving(true);
     setError('');
     try {
-      await onSave({
+      await onSave!({
         skillIds,
         mcpServerIds,
         pluginIds,
@@ -136,12 +160,28 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
       setSaving(false);
     }
   };
+  const saveDocker = async () => {
+    const check = checkAgentDockerfile(dockerfile);
+    if (!check.ok) return setError(check.error);
+    const body = updateAgentBody.safeParse({ dockerfile, services, cpuLimit: cpu ? Number(cpu) : null, memoryMb: memory ? Number(memory) : null });
+    if (!body.success) return setError(body.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', '));
+    setSaving(true);
+    setError('');
+    try {
+      await onUpdate!(body.data, null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
   const pickImage = (file: File | undefined) => {
     if (!file) return;
     if (!AVATAR_ACCEPT.split(',').includes(file.type)) return setError('The image must be a PNG, JPEG, GIF or WebP');
     if (file.size > AVATAR_MAX_BYTES) return setError('The image must be at most 2 MB');
     setError('');
     setAvatar({ file });
+    setAvatarRevision((revision) => revision + 1);
     setPreview((old) => {
       if (old) URL.revokeObjectURL(old);
       return URL.createObjectURL(file);
@@ -152,12 +192,15 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
       if (old) URL.revokeObjectURL(old);
       return null;
     });
-    setAvatar(agent?.avatarImageUrl ? { remove: true } : null);
+    setAvatar(agent ? { remove: true } : null);
+    setAvatarRevision((revision) => revision + 1);
   };
   const shownImage = avatar && 'remove' in avatar ? null : (preview ?? agent?.avatarImageUrl ?? null);
   const selectClass = 'h-9 w-full rounded-md border bg-background px-3 text-sm';
   return (
-    <form onSubmit={submit} className="space-y-5">
+    <form onSubmit={submit} onBlur={agent ? flush : undefined} className="space-y-5">
+      {agent && <AutosaveStatus {...autosave} label="Agent configuration save status" />}
+      {agent && avatarRevision > 0 && <AutosaveStatus {...avatarAutosave} label="Agent image save status" />}
       <div className="grid grid-cols-[1fr_5rem_4rem] gap-3">
         <Field label="Name">
           <Input aria-label="Agent name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
@@ -276,42 +319,48 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
         ))}
         <Link to="/admin/extensions" className="text-xs underline">Manage shared plugins</Link>
       </fieldset>
-      <fieldset className="space-y-2 rounded-lg border p-3">
-        <legend className="px-1 text-sm font-medium">Services</legend>
-        <p className="text-xs text-muted-foreground">
-          Installed and started inside this agent’s container. Data persists across rebuilds.
-          Changes rebuild the image and apply when the agent is idle.
-        </p>
-        {AGENT_SERVICES.map((service) => (
-          <label key={service} className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              aria-label={AGENT_SERVICE_INFO[service].name}
-              checked={services.includes(service)}
-              onChange={(e) => setServices(e.target.checked ? [...services, service] : services.filter((value) => value !== service))}
-            />
-            <span>
-              <b>{AGENT_SERVICE_INFO[service].name}</b>
-              <span className="block text-xs text-muted-foreground">{AGENT_SERVICE_INFO[service].description}</span>
-            </span>
-          </label>
-        ))}
+      <fieldset className="flex flex-col gap-4 rounded-lg border p-3" disabled={saving}>
+        <legend className="px-1 text-sm font-medium">Docker configuration</legend>
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium">Services</legend>
+          <p className="text-xs text-muted-foreground">
+            Installed and started inside this agent’s container. Data persists across rebuilds.
+            Changes rebuild the image and apply when the agent is idle.
+          </p>
+          {AGENT_SERVICES.map((service) => (
+            <label key={service} className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                aria-label={AGENT_SERVICE_INFO[service].name}
+                checked={services.includes(service)}
+                onChange={(e) => setServices(e.target.checked ? [...services, service] : services.filter((value) => value !== service))}
+              />
+              <span>
+                <b>{AGENT_SERVICE_INFO[service].name}</b>
+                <span className="block text-xs text-muted-foreground">{AGENT_SERVICE_INFO[service].description}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        <div className="space-y-1.5">
+          <Label>Dockerfile</Label>
+          <DockerfileEditor value={dockerfile} onChange={setDockerfile} />
+          <p className="text-xs text-muted-foreground">
+            Start FROM claude-task/agent-base and finish as USER agent. Saving a new Dockerfile builds an image automatically.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="CPU limit" hint="Empty means no limit.">
+            <Input aria-label="CPU limit" type="number" min="0.01" step="0.01" max="256" value={cpu} onChange={(e) => setCpu(e.target.value)} />
+          </Field>
+          <Field label="Memory (MB)">
+            <Input aria-label="Memory (MB)" type="number" min="256" max="1048576" value={memory} onChange={(e) => setMemory(e.target.value)} />
+          </Field>
+        </div>
+        {agent && <Button type="button" className="self-start" disabled={saving} onClick={() => void saveDocker()}>
+          {saving ? 'Saving…' : 'Save Docker configuration'}
+        </Button>}
       </fieldset>
-      <div className="space-y-1.5">
-        <Label>Dockerfile</Label>
-        <DockerfileEditor value={dockerfile} onChange={setDockerfile} />
-        <p className="text-xs text-muted-foreground">
-          Start FROM claude-task/agent-base and finish as USER agent. Saving a new Dockerfile builds an image automatically.
-        </p>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="CPU limit" hint="Empty means no limit.">
-          <Input aria-label="CPU limit" type="number" min="0.01" step="0.01" max="256" value={cpu} onChange={(e) => setCpu(e.target.value)} />
-        </Field>
-        <Field label="Memory (MB)">
-          <Input aria-label="Memory (MB)" type="number" min="256" max="1048576" value={memory} onChange={(e) => setMemory(e.target.value)} />
-        </Field>
-      </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled
       </label>
@@ -320,9 +369,9 @@ export function AgentForm({ agent, onSave }: { agent?: Agent; onSave: (body: Cre
           {error}
         </p>
       )}
-      <Button type="submit" disabled={saving || !credentialId}>
-        {saving ? 'Saving…' : agent ? 'Save agent' : 'Create agent'}
-      </Button>
+      {!agent && <Button type="submit" disabled={saving || !credentialId}>
+        {saving ? 'Saving…' : 'Create agent'}
+      </Button>}
     </form>
   );
 }

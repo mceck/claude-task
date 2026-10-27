@@ -1,3 +1,4 @@
+import { ProjectLogo } from './ProjectLogo';
 import { useQueryClient } from '@tanstack/react-query';
 import { BookOpen, GitBranch, Bot, ChevronsUpDown, FolderKanban, KeyRound, LogOut, Monitor, Moon, Sun, Users } from 'lucide-react';
 import { useTheme } from '@/lib/theme';
@@ -97,9 +98,7 @@ function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
           <p className="mt-5 mb-1 px-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">Boards</p>
           {projects.data.map((p) => (
             <NavLink key={p.id} to={`/p/${p.key}`} className={navItem}>
-              <span className="flex size-5 items-center justify-center rounded bg-primary/15 font-mono text-[9px] font-semibold text-primary">
-                {p.key.slice(0, 2)}
-              </span>
+              <ProjectLogo project={p} className="size-5" compact />
               <span className="truncate">{p.name}</span>
             </NavLink>
           ))}
