@@ -88,6 +88,11 @@ describe('GitLab provider HTTP contract', () => {
     expect(requests.find((r) => r.method === 'POST')!.body).toEqual({ source_branch: 'task/api-1-x', target_branch: 'main', title: 'Draft: Fix login', description: 'Details' });
     expect(requests.find((r) => r.path.startsWith('/projects/42/merge_requests?'))!.path).toContain('state=opened&source_branch=task%2Fapi-1-x&target_branch=main');
   });
+  it('merges a merge request', async () => {
+    const { provider, requests } = await harness((r) => (r.path === '/projects/42/merge_requests/3/merge' && r.method === 'PUT' ? { body: mr({ state: 'merged' }) } : undefined));
+    expect((await provider.mergePullRequest(ref, 3)).state).toBe('merged');
+    expect(requests.some((r) => r.method === 'PUT' && r.path === '/projects/42/merge_requests/3/merge')).toBe(true);
+  });
   it('updates the open merge request and keeps its draft state', async () => {
     const { provider, requests } = await harness((r) => {
       if (r.path.startsWith('/projects/42/merge_requests?')) return { body: [mr({ draft: true })] };

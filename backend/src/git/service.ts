@@ -6,6 +6,7 @@ import { transact } from '../context';
 import type { Executor } from '../db/client';
 import { comments, jobs, projects, sessions, taskRevisions, tasks } from '../db/schema';
 import { badRequest, conflict } from '../errors';
+import { GitProviderError } from './provider';
 import { getProject, serializeProject } from '../modules/projects/service';
 import { emitTasksChanged, getTaskRow } from '../modules/tasks/service';
 import type { TaskRow } from '../modules/tasks/service';
@@ -152,6 +153,52 @@ export async function openPullRequest(
       .returning();
     after.effect((c) => c.scheduler.publishComments([notice!.id], 'created'));
     return { number: pr.number, url: pr.url, state: pr.state, draft: pr.draft };
+  });
+}
+
+/** A human merges the Task's open Pull Request from the Task view. The merge uses the provider's default method and its own rules. */
+export async function mergePullRequest(ctx: AppContext, taskId: string, actor: Actor): Promise<void> {
+  const task = await getTaskRow(ctx.db, taskId);
+  const p = await getProject(ctx.db, task.projectId);
+  const current = task.pullRequest;
+  if (!p.repository || !current) throw conflict('This task has no pull request');
+  const noun = pullRequestNoun(current.provider);
+  if (current.state !== 'open') throw conflict(`This ${noun} is ${current.state}, not open`);
+  if (current.draft) throw conflict(`This ${noun} is a draft. Mark it ready first`);
+  const git = await ctx.git.provider(p.repository.connectionId);
+  let merged: Omit<PullRequest, 'checkedAt'>;
+  try {
+    merged = await git.mergePullRequest(p.repository, current.number);
+  } catch (err) {
+    if (err instanceof GitProviderError && [405, 406, 409, 422].includes(err.status))
+      throw conflict(`The provider refused to merge this ${noun}: it may have conflicts, failing checks or missing approvals.`);
+    throw err;
+  }
+  const pr = { ...merged, checkedAt: new Date().toISOString() };
+  await transact(ctx, async (tx, after) => {
+    await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, p.id)).for('share');
+    const locked = await getTaskRow(tx, taskId, { lock: true });
+    const project = await getProject(tx, p.id);
+    // The merge already happened on the provider: only skip recording when the Task no longer points to this Pull Request.
+    if (
+      project.repository?.connectionId !== p.repository?.connectionId ||
+      project.repository?.providerRepoId !== p.repository?.providerRepoId ||
+      locked.pullRequest?.number !== pr.number
+    )
+      return;
+    await recordPullRequest(tx, after, locked, pr, actor);
+    if (pr.state !== 'merged') return;
+    const [notice] = await tx
+      .insert(comments)
+      .values({
+        taskId,
+        kind: 'system',
+        authorType: 'system',
+        body: `${capitalize(pullRequestNoun(pr.provider))} [${pullRequestRef(pr)}](${pr.url}) merged by ${actor.displayName}.`,
+        createdAt: sql`clock_timestamp()`,
+      })
+      .returning();
+    after.effect((c) => c.scheduler.publishComments([notice!.id], 'created'));
   });
 }
 

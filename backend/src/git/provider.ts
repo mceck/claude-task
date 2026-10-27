@@ -34,6 +34,8 @@ export interface GitProvider {
   branchExists(ref: RepositoryRef, branch: string): Promise<boolean>;
   upsertPullRequest(ref: RepositoryRef, input: PullRequestInput): Promise<Omit<PullRequest, 'checkedAt'>>;
   getPullRequest(ref: RepositoryRef, number: number): Promise<Omit<PullRequest, 'checkedAt'>>;
+  /** Merges an open, non-draft Pull Request with the provider's default merge method; throws a GitProviderError when the provider refuses. */
+  mergePullRequest(ref: RepositoryRef, number: number): Promise<Omit<PullRequest, 'checkedAt'>>;
   branchWebUrl(ref: RepositoryRef, branch: string): string;
 }
 export class GitProviderError extends Error {

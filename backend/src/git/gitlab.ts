@@ -209,6 +209,9 @@ export class GitLabProvider implements GitProvider {
       }),
     );
   }
+  async mergePullRequest(ref: RepositoryRef, number: number) {
+    return serializeMR(await this.request<MR>(`${projectPath(ref)}/merge_requests/${number}/merge`, 'PUT', {}));
+  }
   async getPullRequest(ref: RepositoryRef, number: number) {
     return serializeMR(await this.request<MR>(`${projectPath(ref)}/merge_requests/${number}`));
   }

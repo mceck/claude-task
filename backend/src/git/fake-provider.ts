@@ -103,6 +103,15 @@ export class FakeGitProvider implements GitProvider {
     this.pullRequests.set(ref.providerRepoId, prs);
     return { provider: this.kind, number: pr.number, url: pr.url, state: pr.state, draft: pr.draft };
   }
+  /** Set to make merges fail, like a provider refusing a conflicting or unapproved merge. */
+  mergeRefusal: string | null = null;
+  async mergePullRequest(ref: RepositoryRef, number: number) {
+    const pr = this.pullRequests.get(ref.providerRepoId)?.find((p) => p.number === number);
+    if (!pr) throw new GitProviderError('Pull request not found', 404);
+    if (this.mergeRefusal) throw new GitProviderError(this.mergeRefusal, 405);
+    pr.state = 'merged';
+    return { provider: this.kind, number: pr.number, url: pr.url, state: pr.state, draft: pr.draft };
+  }
   async getPullRequest(ref: RepositoryRef, number: number) {
     const pr = this.pullRequests.get(ref.providerRepoId)?.find((p) => p.number === number);
     if (!pr) throw new GitProviderError('Pull request not found', 404);

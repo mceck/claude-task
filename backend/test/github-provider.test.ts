@@ -139,6 +139,15 @@ describe('GitHub App provider HTTP contract', () => {
     });
     expect((await provider.getPullRequest(ref, 5)).state).toBe('merged');
   });
+  it('merges with a contents-and-PR write token and returns the refreshed PR', async () => {
+    const { provider, requests } = await harness((r) => {
+      if (r.path.endsWith('/pulls/5/merge')) return { body: { merged: true } };
+      if (r.path.endsWith('/pulls/5')) return { body: { number: 5, html_url: 'https://github.com/acme/example/pull/5', state: 'closed', draft: false, merged_at: '2026-10-25T00:00:00Z' } };
+    });
+    expect(await provider.mergePullRequest(ref, 5)).toMatchObject({ provider: 'github', number: 5, state: 'merged' });
+    expect(requests.find((r) => r.method === 'PUT')!.path).toMatch(/\/pulls\/5\/merge$/);
+    expect(requests.find((r) => r.path.endsWith('/access_tokens'))!.body).toEqual({ repository_ids: [42], permissions: { contents: 'write', pull_requests: 'write' } });
+  });
   it('creates PRs when no open head exists and surfaces sanitized API errors', async () => {
     const { provider } = await harness((r) => {
       if (r.path.includes('/pulls?')) return { body: [] };
