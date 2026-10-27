@@ -93,6 +93,7 @@ Any User creates a Task in a Project, from the "Add task" box at the bottom of a
 - **Title**: 1 to 500 characters after trimming. Required.
 - **Description**: Markdown, up to 100,000 characters, empty by default.
 - **Status**: any Status of the Project; by default the first `open` Status in order.
+- **Agent**: the Project's **default Agent** (set in its "Agents" settings) when it is enabled, otherwise none. Assigning it creates the usual `pending` Session; nothing starts until the first User Comment. A disabled or deleted default Agent leaves new Tasks without an Agent (deleting an Agent clears the setting).
 - **Priority**: `none` by default.
 - **Tags**: up to 50, all from the same Project.
 - **Assignees**: up to 50 existing Users.

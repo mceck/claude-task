@@ -52,10 +52,12 @@ The platform's Push Policy allows an Agent to push its own Task Branch, includin
 1. Assign an Agent to a Task and send a Comment with the requested work.
 2. Ask the Agent to commit, push and open or update a pull request when ready.
 3. Open the Task's branch link to inspect the code, or its pull request badge to review on the provider.
-4. Review and merge on GitHub or GitLab.
+4. Review the code. When the pull request is open and not a draft, click **Merge pull request** (**Merge merge request** on GitLab) in the Task's "Task code" section and confirm, or merge on GitHub or GitLab. The provider's own rules (required reviews, checks, conflicts) still apply: if it refuses, you see an error and nothing changes.
 5. Set the Task's Status to reflect your team's workflow.
 
 Task Branch names are assigned when the first Job starts, for example `task/web-12-improve-onboarding`. Renaming the Task keeps that branch name. GitLab badges use merge request terminology.
+
+A Task has one pull request at a time. If you ask the Agent for changes while it is open, the Agent pushes to the same branch and the pull request updates; once it is merged or closed, the Agent opens a new one.
 
 Pull request state and Task Status are independent. Merging a pull request leaves the Task's Status unchanged. Moving a Task to **Done** also leaves the Session available; a Status in the `closed` Category ends it.
 

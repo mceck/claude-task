@@ -10,6 +10,7 @@ import { notFound, parse } from '../../errors';
 import { loadTimeline } from '../comments/service';
 import { assertBoardTask, getBoardProject } from '../projects/service';
 import { createTask, deleteTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from './service';
+import { mergePullRequest } from '../../git/service';
 import { idOrKey } from '../../ids';
 
 const projectParams = z.object({ projectId: idOrKey });
@@ -55,6 +56,14 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
       return updateTask(tx, after, id, body, actor);
     });
     return { task };
+  });
+
+  app.post('/tasks/:id/pull-request/merge', async (request) => {
+    const { id } = parse(params, request.params);
+    const row = await getTaskRow(ctx.db, id);
+    await assertBoardTask(ctx.db, row.projectId);
+    await mergePullRequest(ctx, row.id, userActor(currentUser(request)));
+    return { task: await loadTask(ctx.db, row.id) };
   });
 
   app.post('/tasks/:id/move', async (request) => {

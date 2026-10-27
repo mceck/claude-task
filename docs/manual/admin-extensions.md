@@ -52,8 +52,9 @@ Catalog imports and updates do not assign an Extension automatically. Select ent
 
 1. Open the Project's **Settings** → **Agents**.
 2. Enter **Worktree setup script**, such as the dependency installation commands that the repository needs.
-3. Enter **Agent instructions** for every Agent working on this Project.
-4. Click **Save agent settings**.
+3. Choose a **Default agent** if new tasks should start with an Agent assigned (it only starts working on the first comment; a disabled or removed Agent leaves new tasks unassigned).
+4. Enter **Agent instructions** for every Agent working on this Project.
+5. Click **Save agent settings**.
 
 The script runs once for each new Worktree before Claude starts. Existing Worktrees are not prepared again when the script changes. Repository tool-version files are handled with mise before the setup script. Repository `CLAUDE.md` instructions still apply alongside the Project's instructions.
 

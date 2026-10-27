@@ -392,4 +392,23 @@ describe('project settings for Agents', () => {
     expect(res.status).toBe(200);
     expect(res.body.settings).toMatchObject({ setupScript: 'pnpm install', agentInstructions: 'Run pnpm test before review.' });
   });
+
+  it('assigns the Project default Agent to new tasks, and creates them without when it is disabled or removed', async () => {
+    const admin = await app.admin();
+    const { project } = await createProject(admin);
+    const { agent } = await createAgent(app, admin);
+    expect((await admin.patch(`/projects/${project.id}/agent-settings`, { defaultAgentId: crypto.randomUUID() })).status).toBe(400);
+    const set = await admin.patch(`/projects/${project.id}/agent-settings`, { defaultAgentId: agent.id });
+    expect(set.body.settings.defaultAgentId).toBe(agent.id);
+    const task = await createTask(admin, project.id);
+    expect(task.agentId).toBe(agent.id);
+    expect((await admin.get(`/tasks/${task.id}/session`)).body.session).toMatchObject({ state: 'pending' });
+    await admin.patch(`/agents/${agent.id}`, { enabled: false });
+    expect((await createTask(admin, project.id)).agentId).toBeNull();
+    await admin.patch(`/agents/${agent.id}`, { enabled: true });
+    await admin.patch(`/tasks/${task.id}`, { version: task.version, agentId: null });
+    expect((await admin.delete(`/agents/${agent.id}`)).status).toBe(204);
+    expect((await createTask(admin, project.id)).agentId).toBeNull();
+    expect((await admin.get(`/projects/${project.id}/agent-settings`)).body.settings.defaultAgentId).toBeNull();
+  });
 });

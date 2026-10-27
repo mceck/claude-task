@@ -29,7 +29,7 @@ Agents are the platform's Claude Code workers. This area covers an **Agent** as 
 | Manage Credentials | Admins |
 | Manage the Extensions catalog and its MCP server list | Admins |
 | Read the Skills and Plugins catalogs | Every User |
-| Edit a Project's Setup Script and Agent Instructions | Every User |
+| Edit a Project's Setup Script, Agent Instructions and default Agent | Every User |
 | Add, change, import and delete a Project's environment variables, plain or secret | Admins |
 | Read a Project's environment variables (secret values appear as their last four characters) | Every User |
 
@@ -170,7 +170,7 @@ The Job's environment is the Project's variables, then the Credential's variable
 
 ### Project environment variables
 
-Each Project has an "Agents" settings section holding its Setup Script and Agent Instructions (editable by every User; their use is described in [Git integration](git-integration.md) and [Agent sessions](agent-sessions.md)) and its environment variables (managed by Admins).
+Each Project has an "Agents" settings section holding its default Agent (assigned to new Tasks, see [Board](board.md)), its Setup Script and Agent Instructions (editable by every User; their use is described in [Git integration](git-integration.md) and [Agent sessions](agent-sessions.md)) and its environment variables (managed by Admins).
 
 The Setup Script and Agent Instructions save automatically after 600 ms without edits, on leaving a field, or when switching settings tabs or navigating to another app view. Each save carries only the fields that changed. Saves run in order and include newer edits made during a request. The section shows saving, saved or failed state, preserves failed edits and offers Retry. Environment variables, secrets and imports use their own add, update, delete and import actions.
 

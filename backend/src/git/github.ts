@@ -194,6 +194,11 @@ export class GitHubProvider implements GitProvider {
       return serializePR(await this.request<PR>(`${repoPath(ref)}/pulls/${open[0].number}`, auth, 'PATCH', { title: input.title, body: input.body }));
     return serializePR(await this.request<PR>(`${repoPath(ref)}/pulls`, auth, 'POST', input));
   }
+  async mergePullRequest(ref: RepositoryRef, number: number) {
+    const auth = await this.auth(ref, { contents: 'write', pull_requests: 'write' });
+    await this.request(`${repoPath(ref)}/pulls/${number}/merge`, auth, 'PUT', {});
+    return serializePR(await this.request<PR>(`${repoPath(ref)}/pulls/${number}`, auth));
+  }
   async getPullRequest(ref: RepositoryRef, number: number) {
     return serializePR(await this.request<PR>(`${repoPath(ref)}/pulls/${number}`, await this.auth(ref, { pull_requests: 'read' })));
   }

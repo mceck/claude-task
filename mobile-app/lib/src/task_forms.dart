@@ -557,6 +557,14 @@ class TaskDetails extends StatelessWidget {
                       color: Palette.success,
                       onTap: () => openLink(t.pullRequestUrl),
                     ),
+                  if (t.canMergePullRequest && edit != null)
+                    AppButton(
+                      label: 'Merge ${t.pullRequestNoun}',
+                      icon: Icons.merge_rounded,
+                      tone: Tone.ghost,
+                      onPressed: () =>
+                          confirmMergePullRequest(context, controller),
+                    ),
                 ],
               ),
             ),
@@ -896,6 +904,22 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
       ),
     ),
   );
+}
+
+Future<void> confirmMergePullRequest(
+  BuildContext context,
+  TaskController controller,
+) async {
+  final noun = controller.task!.pullRequestNoun;
+  final accepted = await confirm(
+    context,
+    title: 'Merge $noun?',
+    message: 'It is merged into the base branch with the provider\'s default merge method.',
+    confirmLabel: 'Merge',
+  );
+  if (accepted && context.mounted) {
+    await perform(context, controller.mergePullRequest);
+  }
 }
 
 Future<void> confirmDeleteTask(

@@ -295,6 +295,7 @@ export type MoveQueueEntryBody = z.infer<typeof moveQueueEntryBody>;
 export const updateAgentSettingsBody = z.strictObject({
   setupScript: z.string().max(100_000).optional(),
   agentInstructions: z.string().max(100_000).optional(),
+  defaultAgentId: id.nullable().optional(),
 });
 export type UpdateAgentSettingsBody = z.infer<typeof updateAgentSettingsBody>;
 

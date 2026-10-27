@@ -1,8 +1,8 @@
-import { BranchLink, PullRequestBadge } from './Git';
-import { AGENTS_TOPIC, PRIORITIES, taskTopic } from '@claude-task/shared';
+import { BranchLink, PullRequestBadge, capitalize, withProvider } from './Git';
+import { AGENTS_TOPIC, PRIORITIES, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { Expand, Eye, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
@@ -42,6 +42,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const qc = useQueryClient();
   const navigate = useNavigate();
   const confirm = useConfirm();
+  const [merging, setMerging] = useState(false);
   const layout = useTaskLayout();
   const [hideChanges, setHideChanges] = useState(true);
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
@@ -127,6 +128,25 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
       applied((await post<{ task: Task }>(`/tasks/${task.id}/move`, { statusId })).task);
     } catch (err) {
       toast.error('Couldn’t change the status', { description: errorMessage(err) });
+    }
+  };
+
+  const mergePullRequest = async (pr: NonNullable<Task['pullRequest']>) => {
+    const noun = pullRequestNoun(pr.provider);
+    const ok = await confirm({
+      title: `Merge ${noun} ${pullRequestRef(pr)}?`,
+      description: `The ${noun} is merged into the base branch with the provider’s default merge method. This can’t be undone from here.`,
+      confirmLabel: 'Merge',
+    });
+    if (!ok) return;
+    setMerging(true);
+    try {
+      applied((await post<{ task: Task }>(`/tasks/${task.id}/pull-request/merge`)).task);
+      toast.success(`${capitalize(noun)} ${pullRequestRef(pr)} merged`);
+    } catch (err) {
+      toast.error(`Couldn’t merge the ${noun}`, { description: errorMessage(err) });
+    } finally {
+      setMerging(false);
     }
   };
 
@@ -377,6 +397,11 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               {(task.branchName || task.pullRequest) && <section aria-label="Task code" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
                 {task.branchName && task.branchUrl && <BranchLink name={task.branchName} url={task.branchUrl} />}
                 {task.pullRequest && <PullRequestBadge pr={task.pullRequest} />}
+                {task.pullRequest?.state === 'open' && !task.pullRequest.draft && (
+                  <Button size="sm" variant="outline" className="ml-auto" disabled={merging} onClick={() => mergePullRequest(task.pullRequest!)}>
+                    <GitMerge className="size-3.5" /> {merging ? 'Merging…' : `Merge ${pullRequestNoun(withProvider(task.pullRequest).provider)}`}
+                  </Button>
+                )}
               </section>}
               <Description taskId={task.id} description={shown.description} onSave={(description) => save({ description })} overlayContainer={overlay} />
             </div>

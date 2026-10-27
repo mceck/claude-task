@@ -243,6 +243,34 @@ describe('Git integration through the public API', () => {
     await client.close();
   });
 
+  it('merges the open PR from the task with one call, refuses drafts and provider refusals, and records who merged', async () => {
+    const { admin, task, start } = await running();
+    app.git.branches.get('1')!.add(start.git!.taskBranch);
+    const client = await clientFor(start);
+    expect((await admin.post(`/tasks/${task.id}/pull-request/merge`, {})).status).toBe(409);
+    await callPR(client, 'Draft work', true);
+    expect((await admin.post(`/tasks/${task.id}/pull-request/merge`, {})).status).toBe(409);
+    const remote = app.git.pullRequests.get('1')![0]!;
+    remote.draft = false;
+    await app.server.ctx.gitSync.refreshTask(task.id, 0);
+    app.git.mergeRefusal = 'conflicts';
+    const refused = await admin.post(`/tasks/${task.id}/pull-request/merge`, {});
+    expect(refused.status).toBe(409);
+    expect(remote.state).toBe('open');
+    app.git.mergeRefusal = null;
+    const merged = await admin.post(`/tasks/${task.id}/pull-request/merge`, {});
+    expect(merged.status).toBe(200);
+    expect(merged.body.task.pullRequest).toMatchObject({ number: 1, state: 'merged' });
+    expect(remote.state).toBe('merged');
+    const items = await timeline(admin, task.id);
+    expect(items.some((i) => i.type === 'revision' && i.revision.actor.type === 'user' && i.revision.changes[0]?.field === 'pullRequest')).toBe(true);
+    expect(items.some((i) => i.type === 'comment' && i.comment.body.includes('merged by'))).toBe(true);
+    expect((await admin.post(`/tasks/${task.id}/pull-request/merge`, {})).status).toBe(409);
+    // A merged PR frees the slot: the next open_pull_request creates a new one.
+    expect(JSON.parse((await callPR(client)).text).number).toBe(2);
+    await client.close();
+  });
+
   it('refreshes PR state on opening a task and broadcasts card changes without moving status or ending the session', async () => {
     const { admin, bundle, runner, task, start } = await running();
     app.git.branches.get('1')!.add(start.git!.taskBranch);

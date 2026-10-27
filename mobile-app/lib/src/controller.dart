@@ -637,9 +637,7 @@ class TaskController extends ChangeNotifier {
         'chatGeneration': t.chatGeneration,
         'branchName': t.branchName,
         'branchUrl': t.branchUrl,
-        'pullRequest': t.pullRequestUrl == null
-            ? null
-            : {'url': t.pullRequestUrl},
+        'pullRequest': t.pullRequest,
       },
       'items': timeline.map((e) => e.json).toList(),
       'nextCursor': nextCursor,
@@ -821,6 +819,19 @@ class TaskController extends ChangeNotifier {
     final result = await _request('POST', '/tasks/${task!.id}/session/$action');
     session = result['session'] as Json?;
     notifyListeners();
+  }
+
+  Future<void> mergePullRequest() async {
+    final current = task!;
+    final result = await _request(
+      'POST',
+      '/tasks/${current.id}/pull-request/merge',
+    );
+    if (task?.id == current.id) {
+      task = Task.fromJson(result['task'] as Json);
+      await _cacheTask();
+      notifyListeners();
+    }
   }
 
   Future<void> setPreference(Json patch) async {

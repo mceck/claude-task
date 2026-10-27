@@ -309,6 +309,18 @@ Provider specifics:
 - GitHub: the open Pull Request is searched by head `<owner>:<Task Branch>` and base. A Pull Request reported as merged is `merged`; otherwise its state is `open` or `closed`.
 - GitLab: drafts are expressed with the `Draft: ` title prefix. Draft markers the Agent puts at the start of its title (`Draft:`, `[Draft]`, `(Draft)`, `Draft `) are stripped first, and the prefix is added back when the request is a draft or, on update, when the existing merge request is one. States map as `opened` to open, `merged` to merged, `closed` and `locked` to closed.
 
+- At most one Pull Request is attached to a Task at a time. While it is open (draft or not), the Agent's `open_pull_request` calls update it and the Agent's pushes to the Task Branch show up in it. Once it is merged or closed, the next `open_pull_request` creates a new one and replaces the stored link.
+
+### Merging from the Task view
+
+A User merges the Task's Pull Request with one action, without leaving the platform. `POST /tasks/:id/pull-request/merge` is available to any User and works only for Board Tasks whose stored Pull Request is **open and not a draft**; otherwise it answers 409 ("no pull request", "is merged/closed", "is a draft").
+
+1. The backend asks the provider to merge it with the provider's default merge method (GitHub: merge commit; GitLab: the project's setting). The GitHub token for this operation is scoped to Contents write and Pull requests write on the one Repository; the GitLab call uses the connection's token.
+2. If the provider refuses (conflicts, failing checks, missing approvals, branch rules; HTTP 405, 406, 409 or 422), the request fails with 409 and a generic message; nothing changes on the Task. Other provider failures are reported as for any provider call.
+3. On success the stored Pull Request is updated from the provider's answer, a Revision attributed to the User is recorded, the Board and Task view are updated, and a System Comment says "Pull request [#N](link) merged by <User>." (or "Merge request [!N](...)").
+
+Merging doesn't change the Task's Status or Session. The provider's own rules still apply: the platform never bypasses them.
+
 ### Pull Request state sync
 
 The platform polls providers; it needs no webhooks, so the backend can stay unreachable from the internet.
@@ -322,7 +334,7 @@ Pull Request state never changes a Task's Status or a Session: merging doesn't c
 
 ### What Users see
 
-- **Task view**: a "Task code" section with the Task Branch name (linking to the branch page on the provider) and the Pull Request badge. The branch link appears once a Job has stored it; after a Repository change it returns with the next Job.
+- **Task view**: a "Task code" section with the Task Branch name (linking to the branch page on the provider), the Pull Request badge and, while the Pull Request is open and not a draft, a **Merge pull request** / **Merge merge request** button that asks for confirmation first. The branch link appears once a Job has stored it; after a Repository change it returns with the next Job.
 - **Board card**: the Pull Request badge, linking to the provider: `#N` or `!N` followed by `open`, `draft`, `merged` or `closed`, coloured green for open, muted for draft, violet for merged and red for closed. Its label says "Pull request" or "Merge request" by provider.
 - **Timeline**: Pull Request changes appear as Revisions, such as "updated merge request !3 (merged)", next to the System Comments posted by `open_pull_request`.
 - **Wikis** show the branch and Pull Request of their Task the same way.
@@ -362,7 +374,7 @@ flowchart LR
 
 - **Git Connections registry**: lists environment and stored connections, decrypts secrets, and resolves the provider adapter for a connection id. Adapter instances are kept per connection and rebuilt whenever the connection changes, so their token caches survive between requests and reset on any edit. Every part of the backend that talks to a provider resolves it from the Project's Repository's connection.
 - **Provider adapters** (GitHub, GitLab): the only place that knows a provider. Each one validates its credential, lists accessible Repositories, reads a Repository by id, checks whether a branch exists, builds branch links, checks Base Branch Protection, gives the Git Proxy its upstream, opens or updates Pull Requests and reads their state; the GitLab adapter also rotates its token. Provider requests time out after 15 seconds, refuse redirects, and report failures as short messages with the HTTP status, never the provider's response body or the credential.
-- **GitHub adapter**: authenticates as the App with a short-lived signed JWT (valid 9 minutes), finds the installation for each Repository, and requests installation tokens limited to the one Repository and to the permissions each operation needs: Metadata read to list, Contents read to read and check branches, Pull requests write to open, Pull requests read to poll, Contents and Administration read for protection, Contents write for the Git Proxy. Tokens are cached per installation, Repository and permission set until 5 minutes before they expire. It talks to the github.com REST API.
+- **GitHub adapter**: authenticates as the App with a short-lived signed JWT (valid 9 minutes), finds the installation for each Repository, and requests installation tokens limited to the one Repository and to the permissions each operation needs: Metadata read to list, Contents read to read and check branches, Pull requests write to open, Contents and Pull requests write to merge, Pull requests read to poll, Contents and Administration read for protection, Contents write for the Git Proxy. Tokens are cached per installation, Repository and permission set until 5 minutes before they expire. It talks to the github.com REST API.
 - **GitLab adapter**: the REST API v4 under the connection's URL, with the token in the `PRIVATE-TOKEN` header. It follows GitLab's pagination and caches the token's user.
 - **Git Proxy**: described above; it shares the backend's listener and database.
 - **Dispatcher**: computes and stores the Task Branch, checks it remotely, and puts the git section into the Job start (see [Agent sessions](agent-sessions.md)).
@@ -379,6 +391,7 @@ The backend's public address `APP_URL` is used for Task links in Pull Request fo
 | List repositories | Any User | Repositories grouped by connection, with an error per failing connection |
 | Read, set a Project's Repository | Any User | Repository and Base Branch, plus whether the Project has non-closed Sessions |
 | Re-check protection | Any User | Refreshes Base Branch Protection |
+| Merge a Task's Pull Request | Any User | Merges its open, non-draft Pull Request on the provider |
 
 The shared types package defines the payloads. Secrets are accepted on create and update and never returned.
 
@@ -416,6 +429,7 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - **The GitLab upstream URL is built from the connection's URL.** GitLab's reported clone URL can point to plain HTTP or another host when the instance's external URL is misconfigured, and the token must only go to the configured host.
 - **GitHub tokens are scoped per operation.** The token the proxy uses can write contents of one Repository only; Pull Request operations use separate tokens; all of them stay in the backend.
 - **Polling instead of webhooks.** The backend needs no public address and no webhook secret per provider; a 5-minute delay is acceptable for Pull Request state.
+- **Merging is a User action in the backend, not an Agent tool.** The Push Policy keeps Agents off the Base Branch, so merging is left to Users; the backend does it with the connection's credential, which never leaves it, and the provider's rules (reviews, checks, protection) still decide whether the merge is allowed.
 - **Pull Request state is independent of Task Status.** Status never drives Agents, and merging doesn't mean the Task is done; humans decide.
 - **Deterministic Worktree paths and a bare clone per Project.** `claude --resume` needs the same working directory, and Worktrees sharing one bare clone keep disk use and fetch time low for an Agent working on many Tasks of the same Project.
 - **The Task Branch name is fixed once chosen.** Links, open Pull Requests and the Agent's own memory of the branch all depend on it, so renaming the Task keeps it.

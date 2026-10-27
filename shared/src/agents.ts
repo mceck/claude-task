@@ -252,5 +252,7 @@ export interface ProjectEnvVar {
 export interface ProjectAgentSettings {
   setupScript: string;
   agentInstructions: string;
+  /** New Tasks start assigned to this Agent while it is enabled. */
+  defaultAgentId: string | null;
   env: ProjectEnvVar[];
 }
