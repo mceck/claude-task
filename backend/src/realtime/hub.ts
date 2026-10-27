@@ -2,7 +2,7 @@ import type { RealtimeEvent, ServerMessage, Topic } from '@claude-task/shared';
 import type { WebSocket } from 'ws';
 
 const MAX_BACKLOG_BYTES = 16 * 1024 * 1024;
-const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents)$/;
+const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents|wikis)$/;
 
 export function isTopic(value: unknown): value is Topic {
   return typeof value === 'string' && TOPIC_PATTERN.test(value);

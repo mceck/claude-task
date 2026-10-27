@@ -28,6 +28,8 @@ function update(taskId: string, fn: (t: LiveTurn) => LiveTurn) {
 
 export function applyLiveEvent(event: RealtimeEvent): void {
   switch (event.type) {
+    case 'timeline.reset':
+      return update(event.taskId, () => EMPTY);
     case 'live.delta':
       return update(event.taskId, (t) =>
         event.delta.kind === 'text' ? { ...t, text: t.text + event.delta.text } : { ...t, thinking: t.thinking + event.delta.text },

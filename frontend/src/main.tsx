@@ -1,3 +1,4 @@
+import { WikisPage, WikiPage } from './pages/WikisPage';
 import { GitConnectionsPage } from './pages/GitConnectionsPage';
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
@@ -52,6 +53,8 @@ const router = createBrowserRouter([
       { path: '/p/:projectKey/settings', element: <ProjectSettingsPage /> },
       { path: '/t/:taskKey', element: <TaskPage /> },
       { path: '/admin/users', element: <UsersPage /> },
+      { path: '/wikis', element: <WikisPage /> },
+      { path: '/wikis/:wikiId', element: <WikiPage /> },
       { path: '/agents', element: <AgentsPage /> },
       { path: '/agents/:agentId', element: <AgentPage /> },
       { path: '/admin/credentials', element: <CredentialsPage /> },

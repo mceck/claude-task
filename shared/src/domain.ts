@@ -1,5 +1,5 @@
 import type { ProjectRepository, PullRequest } from './git';
-// Entity shapes returned by the API. Terms follow CONTEXT.md.
+// Entity shapes returned by the API. Terms follow docs/CONTEXT.md.
 import type { AgentItemPayload, Delivery, SessionState } from './agents';
 
 export const ROLES = ['admin', 'member'] as const;
@@ -84,6 +84,8 @@ export interface TaskCard {
   tagIds: string[];
   assigneeIds: string[];
   commentCount: number;
+  /** Incremented when Reset Chat clears the conversation. */
+  chatGeneration?: number;
   /** The assigned Agent, if any. */
   agentId: string | null;
   /** The current Session's state on the card (agent avatar + state dot). */
@@ -170,6 +172,8 @@ export type TimelineItem = (
 ) & { /** Persisted read position, supplied by Timeline HTTP responses. */ readPosition?: string };
 
 export interface TimelinePage {
+  /** Conversation generation for detecting a Reset Chat during page loads. */
+  chatGeneration?: number;
   /** Newest first. */
   items: TimelineItem[];
   /** Pass as `before` to get older items; null when there are none. */

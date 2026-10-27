@@ -224,6 +224,7 @@ class FakeApi implements TaskApi {
       return {'user': user};
     }
     if (path == '/auth/logout') return {};
+    if (path == '/wikis') return {'wikis': <Json>[]};
     if (path == '/projects') {
       return {
         'projects': [projectData],

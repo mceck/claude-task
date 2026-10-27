@@ -76,9 +76,9 @@ class Agent implements Identified {
       name = json['name'] as String,
       emoji = json['avatarEmoji'] as String? ?? '🤖',
       enabled = json['enabled'] == true,
-      skillCommands = objects(
-        json['skillCommands'],
-      ).map(SkillCommand.fromJson).toList();
+      skillCommands = objects(json['skillCommands'])
+          .map(SkillCommand.fromJson)
+          .toList();
 }
 
 class SkillCommand {
@@ -89,6 +89,22 @@ class SkillCommand {
       kind = json['kind'] as String? ?? 'skill';
 }
 
+class Wiki implements Identified {
+  @override
+  final String id;
+  final String name, description, taskId;
+  final String? agentId;
+  final Json repository;
+  Wiki.fromJson(Json json)
+    : id = json['id'] as String,
+      name = json['name'] as String,
+      description = json['description'] as String? ?? '',
+      taskId = json['taskId'] as String,
+      agentId = json['agentId'] as String?,
+      repository = Map<String, dynamic>.from(json['repository'] as Map);
+  String get repositoryName => '${repository['owner']}/${repository['name']}';
+}
+
 class Task {
   final String id, projectId, key, title, description, statusId, priority;
   final String? agentId, branchName, branchUrl, pullRequestUrl;
@@ -97,7 +113,7 @@ class Task {
   final String? sessionState;
   final int? queuePosition;
   final List<String> tagIds, assigneeIds;
-  final int version, commentCount;
+  final int version, commentCount, chatGeneration;
   Task.fromJson(Json json)
     : id = json['id'] as String,
       projectId = json['projectId'] as String,
@@ -109,6 +125,7 @@ class Task {
       agentId = json['agentId'] as String?,
       tagIds = strings(json['tagIds']),
       assigneeIds = strings(json['assigneeIds']),
+      chatGeneration = json['chatGeneration'] as int? ?? 0,
       version = json['version'] as int? ?? 1,
       commentCount = (json['commentCount'] as num?)?.toInt() ?? 0,
       sessionState = (json['session'] as Map?)?['state'] as String?,

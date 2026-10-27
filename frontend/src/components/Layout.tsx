@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { GitBranch, Bot, ChevronsUpDown, FolderKanban, KeyRound, LogOut, Monitor, Moon, Sun, Users } from 'lucide-react';
+import { BookOpen, GitBranch, Bot, ChevronsUpDown, FolderKanban, KeyRound, LogOut, Monitor, Moon, Sun, Users } from 'lucide-react';
 import { useTheme } from '@/lib/theme';
 import type { Theme } from '@/lib/theme';
 import { useEffect } from 'react';
@@ -82,6 +82,7 @@ function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
       <NavLink to="/" end className={navItem}>
         <FolderKanban className="size-4" /> Projects
       </NavLink>
+      <NavLink to="/wikis" className={navItem}><BookOpen className="size-4" /> Wiki</NavLink>
       <NavLink to="/agents" className={navItem}><Bot className="size-4" /> Agents</NavLink>
       {isAdmin && <NavLink to="/admin/extensions" className={navItem}><Bot className="size-4" /> Extensions</NavLink>}
       {isAdmin && <NavLink to="/admin/credentials" className={navItem}><KeyRound className="size-4" /> Credentials</NavLink>}

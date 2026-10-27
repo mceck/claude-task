@@ -4,7 +4,7 @@ import type { UserEvent } from './mobile';
 import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, TaskSession } from './agents';
 import type { AgentItem, Comment, Tag, Project, Revision, Status, Task, TaskCard } from './domain';
 
-export type Topic = `project:${string}` | `task:${string}` | 'agents' | `agent:${string}` | `user:${string}`;
+export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | `agent:${string}` | `user:${string}`;
 
 export const projectTopic = (projectId: string): Topic => `project:${projectId}`;
 export const taskTopic = (taskId: string): Topic => `task:${taskId}`;
@@ -26,6 +26,7 @@ export type BoardEvent =
 export type TaskEvent =
   | { type: 'task.changed'; task: Task }
   | { type: 'task.removed'; taskId: string }
+  | { type: 'timeline.reset'; taskId: string }
   | { type: 'comment.created'; comment: Comment }
   | { type: 'comment.updated'; comment: Comment }
   | { type: 'comment.deleted'; comment: Comment }
@@ -48,7 +49,7 @@ export type AgentEvent =
   | { type: 'build.log'; agentId: string; buildId: string; chunk: string }
   | { type: 'job.updated'; job: Job };
 
-export type RealtimeEvent = BoardEvent | TaskEvent | AgentEvent | UserEvent;
+export type RealtimeEvent = { type: 'wiki.changed'; wikiId: string } | BoardEvent | TaskEvent | AgentEvent | UserEvent;
 
 export type ClientMessage =
   | { type: 'subscribe'; topics: Topic[] }

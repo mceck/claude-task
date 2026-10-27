@@ -44,6 +44,7 @@ interface CardRow extends Record<string, unknown> {
   tag_ids: string[];
   assignee_ids: string[];
   comment_count: number;
+  chat_generation: number;
   agent_id: string | null;
   session_agent_id: string | null;
   session_state: SessionState | null;
@@ -99,7 +100,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
 
   const result = await db.execute<CardRow>(sql`
     select t.id, t.project_id, p.key as project_key, t.number, t.title, t.status_id, t.priority,
-      t.position, t.version, t.created_at, t.updated_at,
+      t.position, t.version, t.chat_generation, t.created_at, t.updated_at,
       coalesce((select array_agg(tl.tag_id::text order by l.name, l.id)
         from task_tags tl join tags l on l.id = tl.tag_id where tl.task_id = t.id), '{}') as tag_ids,
       coalesce((select array_agg(ta.user_id::text order by ta.user_id)
@@ -127,6 +128,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     tagIds: r.tag_ids,
     assigneeIds: r.assignee_ids,
     commentCount: r.comment_count,
+    chatGeneration: r.chat_generation,
     branchName: r.branch_name,
     branchUrl: r.branch_url,
     pullRequest: r.pull_request,

@@ -1,10 +1,12 @@
 import { createTaskBody, listTasksQuery, moveTaskBody, timelineQuery, updateTaskBody } from '@claude-task/shared';
 import type { FastifyInstance } from 'fastify';
+import { eq } from 'drizzle-orm';
+import { tasks } from '../../db/schema';
 import { z } from 'zod';
 import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
-import { parse } from '../../errors';
+import { notFound, parse } from '../../errors';
 import { loadTimeline } from '../comments/service';
 import { getProject } from '../projects/service';
 import { createTask, deleteTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from './service';
@@ -72,7 +74,13 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/tasks/:id/timeline', async (request) => {
     const { id } = parse(params, request.params);
     const q = parse(timelineQuery, request.query);
-    const row = await getTaskRow(ctx.db, id);
-    return loadTimeline(ctx.db, row.id, q);
+    return ctx.db.transaction(async (tx) => {
+      const found = await getTaskRow(tx, id);
+      // Reset Chat deletes every projection. Keep the owner locked while loading
+      // the page so its items and generation describe the same conversation.
+      const [row] = await tx.select().from(tasks).where(eq(tasks.id, found.id)).for('key share');
+      if (!row) throw notFound('Task');
+      return { ...(await loadTimeline(tx, row.id, q)), chatGeneration: row.chatGeneration };
+    });
   });
 }

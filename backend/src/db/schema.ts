@@ -94,6 +94,7 @@ export const projects = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     key: text('key').notNull(),
+    kind: text('kind').notNull().default('project'),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
@@ -158,6 +159,7 @@ export const tasks = pgTable(
     createdById: uuid('created_by_id'),
     agentId: uuid('agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'set null' }),
     currentSessionId: uuid('current_session_id'),
+    chatGeneration: integer('chat_generation').notNull().default(0),
     version: integer('version').notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -414,7 +416,7 @@ export const projectEnvVars = pgTable(
   (t) => [uniqueIndex('project_env_vars_name_unique').on(t.projectId, t.name)],
 );
 
-/** The Claude Code conversation of one (Task, Agent); its id is also the Claude session id. */
+/** The persistent conversation of one (Task, Agent). Claude identity can rotate on Reset Chat. */
 export const sessions = pgTable(
   'sessions',
   {
@@ -427,6 +429,8 @@ export const sessions = pgTable(
       .references(() => agents.id, { onDelete: 'cascade' }),
     state: sessionStateEnum('state').notNull().default('pending'),
     worktreePath: text('worktree_path').notNull(),
+    /** Rotated by Reset Chat, independent of the persistent Session row. */
+    claudeSessionId: uuid('claude_session_id'),
     /** Whether `claude` created the session, so later Jobs `--resume` it. */
     started: boolean('started').notNull().default(false),
     lastSeenTaskVersion: integer('last_seen_task_version').notNull().default(0),
@@ -496,6 +500,8 @@ export const jobs = pgTable(
     failureStage: text('failure_stage'),
     error: text('error'),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
+    /** Reset Chat: ignore old output while waiting for cancellation to finish. */
+    discardOutput: boolean('discard_output').notNull().default(false),
     createdAt: createdAt(),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),

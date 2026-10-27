@@ -1,6 +1,6 @@
 import { CATEGORIES } from '@claude-task/shared';
 import type { Category, CategoryCounts, Project, ProjectSummary } from '@claude-task/shared';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client';
 import { projects, statuses } from '../../db/schema';
 import { notFound } from '../../errors';
@@ -55,7 +55,7 @@ export async function listProjects(db: Executor, archived: boolean): Promise<Pro
   const rows = await db
     .select()
     .from(projects)
-    .where(archived ? sql`${projects.archivedAt} is not null` : sql`${projects.archivedAt} is null`)
+    .where(and(eq(projects.kind, 'project'), archived ? sql`${projects.archivedAt} is not null` : sql`${projects.archivedAt} is null`))
     .orderBy(projects.name);
   const counts = await db.execute<{ project_id: string; category: Category; n: number }>(sql`
     select t.project_id, s.category, count(*)::int as n

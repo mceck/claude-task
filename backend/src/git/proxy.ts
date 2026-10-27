@@ -109,7 +109,7 @@ async function authorize(ctx: AppContext, request: FastifyRequest, reply: Fastif
     return null;
   }
   const [row] = await ctx.db
-    .select({ jobId: jobs.id, agentId: jobs.agentId, state: jobs.state, projectId: tasks.projectId, branchName: tasks.branchName, repository: projects.repository })
+    .select({ jobId: jobs.id, agentId: jobs.agentId, state: jobs.state, discardOutput: jobs.discardOutput, projectId: tasks.projectId, branchName: tasks.branchName, repository: projects.repository })
     .from(jobs)
     .innerJoin(tasks, eq(tasks.id, jobs.taskId))
     .innerJoin(projects, eq(projects.id, tasks.projectId))
@@ -119,7 +119,7 @@ async function authorize(ctx: AppContext, request: FastifyRequest, reply: Fastif
     return null;
   }
   // Like Spec 03's token grants: only an accepted Job, still running or finishing its Turn.
-  if (!['running', 'finishing'].includes(row.state) || row.projectId !== projectId.toLowerCase() || !row.repository) {
+  if (row.discardOutput || !['running', 'finishing'].includes(row.state) || row.projectId !== projectId.toLowerCase() || !row.repository) {
     await deny(reply, 403, 'no active task for this repository');
     return null;
   }

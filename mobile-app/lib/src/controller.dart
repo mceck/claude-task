@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
+
 import 'api.dart';
 import 'models.dart';
 import 'push.dart';
@@ -26,6 +28,10 @@ class TaskController extends ChangeNotifier {
   ConnectionState connection = ConnectionState.connecting;
   User? user;
   List<Project> projects = [];
+  List<Wiki> wikis = [];
+  Wiki? wiki;
+  bool wikiSection = false;
+  int _timelineEpoch = 0;
   List<Task> tasks = [];
   List<TaskStatus> statuses = [];
   List<Tag> tags = [];
@@ -63,8 +69,7 @@ class TaskController extends ChangeNotifier {
       if (user != null && !user!.mustChangePassword) {
         unawaited(
           _registerToken(token).catchError((Object _) {
-            error =
-                'Phone token registration failed; try Enable notifications again';
+            error = 'Phone token registration failed; try Enable notifications again';
             notifyListeners();
           }),
         );
@@ -179,6 +184,8 @@ class TaskController extends ChangeNotifier {
   void _hydrateGlobal() {
     final cached = storage.read('global') ?? {};
     projects = objects(cached['projects']).map(Project.fromJson).toList();
+    wikis = objects(cached['wikis']).map(Wiki.fromJson).toList();
+    if (wiki != null) wiki = wikis.byId(wiki!.id) ?? wiki;
     agents = objects(cached['agents']).map(Agent.fromJson).toList();
     users = objects(cached['users']).map(User.fromJson).toList();
   }
@@ -213,6 +220,7 @@ class TaskController extends ChangeNotifier {
   void _subscribe() => _socket?.subscribe({
     'user:${user!.id}',
     'agents',
+    'wikis',
     if (project != null) 'project:${project!.id}',
     if (task != null) 'task:${task!.id}',
   });
@@ -311,6 +319,9 @@ class TaskController extends ChangeNotifier {
     user = null;
     _login = null;
     projects = [];
+    wikis = [];
+    wiki = null;
+    wikiSection = false;
     tasks = [];
     statuses = [];
     tags = [];
@@ -342,12 +353,14 @@ class TaskController extends ChangeNotifier {
       _request('GET', '/projects'),
       _request('GET', '/agents'),
       _request('GET', '/users'),
+      _request('GET', '/wikis'),
     ]);
     if (user == null) return;
     await storage.write('global', {
       'projects': results[0]['projects'],
       'agents': results[1]['agents'],
       'users': results[2]['users'],
+      'wikis': results[3]['wikis'],
     });
     _hydrateGlobal();
     final selectedProject = project;
@@ -358,7 +371,99 @@ class TaskController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void showWikis() {
+    wikiSection = true;
+    wiki = null;
+    project = null;
+    task = null;
+    _clearConversation();
+    _subscribe();
+    notifyListeners();
+  }
+
+  void showProjects() {
+    wikiSection = false;
+    backToProjects();
+  }
+
+  Future<void> selectWiki(Wiki value) async {
+    wikiSection = true;
+    wiki = value;
+    task = null;
+    _clearConversation();
+    project = null;
+    statuses = [];
+    tags = [];
+    notifyListeners();
+    final cachedTask = storage.read('task:${value.taskId}')?['task'];
+    if (!online && cachedTask != null) {
+      await selectTask(Task.fromJson(cachedTask as Json));
+      return;
+    }
+    final result = await _request('GET', '/tasks/${value.taskId}');
+    if (wiki?.id != value.id) return;
+    await selectTask(Task.fromJson(result['task'] as Json));
+  }
+
+  Future<List<Json>> wikiRepositories() async {
+    final result = await _request('GET', '/git/repositories');
+    final groups = objects(result['groups']);
+    final repositories = [
+      for (final g in groups) ...objects(g['repositories']),
+    ];
+    if (repositories.isEmpty && groups.any((g) => g['error'] != null)) {
+      throw StateError(
+        groups
+            .where((g) => g['error'] != null)
+            .map((g) => '${(g['connection'] as Map)['name']}: ${g['error']}')
+            .join('\n'),
+      );
+    }
+    return repositories;
+  }
+
+  Future<void> saveWiki(Json body, {Wiki? existing}) async {
+    final result = await _request(
+      existing == null ? 'POST' : 'PATCH',
+      existing == null ? '/wikis' : '/wikis/${existing.id}',
+      body: body,
+    );
+    await refresh();
+    await selectWiki(Wiki.fromJson(result['wiki'] as Json));
+  }
+
+  void _clearConversation() {
+    timeline = [];
+    nextCursor = null;
+    _olderLoaded = false;
+    session = null;
+    liveText.clear();
+    liveThinking = '';
+    liveStatus = '';
+  }
+
+  Future<void> resetWiki() async {
+    final current = wiki!;
+    await _request('POST', '/wikis/${current.id}/reset');
+    if (wiki?.id != current.id) return;
+    _timelineEpoch++;
+    _clearConversation();
+    await _cacheTask();
+    await _fetchTask(current.taskId);
+    notifyListeners();
+  }
+
+  Future<void> deleteWiki() async {
+    final current = wiki!;
+    await _request('DELETE', '/wikis/${current.id}');
+    await storage.write('task:${current.taskId}', {});
+    showWikis();
+    await refresh();
+  }
+
   Future<void> selectProject(Project value) async {
+    wikiSection = false;
+    wiki = null;
     project = value;
     task = null;
     timeline = [];
@@ -414,7 +519,7 @@ class TaskController extends ChangeNotifier {
     liveThinking = '';
     liveStatus = '';
     final cached = storage.read('task:${value.id}');
-    if (cached != null) {
+    if (cached != null && cached['task'] != null) {
       task = Task.fromJson(cached['task'] as Json);
       timeline = objects(cached['items']).map(TimelineEntry.new).toList();
       nextCursor = cached['nextCursor'] as String?;
@@ -430,15 +535,23 @@ class TaskController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _fetchTask(String id) async {
+  Future<void> _fetchTask(String id, [int attempt = 0]) async {
+    final epoch = _timelineEpoch;
     final result = await Future.wait([
       _request('GET', '/tasks/$id'),
       _request('GET', '/tasks/$id/timeline'),
       _request('GET', '/tasks/$id/session'),
       _request('GET', '/tasks/$id/preferences'),
     ]);
-    if (task?.id != id) return;
-    task = Task.fromJson(result[0]['task'] as Json);
+    if (task?.id != id || epoch != _timelineEpoch) return;
+    final fresh = Task.fromJson(result[0]['task'] as Json);
+    final pageGeneration = result[1]['chatGeneration'] as int?;
+    if (pageGeneration != null && pageGeneration != fresh.chatGeneration) {
+      if (attempt < 2) await _fetchTask(id, attempt + 1);
+      return;
+    }
+    if (fresh.chatGeneration != task!.chatGeneration) _clearConversation();
+    task = fresh;
     session = result[2]['session'] as Json?;
     preferences[id] = TaskPreference.fromJson(result[3]['preference'] as Json);
     _mergeTimeline(objects(result[1]['items']));
@@ -484,6 +597,7 @@ class TaskController extends ChangeNotifier {
         'tagIds': t.tagIds,
         'assigneeIds': t.assigneeIds,
         'version': t.version,
+        'chatGeneration': t.chatGeneration,
         'branchName': t.branchName,
         'branchUrl': t.branchUrl,
         'pullRequest': t.pullRequestUrl == null
@@ -498,12 +612,18 @@ class TaskController extends ChangeNotifier {
 
   Future<void> loadOlder() async {
     if (task == null || nextCursor == null || !online) return;
-    final id = task!.id;
+    final id = task!.id, epoch = _timelineEpoch;
     final result = await _request(
       'GET',
       '/tasks/$id/timeline?before=${Uri.encodeQueryComponent(nextCursor!)}',
     );
-    if (task?.id != id) return;
+    if (task?.id != id || epoch != _timelineEpoch) return;
+    final generation = result['chatGeneration'] as int?;
+    if (generation != null && generation != task!.chatGeneration) {
+      await _fetchTask(id);
+      notifyListeners();
+      return;
+    }
     _mergeTimeline(objects(result['items']));
     nextCursor = result['nextCursor'] as String?;
     _olderLoaded = true;
@@ -534,9 +654,9 @@ class TaskController extends ChangeNotifier {
       }
     }
     unawaited(
-      _fetchProject(
-        projectId,
-      ).then((_) => notifyListeners()).catchError((Object _) {}),
+      _fetchProject(projectId)
+          .then((_) => notifyListeners())
+          .catchError((Object _) {}),
     );
     notifyListeners();
     return task;
@@ -634,8 +754,7 @@ class TaskController extends ChangeNotifier {
   Future<void> reconcileSend() async {
     await _fetchTask(task!.id);
     await setDraft(draft.copyWith(ambiguous: false));
-    error =
-        'Conversation refreshed. Check for your Comment; sending again is a manual action.';
+    error = 'Conversation refreshed. Check for your Comment; sending again is a manual action.';
     notifyListeners();
   }
 
@@ -747,6 +866,12 @@ class TaskController extends ChangeNotifier {
       final result = await _request('GET', '/tasks/$id');
       final target = Task.fromJson(result['task'] as Json);
       if (!projects.any((p) => p.id == target.projectId)) await refresh();
+      final targetWiki = wikis.where((w) => w.taskId == target.id).firstOrNull;
+      if (targetWiki != null) {
+        await selectWiki(targetWiki);
+        pendingTaskId = null;
+        return;
+      }
       final matches = projects.where((p) => p.id == target.projectId);
       if (matches.isEmpty) return;
       await selectProject(matches.first);
@@ -786,6 +911,17 @@ class TaskController extends ChangeNotifier {
       liveStatus = event['status'] == null ? '' : 'Agent retrying request';
       notifyListeners();
       return;
+    }
+    if (type == 'timeline.reset') {
+      final id = event['taskId'] as String;
+      if (id == task?.id) {
+        _timelineEpoch++;
+        _clearConversation();
+        unawaited(_cacheTask());
+        notifyListeners();
+      } else {
+        unawaited(storage.write('task:$id', {}));
+      }
     }
     if (type == 'task.removed' && event['taskId'] == task?.id) {
       task = null;
@@ -882,11 +1018,13 @@ class TaskController extends ChangeNotifier {
   void backToTasks() {
     task = null;
     conversationVisible = false;
+    wiki = null;
     _subscribe();
     notifyListeners();
   }
 
   void backToProjects() {
+    wiki = null;
     task = null;
     project = null;
     conversationVisible = false;

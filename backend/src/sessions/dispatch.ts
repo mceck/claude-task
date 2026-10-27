@@ -153,7 +153,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     const start: JobStartMessage = {
       type: 'job.start',
       jobId: job!.id,
-      sessionId: session!.id,
+      sessionId: session!.claudeSessionId ?? session!.id,
       mode: fresh ? 'new' : 'resume',
       resumeInterrupted,
       worktreePath: session!.worktreePath,

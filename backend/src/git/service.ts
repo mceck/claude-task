@@ -21,7 +21,7 @@ export async function repositorySettings(db: Executor, projectId: string): Promi
   return { repository: p.repository, hasOpenSessions: !!open };
 }
 
-export async function linkRepository(ctx: AppContext, projectId: string, body: RepositoryBody): Promise<void> {
+export async function resolveRepository(ctx: AppContext, body: RepositoryBody) {
   const connection = await ctx.git.find(body.connectionId);
   if (!connection) throw badRequest('Choose a repository of an existing Git Connection');
   const git = ctx.git.providerFor(connection);
@@ -32,17 +32,23 @@ export async function linkRepository(ctx: AppContext, projectId: string, body: R
   const baseBranch = body.baseBranch ?? repo.defaultBranch;
   if (!(await git.branchExists(repo, baseBranch))) throw badRequest(`The base branch "${baseBranch}" does not exist in this repository`);
   const protection = await git.checkBaseBranchProtection(repo, baseBranch);
+  return { ...repo, baseBranch, protection };
+}
+
+export async function linkRepository(ctx: AppContext, projectId: string, body: RepositoryBody): Promise<void> {
+  const repository = await resolveRepository(ctx, body);
+  const { connectionId } = repository;
   await transact(ctx, async (tx, after) => {
     // The connection's lock orders this against its deletion, which must see the link (or vice versa).
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${connection.id}`}))`);
-    if (!(await ctx.git.find(connection.id, tx))) throw badRequest('Choose a repository of an existing Git Connection');
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${connectionId}`}))`);
+    if (!(await ctx.git.find(connectionId, tx))) throw badRequest('Choose a repository of an existing Git Connection');
     const p = await getProject(tx, projectId, { lock: true });
-    const changed = p.repository?.connectionId !== repo.connectionId || p.repository?.providerRepoId !== repo.providerRepoId;
+    const changed = p.repository?.connectionId !== repository.connectionId || p.repository?.providerRepoId !== repository.providerRepoId;
     if (changed && (await repositorySettings(tx, p.id)).hasOpenSessions)
       throw conflict('Unassigning only pauses sessions. Close every non-closed session before changing the repository.');
     const [updated] = await tx
       .update(projects)
-      .set({ repository: { ...repo, baseBranch, protection }, updatedAt: new Date() })
+      .set({ repository, updatedAt: new Date() })
       .where(eq(projects.id, p.id))
       .returning();
     // A PR belongs to its repository, while the Task Branch name stays stable.

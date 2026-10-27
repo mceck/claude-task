@@ -104,6 +104,16 @@ export function putTimelineItem(qc: QueryClient, taskId: string, item: TimelineI
 
 export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
   switch (event.type) {
+    case 'wiki.changed':
+      void qc.invalidateQueries({ queryKey: keys.wikis });
+      void qc.invalidateQueries({ queryKey: keys.wiki(event.wikiId) });
+      return;
+    case 'timeline.reset':
+      void qc.cancelQueries({ queryKey: keys.timeline(event.taskId) }, { revert: false });
+      qc.setQueryData(keys.timeline(event.taskId), { pages: [{ items: [], nextCursor: null }], pageParams: [null] });
+      void qc.invalidateQueries({ queryKey: keys.timeline(event.taskId) });
+      void qc.invalidateQueries({ queryKey: keys.session(event.taskId) });
+      return;
     case 'task.created':
     case 'task.updated':
     case 'task.moved':
@@ -200,7 +210,10 @@ function upsertAgent(qc: QueryClient, agent: Agent): void {
 /** Refetches the queries a topic's events keep up to date. */
 export function refreshTopic(qc: QueryClient, topic: Topic): void {
   const [kind, id] = topic.split(':') as ['project' | 'task' | 'agents' | 'agent', string];
-  if (kind === 'agents') {
+  if (topic === 'wikis') {
+    void qc.invalidateQueries({ queryKey: keys.wikis });
+    void qc.invalidateQueries({ queryKey: ['wiki'] });
+  } else if (kind === 'agents') {
     void qc.invalidateQueries({ queryKey: keys.agents });
   } else if (kind === 'agent') {
     for (const key of [keys.agent(id), keys.queue(id), keys.builds(id), keys.jobs(id), keys.usage(id)]) void qc.invalidateQueries({ queryKey: key });

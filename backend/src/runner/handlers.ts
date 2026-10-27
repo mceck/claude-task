@@ -61,6 +61,7 @@ async function handleHello(ctx: AppContext, agentId: string, msg: Extract<Runner
 
   if (msg.activeJobId && keep) {
     ctx.runners.send(agentId, { type: 'ack', jobId: keep.id, seq: keep.lastSeq });
+    if (keep.discardOutput) ctx.runners.send(agentId, { type: 'job.cancel', jobId: keep.id });
   } else if (msg.activeJobId) {
     // A Job we've already settled: drop its backlog and stop whatever is left of it.
     ctx.runners.send(agentId, { type: 'ack', jobId: msg.activeJobId, seq: Number.MAX_SAFE_INTEGER });
@@ -91,7 +92,17 @@ async function handleJobMessage(ctx: AppContext, agentId: string, msg: RunnerJob
     if (!job) return true;
     const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
     if (msg.seq <= job.lastSeq || !(ACTIVE_JOB_STATES as readonly string[]).includes(job.state)) return true;
-    await processJobMessage(tx, after, job, session!, agent, msg);
+    if (job.discardOutput) {
+      // A reset must retain the busy Job until the Runner confirms exit. No old
+      // output, projection, retries or system notices may repopulate the chat.
+      if (msg.type === 'job.exited' || msg.type === 'job.failed') {
+        await tx.update(jobs).set({ state: 'finished', finishedAt: new Date() }).where(eq(jobs.id, job.id));
+        after.effect((c) => {
+          c.scheduler.publishJob(job.id);
+          c.scheduler.jobEnded(agentId);
+        });
+      }
+    } else await processJobMessage(tx, after, job, session!, agent, msg);
     await tx.update(jobs).set({ lastSeq: msg.seq }).where(eq(jobs.id, job.id));
     return true;
   });
@@ -287,10 +298,10 @@ async function failJob(
  * it's interrupted, and the Session resumes from the front of the Queue.
  */
 export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow): Promise<void> {
-  await settleProjection(tx, after, job);
+  if (!job.discardOutput) await settleProjection(tx, after, job);
   await tx.update(jobs).set({ state: 'interrupted', finishedAt: new Date() }).where(eq(jobs.id, job.id));
   const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
-  if (session?.state === 'running') {
+  if (!job.discardOutput && session?.state === 'running') {
     await tx
       .update(sessions)
       .set({ state: restingState(session) })

@@ -99,6 +99,27 @@
       "when": 1793039618502,
       "tag": "0013_agent_services",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793054532571,
+      "tag": "0014_wiki",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793058853175,
+      "tag": "0015_wiki_chat_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793058884857,
+      "tag": "0016_preserve_existing_claude_sessions",
+      "breakpoints": true
     }
   ]
 }

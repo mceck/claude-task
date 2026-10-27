@@ -240,7 +240,7 @@ export async function deliverComment(
   const job = await activeJob(tx, session.id, true);
   // Native commands run at a Job boundary, after the active response has finished.
   const waiting = await getEntry(tx, task.agentId, task.id);
-  if (job && job.state === 'running' && !waiting && !commandName(comment.body) && after.ctx.runners.isConnected(job.agentId)) {
+  if (job && !job.discardOutput && job.state === 'running' && !waiting && !commandName(comment.body) && after.ctx.runners.isConnected(job.agentId)) {
     const parts = await renderComments(after.ctx, tx, [comment]);
     await setDelivery('delivered', null, job.id);
     if (comment.noticeTaskVersion !== null) {

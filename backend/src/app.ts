@@ -1,3 +1,4 @@
+import { wikiRoutes } from './modules/wikis/routes';
 import { notificationRoutes } from './notifications/routes';
 import { gitRoutes } from './git/routes';
 import { gitProxyRoutes } from './git/proxy';
@@ -98,6 +99,7 @@ export async function buildApp(
       statusRoutes(api, ctx);
       tagRoutes(api, ctx);
       taskRoutes(api, ctx);
+      wikiRoutes(api, ctx);
       commentRoutes(api, ctx);
       credentialRoutes(api, ctx);
       gitRoutes(api, ctx);

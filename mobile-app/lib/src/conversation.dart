@@ -11,6 +11,7 @@ import 'app.dart';
 import 'controller.dart';
 import 'models.dart';
 import 'task_forms.dart';
+import 'wiki.dart';
 import 'ui/markdown.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
@@ -242,14 +243,15 @@ class _ConversationState extends State<Conversation> {
                         },
                       ),
               ),
-              Positioned(
-                top: 8,
-                right: 12,
-                child: _ChangesToggle(
-                  hidden: _hideChanges,
-                  onChanged: (v) => setState(() => _hideChanges = v),
+              if (c.wiki == null)
+                Positioned(
+                  top: 8,
+                  right: 12,
+                  child: _ChangesToggle(
+                    hidden: _hideChanges,
+                    onChanged: (v) => setState(() => _hideChanges = v),
+                  ),
                 ),
-              ),
               Positioned(
                 bottom: 14,
                 right: 16,
@@ -404,7 +406,7 @@ class _Header extends StatelessWidget {
                   Row(
                     children: [
                       Text(
-                        t.key,
+                        c.wiki == null ? t.key : 'Wiki',
                         style: const TextStyle(
                           fontFamily: mono,
                           fontSize: 11.5,
@@ -447,7 +449,13 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
-          if (showDetailsAction)
+          if (c.wiki != null)
+            IconAction(
+              icon: Icons.restart_alt_rounded,
+              tooltip: 'Reset chat',
+              onPressed: c.online ? () => confirmResetWiki(context, c) : null,
+            ),
+          if (showDetailsAction && c.wiki == null)
             IconAction(
               icon: Icons.info_outline_rounded,
               tooltip: 'Task details',
@@ -457,7 +465,9 @@ class _Header extends StatelessWidget {
             icon: muted
                 ? Icons.notifications_off_outlined
                 : Icons.notifications_none_rounded,
-            tooltip: muted ? 'Unmute Task' : 'Mute Task',
+            tooltip: c.wiki != null
+                ? (muted ? 'Unmute wiki' : 'Mute wiki')
+                : (muted ? 'Unmute Task' : 'Mute Task'),
             active: muted,
             onPressed: c.online
                 ? () =>
@@ -467,12 +477,14 @@ class _Header extends StatelessWidget {
           Builder(
             builder: (anchor) => IconAction(
               icon: Icons.more_horiz_rounded,
-              tooltip: 'Task actions',
+              tooltip: c.wiki == null ? 'Task actions' : 'Wiki actions',
               onPressed: () async {
                 final action = await showActions<String>(anchor, [
                   ActionItem(
                     'follow',
-                    following ? 'Unfollow Task' : 'Follow Task',
+                    c.wiki != null
+                        ? (following ? 'Unfollow wiki' : 'Follow wiki')
+                        : (following ? 'Unfollow Task' : 'Follow Task'),
                     following
                         ? Icons.bookmark_rounded
                         : Icons.bookmark_outline_rounded,
@@ -496,17 +508,30 @@ class _Header extends StatelessWidget {
                     Icons.campaign_outlined,
                     enabled: c.online && session?['unseenChanges'] == true,
                   ),
+                  if (c.wiki != null)
+                    ActionItem(
+                      'wiki-settings',
+                      'Wiki settings',
+                      Icons.settings_outlined,
+                      enabled: c.online,
+                    ),
                   ActionItem(
                     'delete',
-                    'Delete Task',
+                    c.wiki == null ? 'Delete Task' : 'Delete wiki',
                     Icons.delete_outline_rounded,
                     enabled: c.online,
                     destructive: true,
                   ),
                 ], title: '${t.key} · ${t.title}');
                 if (action == null || !anchor.mounted) return;
-                if (action == 'delete') {
-                  await confirmDeleteTask(anchor, c);
+                if (action == 'wiki-settings') {
+                  await showWikiForm(anchor, c, wiki: c.wiki);
+                } else if (action == 'delete') {
+                  if (c.wiki != null) {
+                    await confirmDeleteWiki(anchor, c);
+                  } else {
+                    await confirmDeleteTask(anchor, c);
+                  }
                 } else if (action == 'follow') {
                   await perform(
                     anchor,

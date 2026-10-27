@@ -5,6 +5,7 @@ import 'controller.dart';
 import 'conversation.dart';
 import 'models.dart';
 import 'task_forms.dart';
+import 'wiki.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 
@@ -16,6 +17,38 @@ class Workspace extends StatelessWidget {
     builder: (context, box) {
       final c = controller, wide = box.maxWidth >= 1000;
       c.conversationVisible = c.task != null;
+      if (c.wikiSection) {
+        if (wide) {
+          return Row(
+            children: [
+              SizedBox(width: 76, child: ProjectRail(controller: c)),
+              SizedBox(width: 340, child: WikiList(controller: c)),
+              Expanded(
+                child: c.task == null
+                    ? const EmptyState(
+                        icon: Icons.menu_book_outlined,
+                        title: 'Select a Wiki',
+                        message: 'Open a wiki to join its shared conversation.',
+                      )
+                    : Conversation(key: ValueKey(c.task!.id), controller: c),
+              ),
+            ],
+          );
+        }
+        return PopScope(
+          canPop: c.wiki == null,
+          onPopInvokedWithResult: (popped, _) {
+            if (!popped) c.showWikis();
+          },
+          child: c.task != null
+              ? Conversation(
+                  key: ValueKey(c.task!.id),
+                  controller: c,
+                  onBack: c.showWikis,
+                )
+              : WikiList(controller: c),
+        );
+      }
       if (wide) {
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -123,6 +156,13 @@ class ProjectRail extends StatelessWidget {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
+          IconAction(
+            icon: Icons.menu_book_outlined,
+            tooltip: 'Wiki',
+            active: c.wikiSection,
+            onPressed: c.showWikis,
+          ),
+          const SizedBox(height: 8),
           Expanded(
             child: ListView(
               padding: EdgeInsets.zero,
@@ -282,6 +322,11 @@ class ProjectList extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+              IconAction(
+                icon: Icons.menu_book_outlined,
+                tooltip: 'Wiki',
+                onPressed: c.showWikis,
               ),
               Tooltip(
                 message: 'Profile',

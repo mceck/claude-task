@@ -1,4 +1,5 @@
 import type {
+  Wiki,
   Agent,
   AgentBuild,
   AgentUsage,
@@ -27,6 +28,8 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { get } from './client';
 
 export const keys = {
+  wikis: ['wikis'] as const,
+  wiki: (id: string) => ['wiki', id] as const,
   me: ['me'] as const,
   users: ['users'] as const,
   projects: (archived: boolean) => ['projects', { archived }] as const,
@@ -200,4 +203,11 @@ export function useRepositorySettings(projectId: string) {
 }
 export function useGitConnections(enabled: boolean) {
   return useQuery({ queryKey: ['git-connections'], queryFn: () => get<{ connections: GitConnection[] }>('/git/connections').then((r) => r.connections), enabled });
+}
+
+export function useWikis() {
+  return useQuery({ queryKey: keys.wikis, queryFn: () => get<{ wikis: Wiki[] }>('/wikis').then((r) => r.wikis) });
+}
+export function useWiki(id: string) {
+  return useQuery({ queryKey: keys.wiki(id), queryFn: () => get<{ wiki: Wiki }>(`/wikis/${id}`).then((r) => r.wiki) });
 }
