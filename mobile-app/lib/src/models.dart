@@ -73,12 +73,14 @@ class Agent implements Identified {
   @override
   final String id;
   final String name, emoji;
+  final String? avatarImageUrl;
   final bool enabled;
   final List<SkillCommand> skillCommands;
   Agent.fromJson(Json json)
     : id = json['id'] as String,
       name = json['name'] as String,
       emoji = json['avatarEmoji'] as String? ?? '🤖',
+      avatarImageUrl = json['avatarImageUrl'] as String?,
       enabled = json['enabled'] == true,
       skillCommands = objects(json['skillCommands'])
           .map(SkillCommand.fromJson)

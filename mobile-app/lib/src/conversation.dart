@@ -742,9 +742,11 @@ class _LiveTail extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Avatar(
+          UserAvatar(
             label: agent?.name ?? 'Agent',
             emoji: agent?.emoji ?? '🤖',
+            imageUrl: agent?.avatarImageUrl,
+            api: controller.api,
             size: 32,
             circle: false,
           ),
@@ -1287,10 +1289,12 @@ class _CommentView extends StatelessWidget {
                     api: controller.api,
                     size: 32,
                   )
-                : Avatar(
+                : UserAvatar(
                     label: e.author,
-                    emoji: isAgent ? agent?.emoji ?? '🤖' : null,
-                    seed: e.authorId ?? e.author,
+                    emoji: agent?.emoji ?? '🤖',
+                    imageUrl: agent?.avatarImageUrl,
+                    api: controller.api,
+                    userId: e.authorId ?? e.author,
                     size: 32,
                     circle: !isAgent,
                   ),

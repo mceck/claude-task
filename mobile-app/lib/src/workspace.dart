@@ -1261,6 +1261,7 @@ class _TaskRow extends StatelessWidget {
                           const SizedBox(width: 6),
                           AgentBadge(
                             agent: agent,
+                            api: c.api,
                             state: task.sessionState,
                             queuePosition: task.queuePosition,
                             size: 18,
@@ -1314,12 +1315,14 @@ class _TaskRow extends StatelessWidget {
 /// An Agent's emoji with its Session state dot, like the web board card.
 class AgentBadge extends StatelessWidget {
   final Agent? agent;
+  final TaskApi? api;
   final String? state;
   final int? queuePosition;
   final double size;
   const AgentBadge({
     super.key,
     this.agent,
+    this.api,
     this.state,
     this.queuePosition,
     this.size = 22,
@@ -1336,9 +1339,11 @@ class AgentBadge extends StatelessWidget {
           Stack(
             clipBehavior: Clip.none,
             children: [
-              Avatar(
+              UserAvatar(
                 label: agent?.name ?? 'Agent',
                 emoji: agent?.emoji ?? '🤖',
+                imageUrl: agent?.avatarImageUrl,
+                api: api,
                 size: size,
                 circle: false,
               ),

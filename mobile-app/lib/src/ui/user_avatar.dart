@@ -22,10 +22,10 @@ Future<Uint8List> _download(TaskApi api, String url) {
 /// Profile pictures use the authenticated API and its Installation origin check.
 class UserAvatar extends StatefulWidget {
   final String label;
-  final String? userId, imageUrl;
+  final String? userId, imageUrl, emoji;
   final TaskApi? api;
   final double size;
-  final bool selected;
+  final bool selected, circle;
 
   const UserAvatar({
     super.key,
@@ -33,8 +33,10 @@ class UserAvatar extends StatefulWidget {
     required this.api,
     this.userId,
     this.imageUrl,
+    this.emoji,
     this.size = 36,
     this.selected = false,
+    this.circle = true,
   });
 
   @override
@@ -68,8 +70,10 @@ class _UserAvatarState extends State<UserAvatar> {
   Widget build(BuildContext context) {
     final fallback = Avatar(
       label: widget.label,
+      emoji: widget.emoji,
       seed: widget.userId,
       size: widget.size,
+      circle: widget.circle,
       selected: widget.selected,
     );
     return Semantics(
@@ -82,16 +86,20 @@ class _UserAvatarState extends State<UserAvatar> {
               future: _image,
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return fallback;
-                return ClipOval(
-                  child: Image.memory(
-                    snapshot.data!,
-                    width: widget.size,
-                    height: widget.size,
-                    fit: BoxFit.cover,
-                    excludeFromSemantics: true,
-                    errorBuilder: (context, error, stackTrace) => fallback,
-                  ),
+                final image = Image.memory(
+                  snapshot.data!,
+                  width: widget.size,
+                  height: widget.size,
+                  fit: BoxFit.cover,
+                  excludeFromSemantics: true,
+                  errorBuilder: (context, error, stackTrace) => fallback,
                 );
+                return widget.circle
+                    ? ClipOval(child: image)
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(widget.size * .3),
+                        child: image,
+                      );
               },
             ),
     );

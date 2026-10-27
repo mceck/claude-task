@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'api.dart';
 import 'app.dart';
 import 'controller.dart';
 import 'ui/user_avatar.dart';
@@ -43,7 +44,8 @@ Color priorityColor(String p) => switch (p) {
 Color tagColor(Tag tag) =>
     tag.color == null ? tint(tag.name) : hexColor(tag.color!, tint(tag.name));
 
-Widget _agentAvatar(Agent? agent, {double size = 28}) => agent == null
+Widget _agentAvatar(TaskApi? api, Agent? agent, {double size = 28}) =>
+    agent == null
     ? Container(
         width: size,
         height: size,
@@ -57,10 +59,18 @@ Widget _agentAvatar(Agent? agent, {double size = 28}) => agent == null
           color: Palette.fgSubtle,
         ),
       )
-    : Avatar(label: agent.name, emoji: agent.emoji, size: size);
+    : UserAvatar(
+        label: agent.name,
+        emoji: agent.emoji,
+        imageUrl: agent.avatarImageUrl,
+        api: api,
+        size: size,
+        circle: false,
+      );
 
 Future<String?> _pickAgent(
   BuildContext context,
+  TaskApi? api,
   List<Agent> agents,
   String selected,
 ) => showPicker<String>(
@@ -68,13 +78,13 @@ Future<String?> _pickAgent(
   title: 'Agent',
   selected: selected,
   options: [
-    PickerOption('', 'No Agent', leading: _agentAvatar(null)),
+    PickerOption('', 'No Agent', leading: _agentAvatar(api, null)),
     for (final a in agents)
       PickerOption(
         a.id,
         a.name,
         detail: a.enabled ? null : 'Disabled',
-        leading: _agentAvatar(a),
+        leading: _agentAvatar(api, a),
       ),
   ],
 );
@@ -162,13 +172,14 @@ Future<void> showCreateTask(BuildContext context, TaskController c) async {
                 const FieldLabel('Agent', hint: 'optional'),
                 _SelectField(
                   key: const Key('new-task-agent'),
-                  leading: _agentAvatar(agent, size: 26),
+                  leading: _agentAvatar(c.api, agent, size: 26),
                   label: agent?.name ?? 'No Agent',
                   onTap: saving
                       ? null
                       : () async {
                           final picked = await _pickAgent(
                             context,
+                            c.api,
                             agents,
                             agentId,
                           );
@@ -437,7 +448,7 @@ class TaskDetails extends StatelessWidget {
                     value: Row(
                       children: [
                         if (agent != null) ...[
-                          _agentAvatar(agent, size: 20),
+                          _agentAvatar(c.api, agent, size: 20),
                           const SizedBox(width: 8),
                         ],
                         Flexible(
@@ -455,6 +466,7 @@ class TaskDetails extends StatelessWidget {
                         ? () async {
                             final v = await _pickAgent(
                               context,
+                              c.api,
                               c.agents,
                               t.agentId ?? '',
                             );
