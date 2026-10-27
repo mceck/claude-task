@@ -30,7 +30,7 @@ erDiagram
 
 ### Projects
 
-**Creating.** Any User creates a Project with a key, a name (1 to 100 characters after trimming) and an optional description (up to 10,000 characters). The key must be 2 to 6 uppercase letters; anything else is answered with `400`, and a key already in use with `409` "A project with this key already exists". A new Project starts with six Statuses and no Tags:
+**Creating.** Any User creates a Project with a key, a name (1 to 100 characters after trimming) and an optional description (up to 10,000 characters). Creation also accepts an optional Repository with its Base Branch and an optional default Agent. Clients offer enabled Agents and a No Agent option; the API accepts an existing Agent or an empty value. The default Agent applies to new Tasks under the usual assignment rules. The Repository is checked through the same Git Connection, accessibility, Base Branch and protection checks as Project settings. A selected Repository, default Agent, Project and default Statuses are saved in one transaction. An unknown Agent or invalid Repository selection answers `400` and leaves the Project Key available for another attempt. The key must be 2 to 6 uppercase letters; anything else is answered with `400`, and a key already in use with `409` "A project with this key already exists". A new Project starts with six Statuses and no Tags:
 
 | Status | Category | Color |
 | --- | --- | --- |
@@ -229,7 +229,7 @@ Realtime topics: `project:<id>` carries `task.created`, `task.updated`, `task.mo
 
 ## Data model
 
-- **Project**: key (unique, 2 to 6 uppercase letters, fixed), kind (`project` or `wiki`), name, description, archived at, Repository link, next Task number (starts at 1), Setup Script, Agent Instructions, created at, updated at.
+- **Project**: key (unique, 2 to 6 uppercase letters, fixed), kind (`project` or `wiki`), name, description, archived at, Repository link, default Agent, next Task number (starts at 1), Setup Script, Agent Instructions, created at, updated at.
 - **Status**: Project, name (unique within the Project, case-insensitive), color, Category, position.
 - **Tag**: Project, name (unique within the Project, case-insensitive), color.
 - **Task**: Project, number (unique within the Project), title, description, Status, priority, position (fractional key compared byte by byte), creator Actor, assigned Agent, current Session, Task Branch and pull request, conversation generation (see [Wikis](wikis.md)), version (starts at 1, increased on every recorded change), created at, updated at.
@@ -246,6 +246,8 @@ Deleting a Project removes its Statuses, Tags and Tasks; deleting a Task removes
 - The Board list is one query per request, whatever the number of Tasks.
 
 ## Decisions
+
+- **Project creation saves the initial Repository and default Agent atomically.** Both clients send the initial configuration in the creation request, so a failed Repository check or Agent selection leaves the User free to retry with the same Project Key.
 
 - **Project-owned logos in the shared file store.** The Project stores a reference to its own image. Authenticated downloads reuse the existing file store and Login rules, while changing the URL on replacement lets both clients refresh the image. Cleanup runs after commit so failed edits keep the existing logo available.
 

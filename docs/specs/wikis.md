@@ -17,7 +17,7 @@ A Wiki is a shared knowledge base kept in a Repository of Markdown files, togeth
 
 The web app has a Wiki entry in the sidebar, next to Projects. It lists every Wiki as a card with its name, its description (or the Repository's `owner/name` when the description is empty) and the Repository, ordered by name, with a **New wiki** button. Opening a Wiki shows its conversation.
 
-The Flutter app has a Wiki entry in its navigation rail. On wide windows the Wiki list sits beside the selected Wiki's conversation; on narrow ones the list and the conversation are successive screens, and going back from a conversation returns to the list. Creating a Wiki and resetting its chat need a connection; a Wiki whose conversation is cached opens offline.
+The Flutter app has a Wiki entry in its navigation rail and a permanent Wikis entry in the phone drawer. Both open the Wiki list even when it is empty. The list header, its empty state and the phone drawer offer **New wiki**. On wide windows the Wiki list sits beside the selected Wiki's conversation; on narrow ones the list and the conversation are successive screens, and going back from a conversation returns to the list. Creating a Wiki and resetting its chat need a connection; a Wiki whose conversation is cached opens offline.
 
 Every signed-in User sees every Wiki. Wiki Projects stay out of the Projects list and its counts.
 

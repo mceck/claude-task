@@ -62,11 +62,16 @@ class WikiList extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               children: [
                 if (c.wikis.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      'Create a wiki to work together on your Markdown documentation.',
-                      style: TextStyle(color: Palette.fgSubtle),
+                  EmptyState(
+                    icon: Icons.menu_book_outlined,
+                    title: 'No Wikis',
+                    message: 'Create a wiki to work together on your Markdown documentation.',
+                    action: AppButton(
+                      label: 'New wiki',
+                      icon: Icons.add_rounded,
+                      onPressed: c.online
+                          ? () => showWikiForm(context, c)
+                          : null,
                     ),
                   ),
                 for (final wiki in c.wikis)

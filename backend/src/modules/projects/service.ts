@@ -56,7 +56,7 @@ export async function assertBoardTask(db: Executor, projectId: string): Promise<
 
 export async function createProject(
   db: Executor,
-  input: { key: string; name: string; description: string },
+  input: Pick<ProjectRow, 'key' | 'name' | 'description'> & Partial<Pick<ProjectRow, 'repository' | 'defaultAgentId'>>,
 ): Promise<ProjectRow> {
   const [project] = await db.insert(projects).values(input).returning();
   await db

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { transact } from '../../context';
 import type { AfterCommit, AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { attachments, comments, projects, tasks } from '../../db/schema';
+import { agents, attachments, comments, projects, tasks } from '../../db/schema';
 import { badRequest, HttpError, notFound, parse } from '../../errors';
 import { removeDeletedWorktrees } from '../../sessions/lifecycle';
 import { listTags } from '../tags/service';
@@ -13,6 +13,7 @@ import { listStatuses } from '../statuses/service';
 import { assertNoActiveJobs } from '../tasks/service';
 import { createProject, getBoardProject, listProjects, serializeProject } from './service';
 import { idOrKey } from '../../ids';
+import { resolveRepository } from '../../git/service';
 
 const params = z.object({ id: idOrKey });
 
@@ -24,7 +25,19 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   app.post('/projects', async (request, reply) => {
     const body = parse(createProjectBody, request.body);
-    const project = await ctx.db.transaction((tx) => createProject(tx, body));
+    const repository = body.repository ? await resolveRepository(ctx, body.repository) : null;
+    const project = await ctx.db.transaction(async (tx) => {
+      if (repository) {
+        // Serialize the initial link against deletion of its Git Connection.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${repository.connectionId}`}))`);
+        if (!(await ctx.git.find(repository.connectionId, tx))) throw badRequest('Choose a repository of an existing Git Connection');
+      }
+      if (body.defaultAgentId) {
+        const [agent] = await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, body.defaultAgentId)).for('key share');
+        if (!agent) throw badRequest('Unknown agent');
+      }
+      return createProject(tx, { ...body, repository });
+    });
     return reply.status(201).send(await bundle(ctx, project.id));
   });
 

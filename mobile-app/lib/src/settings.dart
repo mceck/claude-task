@@ -14,6 +14,7 @@ import 'ui/widgets.dart';
 part 'settings_extensions.dart';
 part 'settings_git.dart';
 part 'settings_project_agents.dart';
+part 'settings_projects.dart';
 
 /// Native settings share the web app's API and role permissions.
 Future<void> showSettings(BuildContext context, TaskController c) =>
@@ -720,29 +721,9 @@ class _ProjectsSettings extends StatelessWidget {
       action: IconAction(
         icon: Icons.add_rounded,
         tooltip: 'New project',
-        onPressed: () => _form(
-          context,
-          title: 'New project',
-          subtitle: 'The key is 2–6 uppercase letters and cannot change later',
-          fields: const [
-            _Text('key', 'Key', required: true),
-            _Text('name', 'Name', required: true),
-            _Text('description', 'Description', lines: 3),
-          ],
-          submit: 'Create project',
-          onSubmit: (v) async {
-            await controller.settingsRequest(
-              'POST',
-              '/projects',
-              body: {
-                'key': (v['key'] as String).trim().toUpperCase(),
-                'name': (v['name'] as String).trim(),
-                'description': v['description'],
-              },
-            );
-            await controller.refresh();
-          },
-        ),
+        onPressed: controller.online
+            ? () => showProjectForm(context, controller, selectCreated: false)
+            : null,
       ),
       body: _list([
         if (controller.projects.isEmpty)

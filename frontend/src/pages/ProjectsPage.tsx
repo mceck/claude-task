@@ -13,8 +13,10 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { errorMessage, post } from '../api/client';
-import { keys, useProjects } from '../api/queries';
+import { keys, useAgents, useProjects, useRepositoryGroups } from '../api/queries';
 import { ErrorText } from '../components/common';
 
 export const CATEGORY_COLOR: Record<Category, string> = {
@@ -80,7 +82,7 @@ export function ProjectsPage() {
           ))}
         </ul>
       )}
-      <CreateProjectDialog open={creating} onOpenChange={setCreating} />
+      {creating && <CreateProjectDialog open={creating} onOpenChange={setCreating} />}
     </div>
   );
 }
@@ -131,6 +133,15 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [keyTouched, setKeyTouched] = useState(false);
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [defaultAgentId, setDefaultAgentId] = useState('none');
+  const [selected, setSelected] = useState('none');
+  const [baseBranch, setBaseBranch] = useState('');
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState(false);
+  const agents = useAgents();
+  const groups = useRepositoryGroups();
+  const repositories = (groups.data ?? []).flatMap((g) => g.repositories);
+  const choice = repositories.find((r) => `${r.connectionId}:${r.providerRepoId}` === selected);
   const qc = useQueryClient();
   const navigate = useNavigate();
 
@@ -146,58 +157,122 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     if (!PROJECT_KEY_PATTERN.test(effectiveKey)) return setError('The key must be 2–6 uppercase letters');
+    if (selected !== 'none' && !choice) return setError('Choose an available repository');
+    setBusy(true);
+    setError(null);
     try {
-      const bundle = await post<ProjectBundle>('/projects', { key: effectiveKey, name, description });
+      const bundle = await post<ProjectBundle>('/projects', {
+        key: effectiveKey, name, description,
+        defaultAgentId: defaultAgentId === 'none' ? null : defaultAgentId,
+        ...(choice ? { repository: {
+          connectionId: choice.connectionId,
+          providerRepoId: choice.providerRepoId,
+          ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}),
+        } } : {}),
+      });
       qc.setQueryData(keys.project(bundle.project.key), bundle);
       void qc.invalidateQueries({ queryKey: ['projects'] });
       onOpenChange(false);
       navigate(`/p/${bundle.project.key}`);
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form onSubmit={submit} className="space-y-4">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
+        <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>New project</DialogTitle>
             <DialogDescription>It starts with a default set of statuses you can change later.</DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-[1fr_8rem] gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="project-name">Name</Label>
-              <Input id="project-name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="project-key">Key</Label>
-              <Input
-                id="project-key"
-                value={effectiveKey}
-                onChange={(e) => {
-                  setKeyTouched(true);
-                  setKey(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6));
-                }}
-                className="font-mono"
-                required
-              />
-            </div>
-          </div>
-          <p className="-mt-2 text-xs text-muted-foreground">
-            Tasks will be numbered <span className="font-mono">{effectiveKey || 'KEY'}-1</span>, <span className="font-mono">{effectiveKey || 'KEY'}-2</span>… The key can’t be changed later.
-          </p>
-          <div className="space-y-2">
-            <Label htmlFor="project-description">Description</Label>
-            <Textarea id="project-description" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
-          </div>
+          <fieldset disabled={busy} className="min-w-0">
+            <FieldGroup>
+              <FieldGroup className="grid grid-cols-[1fr_8rem] gap-3">
+                <Field>
+                  <FieldLabel htmlFor="project-name">Name</FieldLabel>
+                  <Input id="project-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} autoFocus />
+                </Field>
+                <Field data-invalid={!!error && !PROJECT_KEY_PATTERN.test(effectiveKey)}>
+                  <FieldLabel htmlFor="project-key">Key</FieldLabel>
+                  <Input
+                    id="project-key"
+                    value={effectiveKey}
+                    onChange={(e) => {
+                      setKeyTouched(true);
+                      setKey(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6));
+                    }}
+                    className="font-mono"
+                    aria-invalid={!!error && !PROJECT_KEY_PATTERN.test(effectiveKey)}
+                    required
+                  />
+                </Field>
+              </FieldGroup>
+              <FieldDescription>
+                Tasks will be numbered <span className="font-mono">{effectiveKey || 'KEY'}-1</span>, <span className="font-mono">{effectiveKey || 'KEY'}-2</span>… The key can’t be changed later.
+              </FieldDescription>
+              <Field>
+                <FieldLabel htmlFor="project-description">Description</FieldLabel>
+                <Textarea id="project-description" rows={3} maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="project-default-agent">Default Agent</FieldLabel>
+                <Select value={defaultAgentId} onValueChange={setDefaultAgentId} disabled={busy || agents.isPending}>
+                  <SelectTrigger id="project-default-agent" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">No Agent</SelectItem>
+                      {(agents.data ?? []).filter((a) => a.enabled).map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>Assigned to new Tasks. You can change this later.</FieldDescription>
+                {agents.error && <><ErrorText>{errorMessage(agents.error)}</ErrorText><Button type="button" variant="outline" onClick={() => void agents.refetch()}>Retry agents</Button></>}
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="project-repository-search">Search repositories</FieldLabel>
+                <Input id="project-repository-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Owner, group or repository name" />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="project-repository">Repository</FieldLabel>
+                <Select value={selected} disabled={busy || groups.isPending} onValueChange={(value) => {
+                  setSelected(value);
+                  setBaseBranch(repositories.find((r) => `${r.connectionId}:${r.providerRepoId}` === value)?.defaultBranch ?? '');
+                }}>
+                  <SelectTrigger id="project-repository" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup><SelectItem value="none">No Repository</SelectItem></SelectGroup>
+                    {(groups.data ?? []).map((g) => (
+                      <SelectGroup key={g.connection.id}>
+                        <SelectLabel>{g.connection.name} · {g.connection.host}</SelectLabel>
+                        {g.repositories.filter((r) => `${r.connectionId}:${r.providerRepoId}` === selected || `${r.owner}/${r.name}`.toLowerCase().includes(search.toLowerCase())).map((r) => (
+                          <SelectItem key={r.providerRepoId} value={`${r.connectionId}:${r.providerRepoId}`}>{r.owner}/{r.name}{r.private ? ' (private)' : ''}</SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {groups.isPending && <FieldDescription>Loading repositories…</FieldDescription>}
+                {groups.data?.length === 0 && <FieldDescription>An Admin can add a Git Connection in Git settings to link a Repository.</FieldDescription>}
+                {groups.error && <><ErrorText>{errorMessage(groups.error)}</ErrorText><Button type="button" variant="outline" onClick={() => void groups.refetch()}>Retry repositories</Button></>}
+                {(groups.data ?? []).filter((g) => g.error).map((g) => <ErrorText key={g.connection.id}>{g.connection.name}: {g.error}</ErrorText>)}
+              </Field>
+              {choice && <Field>
+                <FieldLabel htmlFor="project-base-branch">Base branch</FieldLabel>
+                <Input id="project-base-branch" value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} maxLength={250} />
+                <FieldDescription>Defaults to the Repository’s default branch.</FieldDescription>
+              </Field>}
+            </FieldGroup>
+          </fieldset>
           <ErrorText>{error}</ErrorText>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">Create project</Button>
+            <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create project'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

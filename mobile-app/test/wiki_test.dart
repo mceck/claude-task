@@ -9,6 +9,8 @@ import 'package:material_ui/material_ui.dart';
 import 'support.dart';
 
 class WikiApi extends FakeApi {
+  bool empty;
+  WikiApi({this.empty = false});
   Json wiki = {
     'id': 'wiki-1',
     'name': 'Team knowledge',
@@ -33,7 +35,7 @@ class WikiApi extends FakeApi {
   }) async {
     if (path == '/wikis' && method == 'GET') {
       return {
-        'wikis': [wiki],
+        'wikis': empty ? <Json>[] : [wiki],
       };
     }
     if (path == '/wikis/wiki-1/reset') {
@@ -45,6 +47,7 @@ class WikiApi extends FakeApi {
     }
     if ((path == '/wikis' && method == 'POST') ||
         (path == '/wikis/wiki-1' && method == 'PATCH')) {
+      empty = false;
       wiki = {...wiki, ...body!};
       return {'wiki': wiki};
     }
@@ -171,13 +174,18 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final h = Harness(api: WikiApi());
+    final h = Harness(api: WikiApi(empty: true));
     addTearDown(h.dispose);
     await h.login();
-    h.controller.showWikis();
     await tester.pumpWidget(TaskApp(controller: h.controller));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('New wiki'));
+    await tester.tap(find.byType(DrawerBrandMark));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Wikis'));
+    await tester.pumpAndSettle();
+    expect(find.byType(WikiList), findsOneWidget);
+    expect(find.text('No Wikis'), findsOneWidget);
+    await tester.tap(find.widgetWithText(AppButton, 'New wiki'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'Product wiki');
     await tester.tap(find.text('Ada Bot'));

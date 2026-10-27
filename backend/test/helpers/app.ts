@@ -124,6 +124,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       await t.server.ctx.runners.closeAll();
       await t.server.ctx.scheduler.settle();
       await t.server.ctx.gitSync.settle();
+      t.server.ctx.git.invalidateRepositories();
       t.git = new FakeGitProvider();
       t.gitlab = new FakeGitProvider('gitlab', '');
       t.runtime.containers.clear();

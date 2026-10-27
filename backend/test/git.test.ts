@@ -9,6 +9,7 @@ import { assignAgent, assignAndStart, createAgent, createProject, createTask, cr
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
 import { FakeGitProvider } from '../src/git/fake-provider';
+import { REPOSITORY_LIST_CACHE_MS } from '../src/git/connections';
 import { GitProviderError } from '../src/git/provider';
 
 const privateKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
@@ -97,9 +98,73 @@ describe('Git integration through the public API', () => {
       gitlab.id,
     ]);
     app.git.unreachable = 'GitHub could not be reached. Try again later.';
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + REPOSITORY_LIST_CACHE_MS + 1);
     groups = (await member.get('/git/repositories')).body.groups;
     expect(groups[0]).toMatchObject({ repositories: [], error: 'GitHub could not be reached. Try again later.' });
     expect(groups[1].repositories).toHaveLength(2);
+    clock.mockRestore();
+  });
+
+  it('shares concurrent Repository list requests, caches successes for 60 seconds and validates saves freshly', async () => {
+    const admin = await app.admin();
+    const list = vi.spyOn(app.git, 'listAccessibleRepositories');
+    const snapshots = await Promise.all([admin.get('/git/repositories'), admin.get('/git/repositories')]);
+    expect(snapshots.every((r) => r.status === 200)).toBe(true);
+    expect(list).toHaveBeenCalledTimes(1);
+    app.git.addRepository('3', 'acme', 'new-repository');
+    expect((await admin.get('/git/repositories')).body.groups[0].repositories).toHaveLength(2);
+    expect(list).toHaveBeenCalledTimes(1);
+    const result = await admin.post('/projects', {
+      key: 'FRESH', name: 'Fresh Repository', repository: { connectionId: 'env-github', providerRepoId: '3' },
+    });
+    expect(result.status).toBe(201);
+    expect(result.body.project.repository.name).toBe('new-repository');
+    expect(list).toHaveBeenCalledTimes(2);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + REPOSITORY_LIST_CACHE_MS + 1);
+    try {
+      expect((await admin.get('/git/repositories')).body.groups[0].repositories).toHaveLength(3);
+      expect(list).toHaveBeenCalledTimes(3);
+    } finally {
+      clock.mockRestore();
+      list.mockRestore();
+    }
+  });
+
+  it('invalidates cached Repository lists on connection updates and removes deleted connections', async () => {
+    const admin = await app.admin();
+    const connection = (await admin.post('/git/connections', { provider: 'gitlab', name: 'Cache test', token: 'glpat-cache' })).body.connection;
+    const githubList = vi.spyOn(app.git, 'listAccessibleRepositories');
+    const gitlabList = vi.spyOn(app.gitlab, 'listAccessibleRepositories');
+    await admin.get('/git/repositories');
+    await admin.get('/git/repositories');
+    expect(githubList).toHaveBeenCalledTimes(1);
+    expect(gitlabList).toHaveBeenCalledTimes(1);
+    app.gitlab.addRepository('103', 'acme', 'new-repository');
+    await admin.patch(`/git/connections/${connection.id}`, { token: 'glpat-updated' });
+    const groups = (await admin.get('/git/repositories')).body.groups;
+    expect(groups.find((g: { connection: { id: string } }) => g.connection.id === connection.id).repositories).toHaveLength(3);
+    expect(githubList).toHaveBeenCalledTimes(1);
+    expect(gitlabList).toHaveBeenCalledTimes(2);
+    expect((await admin.delete(`/git/connections/${connection.id}`)).status).toBe(204);
+    expect((await admin.get('/git/repositories')).body.groups).toHaveLength(1);
+    githubList.mockRestore();
+    gitlabList.mockRestore();
+  });
+
+  it('retries failed Repository lists immediately while keeping healthy connections cached', async () => {
+    const admin = await app.admin();
+    await admin.post('/git/connections', { provider: 'gitlab', name: 'Healthy', token: 'glpat-cache' });
+    app.git.unreachable = 'Temporarily unavailable';
+    const groups = (await admin.get('/git/repositories')).body.groups;
+    expect(groups[0].error).toBe('Temporarily unavailable');
+    expect(groups[1].repositories).toHaveLength(2);
+    const gitlabList = vi.spyOn(app.gitlab, 'listAccessibleRepositories');
+    app.git.unreachable = null;
+    const recovered = (await admin.get('/git/repositories')).body.groups;
+    expect(recovered[0].error).toBeNull();
+    expect(recovered[0].repositories).toHaveLength(2);
+    expect(gitlabList).not.toHaveBeenCalled();
+    gitlabList.mockRestore();
   });
 
   it('links GitLab repositories in nested groups and opens merge requests with GitLab vocabulary', async () => {

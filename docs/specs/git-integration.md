@@ -104,9 +104,11 @@ The lock and the re-read matter because GitLab revokes the whole token family wh
 
 ### Linking a Repository
 
-Any User can link a Project's Repository from **Project settings → Repository**. Wikis link theirs when they are created (see [Wikis](wikis.md)), through the same checks.
+Any User can choose a Project's Repository and Base Branch during creation in the web and native apps or link it later from **Project settings → Repository**. Creation resolves and checks the selected Repository before saving the Project, its default Statuses and its optional default Agent atomically. Wikis link theirs when they are created (see [Wikis](wikis.md)), through the same checks.
 
 The repository picker lists the Repositories of every Git Connection, grouped by connection and labelled with provider, connection name and host. Each entry shows `owner/name` (the GitLab namespace may be a nested group path) and "(private)" for non-public ones. A search field filters by owner, group or name. A connection that can't list its Repositories appears in an "Unavailable connections" list with its reason, and the other groups still show. With no Git Connection at all, the tab explains that an Admin must add one first.
+
+The backend caches successful Repository lists in process memory for 60 seconds per Git Connection, counted from completion. Simultaneous requests share one provider call. Each connection has its own cache, so a failing connection leaves the others available. Errors are returned to the picker and retried on its next request. Connection edits, credential changes and automatic token rotations invalidate the snapshot through the connection's fingerprint; deleted connections disappear from the next list. Provider-side changes appear after at most 60 seconds. Saving a Repository selection checks accessibility, identity and the Base Branch directly against the provider, independently of this picker cache.
 
 Which Repositories a connection lists:
 
@@ -416,6 +418,8 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - **Observability**: every proxied request is logged with Agent, Job, Project, service, refs, status, bytes and duration; rotations and their failures are logged per connection.
 
 ## Decisions
+
+- **Cache picker Repository lists for 60 seconds per connection in backend memory.** Opening forms in different clients reuses the same snapshot and simultaneous requests share their provider call. Connection fingerprints invalidate changed credentials without retaining secrets in cache keys. Errors are retried immediately, and saves check the provider directly. Each backend process keeps its own short-lived cache, which avoids adding persistent cache infrastructure for a list that is cheap to rebuild.
 
 - **Agent git traffic goes through a backend Git Proxy instead of provider tokens in the container.** GitLab has nothing like GitHub's per-repository installation tokens: the closest option, a per-Job project access token, lives until midnight UTC of the next day at best, creates a bot user per token and needs Premium on gitlab.com, and every further provider would need its own scheme. With the proxy, the only secret in the container is the Job token, which dies with the Job, and a new provider needs only its API adapter. Alternatives rejected: provider-minted tokens per Job (lifetime longer than the Job, tier requirements, Base Branch protected only by the provider); a long-lived bot token in the container (works for every repository and outlives the Job); SSH (a key per Agent registered with every provider, and the backend could no longer inspect pushes). The cost is that all git traffic, large first clones included, flows through the backend.
 - **The Job token is the proxy password.** It already lives in the Agent Container for the Task Tools and is invalid as soon as the Job leaves `running`/`finishing`, so using it for git adds no new secret.

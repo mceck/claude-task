@@ -241,9 +241,15 @@ class AppDrawer extends StatelessWidget {
                 ),
               ),
               const Divider(height: 24),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
-                child: SectionLabel('Projects'),
+              row(
+                leading: const Icon(
+                  Icons.folder_open_outlined,
+                  size: 22,
+                  color: Palette.primary,
+                ),
+                title: 'Projects',
+                selected: !c.wikiSection && c.project == null,
+                onTap: () => go(c.showProjects),
               ),
               if (c.projects.isEmpty)
                 const Padding(
@@ -264,10 +270,23 @@ class AppDrawer extends StatelessWidget {
                     }
                   }),
                 ),
+              row(
+                leading: const Icon(Icons.add_rounded, size: 22),
+                title: 'New project',
+                onTap: c.online
+                    ? () => go(() => showProjectForm(host, c))
+                    : null,
+              ),
               const SizedBox(height: 12),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
-                child: SectionLabel('Wikis'),
+              row(
+                leading: const Icon(
+                  Icons.menu_book_outlined,
+                  size: 22,
+                  color: Palette.primary,
+                ),
+                title: 'Wikis',
+                selected: c.wikiSection && c.wiki == null,
+                onTap: () => go(c.showWikis),
               ),
               if (c.wikis.isEmpty)
                 const Padding(
@@ -288,6 +307,11 @@ class AppDrawer extends StatelessWidget {
                   selected: c.wikiSection && c.wiki?.id == w.id,
                   onTap: () => go(() => perform(host, () => c.selectWiki(w))),
                 ),
+              row(
+                leading: const Icon(Icons.add_rounded, size: 22),
+                title: 'New wiki',
+                onTap: c.online ? () => go(() => showWikiForm(host, c)) : null,
+              ),
               const Divider(height: 24),
               const Padding(
                 padding: EdgeInsets.fromLTRB(12, 0, 12, 0),
@@ -365,6 +389,12 @@ class ProjectRail extends StatelessWidget {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
+          IconAction(
+            icon: Icons.add_rounded,
+            tooltip: 'New project',
+            onPressed: c.online ? () => showProjectForm(context, c) : null,
+          ),
+          const SizedBox(height: 8),
           IconAction(
             icon: Icons.menu_book_outlined,
             tooltip: 'Wiki',
@@ -541,16 +571,28 @@ class ProjectList extends StatelessWidget {
                   ],
                 ),
               ),
+              IconAction(
+                icon: Icons.add_rounded,
+                tooltip: 'New project',
+                onPressed: c.online ? () => showProjectForm(context, c) : null,
+              ),
             ],
           ),
         ),
         const Divider(),
         Expanded(
           child: c.projects.isEmpty
-              ? const EmptyState(
+              ? EmptyState(
                   icon: Icons.folder_off_outlined,
                   title: 'No Projects',
-                  message: 'Projects created on the web appear here.',
+                  message: 'Create a Project to organize your Tasks.',
+                  action: AppButton(
+                    label: 'New project',
+                    icon: Icons.add_rounded,
+                    onPressed: c.online
+                        ? () => showProjectForm(context, c)
+                        : null,
+                  ),
                 )
               : RefreshIndicator(
                   color: Palette.primary,

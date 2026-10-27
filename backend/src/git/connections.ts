@@ -1,5 +1,5 @@
 import { createHash, createPrivateKey } from 'node:crypto';
-import type { CreateGitConnectionBody, GitConnection, GitConnectionHealth, GitProviderKind, RepositoryGroup, UpdateGitConnectionBody } from '@claude-task/shared';
+import type { CreateGitConnectionBody, GitConnection, GitConnectionHealth, GitProviderKind, Repository, RepositoryGroup, UpdateGitConnectionBody } from '@claude-task/shared';
 import { eq, sql } from 'drizzle-orm';
 import type { Config } from '../config';
 import type { AppContext } from '../context';
@@ -38,6 +38,7 @@ export const ENV_GITHUB = 'env-github';
 export const ENV_GITLAB = 'env-gitlab';
 /** Tokens expiring within this window are rotated (database) or warned about (environment). */
 export const EXPIRY_WINDOW_MS = 14 * 24 * 3600000;
+export const REPOSITORY_LIST_CACHE_MS = 60_000;
 const ROTATION_RETRY_MS = 3600000;
 const ROTATED_LIFETIME_DAYS = 90;
 
@@ -61,6 +62,11 @@ export function cachedProviderFactory(): ProviderFactory {
 
 /** The Git Connections of the installation: environment ones first, then stored ones. */
 export class GitConnections {
+  private readonly repositoryLists = new Map<string, {
+    fingerprint: string;
+    expiresAt: number;
+    promise: Promise<Repository[]>;
+  }>();
   constructor(
     private readonly db: Executor,
     private readonly config: Config,
@@ -120,7 +126,12 @@ export class GitConnections {
   }
   async list(db: Executor = this.db): Promise<ConnectionRecord[]> {
     const rows = await db.select().from(gitConnections).orderBy(gitConnections.createdAt);
-    return [...this.environment(), ...rows.map((r) => this.stored(r))];
+    const records = [...this.environment(), ...rows.map((r) => this.stored(r))];
+    const ids = new Set(records.map((r) => r.id));
+    for (const id of this.repositoryLists.keys()) {
+      if (!ids.has(id)) this.repositoryLists.delete(id);
+    }
+    return records;
   }
   async find(id: string, db: Executor = this.db): Promise<ConnectionRecord | null> {
     const env = this.environment().find((r) => r.id === id);
@@ -136,6 +147,33 @@ export class GitConnections {
   }
   providerFor(record: ConnectionRecord): GitProvider {
     return this.factory(record);
+  }
+  invalidateRepositories(id?: string): void {
+    if (id) this.repositoryLists.delete(id);
+    else this.repositoryLists.clear();
+  }
+
+  /** Picker snapshots share in-flight requests; saves still validate against the provider. */
+  listRepositories(record: ConnectionRecord): Promise<Repository[]> {
+    const cached = this.repositoryLists.get(record.id);
+    if (cached?.fingerprint === record.fingerprint && cached.expiresAt > Date.now()) return cached.promise;
+    const entry = {
+      fingerprint: record.fingerprint,
+      expiresAt: Infinity,
+      promise: Promise.resolve().then(() => this.providerFor(record).listAccessibleRepositories()),
+    };
+    entry.promise = entry.promise.then(
+      (repositories) => {
+        entry.expiresAt = Date.now() + REPOSITORY_LIST_CACHE_MS;
+        return repositories;
+      },
+      (error: unknown) => {
+        if (this.repositoryLists.get(record.id) === entry) this.repositoryLists.delete(record.id);
+        throw error;
+      },
+    );
+    this.repositoryLists.set(record.id, entry);
+    return entry.promise;
   }
   /** The provider of a Repository's Git Connection. */
   async provider(connectionId: string): Promise<GitProvider> {
@@ -296,6 +334,7 @@ export async function deleteConnection(ctx: AppContext, id: string): Promise<voi
     if ((await linkedProjects(tx, id)) > 0) throw conflict('Projects still link repositories of this connection. Link them elsewhere first.');
     await tx.delete(gitConnections).where(eq(gitConnections.id, id));
   });
+  ctx.git.invalidateRepositories(id);
 }
 
 /** Repositories of every connection; one failing connection doesn't hide the others. */
@@ -304,7 +343,7 @@ export async function listRepositoryGroups(ctx: AppContext): Promise<RepositoryG
     (await ctx.git.list()).map(async (record) => {
       const connection = { id: record.id, provider: record.provider, name: record.name, host: hostOf(record) };
       try {
-        return { connection, repositories: await ctx.git.providerFor(record).listAccessibleRepositories(), error: null };
+        return { connection, repositories: await ctx.git.listRepositories(record), error: null };
       } catch (err) {
         return { connection, repositories: [], error: err instanceof GitProviderError ? err.message : 'The connection could not list repositories' };
       }

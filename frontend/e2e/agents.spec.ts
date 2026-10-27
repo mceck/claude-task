@@ -248,7 +248,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
 
   await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please check logout too.');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
-  await expect(page.getByLabel('Delivery: Delivered')).toBeVisible();
+  await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel('Delivery: Delivered')).toBeVisible();
   await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.input')).toBe(true);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.interrupt')).toBe(true);

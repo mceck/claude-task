@@ -54,10 +54,19 @@ export interface UserWithTemporaryPassword {
 
 export const PROJECT_KEY_PATTERN = /^[A-Z]{2,6}$/;
 
+export const repositoryBody = z.strictObject({
+  connectionId: z.string().min(1).max(64),
+  providerRepoId: z.string().regex(/^[0-9]+$/).max(30),
+  baseBranch: z.string().trim().min(1).max(250).optional(),
+});
+export type RepositoryBody = z.infer<typeof repositoryBody>;
+
 export const createProjectBody = z.strictObject({
   key: z.string().regex(PROJECT_KEY_PATTERN, 'must be 2–6 uppercase letters'),
   name,
   description: z.string().max(10_000).default(''),
+  repository: repositoryBody.nullable().optional(),
+  defaultAgentId: id.nullable().optional(),
 });
 export type CreateProjectBody = z.input<typeof createProjectBody>;
 
@@ -360,9 +369,3 @@ export const updateGitConnectionBody = z.strictObject({
   token: gitlabToken.optional(),
 });
 export type UpdateGitConnectionBody = z.infer<typeof updateGitConnectionBody>;
-export const repositoryBody = z.strictObject({
-  connectionId: z.string().min(1).max(64),
-  providerRepoId: z.string().regex(/^[0-9]+$/).max(30),
-  baseBranch: z.string().trim().min(1).max(250).optional(),
-});
-export type RepositoryBody = z.infer<typeof repositoryBody>;

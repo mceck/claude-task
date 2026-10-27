@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
-import { createProject, createTask, createUser, statusByName } from './helpers/fixtures';
+import { createAgent, createProject, createTask, createUser, getSession, statusByName } from './helpers/fixtures';
 
 describe('projects', () => {
   const app = useTestApp();
@@ -19,6 +20,61 @@ describe('projects', () => {
       ['Closed', 'closed'],
     ]);
     expect(res.body.tags).toEqual([]);
+  });
+
+  it('lets a Member create a Project with its Repository and default Agent before the first Task', async () => {
+    const admin = await app.admin();
+    const { agent, runner } = await createAgent(app, admin);
+    const { client } = await createUser(app, admin);
+    app.git.branches.get('1')!.add('develop');
+    const result = await client.post('/projects', {
+      key: 'CFG', name: 'Configured', defaultAgentId: agent.id,
+      repository: { connectionId: 'env-github', providerRepoId: '1', baseBranch: 'develop' },
+    });
+    expect(result.status, JSON.stringify(result.body)).toBe(201);
+    const { project } = result.body;
+    expect(project.repository).toMatchObject({ connectionId: 'env-github', providerRepoId: '1', baseBranch: 'develop', protection: { protected: true } });
+    expect((await client.get(`/projects/${project.id}/agent-settings`)).body.settings.defaultAgentId).toBe(agent.id);
+    const task = await createTask(client, project.id);
+    expect(task.agentId).toBe(agent.id);
+    expect(await getSession(client, task.id)).toMatchObject({ state: 'pending' });
+    expect(await runner.none('job.start')).toBe(true);
+  });
+
+  it('accepts a Repository alone and uses its default Base Branch', async () => {
+    const admin = await app.admin();
+    const result = await admin.post('/projects', {
+      key: 'REPO', name: 'Repository only',
+      repository: { connectionId: 'env-github', providerRepoId: '1' },
+    });
+    expect(result.status).toBe(201);
+    expect(result.body.project.repository.baseBranch).toBe('main');
+    expect((await admin.get(`/projects/${result.body.project.id}/agent-settings`)).body.settings.defaultAgentId).toBeNull();
+  });
+
+  it('accepts a default Agent alone and explicit empty configuration', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin);
+    const result = await admin.post('/projects', { key: 'AGENT', name: 'Agent only', defaultAgentId: agent.id });
+    expect(result.status).toBe(201);
+    expect(result.body.project.repository).toBeNull();
+    expect((await createTask(admin, result.body.project.id)).agentId).toBe(agent.id);
+    const empty = await admin.post('/projects', { key: 'EMPTY', name: 'Empty', defaultAgentId: null, repository: null });
+    expect(empty.status).toBe(201);
+    expect((await createTask(admin, empty.body.project.id)).agentId).toBeNull();
+  });
+
+  it.each([
+    { defaultAgentId: randomUUID() },
+    { repository: { connectionId: 'missing', providerRepoId: '1' } },
+    { repository: { connectionId: 'env-github', providerRepoId: '999' } },
+    { repository: { connectionId: 'env-github', providerRepoId: '1', baseBranch: 'missing' } },
+  ])('rejects invalid initial configuration atomically: %j', async (configuration) => {
+    const admin = await app.admin();
+    const result = await admin.post('/projects', { key: 'RETRY', name: 'Invalid', ...configuration });
+    expect(result.status, JSON.stringify(result.body)).toBe(400);
+    expect((await admin.get('/projects/RETRY')).status).toBe(404);
+    expect((await admin.post('/projects', { key: 'RETRY', name: 'Corrected' })).status).toBe(201);
   });
 
   it.each(['A', 'TOOLONG', 'api', 'A1', 'AB-C', ''])('rejects the key %j', async (key) => {
