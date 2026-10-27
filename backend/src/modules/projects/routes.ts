@@ -11,7 +11,7 @@ import { removeDeletedWorktrees } from '../../sessions/lifecycle';
 import { listTags } from '../tags/service';
 import { listStatuses } from '../statuses/service';
 import { assertNoActiveJobs } from '../tasks/service';
-import { createProject, getProject, listProjects, serializeProject } from './service';
+import { createProject, getBoardProject, listProjects, serializeProject } from './service';
 import { idOrKey } from '../../ids';
 
 const params = z.object({ id: idOrKey });
@@ -30,7 +30,7 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   app.get('/projects/:id', async (request) => {
     const { id } = parse(params, request.params);
-    const project = await getProject(ctx.db, id);
+    const project = await getBoardProject(ctx.db, id);
     return bundle(ctx, project.id);
   });
 
@@ -38,7 +38,7 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     const body = parse(updateProjectBody, request.body);
     return transact(ctx, async (tx, after) => {
-      const existing = await getProject(tx, id, { lock: true });
+      const existing = await getBoardProject(tx, id, { lock: true });
       return updateProject(tx, after, existing.id, body);
     });
   });
@@ -47,7 +47,7 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
     app.post(`/projects/:id/${action}`, async (request) => {
       const { id } = parse(params, request.params);
       return transact(ctx, async (tx, after) => {
-        const existing = await getProject(tx, id, { lock: true });
+        const existing = await getBoardProject(tx, id, { lock: true });
         return updateProject(tx, after, existing.id, {
           archivedAt: action === 'archive' ? (existing.archivedAt ?? new Date()) : null,
         });
@@ -58,7 +58,7 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.delete('/projects/:id', { config: { auth: 'admin' } }, async (request, reply) => {
     const { id } = parse(params, request.params);
     await transact(ctx, async (tx, after) => {
-      const project = await getProject(tx, id, { lock: true });
+      const project = await getBoardProject(tx, id, { lock: true });
       if (!project.archivedAt) throw badRequest('Archive the project before deleting it');
       const doomed = await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.projectId, project.id)).for('update');
       await assertNoActiveJobs(tx, eq(tasks.projectId, project.id));

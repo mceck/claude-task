@@ -8,7 +8,7 @@ import type { Executor } from '../../db/client';
 import { projectEnvVars, projects } from '../../db/schema';
 import { badRequest, notFound, parse } from '../../errors';
 import { last4 } from '../../secrets';
-import { getProject } from './service';
+import { getBoardProject } from './service';
 import { idOrKey } from '../../ids';
 
 const projectParams = z.object({ projectId: idOrKey });
@@ -35,14 +35,14 @@ export function agentSettingsRoutes(app: FastifyInstance, ctx: AppContext): void
 
   app.get('/projects/:projectId/agent-settings', async (request) => {
     const { projectId } = parse(projectParams, request.params);
-    const project = await getProject(ctx.db, projectId);
+    const project = await getBoardProject(ctx.db, projectId);
     return { settings: await loadSettings(ctx.db, project.id) };
   });
 
   app.patch('/projects/:projectId/agent-settings', async (request) => {
     const { projectId } = parse(projectParams, request.params);
     const body = parse(updateAgentSettingsBody, request.body);
-    const project = await getProject(ctx.db, projectId);
+    const project = await getBoardProject(ctx.db, projectId);
     await ctx.db.update(projects).set({ ...body, updatedAt: new Date() }).where(eq(projects.id, project.id));
     return { settings: await loadSettings(ctx.db, project.id) };
   });
@@ -56,7 +56,7 @@ export function agentSettingsRoutes(app: FastifyInstance, ctx: AppContext): void
     const { projectId, name } = parse(envParams, request.params);
     const body = parse(putEnvVarBody, { ...(request.body as object), name });
     if (RESERVED.test(body.name)) throw badRequest(`${body.name} is set by the platform`);
-    const project = await getProject(ctx.db, projectId);
+    const project = await getBoardProject(ctx.db, projectId);
     const values = storedValue(body.value, body.secret);
     await ctx.db
       .insert(projectEnvVars)
@@ -78,7 +78,7 @@ export function agentSettingsRoutes(app: FastifyInstance, ctx: AppContext): void
     if (reserved.length) throw badRequest(`Set by the platform: ${reserved.join(', ')}`);
     const tooLong = entries.filter((e) => e.value.length > MAX_VALUE).map((e) => e.name);
     if (tooLong.length) throw badRequest(`Values longer than ${MAX_VALUE} characters: ${tooLong.join(', ')}`);
-    const project = await getProject(ctx.db, projectId);
+    const project = await getBoardProject(ctx.db, projectId);
     await ctx.db.transaction(async (tx) => {
       const existing = await tx.select({ name: projectEnvVars.name, secret: projectEnvVars.secret }).from(projectEnvVars).where(eq(projectEnvVars.projectId, project.id));
       const secretNames = new Set(existing.filter((r) => r.secret).map((r) => r.name));
@@ -102,7 +102,7 @@ export function agentSettingsRoutes(app: FastifyInstance, ctx: AppContext): void
 
   app.delete('/projects/:projectId/env/:name', admin, async (request) => {
     const { projectId, name } = parse(envParams, request.params);
-    const project = await getProject(ctx.db, projectId);
+    const project = await getBoardProject(ctx.db, projectId);
     const removed = await ctx.db
       .delete(projectEnvVars)
       .where(and(eq(projectEnvVars.projectId, project.id), eq(projectEnvVars.name, name)))

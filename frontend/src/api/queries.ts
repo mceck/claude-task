@@ -118,7 +118,7 @@ export function useTimeline(taskId: string | undefined) {
   });
 }
 
-// Agents (Spec 02)
+// Agents (docs/specs/agents.md)
 
 export function useAgents() {
   return useQuery({ queryKey: keys.agents, queryFn: () => get<{ agents: Agent[] }>('/agents').then((r) => r.agents), staleTime: 30_000 });

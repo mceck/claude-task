@@ -180,7 +180,7 @@ func TestRemovingAWorktreeKeepsTheBranches(t *testing.T) {
 		t.Fatal("local task branch lost")
 	}
 
-	// With no remote task branch, reopening recreates from the latest base branch (Spec 03).
+	// With no remote task branch, reopening recreates from the latest base branch (docs/specs/git-integration.md).
 	runJob(t, b, "j2", "worktrees/proj/T-1", o.spec("task/t-1"), "")
 	if gitIn(t, home, wt, "rev-parse", "HEAD") != gitIn(t, home, o.bare, "rev-parse", "main") {
 		t.Fatal("missing remote branch was not recreated from the base")

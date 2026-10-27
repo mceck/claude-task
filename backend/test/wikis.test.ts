@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { taskTopic } from '@claude-task/shared';
 import type { InputBlock, Wiki } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
@@ -45,6 +47,54 @@ describe('Wikis', () => {
     expect(start.mode).toBe('new');
     expect(start.git?.repositoryId).toBe('env-github/1');
     expect(start.claudeArgs.appendSystemPrompt).toContain('repository skills');
+  });
+
+  it('keeps the Wiki Project and its Backing Task out of the Project, Status, Tag and Task APIs', async () => {
+    const { admin, runner, wiki } = await setup();
+    const { client: member } = await createUser(app, admin);
+    const task = (await admin.get(`/tasks/${wiki.taskId}`)).body.task;
+    const attempts: [string, string, unknown?][] = [
+      ['GET', `/projects/${wiki.id}`],
+      ['PATCH', `/projects/${wiki.id}`, { name: 'Renamed' }],
+      ['POST', `/projects/${wiki.id}/archive`],
+      ['GET', `/projects/${wiki.id}/tasks`],
+      ['POST', `/projects/${wiki.id}/tasks`, { title: 'Stray task' }],
+      ['GET', `/projects/${wiki.id}/statuses`],
+      ['POST', `/projects/${wiki.id}/statuses`, { name: 'Extra', color: '#888888', category: 'active' }],
+      ['GET', `/projects/${wiki.id}/tags`],
+      ['PATCH', `/projects/${wiki.id}/agent-settings`, { agentInstructions: 'Something else' }],
+      ['PUT', `/projects/${wiki.id}/repository`, { repository: null }],
+    ];
+    for (const [method, path, body] of attempts) {
+      const res = await member.request(method, path, { body });
+      expect(res.status, `${method} ${path}`).toBe(404);
+    }
+    expect((await admin.patch(`/tasks/${wiki.taskId}`, { version: task.version, title: 'Renamed' })).status).toBe(403);
+    expect((await admin.post(`/tasks/${wiki.taskId}/move`, { statusId: task.statusId })).status).toBe(403);
+    expect((await admin.delete(`/tasks/${wiki.taskId}`)).status).toBe(403);
+    expect((await admin.get(`/wikis/${wiki.id}`)).body.wiki).toEqual(wiki);
+
+    // The conversation keeps working, and the Agent reads its Task but doesn't change it.
+    await comment(member, wiki.taskId, 'Summarise the onboarding page.');
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+    const server = JSON.parse(start.claudeArgs.mcpConfig).mcpServers['claude-task'];
+    const mcp = new Client({ name: 'test', version: '1' });
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(server.url.replace('http://backend.test', app.url)), { requestInit: { headers: server.headers } }));
+    const call = (name: string, args: Record<string, unknown> = {}) =>
+      mcp.callTool({ name, arguments: args }) as Promise<{ content: { text: string }[]; isError?: boolean }>;
+    expect((await call('get_task')).isError ?? false).toBe(false);
+    for (const [name, args] of [
+      ['update_task', { title: 'Renamed' }],
+      ['set_status', { status_name: 'Done' }],
+      ['create_task', { title: 'Stray task' }],
+    ] as const) {
+      const res = await call(name, args);
+      expect(res.isError, name).toBe(true);
+      expect(res.content[0]!.text).toContain('belongs to a Wiki');
+    }
+    await mcp.close();
   });
 
   it('lets multiple members chat and broadcasts resets to everyone', async () => {

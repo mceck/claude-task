@@ -1,4 +1,4 @@
-// The Git Proxy (ADR 0006): Agent Containers' only way to their Repository. Git smart HTTP is
+// The Git Proxy (docs/specs/git-integration.md): Agent Containers' only way to their Repository. Git smart HTTP is
 // streamed to the provider with the Git Connection's credential, which never leaves the backend.
 import http from 'node:http';
 import https from 'node:https';
@@ -118,7 +118,7 @@ async function authorize(ctx: AppContext, request: FastifyRequest, reply: Fastif
     await deny(reply, 401, 'Authentication required');
     return null;
   }
-  // Like Spec 03's token grants: only an accepted Job, still running or finishing its Turn.
+  // Only an accepted Job, still running or finishing its Turn.
   if (row.discardOutput || !['running', 'finishing'].includes(row.state) || row.projectId !== projectId.toLowerCase() || !row.repository) {
     await deny(reply, 403, 'no active task for this repository');
     return null;

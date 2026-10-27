@@ -1,4 +1,4 @@
-// Session lifecycle rules (Spec 02): Assignment, unassignment, reassignment, closing and
+// Session lifecycle rules (docs/specs/agent-sessions.md): Assignment, unassignment, reassignment, closing and
 // reopening a Task, and how a User's Comment reaches the Agent. Lock order everywhere:
 // project → task → agents (by id) → session → job → queue entries.
 import { commandName, taskKey } from '@claude-task/shared';
@@ -15,7 +15,7 @@ import type { CommentRow } from './messages';
 import { attachComments, enqueue, getEntry, removeEntry } from './queue';
 import type { SessionRow } from './view';
 
-/** Deterministic per (Project, Task), because `--resume` needs the same cwd (ADR 0002). */
+/** Deterministic per (Project, Task), because `--resume` needs the same cwd (docs/specs/agent-sessions.md). */
 export async function worktreePathFor(db: Executor, task: Pick<TaskRow, 'projectId' | 'number'>): Promise<string> {
   const [p] = await db.select({ key: projects.key }).from(projects).where(eq(projects.id, task.projectId));
   return `worktrees/${task.projectId}/${taskKey(p!.key, task.number)}`;

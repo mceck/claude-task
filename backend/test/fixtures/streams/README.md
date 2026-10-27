@@ -8,7 +8,7 @@ plugins and skills) are stripped; everything else is as the CLI printed it.
   (`rate_limit_event` with status `rejected`, a `<synthetic>` assistant message, a `result` with
   `subtype: success` and `is_error: true`).
 
-Recorded by the spike in Spec 02 (ADR 0005, 2026-10-26, Claude Code 2.1.310, `claude-sonnet-5-5`):
+Recorded by the real CLI spike (see docs/specs/agent-sessions.md; 2026-10-26, Claude Code 2.1.310, `claude-sonnet-5-5`):
 
 - `mid-turn-message.jsonl` — user message written during a tool call, consumed after it (`--replay-user-messages`).
 - `interrupt-control-request.jsonl` — `control_request` interrupt: `error_during_execution`, process stays alive.

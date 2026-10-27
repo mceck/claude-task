@@ -7,7 +7,7 @@ import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { statuses } from '../../db/schema';
 import { badRequest, notFound, parse } from '../../errors';
-import { getProject } from '../projects/service';
+import { getBoardProject } from '../projects/service';
 import { onStatusClosedChanged } from '../../sessions/lifecycle';
 import { relocateStatusTasks } from '../tasks/service';
 import { assertEntryAndExit, emitStatusesChanged, getStatus, listStatuses, serializeStatus } from './service';
@@ -19,7 +19,7 @@ const params = z.object({ id: z.uuid() });
 export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/projects/:projectId/statuses', async (request) => {
     const { projectId } = parse(projectParams, request.params);
-    const project = await getProject(ctx.db, projectId);
+    const project = await getBoardProject(ctx.db, projectId);
     return { statuses: await listStatuses(ctx.db, project.id) };
   });
 
@@ -28,7 +28,7 @@ export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(createStatusBody, request.body);
     const status = await transact(ctx, async (tx, after) => {
       // Every status change locks the project row, so invariant checks don't race.
-      const project = await getProject(tx, projectId, { lock: true });
+      const project = await getBoardProject(tx, projectId, { lock: true });
       const [last] = await tx.select({ p: max(statuses.position) }).from(statuses).where(eq(statuses.projectId, project.id));
       const [status] = await tx
         .insert(statuses)
@@ -45,7 +45,7 @@ export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(updateStatusBody, request.body);
     return transact(ctx, async (tx, after) => {
       // Read it again under the Project lock: a concurrent change or deletion may have won.
-      await getProject(tx, (await getStatus(tx, id)).projectId, { lock: true });
+      await getBoardProject(tx, (await getStatus(tx, id)).projectId, { lock: true });
       const existing = await getStatus(tx, id);
       if (body.category && body.category !== existing.category) {
         const all = await listStatuses(tx, existing.projectId);
@@ -64,7 +64,7 @@ export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { projectId } = parse(projectParams, request.params);
     const body = parse(reorderStatusesBody, request.body);
     return transact(ctx, async (tx, after) => {
-      const project = await getProject(tx, projectId, { lock: true });
+      const project = await getBoardProject(tx, projectId, { lock: true });
       const current = await listStatuses(tx, project.id);
       const ids = new Set(body.statusIds);
       if (ids.size !== body.statusIds.length || ids.size !== current.length || current.some((s) => !ids.has(s.id))) {
@@ -82,7 +82,7 @@ export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { targetStatusId } = parse(deleteStatusQuery, request.query);
     const actor = userActor(currentUser(request));
     await transact(ctx, async (tx, after) => {
-      await getProject(tx, (await getStatus(tx, id)).projectId, { lock: true });
+      await getBoardProject(tx, (await getStatus(tx, id)).projectId, { lock: true });
       const existing = await getStatus(tx, id);
       if (targetStatusId === id) throw badRequest('Choose a different status for its tasks');
       const [target] = await tx

@@ -1,6 +1,8 @@
 import type { Tag, Status, Task, TaskSession, User } from '@claude-task/shared';
-import { useEffect, useRef } from 'react';
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import type { ReactNode, RefObject } from 'react';
+import { put } from '../api/client';
+import { useTimeline } from '../api/queries';
 import { Composer, useCommentDraft } from './Composer';
 import { Timeline } from './Timeline';
 
@@ -22,6 +24,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const markRead = useReadPosition(task.id, following);
   useEffect(() => {
     const scroll = viewport.current!;
     const observer = new ResizeObserver(() => {
@@ -42,6 +45,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
           const el = event.currentTarget;
           // Reading older activity never snaps back down.
           following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+          markRead();
         }}
       >
         <div ref={content} className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
@@ -56,4 +60,23 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
       </div>
     </section>
   );
+}
+
+/** Moves the User's Read Position to the newest entry while the conversation is on screen and scrolled to the bottom. */
+function useReadPosition(taskId: string, atBottom: RefObject<boolean>) {
+  const timeline = useTimeline(taskId);
+  const newest = timeline.data?.pages[0]?.items[0]?.id;
+  const sent = useRef<string | null>(null);
+  const markRead = useCallback(() => {
+    if (!newest || newest === sent.current || !atBottom.current || document.visibilityState !== 'visible') return;
+    sent.current = newest;
+    // Best effort: the next entry or scroll tries again.
+    put(`/tasks/${taskId}/read-position`, { itemId: newest }).catch(() => {});
+  }, [taskId, newest, atBottom]);
+  useEffect(() => {
+    markRead();
+    document.addEventListener('visibilitychange', markRead);
+    return () => document.removeEventListener('visibilitychange', markRead);
+  }, [markRead]);
+  return markRead;
 }

@@ -17,6 +17,7 @@ import { badRequest, fromDatabaseError, HttpError, unauthorized } from '../error
 import { actorResolver } from '../modules/actors';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import { createTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from '../modules/tasks/service';
+import { assertBoardTask } from '../modules/projects/service';
 import { hashToken } from '../secrets';
 
 interface JobScope {
@@ -253,6 +254,7 @@ async function tagIds(db: Executor, projectId: string, names: string[]): Promise
 }
 
 async function updateOwnTask(ctx: AppContext, scope: JobScope, args: { title?: string; description?: string; priority?: (typeof PRIORITIES)[number]; tags?: string[] }) {
+  await assertBoardTask(ctx.db, scope.projectId);
   const task = await transact(ctx, async (tx, after) => {
     const current = await getTaskRow(tx, scope.taskId);
     return updateTask(
@@ -273,6 +275,7 @@ async function updateOwnTask(ctx: AppContext, scope: JobScope, args: { title?: s
 }
 
 async function setStatus(ctx: AppContext, scope: JobScope, name: string) {
+  await assertBoardTask(ctx.db, scope.projectId);
   const [status] = await ctx.db
     .select()
     .from(statuses)
@@ -287,6 +290,7 @@ async function setStatus(ctx: AppContext, scope: JobScope, name: string) {
 }
 
 async function createProjectTask(ctx: AppContext, scope: JobScope, args: { title: string; description?: string; priority?: (typeof PRIORITIES)[number]; tags?: string[] }) {
+  await assertBoardTask(ctx.db, scope.projectId);
   const task = await transact(ctx, async (tx, after) =>
     createTask(
       tx,

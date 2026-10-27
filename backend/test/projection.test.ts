@@ -244,7 +244,7 @@ describe('stream projection', () => {
   });
 });
 
-describe('recorded streams (ADR 0005 spike)', () => {
+describe('recorded streams (real CLI spike)', () => {
   const load = (name: string) =>
     readFileSync(path.join(import.meta.dirname, `fixtures/streams/${name}.jsonl`), 'utf8')
       .trim()

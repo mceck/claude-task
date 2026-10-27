@@ -21,7 +21,7 @@ const (
 	setupPendingMarker = ".claude-task/setup-pending"
 )
 
-// prepareWorktree makes the Task's Worktree ready (Spec 03) and reports whether it was just created.
+// prepareWorktree makes the Task's Worktree ready (docs/specs/runner.md) and reports whether it was just created.
 // A new Worktree is marked setup-pending as soon as it exists.
 func (j *job) prepareWorktree() (string, bool, error) {
 	<-j.turn

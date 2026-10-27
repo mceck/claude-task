@@ -1,4 +1,4 @@
-// The only module that talks to Docker (Spec 02, "AgentRuntime"). Everything else asks it for
+// The only module that talks to Docker (docs/specs/agents.md, "AgentRuntime"). Everything else asks it for
 // images and containers and stores what it observed.
 
 export interface ContainerSpec {

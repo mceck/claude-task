@@ -4,10 +4,9 @@ Self-hosted kanban board (ClickUp-style) where tasks are worked by Claude Code a
 
 ## Docs (read before changing behavior)
 
-- `CONTEXT.md`: the domain glossary. Use its terms in code, UI and docs (Session/Job/Turn, Comment vs Message, Status vs column, etc.). If you need a new concept, add it there first.
-- `docs/spec/`: feature specs, each with `status:` frontmatter (`to-do` → `in-progress` → `done`). Update the status when you start or finish one.
-  - 01 core board · 02 agents & runtime · 03 git integration · 04 flutter app · 05 GitLab & git proxy
-- `docs/adr/`: architectural decisions (`NNNN-slug.md`, `status:` frontmatter). Don't contradict an accepted ADR silently: write a new one that supersedes it.
+- `docs/CONTEXT.md`: the domain glossary. Use its terms in code, UI and docs (Session/Job/Turn, Comment vs Message, Status vs column, etc.). If you need a new concept, add it there first.
+- `docs/specs/`: one living spec per area, with its architectural decisions: users-and-auth · board · conversation · agents · agent-sessions · runner · git-integration · wikis · clients. Read the affected specs first; don't contradict a recorded decision silently: change it in the spec, with the new rationale.
+- `docs/tasks/`: units of work with their `status`. See Workflow below.
 
 ## Stack & layout
 
@@ -32,7 +31,7 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 
 ## Invariants (don't break these)
 
-- **The first User Comment is the trigger.** Assigning an Agent only creates a `pending` Session; its first Job starts on the first User Comment (or Notify agent). Task Status never drives an Agent, except that a `closed`-category Status ends the Session.
+- **The first User Comment is the trigger.** Assigning an Agent only creates a `pending` Session; its first Job starts on the first User Comment. Notify agent works only on `idle` or `running` Sessions. Task Status never drives an Agent, except that a `closed`-category Status ends the Session.
 - **One Job at a time per Agent.** The Queue lives in the backend DB. The Runner is stateless, dials out over WebSocket, and resends events using seq/ack.
 - **One Session per (Task, Agent)**, resumed with `claude --resume <id>`. Worktree paths are deterministic per (project, task) because resume needs the same cwd.
 - **Agents run `claude -p --input-format stream-json --output-format stream-json`**, not `--bare` (repo CLAUDE.md, `.claude/` and `.mcp.json` must load). Comments for the running Task are written to stdin mid-turn. Everything else waits in the Queue.
@@ -40,7 +39,7 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 - **The `claude` version is pinned centrally** (`CLAUDE_CODE_VERSION`, auto-updater off). The stream-json format is a contract.
 - **Secrets** (Credentials, project secret env) are encrypted at rest (`SECRETS_MASTER_KEY`), write-only in the API (last4 only), never logged, and sent per Job, never as container env.
 - **The agent user is non-root** (`bypassPermissions` refuses root). Agent Dockerfiles must start `FROM claude-task/agent-base` and end as `USER agent`.
-- **Agents reach git only through the Git Proxy** with their Job token, valid only for that Job's Repository while the Job is active (ADR 0006). Provider credentials (Git Connections) never leave the backend. The proxy's Push Policy (only the Task Branch, no deletions or tags) keeps Agents off the Base Branch; provider-side protection is informational.
+- **Agents reach git only through the Git Proxy** with their Job token, valid only for that Job's Repository while the Job is active (see `docs/specs/git-integration.md`). Provider credentials (Git Connections) never leave the backend. The proxy's Push Policy (only the Task Branch, no deletions or tags) keeps Agents off the Base Branch; provider-side protection is informational.
 - **Internal Notes are never delivered** to an Agent.
 
 ## Testing
@@ -51,3 +50,11 @@ Test external behavior only, at the highest seam:
 3. **Opt-in e2e smoke** with real Docker, `claude` and GitHub.
 
 The event projection gets table-driven unit tests over recorded fixtures. Frontend gets a small Playwright suite.
+
+## Workflow
+
+This project is developed spec-first with the `write-spec`, `write-task`, `grill-with-task` and `implement` skills.
+
+- `docs/specs/`: living specs, one per area of the system, describing in detail what it does and the architectural decisions behind it. Every change to behaviour or architecture updates the affected specs in the same change, using the `write-spec` skill.
+- `docs/tasks/`: one file per unit of work. Keep the `status` in its frontmatter (`to-do`, `in-progress`, `done`) current while working on it.
+- `docs/CONTEXT.md`: the domain glossary. Use its terms in code, specs and tasks.

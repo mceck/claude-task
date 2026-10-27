@@ -1,0 +1,249 @@
+# Conversation
+
+The conversation is the human side of a Task's Timeline: the Comments Users write to each other and to the Agent, the Internal Notes they keep among themselves, the files they attach, the indicators that tell them whether the Agent has received each Comment, and the notifications that bring them back to a Task when something happens. It exists because Comments are the only channel between people and Agents: everything a User wants an Agent to know arrives as a Comment, and everything the Agent says comes back as one. How a Comment travels to the Agent (Queue, Jobs, Turns, injection into a running Turn) is described in [Agent sessions](agent-sessions.md); this spec covers what Users write, see and receive.
+
+## Concepts
+
+- A **Comment** is an entry in a Task's conversation. Every Comment has a kind:
+  - `user`: written by a User through the app, as a Comment or as an Internal Note.
+  - `agent`: an **Agent Comment**, the text an Agent wrote for humans during a Turn, projected from its stream (see [Agent sessions](agent-sessions.md)).
+  - `system`: a **System Comment** written by the platform, such as errors, resumes after a restart, and the notice that a User notified the Agent of Task changes.
+- An **Internal Note** is a User Comment flagged as internal when it is posted. It is shown to every User and delivered to no Agent.
+- An **Attachment** is a file a User uploads. A Comment carries up to 10 of them. Files uploaded from the Task description editor are Attachments of the Task itself rather than of a Comment.
+- A **Message** is what the Agent receives: one or more Comments merged together, or a system notice. Users write Comments; the platform turns them into Messages.
+- **Delivery** is the state of a User Comment towards the Agent: queued, delivered, or not delivered with a reason.
+- A **Notify agent** notice is a System Comment that carries, for the Agent only, the list of Task changes Users made since the Agent last read its Task.
+- A **Task Preference** is one User's private state on one Task: whether they follow it, whether they muted it, and how far they have read its Timeline.
+- A **Notification Event** is a moment worth alerting followers about: a completed Turn, a failed Turn, or a Job that needs intervention.
+
+Comments, Revisions and the Agent's work items together form the Task's Timeline (see [Agent sessions](agent-sessions.md) for the Agent's items and [Board](board.md) for Revisions). A Wiki's shared conversation is the conversation of its backing Task and follows every rule in this spec (see [Wikis](wikis.md)).
+
+## Behaviour
+
+### Posting a Comment
+
+Every signed-in User, Admin or Member, can comment on any Task. A Comment has a Markdown body of up to 100,000 characters and up to 10 Attachments. A Comment needs a non-blank body or at least one Attachment; an empty one is answered with `400`. A Comment on a Task that does not exist is answered with `404`.
+
+A Comment is sent as plain JSON, or as a multipart form when it carries files: the form carries the body, the internal flag and the files. When any file is rejected, nothing is created: the Comment is discarded and every file already stored for it is removed.
+
+Once the Comment is stored:
+
+- the author starts following the Task (see [Following](#following-and-muting));
+- a non-internal Comment is handed to the Agent's delivery (see [Delivery](#delivery-to-the-agent));
+- everyone viewing the Task receives it live, and the Task's card shows the new Comment count.
+
+The card's Comment count includes every Comment that is not deleted, of every kind, Internal Notes included.
+
+In the web app the composer submits with Enter and inserts a new line with Shift+Enter. Files can be dropped onto the composer, pasted, or picked with the Attach button; pasted images without a meaningful name are renamed `pasted-<time>-<n>`. The composer checks the size and count limits before sending. While a Comment is being sent, text typed after it stays in the composer. Unsent drafts are kept per Task until the page is reloaded or the User logs out. The Flutter app keeps drafts across restarts and offline (see [Clients](clients.md)).
+
+A User Comment whose body starts with a slash command offered for the Agent (for example `/compact` or a Skill) is a Session command: the composer suggests the available commands while typing, and the command runs between Turns. Its handling belongs to [Agent sessions](agent-sessions.md).
+
+### Internal Notes
+
+A User marks a Comment as an Internal Note before posting it. The flag is fixed for the Comment's lifetime: an edit changes only the body, and an edit request carrying the flag is answered with `400`.
+
+Internal Notes stay among Users everywhere the Agent could see them:
+
+- they get no Delivery and never enter a Message;
+- the first Message of a Session, which includes the conversation so far, leaves them out;
+- the Agent's Task Tools return only non-internal Comments;
+- the Runner can download only Attachments of non-internal Comments.
+
+Internal Notes look distinct on every client: a dashed, slate-coloured box with a lock and an "Internal chat" label. While the composer is in internal mode it takes the same styling, shows "Internal chat: only people see this, never the agent", and hides the slash-command suggestions. Posting an Internal Note counts as participation for following.
+
+### Editing a Comment
+
+Editing applies to User Comments, and only their author can edit them; Admins edit their own Comments like everyone else. The new body must contain non-blank text and is at most 100,000 characters. Saving an unchanged body changes nothing; any other edit sets the "edited" time, which clients show next to the Comment, and is broadcast live. Editing a deleted Comment answers `404`.
+
+An edit changes what Users see. A Comment still queued reaches the Agent in its edited form, because the Message is built when the Job starts. A Comment already delivered stays as the Agent received it; to correct it, the User posts a new Comment.
+
+### Deleting a Comment
+
+A Comment can be deleted by the author of a User Comment and by Admins, who can delete any Comment, Agent and System Comments included. Clients ask for confirmation first.
+
+Deletion is soft: the Comment stays on the Timeline as a tombstone ("Mia deleted a comment", with the time), its body is cleared and its Attachments are removed, both their records and their stored files. Downloading an Attachment of a deleted Comment answers `404`. Deleting an already deleted Comment succeeds without changes.
+
+A queued Comment that is deleted is withdrawn from the pending Message. When its Queue Entry is left with nothing to deliver, the entry is dropped so no Job starts for it; an entry that resumes an interrupted Turn stays. A Comment already delivered remains in the Agent's Session.
+
+### Attachments
+
+Attachment limits:
+
+- up to 25 MB per file; a larger file is answered with `413` (`file_too_large`);
+- up to 10 files per Comment; more are answered with `413` (`too_many_files`);
+- up to 100 description files per Task (see below); more are answered with `400`.
+
+File names are cleaned on upload: any directory part is dropped, control characters are removed, the name is trimmed and cut to 255 characters, and an empty name or one made only of dots becomes `file`. The content type is the one the client declared, or `application/octet-stream` when none was given.
+
+Downloading an Attachment requires a signed-in User. PNG, JPEG, GIF, WebP and AVIF images are served inline so clients preview them in the conversation; asking for a download, or any other type (SVG included), serves the file as an `application/octet-stream` download under its original name. Every download carries `nosniff`, a sandboxing content security policy and a private cache lifetime of one hour.
+
+**Description files.** The Task description editor uploads files as Attachments of the Task, and links them from the description text by URL. The Agent receives them with the description. A description file that the current description no longer links and that is older than 24 hours is removed the next time someone uploads a description file to that Task. Description files are kept by Reset Chat and removed with the Task. Editing the description itself is covered in [Board](board.md).
+
+**What the Agent receives.** Image Attachments travel to the Agent as images, within a per-Message size and count budget, and every other file is saved in its Worktree with its path listed under the Comment. The rules are in [Agent sessions](agent-sessions.md).
+
+### Delivery to the Agent
+
+Every User Comment that is not an Internal Note gets a Delivery as soon as the Task has, or has had, an Agent Session. The state is shown on the Comment as a small badge, and changes live:
+
+| State | Badge | Meaning |
+| --- | --- | --- |
+| queued | clock, "Queued" | Waiting in the Agent's Queue, either because the Agent is busy with another Task, the Session has not started, or a slash command waits for the Turn to end. |
+| delivered | check, "Delivered" | Written to the Agent's running Turn, or included in the Message that started a Job. |
+| not delivered | slashed circle, "Not delivered" | The Agent will never receive it. The reason appears on hover. |
+
+Comments without a badge are Internal Notes, Agent and System Comments, and Comments on a Task that never had an Agent.
+
+The reasons for "not delivered" are:
+
+- `no agent assigned`: the Task has no Agent, or its Agent's Session is paused;
+- `task closed`: the Task is in a closed-category Status;
+- `agent unassigned`: the Agent was unassigned or replaced while the Comment was queued;
+- `removed from queue`: a User removed the Task's Queue Entry from the Agent's Queue;
+- `comment deleted`: the Comment was withdrawn by deleting it.
+
+When a Job fails to start, the Comments it carried go back to queued, at the front of the Agent's Queue, and wait for a User to press Retry or post another Comment.
+
+```mermaid
+stateDiagram-v2
+  [*] --> none: Internal Note, or Task never had an Agent
+  [*] --> delivered: Agent running a Turn on this Task
+  [*] --> queued: Agent busy, Session not started, or slash command
+  [*] --> not_delivered: no Agent, paused or closed Session
+  queued --> delivered: Job starts with this Comment
+  queued --> not_delivered: unassigned, Task closed, removed from Queue
+  delivered --> queued: Job failed to start
+```
+
+The first User Comment on a Task with an assigned Agent is what starts the Agent's work; until then the Session stays pending. The full rules for injection into a running Turn, merging queued Comments into one Message, and the Session states shown next to the conversation are in [Agent sessions](agent-sessions.md).
+
+### Notify agent
+
+When Users edit a Task's title, description, priority or Tags after the Agent last read it, the Task view shows a banner offering **Notify agent**. Only edits made by Users to those four fields count; Status and User assignee changes leave the banner as it is. The banner is shown while the Session is idle or running.
+
+Pressing Notify agent posts a System Comment, "*Name* notified the agent of task changes.", visible to every User. That Comment carries a Delivery like a User Comment (queued or delivered), and the Agent receives, in its place, a field-by-field list of the changes since it last read the Task: old and new values for title and priority, Tags added and removed, and a unified diff for the description, with any description files those changes link. Once the notice is delivered the banner disappears.
+
+Notify agent answers `409` when:
+
+- the Task has no Agent assigned;
+- the Session is pending, paused or closed ("The agent has nothing to be notified about yet");
+- the Agent has already seen every change.
+
+How the Agent's read point moves is part of [Agent sessions](agent-sessions.md).
+
+### Following and muting
+
+Each User follows a Task or not, and can mute it, independently of other Users. Following decides who receives phone notifications for the Task.
+
+A User starts following a Task automatically when they:
+
+- create it;
+- are added to its User assignees, at creation or later (assigning an Agent is a separate thing and follows nobody);
+- post a Comment or an Internal Note on it.
+
+A User can follow, unfollow, mute and unmute any Task explicitly. An explicit follow or unfollow choice is permanent: later automatic triggers leave it as it is. Mute is a separate switch that automatic following never changes, so a muted User who participates again stays muted. A User with no stored preference starts out not following the Task.
+
+Preferences are stored on the server, so every installation of the same User shares them. A change is pushed live only to that User's own connections; other Users never see someone else's preferences.
+
+### Read position and unread
+
+The server gives every persisted Timeline entry of a Task (Comments of every kind, Revisions and the Agent's items) an increasing position at the moment it is stored. Positions follow commit order within a Task, so a reader who has seen position N never misses an entry that becomes visible later with a lower position.
+
+Each User has a read position per Task:
+
+- a client advances it by naming an entry of that Task; naming an entry of another Task answers `400`;
+- it only moves forward: naming an older entry keeps the current position;
+- fetching the Timeline or receiving live events leaves it unchanged;
+- advancing it never makes the User follow the Task.
+
+A Task is **unread** for a User when its latest entry position is greater than their read position. Timeline pages carry each entry's position so clients can mark progress precisely. Reset Chat sets every User's read position on the Wiki back to zero along with the cleared Timeline (see [Wikis](wikis.md)).
+
+The Flutter app advances the read position when the conversation is visible, the app is in the foreground and online, and the reader has reached the latest entry. The web app advances it whenever the Task's conversation is on screen and scrolled to the bottom, each time a newer entry arrives or the reader scrolls back down, and only while the browser tab is visible. Both clients report the newest entry they have loaded, so reading a Task on one client clears its unread state on the other.
+
+### Notifications
+
+Notifications are phone alerts sent to the Users who follow a Task. A Notification Event is recorded in the same transaction as the fact it reports:
+
+| Event | When |
+| --- | --- |
+| Turn completed | A Turn of the Task's Agent ends successfully. |
+| Turn failed | A Turn ends with an error. |
+| Needs intervention | A Job fails (for example at Worktree, setup or start) without a failed Turn already reporting it. |
+
+Each event is identified by the Turn or the Job it reports, so the same fact is recorded once. Streaming fragments, individual Agent Comments, and the wording of the Agent's text never produce a notification.
+
+The recipients of an event are the Users who, at that moment, follow the Task, have not muted it, are active, have no pending forced password change, and have a registered phone whose Login is still valid. One delivery is planned per recipient and phone. Just before sending, every condition is checked again (a User who unfollowed, muted, was deactivated or whose Login expired in between receives nothing), and events older than 24 hours are dropped.
+
+The alert shows a fixed text, "A Task you follow has an update.", with no Task title, Project or generated text, and carries the Task's id so the app opens its conversation after sign-in; for a Wiki's backing Task the app opens the Wiki. Alerts for the same Task collapse into one on the phone. Device registration, the push provider, retries and the unconfigured state are described in [Clients](clients.md).
+
+## Architecture
+
+- The **Comments module** owns Comments and Attachments: posting, editing, soft deletion, uploads and downloads, and the merged Timeline read. It hands every new non-internal User Comment to the Session lifecycle, which decides between delivering it to the running Job and queueing it (see [Agent sessions](agent-sessions.md)), and it publishes Comment events on the Task's real-time topic after the transaction commits.
+- The **Blob store** keeps the bytes of every Attachment behind a small interface: store a stream with its name and type and get an id and size back, read it by id, delete it. The implementation writes each blob as a file plus a metadata sidecar in the backend's data directory. Database records point to blob ids; blobs are deleted only after the transaction that removed their records commits, and blobs stored for a request that fails are removed straight away.
+- The **Notifications module** owns Task Preferences, read positions and phone registrations. The Timeline position of each entry and the Notification Events are written by the database itself when the underlying row is inserted, so they share the transaction of the Comment, Revision, Agent item, Turn or Job change that caused them.
+- The **push dispatcher** reads planned deliveries from the database and sends them through the push transport (see [Clients](clients.md)).
+- **Real-time:** Comment created, updated and deleted events go to the Task topic; the refreshed card goes to the Project topic; preference changes go to the User's private topic. Transport and reconnection are described in [Clients](clients.md).
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant C as Comments module
+  participant L as Session lifecycle
+  participant DB as Database
+  participant RT as Real-time hub
+  U->>C: Post Comment (body, internal, files)
+  C->>C: Store files in the Blob store
+  C->>DB: Insert Comment and Attachments
+  DB->>DB: Assign Timeline position
+  C->>DB: Author follows the Task
+  alt not internal
+    C->>L: Deliver
+    L->>DB: Delivery: delivered, queued or not delivered
+  end
+  C-->>U: 201 with the Comment
+  DB-->>RT: After commit
+  RT-->>U: comment.created, card update
+```
+
+## Data model
+
+- **Comment**: Task, kind (`user`, `agent`, `system`), author Actor, Markdown body, internal flag, edited at, deleted at, created at. Delivery fields: state (`none`, `queued`, `delivered`, `not_delivered`), reason, the Job it was delivered in, the Queue Entry it waits in. Notify agent notices also hold the change list the Agent receives and the Task version it covers. Agent Comments hold the Job that produced them. Comments are soft-deleted and removed only with their Task (or by Reset Chat on a Wiki).
+- **Attachment**: either a Comment or a Task (exactly one), blob id, file name, content type, size in bytes, order within its Comment, created at.
+- **Blob**: the stored bytes, identified by a random UUID, with file name, content type and size in a sidecar.
+- **Task Preference**: User and Task, following, muted, whether following was set explicitly, read position.
+- **Timeline position**: Task, entry id, position; one per persisted Timeline entry.
+- **Notification Event**: id derived from the Turn or Job it reports, Task, kind (`turn.completed`, `turn.failed`, `session.intervention`), created at.
+- **Push delivery**: event, User, phone, attempts, next attempt time, finished time. Unique per event, User and phone.
+
+## Non-functional requirements
+
+- Attachments are capped at 25 MB per file and 10 per Comment; uploads stream to storage instead of being buffered in memory.
+- Attachment downloads require a signed-in User; only raster image types render inline, and every response carries `nosniff` and a sandboxing content security policy, so an uploaded file never runs as a page of the app.
+- An Internal Note never leaves the backend towards an Agent: no Message, no Task Tool result and no Runner download includes it or its files.
+- Timeline positions follow commit order per Task, so unread state is exact across concurrent writers and independent of device clocks.
+- A phone alert is sent at most once per event, User and phone: the delivery is marked done before the provider is called, so a crash after sending never repeats an alert. Unread state stays the authoritative signal when an alert is lost.
+- Lock-screen alerts reveal no Task content.
+- Phone tokens are stored encrypted, looked up by hash, and kept out of logs.
+- A User's preferences and read positions are visible only to that User.
+
+## Decisions
+
+- **Soft deletion of Comments.** The tombstone keeps the Timeline coherent: the Agent may have already received and answered the Comment, and Users see that something was there. The body and files are removed, which is what deletion is for.
+- **The internal flag is fixed at posting time.** Turning a delivered Comment into a note cannot take it back from the Agent, and turning a note into a Comment would deliver it out of order. Users post a new Comment instead.
+- **Only the author edits; Admins may also delete.** Editing someone else's words would misattribute them. Deleting is the moderation tool Admins need, for any kind of Comment.
+- **Edits reach the Agent only while queued.** A delivered Comment is part of the Agent's Session and cannot be rewritten there; a correction is a new Comment, which the Agent sees in order.
+- **Only raster images render inline.** SVG and other types can carry scripts; serving them as downloads with a sandboxing policy keeps uploaded content from running in the app's origin.
+- **Attachment bytes behind a Blob store interface, on the local filesystem.** The app is self-hosted on one machine with a data volume; the interface keeps a move to object storage local to one component.
+- **Description files are Task Attachments linked by URL.** The description stays plain Markdown that Users and the Agent can edit without breaking links, and unlinked uploads are pruned after a 24-hour grace period so drafts in progress keep their files.
+- **Following and read positions live on the server.** Phone and desktop installations of one User share them, and push selection happens where the events are.
+- **An explicit follow choice beats automatic following.** Users who unfollowed a noisy Task stay unfollowed when they comment again.
+- **Notification Events are written by the database in the same transaction as the Turn or Job change.** An event exists exactly when its cause is committed, with no window where one is lost or invented. Events come from the Turn and Job lifecycle, never from reading the Agent's prose, so "intervention" means a Job that failed, which is reliable.
+- **Unread comes from server-assigned positions, not timestamps.** Timestamps can tie and device clocks drift; a commit-ordered position per Task makes "read up to here" exact.
+
+## Related specs
+
+- [Agent sessions](agent-sessions.md): how Comments become Messages, the Queue, injection into a running Turn, Session commands, Notify agent's effect on the Agent's read point, and the Agent's Timeline items.
+- [Board](board.md): Tasks, Revisions and the description editor.
+- [Wikis](wikis.md): a Wiki's shared conversation and Reset Chat.
+- [Clients](clients.md): composer and Timeline UI, drafts, offline cache, real-time transport, phone registration and push delivery.
+- [Users and authentication](users-and-auth.md): who is a signed-in User, roles, Logins.
+- [Runner](runner.md): how attached files are fetched into the Worktree.

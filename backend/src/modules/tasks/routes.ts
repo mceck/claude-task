@@ -8,7 +8,7 @@ import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { notFound, parse } from '../../errors';
 import { loadTimeline } from '../comments/service';
-import { getProject } from '../projects/service';
+import { assertBoardTask, getBoardProject } from '../projects/service';
 import { createTask, deleteTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from './service';
 import { idOrKey } from '../../ids';
 
@@ -19,7 +19,7 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/projects/:projectId/tasks', async (request) => {
     const { projectId } = parse(projectParams, request.params);
     const q = parse(listTasksQuery, request.query);
-    const project = await getProject(ctx.db, projectId);
+    const project = await getBoardProject(ctx.db, projectId);
     const tasks = await loadCards(ctx.db, {
       projectId: project.id,
       includeClosed: q.includeClosed === 'true',
@@ -33,7 +33,7 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(createTaskBody, request.body);
     const actor = userActor(currentUser(request));
     const task = await transact(ctx, async (tx, after) => {
-      const project = await getProject(tx, projectId);
+      const project = await getBoardProject(tx, projectId);
       return createTask(tx, after, project.id, body, actor);
     });
     return reply.status(201).send({ task });
@@ -50,7 +50,10 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     const body = parse(updateTaskBody, request.body);
     const actor = userActor(currentUser(request));
-    const task = await transact(ctx, (tx, after) => updateTask(tx, after, id, body, actor));
+    const task = await transact(ctx, async (tx, after) => {
+      await assertBoardTask(tx, (await getTaskRow(tx, id)).projectId);
+      return updateTask(tx, after, id, body, actor);
+    });
     return { task };
   });
 
@@ -58,13 +61,17 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     const body = parse(moveTaskBody, request.body);
     const actor = userActor(currentUser(request));
-    const task = await transact(ctx, (tx, after) => moveTask(tx, after, id, body, actor));
+    const task = await transact(ctx, async (tx, after) => {
+      await assertBoardTask(tx, (await getTaskRow(tx, id)).projectId);
+      return moveTask(tx, after, id, body, actor);
+    });
     return { task };
   });
 
   app.delete('/tasks/:id', async (request, reply) => {
     const { id } = parse(params, request.params);
     await transact(ctx, async (tx, after) => {
+      await assertBoardTask(tx, (await getTaskRow(tx, id)).projectId);
       const { blobIds } = await deleteTask(tx, after, id);
       for (const blobId of blobIds) after.run(() => ctx.blobs.delete(blobId));
     });

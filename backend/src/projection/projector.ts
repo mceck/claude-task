@@ -1,4 +1,4 @@
-// The Timeline projection of an Agent's stream-json output (ADR 0004). A pure function from
+// The Timeline projection of an Agent's stream-json output (docs/specs/agent-sessions.md). A pure function from
 // (state, event) to (state, mutations, broadcasts), so it can be tested over recorded streams
 // and replayed when the display rules change. Applying the mutations is someone else's job.
 import { createHash } from 'node:crypto';
@@ -289,7 +289,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     if (total !== null) s.costSoFar = Math.max(s.costSoFar, total);
     const subtype = String(e.subtype ?? 'unknown');
     // A Stop (control-request interrupt) ends the Turn with `error_during_execution` and
-    // `terminal_reason: aborted_*`: expected, not a failure to report (ADR 0005).
+    // `terminal_reason: aborted_*`: expected, not a failure to report (docs/specs/agent-sessions.md).
     const aborted = typeof e.terminal_reason === 'string' && e.terminal_reason.startsWith('aborted');
     const isError = !aborted && (e.is_error === true || subtype !== 'success');
     const summary: TurnSummary = {

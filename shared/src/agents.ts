@@ -1,4 +1,4 @@
-// Agents, Credentials, Sessions, Jobs and the Agent's Timeline items (Spec 02). Terms follow docs/CONTEXT.md.
+// Agents, Credentials, Sessions, Jobs and the Agent's Timeline items (docs/specs/agents.md, docs/specs/agent-sessions.md). Terms follow docs/CONTEXT.md.
 
 export const PERMISSION_MODES = ['bypassPermissions', 'auto', 'acceptEdits', 'dontAsk'] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];

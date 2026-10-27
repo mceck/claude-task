@@ -7,7 +7,7 @@ import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { tags } from '../../db/schema';
 import { notFound, parse } from '../../errors';
-import { getProject } from '../projects/service';
+import { getBoardProject } from '../projects/service';
 import { detachTag } from '../tasks/service';
 import { emitTagsChanged, getTag, listTags, serializeTag } from './service';
 import { idOrKey } from '../../ids';
@@ -18,7 +18,7 @@ const params = z.object({ id: z.uuid() });
 export function tagRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/projects/:projectId/tags', async (request) => {
     const { projectId } = parse(projectParams, request.params);
-    const project = await getProject(ctx.db, projectId);
+    const project = await getBoardProject(ctx.db, projectId);
     return { tags: await listTags(ctx.db, project.id) };
   });
 
@@ -26,7 +26,7 @@ export function tagRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { projectId } = parse(projectParams, request.params);
     const body = parse(createTagBody, request.body);
     const tag = await transact(ctx, async (tx, after) => {
-      const project = await getProject(tx, projectId);
+      const project = await getBoardProject(tx, projectId);
       const [tag] = await tx
         .insert(tags)
         .values({ ...body, projectId: project.id })
@@ -42,6 +42,7 @@ export function tagRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(updateTagBody, request.body);
     return transact(ctx, async (tx, after) => {
       const existing = await getTag(tx, id);
+      await getBoardProject(tx, existing.projectId);
       const [tag] = await tx.update(tags).set(body).where(eq(tags.id, id)).returning();
       if (!tag) throw notFound('Tag');
       await emitTagsChanged(tx, after, existing.projectId);
@@ -54,6 +55,7 @@ export function tagRoutes(app: FastifyInstance, ctx: AppContext): void {
     const actor = userActor(currentUser(request));
     await transact(ctx, async (tx, after) => {
       const existing = await getTag(tx, id);
+      await getBoardProject(tx, existing.projectId);
       await detachTag(tx, after, existing, actor);
       await tx.delete(tags).where(eq(tags.id, id));
       await emitTagsChanged(tx, after, existing.projectId);

@@ -160,7 +160,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
       git:
         repository && branch
           ? {
-              // Agents reach git only through the Git Proxy, with their Job token (ADR 0006).
+              // Agents reach git only through the Git Proxy, with their Job token (docs/specs/git-integration.md).
               cloneUrl: gitProxyUrl(ctx.config.agents.backendUrl, project!.id),
               token: jobToken.token,
               repositoryId: `${repository.connectionId}/${repository.providerRepoId}`,

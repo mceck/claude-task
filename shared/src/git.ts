@@ -1,4 +1,4 @@
-/** Provider-independent Git Integration shapes (Spec 03, Spec 05). */
+/** Provider-independent Git Integration shapes (docs/specs/git-integration.md). */
 export type GitProviderKind = 'github' | 'gitlab';
 
 export interface RepositoryRef {

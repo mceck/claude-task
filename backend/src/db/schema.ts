@@ -269,7 +269,7 @@ export const attachments = pgTable(
   ],
 );
 
-// Agents (Spec 02)
+// Agents (docs/specs/agents.md)
 
 /** Every encrypted value carries its key version, e.g. `v1:<iv>:<tag>:<ciphertext>`. */
 export const credentials = pgTable(

@@ -1,5 +1,5 @@
 // Logins: a User's authenticated browser sessions, stored server-side.
-// (Not to be confused with a Session, the agent conversation of Spec 02.)
+// (Not to be confused with a Session, the Agent's conversation on a Task.)
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt, inArray, ne, sql } from 'drizzle-orm';
 import type { FastifyReply } from 'fastify';

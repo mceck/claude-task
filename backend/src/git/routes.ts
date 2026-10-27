@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../context';
 import { parse } from '../errors';
+import { getBoardProject } from '../modules/projects/service';
 import { createConnection, deleteConnection, listConnections, listRepositoryGroups, updateConnection } from './connections';
 import { linkRepository, recheckProtection, repositorySettings } from './service';
 import { idOrKey } from '../ids';
@@ -27,15 +28,18 @@ export function gitRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/git/repositories', async () => ({ groups: await listRepositoryGroups(ctx) }));
   app.get('/projects/:id/repository', async (request) => {
     const { id } = parse(params, request.params);
+    await getBoardProject(ctx.db, id);
     return repositorySettings(ctx.db, id);
   });
   app.put('/projects/:id/repository', async (request) => {
     const { id } = parse(params, request.params);
+    await getBoardProject(ctx.db, id);
     await linkRepository(ctx, id, parse(repositoryBody, request.body));
     return repositorySettings(ctx.db, id);
   });
   app.post('/projects/:id/repository/check-protection', async (request) => {
     const { id } = parse(params, request.params);
+    await getBoardProject(ctx.db, id);
     await recheckProtection(ctx, id);
     return repositorySettings(ctx.db, id);
   });

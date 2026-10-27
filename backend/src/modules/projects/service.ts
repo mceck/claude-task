@@ -3,7 +3,7 @@ import type { Category, CategoryCounts, Project, ProjectSummary } from '@claude-
 import { and, eq, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client';
 import { projects, statuses } from '../../db/schema';
-import { notFound } from '../../errors';
+import { forbidden, notFound } from '../../errors';
 import { UUID } from '../../ids';
 
 export type ProjectRow = typeof projects.$inferSelect;
@@ -38,6 +38,19 @@ export async function getProject(db: Executor, idOrKey: string, opts: { lock?: b
   const [row] = await (opts.lock ? query.for('update') : query);
   if (!row) throw notFound('Project');
   return row;
+}
+
+/** A Project as the Project, Status, Tag and Repository routes see it: Wiki Projects are reached through the Wiki API only. */
+export async function getBoardProject(db: Executor, idOrKey: string, opts: { lock?: boolean } = {}): Promise<ProjectRow> {
+  const row = await getProject(db, idOrKey, opts);
+  if (row.kind === 'wiki') throw notFound('Project');
+  return row;
+}
+
+/** A Wiki's Backing Task changes only through the Wiki API (its name, description and Agent). */
+export async function assertBoardTask(db: Executor, projectId: string): Promise<void> {
+  const project = await getProject(db, projectId);
+  if (project.kind === 'wiki') throw forbidden('This Task belongs to a Wiki: change it from the Wiki', 'wiki_task');
 }
 
 export async function createProject(

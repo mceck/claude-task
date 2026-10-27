@@ -23,7 +23,7 @@ export interface AttachmentToFetch {
   path: string;
 }
 
-/** The repository to prepare the Worktree from (Spec 03). Null when the Project has none. */
+/** The repository to prepare the Worktree from (docs/specs/git-integration.md). Null when the Project has none. */
 export interface GitSpec {
   /** The Git Proxy URL of the Project, without credentials (a file URL in tests). */
   cloneUrl: string;

@@ -133,6 +133,31 @@ test('posts a comment and an internal chat, seen live elsewhere', async ({ brows
   await b.close();
 });
 
+test('reading a task on the web moves the read position, also for comments arriving while it is open', async ({ page, browser }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Read me');
+  const writer = await loggedInContext(browser);
+  try {
+    const post = (body: string) =>
+      writer.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body }, headers: { 'x-claude-task': '1' } });
+    expect((await post('Before opening')).status()).toBe(201);
+    const unread = async () =>
+      (await (await page.request.get(`/api/v1/tasks/${task.id}/preferences`)).json()).preference.unread as boolean;
+    expect(await unread()).toBe(true);
+
+    await page.goto(`/t/${task.key}`);
+    await expect(page.getByText('Before opening')).toBeVisible();
+    await expect.poll(unread).toBe(false);
+
+    expect((await post('While open')).status()).toBe(201);
+    await expect(page.getByText('While open')).toBeVisible();
+    await expect.poll(unread).toBe(false);
+  } finally {
+    await writer.close();
+  }
+});
+
 test('uploads an image and previews it inline', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request);
