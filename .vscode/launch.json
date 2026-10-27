@@ -23,7 +23,10 @@
             "cwd": "mobile-app",
             "request": "launch",
             "type": "dart",
-            "flutterMode": "release"
+            "flutterMode": "release",
+            "args": [
+                "--dart-define-from-file=firebase-options.android.json"
+            ]
         }
     ]
 }
