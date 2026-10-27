@@ -1,7 +1,7 @@
 // What an Agent receives: the Message content blocks (Comments, Task snapshots, notices)
 // and the system prompt its Session runs with.
-import { API_PREFIX, RUNNER_ATTACHMENTS_PATH, commandName } from '@claude-task/shared';
-import type { AttachmentToFetch, InputBlock } from '@claude-task/shared';
+import { AGENT_SERVICE_INFO, API_PREFIX, RUNNER_ATTACHMENTS_PATH, commandName } from '@claude-task/shared';
+import type { AgentService, AttachmentToFetch, InputBlock } from '@claude-task/shared';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { AppContext } from '../context';
 import type { Executor } from '../db/client';
@@ -242,6 +242,7 @@ export interface PromptInput {
   branch: string | null;
   projectInstructions: string;
   agentPrompt: string;
+  services: AgentService[];
 }
 
 /** `--append-system-prompt`: the platform section, then Project and Agent instructions. */
@@ -253,7 +254,8 @@ export function systemPrompt(p: PromptInput): string {
     'How this works:',
     '- Everything you write as text is posted as a comment on the task, for humans: write clearly and use markdown.',
     '- New messages from humans can arrive while you work. Take them into account as soon as you see them.',
-    '- If you need clarification, ask in text and end your turn. The answer will arrive as a new message.',
+    '- If you need a decision with clear options, ask it with `ask_question`; otherwise ask in text. Then end your turn: the answer will arrive as a new message.',
+    '- To show humans screenshots, charts, logs or other files, post them with `send_files`.',
     '- Files attached to comments, and files linked in the task description, are saved under `.claude-task/attachments/` in your working directory.',
     '',
     'Task tools (MCP server `claude-task`):',
@@ -262,6 +264,9 @@ export function systemPrompt(p: PromptInput): string {
     '- `set_status`: move your task to another status to signal progress. Closed statuses are for humans.',
     '- `list_tasks`: list the project\'s tasks.',
     '- `create_task`: report an out-of-scope issue as a new, unassigned task.',
+    '- `send_files`: post files from your container (screenshots, reports) to the conversation.',
+    '- `ask_question`: ask a multiple-choice question; the first answer decides.',
+    '- `create_survey`: collect answers from every assignee. Only when a human explicitly asks for a survey or for several people\'s opinions.',
   ];
   if (p.branch) {
     platform.push(
@@ -270,6 +275,13 @@ export function systemPrompt(p: PromptInput): string {
       '- `open_pull_request`: open or update a pull request from your task branch after committing and pushing it.',
       `- Never push to branches other than \`${p.branch}\`.`,
       '- Before moving the task to a review status, commit, push the task branch and open or update the pull request with `open_pull_request`.',
+    );
+  }
+  if (p.services.length) {
+    platform.push(
+      '',
+      'Development services in your container, ready to use and shared by all your tasks (keep projects apart with their own database names, key prefixes or buckets):',
+      ...p.services.map((service) => `- ${AGENT_SERVICE_INFO[service].name}: ${AGENT_SERVICE_INFO[service].description}`),
     );
   }
   return [platform.join('\n'), p.projectInstructions.trim() && `Project instructions:\n${p.projectInstructions.trim()}`, p.agentPrompt.trim()]

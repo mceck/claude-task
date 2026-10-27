@@ -152,6 +152,9 @@ func (j *job) args() []string {
 	if c.MCPConfig != "" {
 		a = append(a, "--mcp-config", c.MCPConfig)
 	}
+	for _, tool := range c.DisallowedTools {
+		a = append(a, "--disallowedTools", tool)
+	}
 	return a
 }
 

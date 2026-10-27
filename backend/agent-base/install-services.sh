@@ -10,6 +10,7 @@ for service in "$@"; do
     mysql) packages+=(mysql-server-core-8.0 mysql-client-8.0) ;;
     mailpit) ;;
     rustfs) packages+=(unzip) ;;
+    chrome) ;;
     *) echo "Unknown agent service: $service" >&2; exit 1 ;;
   esac
 done
@@ -22,6 +23,13 @@ fi
 
 for service in "$@"; do
   case "$service" in
+    # Clients look for the server sockets in their default directories, so the agent user owns them.
+    postgres)
+      install -d -o agent -g "$(id -g agent)" -m 755 /var/run/postgresql
+      ;;
+    mysql)
+      install -d -o agent -g "$(id -g agent)" -m 755 /var/run/mysqld
+      ;;
     mailpit)
       case "$(dpkg --print-architecture)" in
         amd64) arch=amd64 ;;
@@ -43,6 +51,18 @@ for service in "$@"; do
       unzip -jo /tmp/rustfs.zip rustfs -d /usr/local/bin
       chmod 755 /usr/local/bin/rustfs
       rm /tmp/rustfs.zip
+      ;;
+    # Playwright's Chromium build, with the system libraries browsers need (installing those needs
+    # root, which the agent lacks), so projects' own Playwright browsers run too.
+    chrome)
+      export MISE_DATA_DIR=/tmp/chrome-mise MISE_CACHE_DIR=/tmp/chrome-mise/cache
+      PLAYWRIGHT_BROWSERS_PATH=/opt/chrome mise exec node@22 -- npx --yes playwright@1.64.0 install --with-deps chromium
+      chrome="$(find /opt/chrome -path '*/chromium-*' -type f -name chrome -perm -u+x | head -n 1)"
+      if [[ -z "$chrome" ]]; then echo 'Chromium binary not found after install' >&2; exit 1; fi
+      ln -sf "$chrome" /usr/local/bin/chromium
+      chmod -R a+rX /opt/chrome
+      rm -rf /tmp/chrome-mise /root/.npm /var/lib/apt/lists/*
+      unset MISE_DATA_DIR MISE_CACHE_DIR
       ;;
   esac
 done

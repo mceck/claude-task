@@ -136,7 +136,18 @@ The chronological record of a Task: Comments, Revisions and the Agent's work, in
 _Avoid_: feed, log, chat
 
 **Agent Comment**:
-A Comment holding the text an Agent wrote for humans during a Turn.
+A Comment an Agent wrote for humans during a Turn: its text, or files, a Question or a Survey it posted.
+
+**Question**:
+A Comment in which an Agent asks Users to choose among options. It stays open until the first User answers it, and the answer reaches the Agent as a Message.
+_Avoid_: poll, form, prompt
+
+**Survey**:
+A Comment in which an Agent, on a User's explicit request, collects answers from several Users. It reaches the Agent as one Message when every expected respondent has answered or someone closes it early.
+_Avoid_: poll, vote
+
+**Expected Respondent**:
+A User who was an Assignee of the Task when a Survey was created, and whose answer the Survey waits for.
 
 **Agent Item**:
 An entry of the Agent's work on the Timeline that isn't a Comment: Thinking, Activity, a Turn Summary or a notice.
@@ -217,7 +228,7 @@ An Agent's own image, built from its Dockerfile on top of the Base Image.
 One attempt to produce an Agent Image, with its log.
 
 **Development Service**:
-A local database or tool (PostgreSQL, Redis, MySQL, Mailpit, RustFS) run inside an Agent Container.
+A local database or tool (PostgreSQL, Redis, MySQL, Mailpit, RustFS, Chrome) run inside an Agent Container.
 _Avoid_: services (alone)
 
 **Runner**:
@@ -263,7 +274,7 @@ An external tool server in the platform's catalog, made available to the Agents 
 A Claude Code plugin from a marketplace, kept in the platform's catalog and installed into the Agent Containers of the Agents it's assigned to. Unlike a catalog Skill, the platform stores only where to install it from, not its files.
 
 **Task Tools**:
-The actions an Agent can take on Tasks from inside its Session: reading, editing and moving its own Task, reading other Tasks in the Project, creating new ones, and opening a pull request.
+The actions an Agent can take from inside its Session: reading, editing and moving its own Task, reading other Tasks in the Project, creating new ones, opening a pull request, and posting files, Questions and Surveys to its Task's Conversation.
 
 ### Execution
 

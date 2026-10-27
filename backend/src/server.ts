@@ -15,6 +15,7 @@ import { FakeRuntime } from './agents/fake-runtime';
 import type { AgentRuntime } from './agents/runtime';
 import { Scheduler } from './agents/scheduler';
 import { RunnerHub } from './runner/hub';
+import { UploadRequests } from './runner/uploads';
 import type { Config } from './config';
 import type { AppContext } from './context';
 import { createDb, runMigrations } from './db/client';
@@ -49,6 +50,7 @@ export async function createServer(
         (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents)),
       runners: new RunnerHub(() => ctx.log),
     } as AppContext;
+    ctx.uploads = new UploadRequests(ctx.runners, config.agents.backendUrl, config.agents.uploadTimeoutMs);
     ctx.pushDispatcher = new PushDispatcher(ctx);
     ctx.scheduler = new Scheduler(ctx);
     ctx.gitSync = new GitSync(ctx);

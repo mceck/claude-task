@@ -261,7 +261,8 @@ Each Job runs the real Claude Code CLI in headless mode inside the Task's Worktr
 - `--session-id <id>` for a conversation `claude` has not created yet, `--resume <id>` afterwards, always with the Session's Claude session identity;
 - `--model`, `--effort` and `--permission-mode` from the Agent when set;
 - `--append-system-prompt` with the composed system prompt;
-- `--mcp-config` with the Task Tools server and the Agent's catalog MCP servers.
+- `--mcp-config` with the Task Tools server and the Agent's catalog MCP servers;
+- `--disallowedTools AskUserQuestion`, because a headless Job has nobody to answer Claude Code's own question dialog; Agents ask through `ask_question` instead.
 
 It runs without `--bare`, so the repository's CLAUDE.md, its `.claude/` settings and Skills, its `.mcp.json`, and the Agent's installed Skills and Plugins load exactly as in an interactive session. The platform configures no hooks; hooks a repository or Plugin brings run normally. The `claude` version is pinned centrally through `CLAUDE_CODE_VERSION` (default 2.1.310) with the auto-updater off, because the stream-json format is a contract for the projection. Each Job records the `claude` version and the MCP servers reported at its start.
 
@@ -276,10 +277,12 @@ The appended system prompt is the same for every Job of a Session; it holds no T
    - its working directory (the Worktree in the Agent's home) and, when the Project has a Repository, that it is a git worktree on the Task Branch;
    - that everything it writes as text is posted as a Comment on the Task for humans, so it should write clearly in Markdown;
    - that new messages from humans can arrive while it works and should be taken into account as soon as it sees them;
-   - that when it needs clarification it should ask in text and end its Turn, since the answer arrives as a new Message;
+   - that for a decision with clear options it asks with `ask_question`, otherwise in text, and then ends its Turn, since the answer arrives as a new Message;
+   - that `send_files` shows screenshots and other files to humans, and that `create_survey` is only for when a human explicitly asks to collect several people's answers;
    - that files attached to Comments and linked in the description are saved under `.claude-task/attachments/` in its working directory;
    - the Task Tools on the `claude-task` server and what each is for;
-   - when the Project has a Repository: `open_pull_request`, that it pushes only to its Task Branch, and that before moving the Task to a review Status it commits, pushes and opens or updates the pull request.
+   - when the Project has a Repository: `open_pull_request`, that it pushes only to its Task Branch, and that before moving the Task to a review Status it commits, pushes and opens or updates the pull request;
+   - when the Agent has Development Services: that they are ready to use in its container, shared by all its Tasks so Projects keep apart by their own database names, key prefixes or buckets, and each selected service with its address and access (the descriptions the Agent form shows). Without this, the Agent would not know the services exist.
 2. **Project instructions**, under the heading "Project instructions:", when the Project has Agent Instructions.
 3. **The Agent's own system prompt**, when set.
 
@@ -329,8 +332,15 @@ Every tool acts as the Agent: mutations are Revisions attributed to it and appea
 | `update_task` | `title` (1 to 500 characters), `description` (up to 100,000), `priority` (`urgent`, `high`, `normal`, `low`, `none`), `tags` (up to 50 names, replacing the current set); all optional | Updates the Agent's own Task. Tag names match case-insensitively and must exist in the Project. The edit applies to the current version of the Task. |
 | `set_status` | `status_name` | Moves the Agent's own Task to the named Status (case-insensitive). Statuses in the `closed` Category are refused with a message that closing is for humans. |
 | `create_task` | `title`, `description`, `priority` (default `none`), `tags` | Creates a Task in the same Project, in its first `open` Status, with no assignees and no Agent, created by the Agent. |
+| `send_files` | `paths` (1 to 10), `caption` (optional Markdown, up to 100,000 characters) | Posts the files as an Agent Comment with the caption as its body. Returns the Comment and the stored file names. |
+| `ask_question` | `questions` (1 to 4 items), `paths` (0 to 10) | Posts a Question with the files, and answers that the Agent should end its Turn because the answer arrives as a new Message. |
+| `create_survey` | `questions` (1 to 4 items), `paths` (0 to 10) | Posts a Survey whose Expected Respondents are the Task's User Assignees, and answers with their names. A Task without Assignees gets an error suggesting `ask_question`. Its description limits it to explicit requests from humans. |
 
-In a Wiki's Session, `get_task` and `list_tasks` read the Wiki and its Project as usual, while `update_task`, `set_status` and `create_task` answer with an error that a Wiki changes through the conversation and its Git Repository (see [Wikis](wikis.md)).
+An item of `ask_question` and `create_survey` mirrors Claude Code's own question tool: `header` (1 to 12 characters), `question` (1 to 2,000 characters), `options` (2 to 4, each a `label` of 1 to 60 characters, unique within the item ignoring case, and a `description` of up to 300 characters) and `multiSelect` (default false). "Other" is added by the clients, so an option labelled "Other" is refused. How Users answer is described in [Conversation](conversation.md).
+
+**Files from the container.** `paths` are relative to the Worktree or absolute, and name regular files of up to 25 MB that the `agent` user can read. Before posting anything, the backend asks the Agent's Runner for the files over its connection and waits up to 60 seconds for the Runner to upload them (see [Runner](runner.md)). The tool answers with an error naming each path that failed and why, and posts nothing, when any file is missing, not a regular file or too large; it fails at once when the Runner is not connected, and when the upload hasn't finished 60 seconds after the request. When the Job ended meanwhile (the Task was closed, the Agent unassigned or the Job cancelled), nothing is posted and the files are discarded.
+
+In a Wiki's Session, `get_task` and `list_tasks` read the Wiki and its Project as usual, `send_files`, `ask_question` and `create_survey` work as on any Task, while `update_task`, `set_status` and `create_task` answer with an error that a Wiki changes through the conversation and its Git Repository (see [Wikis](wikis.md)).
 | `open_pull_request` | `title`, `body`, `draft` | Opens or updates the pull request of the Task Branch. See [Git integration](git-integration.md). |
 
 ### Notify agent of changes
@@ -425,7 +435,7 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 - **Message size:** a Message inlines at most 20 images and 16 MB of images, so a Job start stays well within the Runner connection's frame limit.
 - **Display limits:** tool output and long tool inputs are cut at 20 KB on the Timeline; the raw stream keeps them whole. Setup output and stderr keep the last 64 KB per Job.
 - **Secrets:** the Credential and Project secrets are decrypted only to build a Job's start and go only to the Runner of that Job's Agent. The Job token is stored as a hash and is valid only while its Job is active.
-- **Isolation:** Task Tools write only the Agent's own Task (reads and new Tasks stay within its Project); the Runner downloads only attachments of Tasks its Agent is working on, and only those visible to the Agent.
+- **Isolation:** Task Tools write only the Agent's own Task (reads and new Tasks stay within its Project); the Runner downloads only attachments of Tasks its Agent is working on, and only those visible to the Agent; an upload is accepted only from the Runner the backend asked, while the Job's tool call waits for it.
 - **Live updates** are coalesced and flushed once per event loop turn; a browser whose backlog grows past 16 MB is disconnected and refetches on reconnect.
 
 ## Decisions
@@ -434,6 +444,8 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 - **The backend owns the Queue; the Runner dials out and holds no state.** Sessions, Jobs, Queue Entries and Deliveries live in Postgres and are decided by the backend. A container restart or a dropped connection loses no work: the backend sees a Job without an outcome and resumes it. The same design works on remote hosts later without opening ports on Agent Containers. Calling into the container (HTTP or exec) was rejected because it needs reachable ports and ties the backend to Docker networking; a queue inside the Runner was rejected because it would be lost on container recreation and invisible to the UI. Consequence: Credentials and Project environment travel with each Job, so rotation takes effect on the next Job and Project secrets reach only that Project's Tasks.
 - **One Job at a time per Agent.** An Agent is "one worker, one thing at a time", and Tasks in one container would otherwise share ports, databases and background processes. Throughput comes from more Agents. Feedback on another Task can wait behind a long Job, which is why Users can reorder the Queue. See [Agents](agents.md) for the container side.
 - **The Timeline comes from the stdout stream alone.** Hooks don't expose the assistant's text, run as separate processes that would each need a way to call the backend, and give no single ordered stream. The platform configures no hooks; repository and Plugin hooks still run. The raw events are stored and projected by a pure function, so the projection can be tested exhaustively over recorded streams and replayed if display rules change.
+- **Agent files travel through the Runner, on request.** The Task Tools server runs in the backend and the files are in the container. Asking the connected Runner for the files and letting it upload them keeps the tool a single call with a path. Passing file contents in the tool input was rejected because the bytes would go through the model's context; a separate upload command in the container was rejected because it makes two steps of one action and needs the Job token inside the container.
+- **The platform's own question tools replace `AskUserQuestion`.** In a headless Job, Claude Code's dialog needs the permission protocol and keeps the Turn waiting for a human. `ask_question` posts and lets the Turn end, so the Agent is free while people decide (see [Conversation](conversation.md)).
 - **Comments for the running Task are written to stdin mid-turn.** Verified against the pinned CLI: a message written during a Turn is consumed at the next model call and the same `result` covers it. Holding Comments until the `result` was the fallback, unused. Interrupt uses the stream-json control request, which ends the Turn and keeps the process alive; `SIGINT` would end the process, so it serves only as a stop. Messages written after a `result` each become their own Turn, so the backend merges pending Comments into one Message itself.
 - **Each Job ends after its Turn.** On `result` the backend closes stdin and lets `claude` exit, so an idle Session holds no process and the Agent is free for the next Task in its Queue. Comments arriving from that point go to the back of the Queue, which keeps the Queue fair across Tasks.
 - **One Session per (Task, Agent), kept across reassignment.** Reassigning back to an Agent resumes its own conversation, with what was said meanwhile, so its memory isn't lost; a new Agent starts fresh with the full non-internal history and the existing branch.

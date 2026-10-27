@@ -3,7 +3,7 @@ package protocol
 
 import "encoding/json"
 
-const Version = 2
+const Version = 3
 
 type GitSpec struct {
 	CloneURL     string `json:"cloneUrl"`
@@ -26,11 +26,24 @@ type ClaudeArgs struct {
 	PermissionMode     string  `json:"permissionMode"`
 	AppendSystemPrompt string  `json:"appendSystemPrompt"`
 	MCPConfig          string  `json:"mcpConfig"`
+	// DisallowedTools are passed as one `--disallowedTools <name>` each.
+	DisallowedTools []string `json:"disallowedTools"`
 }
 
 type Attachment struct {
 	URL  string `json:"url"`
 	Path string `json:"path"`
+}
+
+// UploadFile is one path of a job.upload: relative to the Worktree, or absolute.
+type UploadFile struct {
+	Path string `json:"path"`
+}
+
+// UploadManifestEntry reports one requested path of an upload, in request order.
+type UploadManifestEntry struct {
+	Path  string `json:"path"`
+	Error string `json:"error,omitempty"`
 }
 
 // Incoming is any backend → runner message; only the fields of its type are set.
@@ -50,6 +63,9 @@ type Incoming struct {
 	Message            json.RawMessage   `json:"message"`
 	AttachmentsToFetch []Attachment      `json:"attachmentsToFetch"`
 	RepoPath           *string           `json:"repoPath"`
+	RequestID          string            `json:"requestId"`
+	URL                string            `json:"url"`
+	Files              []UploadFile      `json:"files"`
 }
 
 // Outgoing message shapes (runner → backend). Job-scoped ones get jobId and seq from the runner.

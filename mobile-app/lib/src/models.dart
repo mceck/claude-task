@@ -89,9 +89,9 @@ class Agent implements Identified {
       enabled = json['enabled'] == true,
       extensionsPending = json['extensionsPending'] == true,
       extensionsError = json['extensionsError'] as String?,
-      skillCommands = objects(json['skillCommands'])
-          .map(SkillCommand.fromJson)
-          .toList();
+      skillCommands = objects(
+        json['skillCommands'],
+      ).map(SkillCommand.fromJson).toList();
 }
 
 class SkillCommand {
@@ -196,6 +196,120 @@ class TimelineEntry {
   bool get isOwnCommentEditable =>
       type == 'comment' && content['kind'] == 'user' && !deleted;
   List<Json> get attachments => objects(content['attachments']);
+
+  /// The structured part of an Agent's Question, shown as a card.
+  Question? get question => content['question'] is Map
+      ? Question.fromJson(Json.from(content['question'] as Map))
+      : null;
+
+  /// The structured part of an Agent's Survey, shown as a card.
+  Survey? get survey => content['survey'] is Map
+      ? Survey.fromJson(Json.from(content['survey'] as Map))
+      : null;
+
+  /// On the User Comment that answers a Question: the Question's Comment id.
+  String? get answersCommentId => content['answersCommentId'] as String?;
+}
+
+/// Whoever performed an action; [id] is null for the system.
+class Actor {
+  final String? id;
+  final String displayName;
+  Actor.fromJson(Json json)
+    : id = json['id'] as String?,
+      displayName = json['displayName'] as String? ?? 'Someone';
+  static Actor? maybe(Object? json) =>
+      json is Map ? Actor.fromJson(Json.from(json)) : null;
+}
+
+/// One option of a [QuestionItem].
+class QuestionOption {
+  final String label, description;
+  QuestionOption.fromJson(Json json)
+    : label = json['label'] as String,
+      description = json['description'] as String? ?? '';
+}
+
+/// One multiple-choice item of a Question or Survey; the clients add "Other".
+class QuestionItem {
+  final String header, question;
+  final List<QuestionOption> options;
+  final bool multiSelect;
+  QuestionItem.fromJson(Json json)
+    : header = json['header'] as String? ?? '',
+      question = json['question'] as String? ?? '',
+      options = objects(json['options']).map(QuestionOption.fromJson).toList(),
+      multiSelect = json['multiSelect'] == true;
+  static List<QuestionItem> list(Object? json) =>
+      objects(json).map(QuestionItem.fromJson).toList();
+}
+
+/// The answer to one item: the chosen option labels and the "Other" text.
+class QuestionAnswer {
+  final List<String> selected;
+  final String? other;
+  const QuestionAnswer(this.selected, [this.other]);
+  QuestionAnswer.fromJson(Json json)
+    : selected = strings(json['selected']),
+      other = json['other'] as String?;
+  static List<QuestionAnswer> list(Object? json) =>
+      objects(json).map(QuestionAnswer.fromJson).toList();
+  Json toJson() => {'selected': selected, 'other': other};
+}
+
+class Question {
+  final List<QuestionItem> items;
+  final List<QuestionAnswer>? answer;
+  final Actor? answeredBy;
+  final DateTime? answeredAt;
+  final bool open;
+  Question.fromJson(Json json)
+    : items = QuestionItem.list(json['items']),
+      open = json['state'] == 'open',
+      answer = json['answer'] == null
+          ? null
+          : QuestionAnswer.list(json['answer']),
+      answeredBy = Actor.maybe(json['answeredBy']),
+      answeredAt = DateTime.tryParse(json['answeredAt'] as String? ?? '');
+}
+
+class SurveyResponse {
+  final Actor user;
+  final List<QuestionAnswer> answers;
+  final String updatedAt;
+  SurveyResponse.fromJson(Json json)
+    : user = Actor.fromJson(Json.from(json['user'] as Map)),
+      answers = QuestionAnswer.list(json['answers']),
+      updatedAt = json['updatedAt'] as String? ?? '';
+}
+
+class Survey {
+  final List<QuestionItem> items;
+  final bool open;
+
+  /// The Task's Assignees when the Survey was created.
+  final List<Actor> expectedRespondents;
+
+  /// In first-answer order.
+  final List<SurveyResponse> responses;
+
+  /// Null while open, and when it closed because everyone expected answered.
+  final Actor? closedBy;
+  final DateTime? closedAt;
+  Survey.fromJson(Json json)
+    : items = QuestionItem.list(json['items']),
+      open = json['state'] == 'open',
+      expectedRespondents = objects(
+        json['expectedRespondents'],
+      ).map(Actor.fromJson).toList(),
+      responses = objects(
+        json['responses'],
+      ).map(SurveyResponse.fromJson).toList(),
+      closedBy = Actor.maybe(json['closedBy']),
+      closedAt = DateTime.tryParse(json['closedAt'] as String? ?? '');
+
+  SurveyResponse? responseOf(String? userId) =>
+      responses.where((r) => r.user.id == userId).firstOrNull;
 }
 
 class DraftFile {

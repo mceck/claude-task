@@ -19,6 +19,7 @@ import { AgentItemView, LiveTurnView } from './AgentTimeline';
 import { AgentAvatar, DeliveryBadge } from './agents';
 import { ErrorText, Loading, Time, useConfirm, UserAvatar } from './common';
 import { Markdown } from './Markdown';
+import { QuestionCard, SurveyCard } from './QuestionCards';
 
 interface Row {
   item: TimelineItem;
@@ -142,6 +143,7 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
   const agent = comment.kind === 'agent' ? agents.find((a) => a.id === comment.author.id) : undefined;
   return (
     <li
+      id={`comment-${comment.id}`}
       aria-label={comment.internal ? 'Internal chat' : comment.kind === 'agent' ? 'Agent comment' : comment.kind === 'system' ? 'System comment' : 'Comment'}
       className="relative flex gap-3"
     >
@@ -222,6 +224,18 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
               </Button>
             </div>
           </div>
+        ) : comment.question ? (
+          <QuestionCard comment={comment} />
+        ) : comment.survey ? (
+          <SurveyCard comment={comment} />
+        ) : comment.answersCommentId ? (
+          <button
+            type="button"
+            className="text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => document.getElementById(`comment-${comment.answersCommentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+          >
+            Answered the question
+          </button>
         ) : (
           comment.body && (
             <CollapsibleBody expand={expandedFromLive(comment.id)}>

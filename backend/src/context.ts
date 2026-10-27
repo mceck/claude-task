@@ -11,6 +11,7 @@ import type { Config } from './config';
 import type { Db, Tx } from './db/client';
 import type { RealtimeHub } from './realtime/hub';
 import type { RunnerHub } from './runner/hub';
+import type { UploadRequests } from './runner/uploads';
 
 export interface AppContext {
   config: Config;
@@ -25,6 +26,8 @@ export interface AppContext {
   gitSync: GitSync;
   /** Connected Runners, one per Agent. */
   runners: RunnerHub;
+  /** Files Agents post, waiting for their Runner's upload. */
+  uploads: UploadRequests;
   /** Dispatcher, builds and the container reconciler. */
   scheduler: Scheduler;
   log: FastifyBaseLogger;

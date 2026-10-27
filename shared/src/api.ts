@@ -1,7 +1,7 @@
 // Request payloads, validated server-side and typed client-side.
 import { z } from 'zod';
 import { AGENT_SERVICES, DEFAULT_AGENT_SERVICES, CREDENTIAL_KINDS, EFFORT_LEVELS, PERMISSION_MODES } from './agents';
-import { CATEGORIES, PRIORITIES, ROLES } from './domain';
+import { CATEGORIES, PRIORITIES, QUESTION_LIMITS, ROLES } from './domain';
 import type { Tag, Project, Status, Task, User } from './domain';
 
 export const API_PREFIX = '/api/v1';
@@ -191,6 +191,17 @@ export const updateCommentBody = z.strictObject({
   body: z.string().trim().min(1).max(100_000),
 });
 export type UpdateCommentBody = z.infer<typeof updateCommentBody>;
+
+const questionAnswer = z.strictObject({
+  selected: z.array(z.string().max(QUESTION_LIMITS.label)).max(QUESTION_LIMITS.options.max),
+  other: z.string().max(QUESTION_LIMITS.other).nullable().default(null),
+});
+
+/** Answering a Question, or a User's answer to a Survey: one entry per item, in order. */
+export const answerQuestionBody = z.strictObject({
+  answers: z.array(questionAnswer).min(QUESTION_LIMITS.items.min).max(QUESTION_LIMITS.items.max),
+});
+export type AnswerQuestionBody = z.input<typeof answerQuestionBody>;
 
 export const timelineQuery = z.object({
   before: z.string().max(500).optional(),

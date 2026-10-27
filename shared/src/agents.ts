@@ -6,7 +6,7 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
-export const AGENT_SERVICES = ['postgres', 'redis', 'mysql', 'mailpit', 'rustfs'] as const;
+export const AGENT_SERVICES = ['postgres', 'redis', 'mysql', 'mailpit', 'rustfs', 'chrome'] as const;
 export type AgentService = (typeof AGENT_SERVICES)[number];
 export const DEFAULT_AGENT_SERVICES: AgentService[] = ['postgres', 'redis'];
 
@@ -16,6 +16,7 @@ export const AGENT_SERVICE_INFO: Record<AgentService, { name: string; descriptio
   mysql: { name: 'MySQL', description: '127.0.0.1:3306 · database/user: agent · no password' },
   mailpit: { name: 'Mailpit', description: 'SMTP: 127.0.0.1:1025 · web/API: 127.0.0.1:8025' },
   rustfs: { name: 'RustFS', description: 'S3: 127.0.0.1:9000 · console: 127.0.0.1:9001 · rustfsadmin / rustfsadmin' },
+  chrome: { name: 'Chrome', description: 'Chromium, started on demand · `chromium` on PATH · used by the Playwright MCP server' },
 };
 
 export const CREDENTIAL_KINDS = ['claude_oauth_token', 'anthropic_api_key'] as const;

@@ -92,7 +92,7 @@ export function commentRoutes(app: FastifyInstance, ctx: AppContext): void {
 }
 
 /** Streams uploaded files into the BlobStore and collects the text fields. */
-async function receiveMultipart(
+export async function receiveMultipart(
   ctx: AppContext,
   request: FastifyRequest,
 ): Promise<{ fields: Record<string, unknown>; files: NewAttachment[] }> {

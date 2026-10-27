@@ -1,10 +1,10 @@
 import { autoFollow } from '../../notifications/preferences';
 import { API_PREFIX, projectTopic, taskTopic } from '@claude-task/shared';
-import type { Actor, Attachment, Comment, TimelineItem, TimelinePage } from '@claude-task/shared';
+import type { Actor, Attachment, Comment, Question, QuestionItem, QuestionKind, Survey, TimelineItem, TimelinePage } from '@claude-task/shared';
 import { and, asc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentItems, attachments, comments, queueEntries, taskRevisions, tasks } from '../../db/schema';
+import { agentItems, attachments, comments, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
 import { lockAgents } from '../agents/service';
 import { dropIfEmpty } from '../../sessions/queue';
 import { serializeAgentItem } from '../../projection/apply';
@@ -17,6 +17,16 @@ import type { TaskRow } from '../tasks/service';
 
 type CommentRow = typeof comments.$inferSelect;
 type AttachmentRow = typeof attachments.$inferSelect;
+type QuestionRow = typeof questions.$inferSelect;
+type ResponseRow = typeof surveyResponses.$inferSelect;
+
+/** The structured part of a new Question or Survey. */
+export interface NewQuestion {
+  kind: QuestionKind;
+  items: QuestionItem[];
+  /** The Expected Respondents of a Survey; empty for a Question. */
+  expectedRespondentIds: string[];
+}
 
 export interface NewAttachment {
   blobId: string;
@@ -36,7 +46,33 @@ function serializeAttachment(a: AttachmentRow): Attachment {
   };
 }
 
-function serializeComment(c: CommentRow, author: Actor, files: AttachmentRow[]): Comment {
+function serializeQuestion(q: QuestionRow, user: (id: string | null) => Actor | null): Question {
+  return {
+    items: q.items,
+    state: q.state === 'answered' ? 'answered' : 'open',
+    answer: q.answer ?? null,
+    answeredBy: user(q.answeredBy),
+    answeredAt: q.answeredAt?.toISOString() ?? null,
+  };
+}
+
+function serializeSurvey(q: QuestionRow, responses: ResponseRow[], user: (id: string | null) => Actor | null): Survey {
+  return {
+    items: q.items,
+    state: q.state === 'closed' ? 'closed' : 'open',
+    expectedRespondents: q.expectedRespondentIds.map((id) => user(id)!),
+    responses: responses.map((r) => ({ user: user(r.userId)!, answers: r.answers, updatedAt: r.updatedAt.toISOString() })),
+    closedBy: user(q.closedBy),
+    closedAt: q.closedAt?.toISOString() ?? null,
+  };
+}
+
+function serializeComment(
+  c: CommentRow,
+  author: Actor,
+  files: AttachmentRow[],
+  structured: { question: Question | null; survey: Survey | null } = { question: null, survey: null },
+): Comment {
   const deleted = c.deletedAt !== null;
   return {
     id: c.id,
@@ -50,6 +86,9 @@ function serializeComment(c: CommentRow, author: Actor, files: AttachmentRow[]):
     deletedAt: c.deletedAt?.toISOString() ?? null,
     createdAt: c.createdAt.toISOString(),
     delivery: c.deliveryState === 'none' ? null : { state: c.deliveryState, reason: c.deliveryReason, jobId: c.deliveredInJobId },
+    question: deleted ? null : structured.question,
+    survey: deleted ? null : structured.survey,
+    answersCommentId: c.answersCommentId,
   };
 }
 
@@ -61,23 +100,33 @@ export async function loadCommentsById(db: Executor, ids: string[]): Promise<Map
     .from(attachments)
     .where(inArray(attachments.commentId, ids))
     .orderBy(asc(attachments.position));
-  const resolve = await actorResolver(
-    db,
-    rows.map((r) => ({ type: r.authorType, id: r.authorId })),
-  );
+  const questionRows = await db.select().from(questions).where(inArray(questions.commentId, ids));
+  const responses = questionRows.some((q) => q.kind === 'survey')
+    ? await db
+        .select()
+        .from(surveyResponses)
+        .where(inArray(surveyResponses.commentId, questionRows.map((q) => q.commentId)))
+        .orderBy(asc(surveyResponses.createdAt), asc(surveyResponses.userId))
+    : [];
+  const userIds = questionRows.flatMap((q) => [q.answeredBy, q.closedBy, ...q.expectedRespondentIds]).concat(responses.map((r) => r.userId));
+  const resolve = await actorResolver(db, [
+    ...rows.map((r) => ({ type: r.authorType, id: r.authorId })),
+    ...userIds.filter((id): id is string => !!id).map((id) => ({ type: 'user' as const, id })),
+  ]);
+  const user = (id: string | null) => (id ? resolve({ type: 'user', id }) : null);
   return new Map(
-    rows.map((r) => [
-      r.id,
-      serializeComment(
-        r,
-        resolve({ type: r.authorType, id: r.authorId }),
-        files.filter((f) => f.commentId === r.id),
-      ),
-    ]),
+    rows.map((r) => {
+      const q = questionRows.find((f) => f.commentId === r.id);
+      const structured = {
+        question: q?.kind === 'question' ? serializeQuestion(q, user) : null,
+        survey: q?.kind === 'survey' ? serializeSurvey(q, responses.filter((x) => x.commentId === r.id), user) : null,
+      };
+      return [r.id, serializeComment(r, resolve({ type: r.authorType, id: r.authorId }), files.filter((f) => f.commentId === r.id), structured)];
+    }),
   );
 }
 
-async function loadComment(db: Executor, id: string): Promise<Comment> {
+export async function loadComment(db: Executor, id: string): Promise<Comment> {
   const comment = (await loadCommentsById(db, [id])).get(id);
   if (!comment) throw notFound('Comment');
   return comment;
@@ -100,7 +149,7 @@ export async function createUserComment(
   tx: Executor,
   after: AfterCommit,
   task: TaskRow,
-  input: { body: string; internal: boolean; attachments: NewAttachment[] },
+  input: { body: string; internal: boolean; attachments: NewAttachment[]; answersCommentId?: string },
   author: Actor,
 ): Promise<Comment> {
   if (input.body.trim() === '' && input.attachments.length === 0) {
@@ -115,6 +164,7 @@ export async function createUserComment(
       authorId: author.id,
       body: input.body,
       internal: input.internal,
+      answersCommentId: input.answersCommentId ?? null,
     })
     .returning();
   if (input.attachments.length > 0) {
@@ -126,6 +176,42 @@ export async function createUserComment(
   after.emit(taskTopic(task.id), { type: 'comment.created', comment });
   await emitCardRefresh(tx, after, task.id);
   return comment;
+}
+
+/**
+ * An Agent Comment posted through a Task Tool (files, a Question or a Survey), as opposed to the
+ * ones projected from its stream. Returns the new Comment's id.
+ */
+export async function createAgentComment(
+  tx: Executor,
+  after: AfterCommit,
+  input: {
+    taskId: string;
+    agentId: string;
+    jobId: string;
+    body: string;
+    attachments: NewAttachment[];
+    question?: NewQuestion;
+  },
+): Promise<string> {
+  const [row] = await tx
+    .insert(comments)
+    .values({
+      taskId: input.taskId,
+      kind: 'agent',
+      authorType: 'agent',
+      authorId: input.agentId,
+      jobId: input.jobId,
+      body: input.body,
+      createdAt: sql`clock_timestamp()`,
+    })
+    .returning({ id: comments.id });
+  if (input.attachments.length > 0) {
+    await tx.insert(attachments).values(input.attachments.map((a, position) => ({ ...a, position, commentId: row!.id })));
+  }
+  if (input.question) await tx.insert(questions).values({ commentId: row!.id, ...input.question });
+  after.effect((ctx) => ctx.scheduler.publishComments([row!.id], 'created'));
+  return row!.id;
 }
 
 /** Only the author edits a Comment; the internal flag can't change after posting. */
@@ -141,6 +227,7 @@ export async function updateComment(
   if (row.kind !== 'user' || row.authorType !== 'user' || row.authorId !== user.id) {
     throw forbidden('You can only edit your own comments');
   }
+  if (row.answersCommentId) throw forbidden('An answer to a question is final: post a new comment instead');
   if (row.body === body) return loadComment(tx, row.id);
   await tx
     .update(comments)

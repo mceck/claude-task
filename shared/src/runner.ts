@@ -3,11 +3,16 @@
 // runner (runner/internal/protocol) mirrors these shapes.
 import type { PermissionMode } from './agents';
 
-export const RUNNER_PROTOCOL_VERSION = 2;
+export const RUNNER_PROTOCOL_VERSION = 3;
 /** WebSocket path, authenticated with `Authorization: Bearer <runner token>`. */
 export const RUNNER_WS_PATH = '/api/v1/runner';
 /** Attachment downloads for the Runner, same bearer token: `${RUNNER_ATTACHMENTS_PATH}/<attachmentId>`. */
 export const RUNNER_ATTACHMENTS_PATH = '/api/v1/runner/attachments';
+/**
+ * Uploads of files an Agent posts, same bearer token: `${RUNNER_UPLOADS_PATH}/<requestId>`, one
+ * multipart POST with a `manifest` field (`UploadManifestEntry[]`) then one `file` part per success.
+ */
+export const RUNNER_UPLOADS_PATH = '/api/v1/runner/uploads';
 /** Git Proxy (smart HTTP): `${GIT_PROXY_PATH}/<projectId>.git`, Basic auth with the Job token as password. */
 export const GIT_PROXY_PATH = '/git';
 /** Streamable HTTP MCP endpoint for Task Tools, authenticated with the Job token. */
@@ -55,6 +60,14 @@ export interface ClaudeArgs {
   appendSystemPrompt: string;
   /** `--mcp-config`, a JSON string. */
   mcpConfig: string;
+  /** `--disallowedTools <name>`, one per tool. */
+  disallowedTools: string[];
+}
+
+/** One requested path in an upload's manifest, in request order; `error` when it failed. */
+export interface UploadManifestEntry {
+  path: string;
+  error?: string;
 }
 
 export type JobFailureStage = 'worktree' | 'setup' | 'spawn';
@@ -94,6 +107,11 @@ export type BackendToRunner =
   | { type: 'job.end'; jobId: string }
   /** Interrupt, close stdin, SIGTERM after 10 s, SIGKILL after 20 s. */
   | { type: 'job.cancel'; jobId: string }
+  /**
+   * Upload files the Agent posts through a Task Tool: POST them to `url` (see `RUNNER_UPLOADS_PATH`).
+   * A request outside the Job's stream: no seq, no ack; paths are relative to the Worktree or absolute.
+   */
+  | { type: 'job.upload'; jobId: string; requestId: string; url: string; files: { path: string }[] }
   /** Remove a Worktree directory (never the branch). Paths relative to the Agent's home. */
   | { type: 'worktree.remove'; worktreePath: string; repoPath: string | null }
   /** Everything the Runner sent for this Job up to and including `seq` is processed. */

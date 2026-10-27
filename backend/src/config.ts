@@ -41,6 +41,8 @@ export interface AgentsConfig {
   runnerReconnectTimeoutMs: number;
   /** How often the backend pings each Runner; one missed round drops the connection (default 30s). */
   runnerPingIntervalMs?: number;
+  /** How long a Task Tool waits for the Runner to upload the files an Agent posts (default 60s). */
+  uploadTimeoutMs?: number;
   /** Stop this Installation's Agent Containers on graceful backend shutdown. */
   stopOnShutdown?: boolean;
 }

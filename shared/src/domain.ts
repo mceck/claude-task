@@ -156,6 +156,56 @@ export interface Comment {
   createdAt: string;
   /** Whether a User's Comment reached the Agent; null for Internal Notes, agent and system Comments, or with no Agent. */
   delivery: Delivery | null;
+  /** Set on an Agent's Question. */
+  question: Question | null;
+  /** Set on an Agent's Survey. */
+  survey: Survey | null;
+  /** On the User Comment that answers a Question: the Question's Comment id. */
+  answersCommentId: string | null;
+}
+
+/** The two kinds of multiple-choice Agent Comments. */
+export const QUESTION_KINDS = ['question', 'survey'] as const;
+export type QuestionKind = (typeof QUESTION_KINDS)[number];
+
+/** One multiple-choice item of a Question or Survey; "Other" is added by the clients. */
+export interface QuestionItem {
+  header: string;
+  question: string;
+  options: { label: string; description: string }[];
+  multiSelect: boolean;
+}
+
+/** The answer to one item: chosen option labels and the "Other" text. */
+export interface QuestionAnswer {
+  selected: string[];
+  other: string | null;
+}
+
+export interface Question {
+  items: QuestionItem[];
+  state: 'open' | 'answered';
+  answer: QuestionAnswer[] | null;
+  answeredBy: Actor | null;
+  answeredAt: string | null;
+}
+
+export interface SurveyResponse {
+  user: Actor;
+  answers: QuestionAnswer[];
+  updatedAt: string;
+}
+
+export interface Survey {
+  items: QuestionItem[];
+  state: 'open' | 'closed';
+  /** The Task's Assignees when the Survey was created. */
+  expectedRespondents: Actor[];
+  /** In first-answer order. */
+  responses: SurveyResponse[];
+  /** Null while open, and when it closed because every Expected Respondent answered. */
+  closedBy: Actor | null;
+  closedAt: string | null;
 }
 
 /** Thinking, Activity, Turn Summaries and notices projected from an Agent's stream. */
@@ -187,6 +237,17 @@ export interface TimelinePage {
 
 export const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 export const ATTACHMENT_MAX_FILES = 10;
+
+/** Limits of a Question or Survey (they mirror Claude Code's own question tool). */
+export const QUESTION_LIMITS = {
+  items: { min: 1, max: 4 },
+  header: 12,
+  question: 2000,
+  options: { min: 2, max: 4 },
+  label: 60,
+  description: 300,
+  other: 2000,
+} as const;
 
 export function taskKey(projectKey: string, number: number): string {
   return `${projectKey}-${number}`;

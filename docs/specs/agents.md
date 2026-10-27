@@ -11,7 +11,7 @@ Agents are the platform's Claude Code workers. This area covers an **Agent** as 
 - An **Agent Image** is built from the Agent's own Dockerfile on top of the Base Image at the current Platform Version. A **Build** is one attempt to produce it, with its log and outcome.
 - The **Agent Container** runs the Agent Image. The **Agent Volume** is mounted as the agent user's home and holds everything that must survive container recreation: bare repositories, Worktrees, Claude's configuration and Session transcripts, development-service data, mise tool installs, synchronized Skills and the record of installed Plugins.
 - The **Runner token** is the secret the Runner uses to connect to the backend. It identifies exactly one Agent and changes every time the container is recreated. It is distinct from the Job token, which authorizes one Job's MCP and Git Proxy calls (see [Agent sessions](agent-sessions.md) and [Git integration](git-integration.md)).
-- **Development services** are local databases and tools (PostgreSQL, Redis, MySQL, Mailpit, RustFS) installed and started inside an Agent Container, selected per Agent.
+- **Development services** are local databases and tools (PostgreSQL, Redis, MySQL, Mailpit, RustFS, Chrome) installed and started inside an Agent Container, selected per Agent.
 - **Extensions** are the entries of a shared catalog that Admins assign to Agents: **Skills** (files synchronized into the Agent's Claude configuration), **MCP servers** (added to each Job's MCP configuration) and **Plugins** (installed with Claude Code's own plugin manager).
 - **Project environment variables** are name/value pairs defined per Project, optionally secret, delivered to every Job on that Project's Tasks.
 - The **Agent state** is the single status the Agents list shows, derived from the Agent's configuration, image, Runner connection and Jobs.
@@ -52,7 +52,7 @@ An Admin creates an Agent from the Agents page. The fields and their rules:
 | Permission mode | `bypassPermissions`, `auto`, `acceptEdits` or `dontAsk` | `bypassPermissions` |
 | System prompt | up to 50,000 characters, appended after the platform and Project sections of the Job's system prompt | empty |
 | Dockerfile | 1 to 100,000 characters, validated as described in [Agent Dockerfiles](#agent-dockerfiles) | `FROM claude-task/agent-base` followed by `USER agent` |
-| Services | any subset of PostgreSQL, Redis, MySQL, Mailpit and RustFS, without duplicates | PostgreSQL and Redis |
+| Services | any subset of PostgreSQL, Redis, MySQL, Mailpit, RustFS and Chrome, without duplicates | PostgreSQL and Redis |
 | Skills, MCP servers, Plugins | up to 100 catalog entries of each kind, without duplicates | none |
 | CPU limit | more than 0 and up to 256 CPUs, fractions allowed | no limit |
 | Memory limit | 256 to 1,048,576 MB | no limit |
@@ -187,10 +187,10 @@ The import is merged into the Project's variables: names in the file are overwri
 
 The Base Image is Ubuntu 24.04 (the `buildpack-deps:noble` image) with:
 
-- bash, ca-certificates, curl, git, less, OpenSSH client and procps;
+- bash, ca-certificates, curl, git, jq, less, OpenSSH client, procps and vim;
 - the `claude` CLI at the pinned version, installed outside the agent's home so that the Agent Volume mounted there leaves it visible, with the auto-updater turned off;
 - the Runner and the git credential helper, compiled from the Runner sources in the same build and configured system-wide as git's credential helper (see [Git integration](git-integration.md));
-- mise, with its shims on the `PATH` of every process, including login shells;
+- mise, with its shims on the `PATH` of every process, including login shells, and the `flutter` mise plugin. The plugin is installed outside the agent's home, and the container entrypoint links it into the Agent Volume's mise data when that has no plugin of the same name, so existing Agent Volumes get it too. Every Node.js that mise installs gets Corepack enabled, so `pnpm` and `yarn` are on the `PATH` at the version a `package.json`'s `packageManager` field names, downloaded without Corepack's confirmation prompt (a prompt would stall a Job). The container entrypoint also enables Corepack for Node.js versions already in the Agent Volume, so existing Agents get it too. Node.js 25 and later no longer ship Corepack: repositories on those versions declare `pnpm` or `yarn` in their mise configuration instead;
 - the development-service installer, used while building Agent Images, and the container entrypoint;
 - the non-root user `agent` with uid 1000 and home `/home/agent`, which is also the image's final user and working directory.
 
@@ -333,7 +333,7 @@ sequenceDiagram
 
 ### Agent development environment
 
-**Services.** Each Agent selects the development services installed in its image and started in its container. PostgreSQL and Redis are selected by default; MySQL, Mailpit and RustFS are optional; an empty selection is valid. Selected services are installed while building the image (packages for PostgreSQL 16, Redis and MySQL 8.0; release binaries for Mailpit and RustFS, on amd64 or arm64), and the container entrypoint starts them as the `agent` user before the Runner. They listen on the loopback interface only:
+**Services.** Each Agent selects the development services installed in its image and started in its container. PostgreSQL and Redis are selected by default; MySQL, Mailpit, RustFS and Chrome are optional; an empty selection is valid. Selected services are installed while building the image (packages for PostgreSQL 16, Redis and MySQL 8.0; release binaries for Mailpit and RustFS, on amd64 or arm64; Playwright's Chromium build with the system libraries browsers need, so a Project's own Playwright browsers run too), and the container entrypoint starts them as the `agent` user before the Runner. Chrome is the exception: nothing runs until a tool launches it. The others listen on the loopback interface only:
 
 | Service | Address | Access |
 | --- | --- | --- |
@@ -342,8 +342,11 @@ sequenceDiagram
 | MySQL 8.0 | `mysql://agent@127.0.0.1:3306/agent` | no password; `agent` holds every privilege and can create databases |
 | Mailpit 1.32.0 | SMTP `127.0.0.1:1025`, web UI and API `http://127.0.0.1:8025` | messages kept in its own database |
 | RustFS 1.0.4 | S3 API `http://127.0.0.1:9000`, console `http://127.0.0.1:9001` | access key and secret key `rustfsadmin` |
+| Chrome (Chromium from Playwright 1.64.0) | `chromium` on the `PATH`, started on demand | the entrypoint points the Playwright MCP server at it (`PLAYWRIGHT_MCP_*` variables: Chromium, headless, without the browser sandbox), so that server works with no arguments |
 
-Service data and logs live in the Agent Volume, so they survive restarts and recreation. Each Agent has its own services, shared by all the Tasks it works on; Projects keep apart by using separate database names, Redis key namespaces or databases, and S3 buckets. Deselecting a service keeps its data, and selecting it again reuses it. The entrypoint waits up to 60 seconds for each service to become ready; a service that exits or never becomes ready stops the container start with the tail of its log in the container logs, and Docker's restart policy tries again.
+PostgreSQL and MySQL also listen on the Unix sockets their clients look for by default (`/var/run/postgresql` and `/var/run/mysqld/mysqld.sock`), so `psql`, `mysql` and applications with no host configured connect without options. The Agent learns the selected services, with their addresses, from its system prompt (see [Agent sessions](agent-sessions.md)).
+
+Service data and logs live in the Agent Volume, so they survive restarts and recreation. Nothing runs in the container before the entrypoint, so it removes the lock files a killed container leaves behind (PostgreSQL's `postmaster.pid` and socket locks, MySQL's socket lock): process IDs repeat in a new container, and a stale lock with a reused PID would make a service refuse to start or look ready before it is. Each Agent has its own services, shared by all the Tasks it works on; Projects keep apart by using separate database names, Redis key namespaces or databases, and S3 buckets. Deselecting a service keeps its data, and selecting it again reuses it. The entrypoint waits up to 60 seconds for each service to become ready; a service that exits or never becomes ready stops the container start with the tail of its log in the container logs, and Docker's restart policy tries again.
 
 Changing the selection rebuilds the image. A failed Build keeps the previous container and its services running; a successful one replaces the container when the Agent is idle, or immediately when forced.
 
@@ -518,6 +521,7 @@ Sessions, Jobs and Queue Entries belong to [Agent sessions](agent-sessions.md).
 - **The Base Image is built locally from bundled sources, with the Claude Code version pinned.** The stream-json format is a contract, so every Agent runs a tested `claude` version, the auto-updater is off, and upgrades are deliberate. Building locally needs no registry and keeps the Runner and the Base Image versioned together. The Platform Version fingerprints the CLI version, the recipe, its scripts and the Runner sources, so any of them changing rebuilds every Agent on its own.
 - **Agent Dockerfiles start from the Base Image and end as the `agent` user.** `bypassPermissions` refuses to run as root, and the Runner, credential helper and entrypoint come from the Base Image. The backend pins the base to the exact Platform Version itself, so a Dockerfile naming any tag still builds on the current platform.
 - **A failed Build keeps the previous container in service, and recreation waits for idle.** A working Agent stays online through a typo in its Dockerfile, and a rebuild interrupts work in progress only when an Admin forces it.
+- **Chrome is installed, not started.** Browser clients (the Playwright MCP server, test runners) launch their own browser per session, so a resident browser would only cost memory on every idle Agent and share one profile across Tasks. Unconfigured, the Playwright MCP server looks for Google Chrome, which has no Linux arm64 build, and runs it headed with the sandbox, which needs a display and user namespaces; the entrypoint's variables point it at Chromium instead.
 - **Development services run inside the Agent Container, as the `agent` user, on loopback.** Agents can run tests against real databases with no extra infrastructure or credentials; one set per Agent matches the one-Job-at-a-time model, and data lives on the volume so it survives rebuilds.
 - **Extensions synchronize into the running container instead of the image.** Skills and Plugins change more often than toolchains; synchronizing between Jobs avoids a rebuild and a recreation for each change. Plugins are installed with Claude Code's own plugin manager, so the platform stores only where they come from.
 - **The platform configures no hooks and no guardrails inside the container.** The Timeline comes from the stdout stream, and the Base Branch is protected by the Git Proxy's Push Policy, so an Agent's permission mode governs only what it does inside its own container.

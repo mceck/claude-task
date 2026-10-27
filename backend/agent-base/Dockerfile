@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${RUNNER_VE
 FROM buildpack-deps:noble
 ARG CLAUDE_CODE_VERSION
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates curl git less openssh-client procps \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl git jq less openssh-client procps vim \
  && rm -rf /var/lib/apt/lists/*
 # Claude Code lives outside /home/agent: the Agent Volume is mounted there and would hide
 # (or freeze) anything installed in it.
@@ -38,12 +38,20 @@ COPY agent-base/install-services.sh /usr/local/bin/claude-task-install-services
 COPY agent-base/entrypoint.sh /usr/local/bin/claude-task-entrypoint
 RUN chmod 755 /usr/local/bin/claude-task-install-services /usr/local/bin/claude-task-entrypoint \
  && printf '%s\n' 'export PATH="/home/agent/.local/share/mise/shims:$PATH"' > /etc/profile.d/mise.sh
+# Every Node mise installs gets Corepack's pnpm and yarn, at the version a package.json's
+# packageManager names, downloaded without the prompt that would stall a Job.
 ENV DISABLE_AUTOUPDATER=1 \
+    MISE_NODE_COREPACK=true \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CLAUDE_TASK_CLAUDE_PATH=/usr/local/bin/claude \
     CLAUDE_TASK_SERVICES="" \
     PATH=/home/agent/.local/share/mise/shims:/usr/lib/postgresql/16/bin:$PATH
+COPY --from=ghcr.io/jdx/mise:latest /usr/local/bin/mise /usr/local/bin/mise
+# Plugins live outside /home/agent for the same reason as Claude Code; the entrypoint links them
+# into the Agent Volume's mise data.
+RUN mise --version \
+ && MISE_DATA_DIR=/opt/mise mise plugins add flutter \
+ && chown -R agent: /opt/mise
 USER agent
 WORKDIR /home/agent
-COPY --from=ghcr.io/jdx/mise:latest /usr/local/bin/mise /usr/local/bin/mise
-RUN mise --version
 ENTRYPOINT ["/usr/local/bin/claude-task-entrypoint"]

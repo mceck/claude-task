@@ -31,6 +31,8 @@ describe('migration upgrades', () => {
       ALTER TABLE projects DROP COLUMN logo_blob_id;
       ALTER TABLE users DROP COLUMN avatar_blob_id;
       ALTER TABLE projects DROP COLUMN default_agent_id;
+      DROP TABLE survey_responses, questions;
+      ALTER TABLE comments DROP COLUMN answers_comment_id;
     `);
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.when]);
     expect((await db.$client.query('SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1')).rows[0].hash)
@@ -72,6 +74,8 @@ describe('migration upgrades', () => {
       // Recreate the schema before User avatars so the newer migration is applied during the upgrade.
       await db.$client.query('ALTER TABLE users DROP COLUMN avatar_blob_id');
       await db.$client.query('ALTER TABLE projects DROP COLUMN default_agent_id');
+      await db.$client.query('DROP TABLE survey_responses, questions');
+      await db.$client.query('ALTER TABLE comments DROP COLUMN answers_comment_id');
       await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.created_at]);
       await db.$client.query('UPDATE drizzle.__drizzle_migrations SET hash = $1, created_at = $2 WHERE id = $3', [hash, when, original.id]);
       const before = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows;

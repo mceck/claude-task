@@ -1,6 +1,7 @@
 package test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,7 +14,7 @@ func TestHelloAndArgumentsForANewSession(t *testing.T) {
 	b := newBackend(t)
 	home := startRunner(t, b)
 	hello := b.waitHello(1)
-	if hello.str("claudeVersion") != "9.9.9" || hello["activeJobId"] != nil || hello.num("protocolVersion") != 2 {
+	if hello.str("claudeVersion") != "9.9.9" || hello["activeJobId"] != nil || hello.num("protocolVersion") != 3 {
 		t.Fatalf("unexpected hello %v", hello)
 	}
 
@@ -31,7 +32,7 @@ func TestHelloAndArgumentsForANewSession(t *testing.T) {
 	r := readRecord(t, rec)
 	want := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--include-partial-messages", "--session-id", "s-1", "--model", "opus", "--permission-mode", "bypassPermissions",
-		"--append-system-prompt", "Be nice", "--mcp-config", `{"mcpServers":{}}`}
+		"--append-system-prompt", "Be nice", "--mcp-config", `{"mcpServers":{}}`, "--disallowedTools", "AskUserQuestion"}
 	if !slices.Equal(r.Args, want) {
 		t.Fatalf("args\n got %q\nwant %q", r.Args, want)
 	}
@@ -350,4 +351,83 @@ func TestAttachmentsAreFetchedIntoTheWorktree(t *testing.T) {
 	}
 	b.send(msg{"type": "job.end", "jobId": "j1"})
 	b.waitType("j1", "job.exited")
+}
+
+func TestUploadPostsTheRequestedFiles(t *testing.T) {
+	b := newBackend(t)
+	home := startRunner(t, b)
+	b.send(jobStart(jobOpts{id: "j1", text: "HANG"}))
+	b.waitEvent("j1", "tool_use", isToolUse)
+
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	png := []byte("\x89PNG\r\n\x1a\n rest of the image")
+	abs := filepath.Join(t.TempDir(), "chart.json")
+	writeFile(t, filepath.Join(wt, "out/report.txt"), "the report")
+	writeFile(t, filepath.Join(wt, "out/screenshot"), string(png))
+	writeFile(t, abs, `{"ok":true}`)
+	if err := os.Symlink("out/report.txt", filepath.Join(wt, "latest.txt")); err != nil {
+		t.Fatal(err)
+	}
+	// Sparse, so the size check costs no disk.
+	big, err := os.Create(filepath.Join(wt, "big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := big.Truncate(25<<20 + 1); err != nil {
+		t.Fatal(err)
+	}
+	big.Close()
+
+	paths := []string{"out/report.txt", "missing.txt", abs, "out", "big.bin", "out/screenshot", "latest.txt"}
+	files := []msg{}
+	for _, p := range paths {
+		files = append(files, msg{"path": p})
+	}
+	// Not held by the Runner: ignored.
+	b.send(msg{"type": "job.upload", "jobId": "nope", "requestId": "r0", "url": b.uploadURL("r0"), "files": files})
+	b.send(msg{"type": "job.upload", "jobId": "j1", "requestId": "r1", "url": b.uploadURL("r1"), "files": files})
+
+	u := b.waitUpload("r1")
+	wantManifest := []msg{
+		{"path": "out/report.txt"}, {"path": "missing.txt", "error": "not found"}, {"path": abs},
+		{"path": "out", "error": "not a regular file"}, {"path": "big.bin", "error": "larger than 25 MB"},
+		{"path": "out/screenshot"}, {"path": "latest.txt"},
+	}
+	if fmt.Sprint(u.manifest) != fmt.Sprint(wantManifest) {
+		t.Fatalf("manifest\n got %v\nwant %v", u.manifest, wantManifest)
+	}
+	wantParts := []uploadPart{
+		{"file", "report.txt", "text/plain; charset=utf-8", []byte("the report")},
+		{"file", "chart.json", "application/json", []byte(`{"ok":true}`)},
+		{"file", "screenshot", "image/png", png},
+		{"file", "latest.txt", "text/plain; charset=utf-8", []byte("the report")},
+	}
+	if fmt.Sprintf("%q", u.parts) != fmt.Sprintf("%q", wantParts) {
+		t.Fatalf("parts\n got %q\nwant %q", u.parts, wantParts)
+	}
+
+	// A failed POST becomes a Runner note on stderr.
+	b.send(msg{"type": "job.upload", "jobId": "j1", "requestId": "r2", "url": b.srv.URL + "/nowhere", "files": files[:1]})
+	waitUntil(t, 15*time.Second, "upload failure note", func() bool {
+		return strings.Contains(b.stderr("j1"), "[runner] could not upload files: HTTP 404")
+	})
+	b.mu.Lock()
+	_, ignored := b.uploads["r0"]
+	b.mu.Unlock()
+	if ignored {
+		t.Fatal("uploaded for a job the runner doesn't hold")
+	}
+
+	b.send(msg{"type": "job.cancel", "jobId": "j1"})
+	b.waitType("j1", "job.exited")
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

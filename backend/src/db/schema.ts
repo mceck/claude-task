@@ -29,11 +29,12 @@ import {
   JOB_STATES,
   PERMISSION_MODES,
   PRIORITIES,
+  QUESTION_KINDS,
   QUEUE_ENTRY_KINDS,
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentService, AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind } from '@claude-task/shared';
+import type { AgentService, AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, QuestionAnswer, QuestionItem } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -241,6 +242,8 @@ export const comments = pgTable(
     noticeMessage: text('notice_message'),
     /** For agent Comments: the Job whose stream produced it. */
     jobId: uuid('job_id'),
+    /** On the User Comment answering a Question: the Question's Comment. */
+    answersCommentId: uuid('answers_comment_id').references((): AnyPgColumn => comments.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -271,6 +274,45 @@ export const attachments = pgTable(
     index('attachments_task_idx').on(t.taskId),
     check('attachments_owner_check', sql`(${t.commentId} is not null) <> (${t.taskId} is not null)`),
   ],
+);
+
+/** The structured part of an Agent's Question or Survey (docs/specs/conversation.md). */
+export const questions = pgTable('questions', {
+  commentId: uuid('comment_id')
+    .primaryKey()
+    .references(() => comments.id, { onDelete: 'cascade' }),
+  kind: text('kind', { enum: QUESTION_KINDS }).notNull(),
+  items: jsonb('items').$type<QuestionItem[]>().notNull(),
+  /** `answered` ends a Question, `closed` a Survey. */
+  state: text('state', { enum: ['open', 'answered', 'closed'] }).notNull().default('open'),
+  /** Survey: the Task's Assignees when it was created. */
+  expectedRespondentIds: uuid('expected_respondent_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  answer: jsonb('answer').$type<QuestionAnswer[]>(),
+  answeredBy: uuid('answered_by').references(() => users.id, { onDelete: 'set null' }),
+  answeredAt: timestamp('answered_at', { withTimezone: true }),
+  answerCommentId: uuid('answer_comment_id').references((): AnyPgColumn => comments.id, { onDelete: 'set null' }),
+  /** Null when a Survey closed because every Expected Respondent answered. */
+  closedBy: uuid('closed_by').references(() => users.id, { onDelete: 'set null' }),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
+  resultCommentId: uuid('result_comment_id').references((): AnyPgColumn => comments.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+});
+
+/** One User's answer to a Survey, changeable while it is open. */
+export const surveyResponses = pgTable(
+  'survey_responses',
+  {
+    commentId: uuid('comment_id')
+      .notNull()
+      .references(() => questions.commentId, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    answers: jsonb('answers').$type<QuestionAnswer[]>().notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.commentId, t.userId] })],
 );
 
 // Agents (docs/specs/agents.md)

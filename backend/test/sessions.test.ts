@@ -87,6 +87,9 @@ describe('assignment and the first Job', () => {
     expect(start.claudeArgs.appendSystemPrompt).toContain(task.key);
     expect(start.claudeArgs.appendSystemPrompt).toContain('Use pnpm.');
     expect(start.claudeArgs.appendSystemPrompt).toContain('Always write tests.');
+    expect(start.claudeArgs.appendSystemPrompt).toContain('- PostgreSQL: 127.0.0.1:5432');
+    expect(start.claudeArgs.appendSystemPrompt).toContain('- Redis: 127.0.0.1:6379');
+    expect(start.claudeArgs.appendSystemPrompt).not.toContain('MySQL');
     const mcp = JSON.parse(start.claudeArgs.mcpConfig);
     expect(mcp.mcpServers['claude-task']).toMatchObject({ type: 'http', url: 'http://backend.test/api/v1/mcp' });
     expect(mcp.mcpServers['claude-task'].headers.Authorization).toMatch(/^Bearer .{20,}/);

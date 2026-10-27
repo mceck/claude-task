@@ -50,6 +50,11 @@ Json commentData(
   String body, {
   bool internal = false,
   String position = '1',
+  String kind = 'user',
+  Json? author,
+  Json? question,
+  Json? survey,
+  String? answersCommentId,
 }) => {
   'type': 'comment',
   'id': id,
@@ -59,13 +64,83 @@ Json commentData(
     'id': id,
     'taskId': 'task-1',
     'createdAt': at(position),
-    'kind': 'user',
+    'kind': kind,
     'body': body,
     'internal': internal,
-    'author': {'id': 'user-1', 'displayName': 'Ada', 'type': 'user'},
+    'author':
+        author ??
+        (kind == 'agent'
+            ? {'id': 'agent-1', 'displayName': 'Ada Bot', 'type': 'agent'}
+            : {'id': 'user-1', 'displayName': 'Ada', 'type': 'user'}),
     'attachments': <Json>[],
-    'delivery': internal ? null : {'state': 'queued', 'reason': null},
+    'delivery': internal || kind != 'user'
+        ? null
+        : {'state': 'queued', 'reason': null},
+    'question': question,
+    'survey': survey,
+    'answersCommentId': answersCommentId,
   },
+};
+
+const mia = <String, dynamic>{
+  'id': 'user-2',
+  'displayName': 'Mia',
+  'type': 'user',
+};
+const ada = <String, dynamic>{
+  'id': 'user-1',
+  'displayName': 'Ada',
+  'type': 'user',
+};
+
+/// Items of an Agent's Question or Survey: one single and one multiple choice.
+List<Json> questionItems() => [
+  {
+    'header': 'Database',
+    'question': 'Which **database** should I use?',
+    'options': [
+      {'label': 'Postgres', 'description': 'Already in the stack'},
+      {'label': 'SQLite', 'description': ''},
+    ],
+    'multiSelect': false,
+  },
+  {
+    'header': 'Targets',
+    'question': 'Where should it run?',
+    'options': [
+      {'label': 'iOS', 'description': ''},
+      {'label': 'Android', 'description': ''},
+    ],
+    'multiSelect': true,
+  },
+];
+
+Json questionData({List<Json>? answer, Json? answeredBy}) => {
+  'items': questionItems(),
+  'state': answer == null ? 'open' : 'answered',
+  'answer': answer,
+  'answeredBy': answeredBy,
+  'answeredAt': answer == null ? null : at('5'),
+};
+
+Json surveyData({
+  List<Json> responses = const [],
+  bool closed = false,
+  Json? closedBy,
+  List<Json> expected = const [ada, mia],
+}) => {
+  'items': questionItems(),
+  'state': closed ? 'closed' : 'open',
+  'expectedRespondents': expected,
+  'responses': responses,
+  'closedBy': closedBy,
+  'closedAt': closed ? at('9') : null,
+};
+
+Json responseData(Json user, List<Json> answers, {String position = '4'}) => {
+  'user': user,
+  'answers': answers,
+  'updatedAt': at(position),
 };
 Json revisionData(String id, List<Json> changes, {String position = '1'}) => {
   'type': 'revision',
@@ -205,6 +280,13 @@ class FakeApi implements TaskApi {
   Json? session;
   int createCount = 0, sendCount = 0, readCount = 0;
   final createdTags = <Json>[];
+
+  /// Answers the Question and Survey routes (`/comments/:id/answer`,
+  /// `/response`, `/close`); it may throw an [ApiException].
+  Json Function(String method, String path, Json? body)? conversationTool;
+
+  /// The last body sent to each `METHOD /path`.
+  final bodies = <String, Json?>{};
   @override
   Future<Json> request(
     String method,
@@ -213,6 +295,7 @@ class FakeApi implements TaskApi {
     List<DraftFile> files = const [],
   }) async {
     calls.add('$method $path');
+    bodies['$method $path'] = body;
     if (offline) throw const SocketException('offline');
     if (expire) throw const ApiException(401, 'unauthorized', 'Login expired');
     if (path == '/auth/login') {
@@ -359,6 +442,10 @@ class FakeApi implements TaskApi {
     }
     if (path == '/notifications/status') {
       return {'configured': false, 'provider': 'fcm'};
+    }
+    if (conversationTool != null &&
+        RegExp(r'^/comments/[^/]+/(answer|response|close)$').hasMatch(path)) {
+      return conversationTool!(method, path, body);
     }
     if (path.startsWith('/comments/')) return {};
     throw StateError('Unexpected API call: $method $path');

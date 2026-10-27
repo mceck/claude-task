@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -73,12 +74,13 @@ type backend struct {
 	gaps       []string
 	autoAck    bool
 	files      map[string][]byte
+	uploads    map[string]upload
 	// reply answers a processed message right away, like the real backend's scheduler.
 	reply func(m msg) []msg
 }
 
 func newBackend(t *testing.T) *backend {
-	b := &backend{t: t, lastSeq: map[string]int64{}, autoAck: true, files: map[string][]byte{}}
+	b := &backend{t: t, lastSeq: map[string]int64{}, autoAck: true, files: map[string][]byte{}, uploads: map[string]upload{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/runner", b.serveWS)
 	mux.HandleFunc("/files/", func(w http.ResponseWriter, r *http.Request) {
@@ -95,12 +97,76 @@ func newBackend(t *testing.T) *backend {
 		}
 		w.Write(data)
 	})
+	mux.HandleFunc("POST /api/v1/runner/uploads/{requestId}", b.serveUpload)
 	b.srv = httptest.NewServer(mux)
 	t.Cleanup(func() {
 		b.drop()
 		b.srv.Close()
 	})
 	return b
+}
+
+// upload is what the Runner posted for one job.upload: the manifest, then the file parts in order.
+type upload struct {
+	manifest []msg
+	parts    []uploadPart
+}
+
+type uploadPart struct {
+	field, filename, contentType string
+	data                         []byte
+}
+
+func (b *backend) serveUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer "+token {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	mr, err := r.MultipartReader()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var u upload
+	for i := 0; ; i++ {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		data, _ := io.ReadAll(p)
+		if i == 0 {
+			if p.FormName() != "manifest" || json.Unmarshal(data, &u.manifest) != nil {
+				http.Error(w, "the first part must be the manifest", http.StatusBadRequest)
+				return
+			}
+			continue
+		}
+		u.parts = append(u.parts, uploadPart{p.FormName(), p.FileName(), p.Header.Get("Content-Type"), data})
+	}
+	b.mu.Lock()
+	b.uploads[r.PathValue("requestId")] = u
+	b.mu.Unlock()
+}
+
+func (b *backend) uploadURL(requestID string) string {
+	return b.srv.URL + "/api/v1/runner/uploads/" + requestID
+}
+
+func (b *backend) waitUpload(requestID string) upload {
+	b.t.Helper()
+	var u upload
+	waitUntil(b.t, 15*time.Second, "upload "+requestID, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		var ok bool
+		u, ok = b.uploads[requestID]
+		return ok
+	})
+	return u
 }
 
 func (b *backend) wsURL() string {
@@ -388,6 +454,7 @@ func jobStart(o jobOpts) msg {
 		"claudeArgs": msg{
 			"model": o.model, "effort": o.effort, "permissionMode": "bypassPermissions",
 			"appendSystemPrompt": o.systemPrompt, "mcpConfig": `{"mcpServers":{}}`,
+			"disallowedTools": []string{"AskUserQuestion"},
 		},
 		"initialMessage": initial, "attachmentsToFetch": attachments,
 	}

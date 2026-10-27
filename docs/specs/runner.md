@@ -5,9 +5,9 @@ The **Runner** is the platform's process inside every Agent Container. It dials 
 ## Concepts
 
 - The **Runner** belongs to one Agent and runs at most one Job at a time. It starts with the Agent Container and lives as long as the container does.
-- The **Runner token** identifies the Runner to the backend. It maps to exactly one Agent, is stored hashed by the backend and is regenerated every time the Agent Container is recreated (see [Agents](agents.md)). The Runner uses it for the WebSocket and for attachment downloads, and keeps it to itself.
+- The **Runner token** identifies the Runner to the backend. It maps to exactly one Agent, is stored hashed by the backend and is regenerated every time the Agent Container is recreated (see [Agents](agents.md)). The Runner uses it for the WebSocket, for attachment downloads and for file uploads, and keeps it to itself.
 - The **Job token** is the per-Job secret the backend puts in `job.start`. Claude Code uses it for the Task Tools MCP server, and the Git credential helper uses it as the Git Proxy password. It is valid only while the Job is active (see [Agent sessions](agent-sessions.md) and [Git integration](git-integration.md)).
-- The **Runner Protocol** is the JSON message contract over the WebSocket, with a protocol version (currently 2). The shared TypeScript types are its single source of truth and the Go Runner mirrors them.
+- The **Runner Protocol** is the JSON message contract over the WebSocket, with a protocol version (currently 3). The shared TypeScript types are its single source of truth and the Go Runner mirrors them.
 - A **Job-scoped message** is any message the Runner sends about a Job. Each carries the Job id and a **seq**: one counter per Job, starting at 1 and shared by every message type, so the backend processes them exactly once and in order.
 - The **outbox** is the Runner's per-Job list of Job-scoped messages the backend hasn't acknowledged yet. It is what gets resent after a reconnect.
 - **Worktree preparation** covers everything the Runner does before starting `claude`: the git steps, the tool install, the Setup Script and the attachment downloads. Its output streams to the backend as setup output.
@@ -57,11 +57,12 @@ Backend to Runner:
 | `job.interrupt` | Job id | Stops the current Turn; the process stays alive. |
 | `job.end` | Job id | Closes stdin: `claude` works through what was already written, then exits. |
 | `job.cancel` | Job id | Interrupts, closes stdin and escalates to signals. |
+| `job.upload` | Job id; request id; upload URL; file paths | Reads the files and uploads them to the URL (see [Uploading files](#uploading-files)). |
 | `worktree.remove` | Worktree path; bare clone path or none | Deletes the Worktree directory. Branches stay. |
 | `ack` | Job id; seq | Everything up to and including that seq is processed. |
 | `ping` | | Answered with `pong`. |
 
-The git spec holds the Git Proxy clone URL (without credentials), the Job token as the proxy password, the Repository's stable identity, the Base Branch, the Task Branch, a hint on whether the Task Branch exists remotely, the bare clone path and the commit identity (name and email). The Claude arguments are the model, the effort, the permission mode, the text appended to the system prompt and the MCP configuration (a JSON string carrying the Task Tools server with the Job token, plus the Agent's MCP Extensions). The environment is the merged map of the Project's env vars and secrets, the Credential's variable and, for a resumed interrupted Turn, the resume flag. Paths are relative to the Agent's home. The values themselves are chosen by the backend (see [Agent sessions](agent-sessions.md), [Agents](agents.md) and [Git integration](git-integration.md)).
+The git spec holds the Git Proxy clone URL (without credentials), the Job token as the proxy password, the Repository's stable identity, the Base Branch, the Task Branch, a hint on whether the Task Branch exists remotely, the bare clone path and the commit identity (name and email). The Claude arguments are the model, the effort, the permission mode, the text appended to the system prompt, the tools to disallow and the MCP configuration (a JSON string carrying the Task Tools server with the Job token, plus the Agent's MCP Extensions). The environment is the merged map of the Project's env vars and secrets, the Credential's variable and, for a resumed interrupted Turn, the resume flag. Paths are relative to the Agent's home. The values themselves are chosen by the backend (see [Agent sessions](agent-sessions.md), [Agents](agents.md) and [Git integration](git-integration.md)).
 
 Runner to backend:
 
@@ -161,7 +162,7 @@ The Runner starts `claude` (the path is configurable, so tests can use a fake) i
 
 - `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`;
 - `--session-id <session id>` for mode `new`, `--resume <session id>` for mode `resume`;
-- `--model` and `--effort` when set, `--permission-mode` when set, `--append-system-prompt` when non-empty, `--mcp-config` when non-empty.
+- `--model` and `--effort` when set, `--permission-mode` when set, `--append-system-prompt` when non-empty, `--mcp-config` when non-empty, and `--disallowedTools <name>` for each tool to disallow.
 
 The Runner leaves `--bare` out, so the repository's CLAUDE.md, `.claude/` settings, skills and `.mcp.json` load as in a normal session.
 
@@ -177,6 +178,14 @@ Control messages for a running Job apply in arrival order:
 - **`job.interrupt`**: the Runner writes a stream-json `control_request` with subtype `interrupt` and a unique request id. `claude` ends the Turn and stays alive for the next Message. When stdin is already closed, the Runner sends SIGINT to the process group instead, which ends the Turn and the process.
 - **`job.end`**: the Runner closes stdin. `claude` processes every Message already written, each possibly producing its own Turn, then exits.
 - **`job.cancel`**: the Runner interrupts and closes stdin, which normally makes `claude` exit on its own. If the Job hasn't ended 10 seconds after the cancel, the process group gets SIGTERM; at 20 seconds, SIGKILL. When the cancel arrives during the tool install or the Setup Script, that step's process group gets SIGTERM right away (it has no gentler stop), and the Job fails with "cancelled". A cancel during the git steps takes effect when the current git command ends. A Job cancelled before `claude` starts fails at stage `spawn` with "cancelled before start".
+
+### Uploading files
+
+`job.upload` asks for files the Agent posts through a Task Tool (see [Agent sessions](agent-sessions.md)). It is a request outside the Job's message stream, so it carries no seq and gets no `ack`. The Runner handles it while the Job is running, alongside the Job's other messages:
+
+- Each path is resolved against the Job's Worktree when relative, or taken as given when absolute, with symlinks followed. It must name a regular file of at most 25 MB.
+- The Runner answers with one `multipart/form-data` POST to the upload URL, with the Runner token as bearer. The first part is a manifest listing every requested path in order, each with an error message when it failed ("not found", "not a regular file", "larger than 25 MB", or the read error). One file part per successful path follows, in order, named after the file's base name, with its content type taken from the extension, otherwise detected from its first 512 bytes, otherwise `application/octet-stream`.
+- The backend accepts the POST only from the Runner of the Agent it asked, while the request is pending, and answers `404` otherwise. The upload has 60 seconds, the time the backend's tool call waits for it. A failed POST is reported on the Job's stderr as a Runner note while the Job runs, and in the container log once it has ended; the waiting tool call then times out on the backend. A `job.upload` for a Job the Runner doesn't hold is logged and ignored.
 
 ### Streaming output
 
@@ -230,7 +239,7 @@ flowchart LR
     H -->|Unix socket| R
   end
   R <-->|WebSocket, Runner token| B[Backend Runner endpoint]
-  R -->|attachments, Runner token| B
+  R -->|attachments and uploads, Runner token| B
   C -->|MCP, Job token| M[Backend Task Tools]
   T -->|git, Job token| P[Backend Git Proxy]
 ```
@@ -289,6 +298,7 @@ On the Agent Volume it relies on:
 | Each git command | 30 min |
 | Tool install, Setup Script | 30 min each |
 | Attachment download | 5 min each |
+| File upload | 10 files of 25 MB each per request, 60 s per request |
 | Cancel escalation | interrupt and close stdin at once, SIGTERM at 10 s, SIGKILL at 20 s |
 | New Job waiting for a cancelled one | kill delay + 5 s (25 s) |
 | Output drain after exit | 2 s of silence, 1 min at most |
@@ -302,7 +312,7 @@ On the Agent Volume it relies on:
 
 - **Secrets.** The Runner token reaches only the Runner process: the entrypoint passes it over a pipe, the Runner removes it from its environment before starting anything, and on Linux the Runner is non-dumpable. Every process the Runner starts (git, mise, the Setup Script, `claude` and its tools, repository git hooks) runs without it. The Job token and the Job's environment exist only for that Job's processes. The Runner keeps them out of its logs; the Git credential helper prints a token only to git.
 - **No lost output.** Every Job-scoped message is processed by the backend exactly once and in order, across reconnects and backend restarts, for as long as the Runner process lives. Output written by `claude` before it exits is forwarded.
-- **Containment.** All file operations from a Job stay inside the Agent's home, and attachments inside their Worktree. Processes started for a Job end with it.
+- **Containment.** Every file the Runner writes for a Job stays inside the Agent's home, and attachments inside their Worktree. Uploads read files wherever the `agent` user can read them, which is what the Agent itself can already read and show. Processes started for a Job end with it.
 - **Memory.** The Runner's memory stays bounded per Job (50 MiB of outbox, 32 MiB per message) whatever the length of a disconnect or the size of a line.
 - **Observability.** The Runner logs connection changes, ignored messages and Worktree removal errors to the container log. Everything about a Job reaches the backend as setup output, stderr or a failure message, and the Runner's own notes on stderr start with `[runner]`.
 
@@ -321,6 +331,7 @@ On the Agent Volume it relies on:
 - **The Runner token stays inside the Runner process.** It outlives every Job, while `claude`, its tools, the Setup Script and git hooks run Agent-controlled code whose output reaches the Timeline. Handing it over on a pipe, removing it from the environment and making the Runner non-dumpable keep it out of their environments and memory.
 - **The Git credential helper is answered locally from the current Job.** The Job token already lives in the container for the MCP server, so using it for the Git Proxy adds no secret. Answering from the Runner's memory, only for the exact proxy URL of the current Job, needs no backend round trip, cache or expiry handling. Provider credentials stay in the backend.
 - **Worktree work runs one at a time, in arrival order.** A removal and a new Job for the same Task can arrive back to back; ordering them, and making a removal wait for the Jobs on its Worktree, keeps a reopened Task from losing a freshly created Worktree.
+- **Files go up on request, over HTTP.** The backend asks with a small `job.upload` message and the Runner streams the files in a multipart POST, the mirror of attachment downloads. Large bytes stay off the WebSocket, whose messages are capped and resent after reconnects, and the request needs no seq because a lost one simply times out the tool call that asked for it.
 - **A Job arriving during a cancel waits for it.** The backend dispatches the next Queue Entry as soon as it cancels a Job, so the Runner lets the new Job wait out the cancel escalation rather than refusing it.
 
 ## Related specs

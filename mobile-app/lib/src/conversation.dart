@@ -9,6 +9,7 @@ import 'package:open_filex/open_filex.dart';
 import 'app.dart';
 import 'controller.dart';
 import 'models.dart';
+import 'questions.dart';
 import 'task_forms.dart';
 import 'wiki.dart';
 import 'uploads.dart';
@@ -948,6 +949,37 @@ class TimelineTile extends StatelessWidget {
         ),
       );
     }
+    if (e.answersCommentId != null) {
+      final delivery = e.content['delivery'] as Map?;
+      return _Meta(
+        icon: Icons.task_alt_rounded,
+        ringed: true,
+        child: Wrap(
+          spacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: e.author,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Palette.fgMuted,
+                    ),
+                  ),
+                  TextSpan(
+                    text:
+                        ' answered the question · ${_CommentView._time(e.createdAt)}',
+                  ),
+                ],
+              ),
+            ),
+            if (delivery != null) _Delivery(delivery: delivery),
+          ],
+        ),
+      );
+    }
     final own = kind == 'user' && e.authorId == controller.user?.id;
     final agent = kind == 'agent'
         ? controller.agents.byId(e.authorId) ??
@@ -1113,6 +1145,7 @@ class _CommentView extends StatelessWidget {
     final e = entry, kind = e.content['kind'];
     final isAgent = kind == 'agent', isSystem = kind == 'system';
     final delivery = e.content['delivery'] as Map?;
+    final question = e.question, survey = e.survey;
     // Claude uses orange; Internal chat stays gray and System notices use amber.
     final line = e.internal
         ? Palette.slate.withValues(alpha: .65)
@@ -1147,7 +1180,21 @@ class _CommentView extends StatelessWidget {
               ],
             ),
           ),
-        if (e.body.isNotEmpty)
+        if (question != null)
+          QuestionCard(
+            key: ValueKey('question:${e.id}'),
+            commentId: e.id,
+            question: question,
+            controller: controller,
+          )
+        else if (survey != null)
+          SurveyCard(
+            key: ValueKey('survey:${e.id}'),
+            commentId: e.id,
+            survey: survey,
+            controller: controller,
+          )
+        else if (e.body.isNotEmpty)
           _Clamped(
             fade: Palette.bg,
             expanded: controller.expandedComments.contains(e.id),

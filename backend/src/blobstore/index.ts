@@ -70,3 +70,8 @@ export class FsBlobStore implements BlobStore {
     return path.join(this.dir, `${id}.json`);
   }
 }
+
+/** Removes blobs of a failed request; a failed delete leaves that one behind without hiding the original error. */
+export async function discardBlobs(blobs: BlobStore, ids: string[]): Promise<void> {
+  await Promise.allSettled(ids.map((id) => blobs.delete(id)));
+}

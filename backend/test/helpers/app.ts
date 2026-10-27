@@ -55,6 +55,8 @@ export interface TestAppOptions {
   config?: Partial<Config>;
   /** Real providers instead of the fakes (provider HTTP contracts). */
   git?: import('../../src/git/connections').ProviderFactory;
+  /** Merged into the default Agents settings. */
+  agents?: Partial<Config['agents']>;
   /** Keep data between tests in the file (default: truncate before each test). */
   keepData?: boolean;
 }
@@ -90,6 +92,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
         commitEmailDomain: 'agents.test',
         reconcileIntervalMs: 60 * 60_000,
         runnerReconnectTimeoutMs: 5 * 60_000,
+        ...options.agents,
       },
       github: { appId: '1', privateKey: 'unused by the fake provider' },
       gitlabAllowHttp: true,

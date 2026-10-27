@@ -186,6 +186,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
           branch,
           projectInstructions: project!.agentInstructions,
           agentPrompt: agent.systemPrompt,
+          services: agent.services,
         }),
         mcpConfig: JSON.stringify({
           mcpServers: {
@@ -197,6 +198,8 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
             },
           },
         }),
+        // Nobody can answer Claude Code's own question dialog in a headless Job: Agents use ask_question.
+        disallowedTools: ['AskUserQuestion'],
       },
       initialMessage: message.blocks,
       attachmentsToFetch: message.fetch,

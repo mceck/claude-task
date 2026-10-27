@@ -255,6 +255,19 @@ func (r *Runner) handle(m *protocol.Incoming) {
 			return
 		}
 		j.control(m)
+	case "job.upload":
+		// Outside the Job's stream: off the read loop and independent of stdin work.
+		r.mu.Lock()
+		j := r.findLocked(m.JobID)
+		if j != nil && j.finished {
+			j = nil
+		}
+		r.mu.Unlock()
+		if j == nil {
+			log.Printf("ignoring job.upload %s for job %s that isn't running", m.RequestID, m.JobID)
+			return
+		}
+		go j.upload(m)
 	case "worktree.remove":
 		// Off the read loop: it waits for Worktree work before it and for the Jobs using the Worktree.
 		r.mu.Lock()

@@ -870,6 +870,89 @@ class TaskController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Answers an Agent's Question; true once the answer is recorded. The first
+  /// answer wins: a later one refreshes the Timeline and says who answered.
+  Future<bool> answerQuestion(String commentId, List<QuestionAnswer> answers) =>
+      _answer(
+        'POST',
+        '/comments/$commentId/answer',
+        answers,
+        (result) => [result['question'], result['answer']],
+      );
+
+  /// Saves or updates the signed-in User's response to an open Survey.
+  Future<bool> respondToSurvey(
+    String commentId,
+    List<QuestionAnswer> answers,
+  ) => _answer(
+    'PUT',
+    '/comments/$commentId/response',
+    answers,
+    (result) => [result['comment']],
+  );
+
+  /// "Send now": closes an open Survey and sends its results to the Agent.
+  Future<bool> closeSurvey(String commentId) => _answer(
+    'POST',
+    '/comments/$commentId/close',
+    null,
+    (result) => [result['comment']],
+  );
+
+  /// Answering needs a connection: offline, the card keeps its selection and
+  /// the banner says to answer later. Failures land in [error], and a `409`
+  /// (answered or closed meanwhile) refreshes the conversation.
+  Future<bool> _answer(
+    String method,
+    String path,
+    List<QuestionAnswer>? answers,
+    List<Object?> Function(Json result) comments,
+  ) async {
+    final current = task;
+    if (current == null) return false;
+    if (!online) {
+      error = 'Offline. Your choices are kept; answer once back online.';
+      notifyListeners();
+      return false;
+    }
+    error = null;
+    try {
+      final result = await _request(
+        method,
+        path,
+        body: answers == null
+            ? null
+            : {'answers': answers.map((a) => a.toJson()).toList()},
+      );
+      if (task?.id == current.id) {
+        _mergeTimeline([
+          for (final comment in comments(result))
+            if (comment is Map && comment['taskId'] == current.id)
+              {
+                'type': 'comment',
+                'id': comment['id'],
+                'createdAt': comment['createdAt'],
+                'comment': Json.from(comment),
+              },
+        ]);
+        await _cacheTask();
+      }
+      return true;
+    } catch (e) {
+      _recordError(e);
+      if (e is ApiException && e.status == 409 && task?.id == current.id) {
+        try {
+          await _fetchTask(current.id);
+        } catch (_) {
+          /* The banner already explains; the next refresh catches up. */
+        }
+      }
+      return false;
+    } finally {
+      notifyListeners();
+    }
+  }
+
   Future<void> deleteTask() async {
     final current = task!;
     await _request('DELETE', '/tasks/${current.id}');
