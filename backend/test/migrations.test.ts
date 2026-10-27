@@ -5,8 +5,7 @@ import { migrationsFolder, runMigrations } from '../src/db/client';
 import { useTestApp } from './helpers/app';
 import { assignAgent, createAgent, createProject, createTask, getSession } from './helpers/fixtures';
 
-// The test app's DB is disposable. Recreate the exact schema and ledger left by
-// the first Wiki migration, which the local watch process had already applied.
+// Recreate previously applied schemas and ledgers in the disposable test DB.
 describe('migration upgrades', () => {
   const app = useTestApp();
 
@@ -48,5 +47,35 @@ describe('migration upgrades', () => {
     await admin.post(`/tasks/${task.id}/comments`, { body: 'Continue the existing conversation' });
     const start = await runner.next('job.start');
     expect(start).toMatchObject({ mode: 'resume', sessionId: session!.id });
+  });
+
+  it.each([
+    { when: 1793060000000, hash: 'a9cf8a04e7c47bdaaa3ef362edac6f22869773e7bf8f7db8edc1b357c5a49732' },
+    { when: 1793070354010, hash: 'e3374ab8b40fa9a78cfbdea32f8ab9e4372d3df435dfac80deafefd96acd71b5' },
+  ])('keeps existing Project logos without replaying the migration recorded at $when', async ({ when, hash }) => {
+    const admin = await app.admin();
+    const { project } = await createProject(admin);
+    const form = new FormData();
+    const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+    form.set('file', new Blob([image], { type: 'image/png' }), 'logo.png');
+    const uploaded = await admin.request('PUT', `/projects/${project.id}/logo`, { form });
+    expect(uploaded.status).toBe(200);
+    const { db } = app.server.ctx;
+    const original = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1')).rows[0];
+    try {
+      await db.$client.query('UPDATE drizzle.__drizzle_migrations SET hash = $1, created_at = $2 WHERE id = $3', [hash, when, original.id]);
+      const before = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows;
+
+      await runMigrations(db);
+      await runMigrations(db);
+
+      expect((await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows).toEqual(before);
+      expect((await admin.get(`/projects/${project.id}`)).body.project.logoUrl).toBe(uploaded.body.project.logoUrl);
+      const downloaded = await admin.get(`/projects/${project.id}/logo`);
+      expect(downloaded.status).toBe(200);
+      expect(Buffer.from(downloaded.body)).toEqual(image);
+    } finally {
+      await db.$client.query('UPDATE drizzle.__drizzle_migrations SET hash = $1, created_at = $2 WHERE id = $3', [original.hash, original.created_at, original.id]);
+    }
   });
 });

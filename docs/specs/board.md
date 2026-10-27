@@ -214,6 +214,8 @@ The Board stays live: card, Status, Tag and Project changes from other Users and
 
 The board lives in four backend modules, each owning its records and checks: **Projects**, **Statuses**, **Tags** and **Tasks**. The Tasks module owns numbering, ordering, the concurrency check, Revisions and the card projection, and calls the Session lifecycle whenever a Task's Status or Agent changes. An **Actor resolver** turns stored Actor references into display names in one batch per response.
 
+The backend applies database migrations on startup and records their completion. Applied migrations keep their original timestamps and SQL; further schema changes use new migrations. Restarts and upgrades preserve existing Project data and logos.
+
 Every write runs in one database transaction. Realtime events and side effects (deleting stored files, messages to Runners) are collected during the transaction and released only after it commits, so clients never see a change that was rolled back. Each event carries the new projection of what changed (a card, a full Task, the whole Status or Tag list), and clients replace their copy with it.
 
 Concurrency is handled with row locks in a fixed order:
