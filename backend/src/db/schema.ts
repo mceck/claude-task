@@ -105,6 +105,8 @@ export const projects = pgTable(
     /** Runs in every newly created Worktree of the Project's Tasks. */
     setupScript: text('setup_script').notNull().default(''),
     agentInstructions: text('agent_instructions').notNull().default(''),
+    /** Assigned to every new Task of the Project when it is enabled. */
+    defaultAgentId: uuid('default_agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -113,6 +113,9 @@ class Task {
   final String id, projectId, key, title, description, statusId, priority;
   final String? agentId, branchName, branchUrl, pullRequestUrl;
 
+  /// The Pull Request as the API sends it (provider, number, url, state, draft).
+  final Json? pullRequest;
+
   /// The Agent Session as the board card shows it.
   final String? sessionState;
   final int? queuePosition;
@@ -137,7 +140,18 @@ class Task {
           ?.toInt(),
       branchName = json['branchName'] as String?,
       branchUrl = json['branchUrl'] as String?,
+      pullRequest = json['pullRequest'] == null
+          ? null
+          : Json.from(json['pullRequest'] as Map),
       pullRequestUrl = (json['pullRequest'] as Map?)?['url'] as String?;
+
+  /// Merging works on open Pull Requests that aren't drafts.
+  bool get canMergePullRequest =>
+      pullRequest?['state'] == 'open' && pullRequest?['draft'] != true;
+
+  /// GitLab calls it a merge request.
+  String get pullRequestNoun =>
+      pullRequest?['provider'] == 'gitlab' ? 'Merge Request' : 'Pull Request';
 }
 
 class TaskPreference {

@@ -304,6 +304,16 @@ class FakeApi implements TaskApi {
       };
       return {'task': currentTask};
     }
+    if (path == '/tasks/task-1/pull-request/merge' && method == 'POST') {
+      currentTask = {
+        ...currentTask,
+        'pullRequest': {
+          ...(currentTask['pullRequest'] as Map),
+          'state': 'merged',
+        },
+      };
+      return {'task': currentTask};
+    }
     if (path == '/tasks/task-1') return {'task': currentTask};
     if (path.startsWith('/tasks/task-1/timeline')) {
       return {

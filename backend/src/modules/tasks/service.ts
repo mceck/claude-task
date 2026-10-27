@@ -251,11 +251,22 @@ export async function createTask(
     .returning();
   await setTags(tx, task!.id, tagIds);
   await setAssignees(tx, task!.id, assigneeIds);
+  await assignDefaultAgent(tx, after, projectId, task!.id);
 
   await autoFollow(tx, after, task!.id, [...assigneeIds, ...(actor.type === 'user' && actor.id ? [actor.id] : [])]);
   const created = await loadTask(tx, task!.id);
   after.emit(projectTopic(projectId), { type: 'task.created', task: cardOf(created) });
   return created;
+}
+
+/** A new Task starts with the Project's default Agent when it still exists and is enabled; otherwise it has none. */
+async function assignDefaultAgent(tx: Executor, after: AfterCommit, projectId: string, taskId: string): Promise<void> {
+  const [project] = await tx.select({ defaultAgentId: projects.defaultAgentId }).from(projects).where(eq(projects.id, projectId));
+  if (!project?.defaultAgentId) return;
+  const [agent] = await tx.select({ id: agents.id }).from(agents).where(and(eq(agents.id, project.defaultAgentId), eq(agents.enabled, true)));
+  if (!agent) return;
+  await tx.update(tasks).set({ agentId: agent.id }).where(eq(tasks.id, taskId));
+  await onTaskChanged(tx, after, await getTaskRow(tx, taskId), { agentId: null, statusId: (await getTaskRow(tx, taskId)).statusId });
 }
 
 export interface UpdateTaskInput {

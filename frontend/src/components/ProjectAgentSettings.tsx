@@ -5,10 +5,11 @@ import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { del, errorMessage, patch, post, put } from '../api/client';
-import { keys, useAgentSettings, useMe } from '../api/queries';
+import { keys, useAgents, useAgentSettings, useMe } from '../api/queries';
 import { Field, ErrorText, Loading, useConfirm } from './common';
 import { useAutosave } from '../lib/useAutosave';
 import { AutosaveStatus } from './AutosaveStatus';
@@ -21,6 +22,7 @@ export function ProjectAgentSettings({ projectId }: { projectId: string }) {
 }
 
 function SettingsForm({ projectId, settings }: { projectId: string; settings: Settings }) {
+  const agents = useAgents();
   const admin = useMe().data?.role === 'admin';
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -73,6 +75,24 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
     <div className="space-y-4">
       <section onBlur={() => void autosave.flush()} className="flex flex-col gap-4 rounded-xl border bg-card p-5">
         <h2 className="font-medium">Agent setup</h2>
+        <Field label="Default agent" hint="Assigned to every new task. Tasks are created without an agent if it is disabled or removed.">
+          <Select
+            value={settings.defaultAgentId ?? 'none'}
+            onValueChange={(id) =>
+              void patch<{ settings: Settings }>(`/projects/${projectId}/agent-settings`, { defaultAgentId: id === 'none' ? null : id })
+                .then((r) => qc.setQueryData(keys.agentSettings(projectId), r.settings))
+                .catch((err) => toast.error(errorMessage(err)))
+            }
+          >
+            <SelectTrigger aria-label="Default agent" className="w-fit min-w-48"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No agent</SelectItem>
+              {(agents.data ?? []).filter((a) => a.enabled || a.id === settings.defaultAgentId).map((a) => (
+                <SelectItem key={a.id} value={a.id}>{a.name}{!a.enabled && ' (disabled)'}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
         <Field label="Worktree setup script" hint="Runs once for each new worktree, before Claude starts.">
           <Textarea
             aria-label="Worktree setup script"

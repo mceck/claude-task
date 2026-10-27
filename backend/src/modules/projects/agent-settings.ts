@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { projectEnvVars, projects } from '../../db/schema';
+import { agents, projectEnvVars, projects } from '../../db/schema';
 import { badRequest, notFound, parse } from '../../errors';
 import { last4 } from '../../secrets';
 import { getBoardProject } from './service';
@@ -26,7 +26,7 @@ function serializeEnvVar(r: typeof projectEnvVars.$inferSelect): ProjectEnvVar {
 async function loadSettings(db: Executor, projectId: string): Promise<ProjectAgentSettings> {
   const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
   const env = await db.select().from(projectEnvVars).where(eq(projectEnvVars.projectId, projectId)).orderBy(asc(projectEnvVars.name));
-  return { setupScript: p!.setupScript, agentInstructions: p!.agentInstructions, env: env.map(serializeEnvVar) };
+  return { setupScript: p!.setupScript, agentInstructions: p!.agentInstructions, defaultAgentId: p!.defaultAgentId, env: env.map(serializeEnvVar) };
 }
 
 /** The Project's "Agents" settings: Setup Script, Agent Instructions (members), env vars and secrets (admins). */
@@ -43,6 +43,10 @@ export function agentSettingsRoutes(app: FastifyInstance, ctx: AppContext): void
     const { projectId } = parse(projectParams, request.params);
     const body = parse(updateAgentSettingsBody, request.body);
     const project = await getBoardProject(ctx.db, projectId);
+    if (body.defaultAgentId) {
+      const [found] = await ctx.db.select({ id: agents.id }).from(agents).where(eq(agents.id, body.defaultAgentId));
+      if (!found) throw badRequest('Unknown agent');
+    }
     await ctx.db.update(projects).set({ ...body, updatedAt: new Date() }).where(eq(projects.id, project.id));
     return { settings: await loadSettings(ctx.db, project.id) };
   });

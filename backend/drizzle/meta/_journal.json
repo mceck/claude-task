@@ -134,6 +134,13 @@
       "when": 1793076773668,
       "tag": "0018_user_avatar",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793111910932,
+      "tag": "0019_project_default_agent",
+      "breakpoints": true
     }
   ]
 }
