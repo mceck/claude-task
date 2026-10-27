@@ -59,8 +59,9 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
         final offline =
             c.user != null && c.connection != api.ConnectionState.connected;
         return Scaffold(
+          // All four edges: on edge-to-edge Android and notched devices
+          // screens must not draw under the cutout or system navigation bar.
           body: SafeArea(
-            bottom: false,
             child: Column(
               children: [
                 _Reveal(
