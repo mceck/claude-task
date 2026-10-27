@@ -203,6 +203,9 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
             </Link>
             <span className="text-muted-foreground/50">/</span>
             <span className="font-mono font-medium">{task.key}</span>
+            <span className="truncate text-[10px] text-muted-foreground">
+              · Created by {task.createdBy.displayName} <Time iso={task.createdAt} />
+            </span>
           </div>
           <Title title={shown.title} onSave={(title) => save({ title })} />
         </div>
@@ -319,112 +322,113 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
         </Panel>
         <Panel id={`${task.key}-details`} main={layout.focus === 'details'} open={layout.sidebarOpen} className={cn(layout.focus === 'details' && 'order-first')}>
           <section aria-label="Task details" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div className={cn('space-y-6', layout.focus === 'details' ? 'mx-auto w-full max-w-3xl px-6 py-6' : 'p-5')}>
-              <div className="grid grid-cols-[6.5rem_1fr] items-center gap-x-4 gap-y-2.5 rounded-xl border bg-muted/20 p-4 text-sm">
-                <PropLabel>Status</PropLabel>
-                <Select value={task.statusId} onValueChange={moveTo}>
-                  <SelectTrigger size="sm" aria-label="Status" className="w-fit min-w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statuses.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        <StatusDot color={s.color} className="size-2" /> {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <PropLabel>Priority</PropLabel>
-                <Select value={shown.priority} onValueChange={(p) => save({ priority: p as Priority })}>
-                  <SelectTrigger size="sm" aria-label="Priority" className="w-fit min-w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PRIORITIES.map((p) => (
-                      <SelectItem key={p} value={p}>
-                        <PriorityIcon priority={p} /> {PRIORITY_STYLE[p].label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <PropLabel>Assignees</PropLabel>
-                <MultiPick
-                  label="Assignees"
-                  highlight={false}
-                  options={people
-                    .filter((u) => u.active || shown.assigneeIds.includes(u.id))
-                    .map((u) => ({ value: u.id, label: u.displayName, icon: <UserAvatar user={u} size="xs" /> }))}
-                  selected={shown.assigneeIds}
-                  onChange={(assigneeIds) => save({ assigneeIds })}
-                  trigger={
-                    <button type="button" aria-label="Assign" className="flex min-h-7 w-fit flex-wrap items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                      {shown.assigneeIds.length === 0 && <span className="text-muted-foreground">Unassigned</span>}
-                      {shown.assigneeIds.map((id) => {
-                        const u = people.find((p) => p.id === id);
-                        return (
-                          <span key={id} className="flex items-center gap-1.5">
-                            <UserAvatar user={u ?? { id, displayName: '?' }} size="xs" /> {u?.displayName}
-                          </span>
-                        );
-                      })}
-                      <Plus className="size-3.5 text-muted-foreground" />
-                    </button>
-                  }
-                />
-
-                <PropLabel>Agent</PropLabel>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Select value={shown.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
-                    <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
+            <div className={cn('@container space-y-6', layout.focus === 'details' ? 'mx-auto w-full max-w-3xl px-6 py-6' : 'p-5')}>
+              <div className="grid grid-cols-[6.5rem_1fr] gap-x-4 gap-y-2.5 rounded-xl border bg-muted/20 p-4 text-sm @2xl:grid-cols-[6.5rem_1fr_6.5rem_1fr]">
+                <Prop label="Status" className="@2xl:col-start-1 @2xl:row-start-1">
+                  <Select value={task.statusId} onValueChange={moveTo}>
+                    <SelectTrigger size="sm" aria-label="Status" className="w-fit min-w-40">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">No agent</SelectItem>
-                      {(agents.data ?? []).filter((a) => a.enabled || a.id === shown.agentId).map((a) => (
-                        <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'}</SelectItem>
+                      {statuses.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          <StatusDot color={s.color} className="size-2" /> {s.name}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
+                </Prop>
 
-                <PropLabel>Tags</PropLabel>
-                <MultiPick
-                  label="Tags"
-                  createNoun="tag"
-                  onCreate={async (name) => {
-                    try {
-                      const { tag } = await post<{ tag: Tag }>(`/projects/${task.projectId}/tags`, { name, color: nextTagColor(tags.length) });
-                      // The WebSocket event updates the project's tag list; select the new tag right away.
-                      await save({ tagIds: [...shown.tagIds, tag.id] });
-                    } catch (err) {
-                      toast.error('Couldn’t create the tag', { description: errorMessage(err) });
+                <Prop label="Priority" className="@2xl:col-start-1 @2xl:row-start-2">
+                  <Select value={shown.priority} onValueChange={(p) => save({ priority: p as Priority })}>
+                    <SelectTrigger size="sm" aria-label="Priority" className="w-fit min-w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PRIORITIES.map((p) => (
+                        <SelectItem key={p} value={p}>
+                          <PriorityIcon priority={p} /> {PRIORITY_STYLE[p].label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Prop>
+
+                <Prop label="Updated" className="@2xl:col-start-1 @2xl:row-start-3">
+                  <span className="px-1.5 text-muted-foreground">
+                    <Time iso={task.updatedAt} />
+                  </span>
+                </Prop>
+
+                <Prop label="Assignees" className="@2xl:col-start-3 @2xl:row-start-1">
+                  <MultiPick
+                    label="Assignees"
+                    highlight={false}
+                    options={people
+                      .filter((u) => u.active || shown.assigneeIds.includes(u.id))
+                      .map((u) => ({ value: u.id, label: u.displayName, icon: <UserAvatar user={u} size="xs" /> }))}
+                    selected={shown.assigneeIds}
+                    onChange={(assigneeIds) => save({ assigneeIds })}
+                    trigger={
+                      <button type="button" aria-label="Assign" className="flex min-h-7 w-fit flex-wrap items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
+                        {shown.assigneeIds.length === 0 && <span className="text-muted-foreground">Unassigned</span>}
+                        {shown.assigneeIds.map((id) => {
+                          const u = people.find((p) => p.id === id);
+                          return (
+                            <span key={id} className="flex items-center gap-1.5">
+                              <UserAvatar user={u ?? { id, displayName: '?' }} size="xs" /> {u?.displayName}
+                            </span>
+                          );
+                        })}
+                        <Plus className="size-3.5 text-muted-foreground" />
+                      </button>
                     }
-                  }}
-                  highlight={false}
-                  options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
-                  selected={shown.tagIds}
-                  onChange={(tagIds) => save({ tagIds })}
-                  trigger={
-                    <button type="button" aria-label="Edit tags" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
-                      {shown.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
-                      {shown.tagIds.map((id) => {
-                        const l = tags.find((x) => x.id === id);
-                        return l ? <TagChip key={id} name={l.name} color={l.color} /> : null;
-                      })}
-                      <Plus className="size-3.5 text-muted-foreground" />
-                    </button>
-                  }
-                />
+                  />
+                </Prop>
 
-                <PropLabel>Created</PropLabel>
-                <span className="flex items-center gap-2 px-1.5 text-muted-foreground">
-                  <UserAvatar name={task.createdBy.displayName} user={task.createdBy.id ? { id: task.createdBy.id, displayName: task.createdBy.displayName } : undefined} size="xs" />
-                  <span className="text-foreground">{task.createdBy.displayName}</span> · <Time iso={task.createdAt} />
-                </span>
-                <PropLabel>Updated</PropLabel>
-                <span className="px-1.5 text-muted-foreground">
-                  <Time iso={task.updatedAt} />
-                </span>
+                <Prop label="Agent" className="@2xl:col-start-3 @2xl:row-start-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select value={shown.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
+                      <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No agent</SelectItem>
+                        {(agents.data ?? []).filter((a) => a.enabled || a.id === shown.agentId).map((a) => (
+                          <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </Prop>
+
+                <Prop label="Tags" className="@2xl:col-start-3 @2xl:row-start-3">
+                  <MultiPick
+                    label="Tags"
+                    createNoun="tag"
+                    onCreate={async (name) => {
+                      try {
+                        const { tag } = await post<{ tag: Tag }>(`/projects/${task.projectId}/tags`, { name, color: nextTagColor(tags.length) });
+                        // The WebSocket event updates the project's tag list; select the new tag right away.
+                        await save({ tagIds: [...shown.tagIds, tag.id] });
+                      } catch (err) {
+                        toast.error('Couldn’t create the tag', { description: errorMessage(err) });
+                      }
+                    }}
+                    highlight={false}
+                    options={tags.map((l) => ({ value: l.id, label: l.name, icon: <span className="size-2 rounded-full" style={{ backgroundColor: l.color }} /> }))}
+                    selected={shown.tagIds}
+                    onChange={(tagIds) => save({ tagIds })}
+                    trigger={
+                      <button type="button" aria-label="Edit tags" className="flex min-h-7 w-fit flex-wrap items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left hover:bg-muted">
+                        {shown.tagIds.length === 0 && <span className="text-muted-foreground">No tags</span>}
+                        {shown.tagIds.map((id) => {
+                          const l = tags.find((x) => x.id === id);
+                          return l ? <TagChip key={id} name={l.name} color={l.color} /> : null;
+                        })}
+                        <Plus className="size-3.5 text-muted-foreground" />
+                      </button>
+                    }
+                  />
+                </Prop>
               </div>
 
               {(task.branchName || task.pullRequest) && <section aria-label="Task code" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
@@ -530,8 +534,14 @@ function useTaskLayout() {
   };
 }
 
-function PropLabel({ children }: { children: ReactNode }) {
-  return <span className="text-xs text-muted-foreground">{children}</span>;
+/** A property row: label and value share the grid's columns, so rows line up even when placed in the second column. */
+function Prop({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={cn('col-span-2 grid grid-cols-subgrid items-center', className)}>
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+    </div>
+  );
 }
 
 function CloseButton({ onClose }: { onClose: () => void }) {

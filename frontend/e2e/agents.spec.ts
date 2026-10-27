@@ -266,6 +266,30 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await expect(page.getByLabel('System comment').filter({ hasText: 'notified the agent' })).toBeVisible();
 });
 
+test('keeps a long streamed answer anchored at its top and expanded once it is stored', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Explain the redirect');
+  const agent = await seedAgent(page.request, 'Writing agent');
+  await page.goto(`/t/${task.key}`);
+  await assignAndStart(page, agent.name);
+  await expect(page.getByLabel('Session: running')).toBeVisible();
+  const job = await jobStart(page.request, agent.id, task.id);
+  const s = new Stream(job.sessionId);
+  const answer = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1} of the explanation.`).join('\n\n');
+  await replay(page.request, agent.id, job.jobId, [s.delta(answer)]);
+
+  const live = page.getByLabel('Agent is writing');
+  await expect(live.getByText('Paragraph 1 of', { exact: false })).toBeInViewport();
+  await live.getByRole('button', { name: 'Show more' }).click();
+  await expect(live.getByRole('button', { name: 'Show less' })).toBeVisible();
+
+  await replay(page.request, agent.id, job.jobId, [s.text(answer)]);
+  await expect(live).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByText('Paragraph 40 of the explanation.')).toBeVisible();
+});
+
 test('shows card state and lets a member reorder the queue without managing agents', async ({ browser }) => {
   const admin = await browser.newContext();
   await login(admin.request);

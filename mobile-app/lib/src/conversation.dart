@@ -18,6 +18,9 @@ import 'ui/widgets.dart';
 import 'ui/user_avatar.dart';
 import 'ui/skill_suggestions.dart';
 
+/// Within this distance of the bottom, the Timeline follows new content.
+const _followSlack = 80.0;
+
 class Conversation extends StatefulWidget {
   final TaskController controller;
   final VoidCallback? onBack;
@@ -56,7 +59,7 @@ class _ConversationState extends State<Conversation> {
   }
 
   void _scrolled() {
-    final bottom = _scroll.position.pixels < 80;
+    final bottom = _scroll.position.pixels < _followSlack;
     if (_atBottom != bottom) setState(() => _atBottom = bottom);
     if (bottom) _markReached();
   }
@@ -753,7 +756,7 @@ class _LiveTail extends StatelessWidget {
                       ),
                     ),
                   ),
-                for (final text in c.liveText.values)
+                for (final MapEntry(:key, value: text) in c.liveText.entries)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: DashedOutline(
@@ -761,10 +764,18 @@ class _LiveTail extends StatelessWidget {
                       borderRadius: _bubbleRadius(own: false),
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                        child: Md(
-                          '$text ▍',
-                          selectable: false,
-                          onLink: openLink,
+                        child: _Clamped(
+                          key: ValueKey(key),
+                          fade: Palette.bg,
+                          expanded: c.liveExpanded.contains(key),
+                          onExpandedChanged: (expanded) => expanded
+                              ? c.liveExpanded.add(key)
+                              : c.liveExpanded.remove(key),
+                          child: Md(
+                            '$text ▍',
+                            selectable: false,
+                            onLink: openLink,
+                          ),
                         ),
                       ),
                     ),
@@ -1139,6 +1150,7 @@ class _CommentView extends StatelessWidget {
         if (e.body.isNotEmpty)
           _Clamped(
             fade: Palette.bg,
+            expanded: controller.expandedComments.contains(e.id),
             child: Md(e.body, size: isSystem ? 13.5 : 14.5, onLink: openLink),
           ),
         for (final attachment in e.attachments)
@@ -1324,50 +1336,145 @@ class _Bubble extends StatelessWidget {
 /// Long Comments are clamped with a fade and a "Show more" toggle, like the web.
 /// The decision is made during layout, so a Comment never shows at full height
 /// for a frame and then shrinks.
+///
+/// The Timeline is reversed, so a box growing in place would push its top up
+/// and out of view. Expanding, collapsing and new text in an expanded box
+/// scroll by the same amount instead, keeping the top where it is, as on the
+/// web; moving off the bottom also stops the Timeline following new content.
 class _Clamped extends StatefulWidget {
   final Widget child;
 
   /// The opaque color behind the text, faded over the clamped bottom.
   final Color fade;
-  const _Clamped({required this.child, required this.fade});
+
+  /// Opens the box, e.g. for the Comment that replaces a live box the reader
+  /// had expanded.
+  final bool expanded;
+  final ValueChanged<bool>? onExpandedChanged;
+  const _Clamped({
+    super.key,
+    required this.child,
+    required this.fade,
+    this.expanded = false,
+    this.onExpandedChanged,
+  });
   @override
   State<_Clamped> createState() => _ClampedState();
 }
 
-class _ClampedState extends State<_Clamped> {
-  bool _expanded = false;
+class _ClampedState extends State<_Clamped>
+    with SingleTickerProviderStateMixin {
+  late bool _expanded = widget.expanded;
+  late final _expansion = AnimationController(
+    vsync: this,
+    duration: Motion.medium,
+    value: _expanded ? 1 : 0,
+  )..addListener(_keepTopWhileAnimating);
+  late final _progress = CurvedAnimation(
+    parent: _expansion,
+    curve: Motion.enter,
+  );
+  late double _shown = _progress.value;
+
   @override
-  Widget build(BuildContext context) => _ClampLayout(
-    expanded: _expanded,
-    fade: widget.fade,
-    content: widget.child,
-    toggle: Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Pressable(
-        onTap: () => setState(() => _expanded = !_expanded),
-        pressedScale: .96,
-        borderRadius: BorderRadius.circular(8),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              _expanded
-                  ? Icons.keyboard_arrow_up_rounded
-                  : Icons.keyboard_arrow_down_rounded,
-              size: 16,
-              color: Palette.fgMuted,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              _expanded ? 'Show less' : 'Show more',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
+  void didUpdateWidget(_Clamped oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A Comment the live text was appended to is already on screen.
+    if (widget.expanded && !oldWidget.expanded && !_expanded) {
+      _expanded = true;
+      _shown = 1;
+      _expansion.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _progress.dispose();
+    _expansion.dispose();
+    super.dispose();
+  }
+
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
+    widget.onExpandedChanged?.call(_expanded);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _expansion.value = _expanded ? 1 : 0;
+    } else if (_expanded) {
+      _expansion.forward();
+    } else {
+      _expansion.reverse();
+    }
+  }
+
+  /// Runs on each animation tick, before layout, so the frame shows the box
+  /// and the scroll offset in step.
+  void _keepTopWhileAnimating() {
+    final shown = _progress.value, change = shown - _shown;
+    _shown = shown;
+    final box = context.findRenderObject();
+    if (change != 0 && box is _RenderClamp) {
+      _scrollBy(box.hiddenHeight * change, always: true);
+    }
+  }
+
+  /// New text in an expanded box, once laid out.
+  void _grew(double delta) {
+    if (!_expanded || _expansion.isAnimating) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scrollBy(delta, always: false);
+    });
+  }
+
+  /// [always] false leaves the Timeline following at the bottom.
+  void _scrollBy(double delta, {required bool always}) {
+    final position = Scrollable.maybeOf(context)?.position;
+    if (position == null ||
+        position.axisDirection != AxisDirection.up ||
+        (!always && position.pixels < _followSlack)) {
+      return;
+    }
+    final target = position.pixels + delta;
+    position.jumpTo(
+      target < position.minScrollExtent ? position.minScrollExtent : target,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _progress,
+    builder: (context, _) => _ClampLayout(
+      progress: _progress.value,
+      fade: widget.fade,
+      onGrow: _grew,
+      content: widget.child,
+      toggle: Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Pressable(
+          onTap: _toggle,
+          pressedScale: .96,
+          borderRadius: BorderRadius.circular(8),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _expanded
+                    ? Icons.keyboard_arrow_up_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                size: 16,
                 color: Palette.fgMuted,
               ),
-            ),
-          ],
+              const SizedBox(width: 4),
+              Text(
+                _expanded ? 'Show less' : 'Show more',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Palette.fgMuted,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -1375,22 +1482,25 @@ class _ClampedState extends State<_Clamped> {
 }
 
 class _ClampLayout extends MultiChildRenderObjectWidget {
-  final bool expanded;
+  final double progress;
   final Color fade;
+  final ValueChanged<double> onGrow;
   _ClampLayout({
-    required this.expanded,
+    required this.progress,
     required this.fade,
+    required this.onGrow,
     required Widget content,
     required Widget toggle,
   }) : super(children: [content, toggle]);
   @override
   _RenderClamp createRenderObject(BuildContext context) =>
-      _RenderClamp(expanded, fade);
+      _RenderClamp(progress, fade, onGrow);
   @override
   void updateRenderObject(BuildContext context, _RenderClamp renderObject) {
     renderObject
-      ..expanded = expanded
-      ..fade = fade;
+      ..progress = progress
+      ..fade = fade
+      ..onGrow = onGrow;
   }
 }
 
@@ -1398,17 +1508,18 @@ class _ClampParentData extends ContainerBoxParentData<RenderBox> {}
 
 /// Lays out the content at full height; past [max] (+ some slack, so a line or
 /// two isn't hidden) it shows [max] with a fade, and the toggle below it.
+/// [progress] opens it from [max] (0) to the full height (1).
 class _RenderClamp extends RenderBox
     with
         ContainerRenderObjectMixin<RenderBox, _ClampParentData>,
         RenderBoxContainerDefaultsMixin<RenderBox, _ClampParentData> {
   static const max = 320.0, slack = 40.0, fadeHeight = 64.0;
-  _RenderClamp(this._expanded, this._fade);
+  _RenderClamp(this._progress, this._fade, this.onGrow);
 
-  bool _expanded;
-  set expanded(bool value) {
-    if (value == _expanded) return;
-    _expanded = value;
+  double _progress;
+  set progress(double value) {
+    if (value == _progress) return;
+    _progress = value;
     markNeedsLayout();
   }
 
@@ -1419,8 +1530,16 @@ class _RenderClamp extends RenderBox
     markNeedsPaint();
   }
 
+  /// Called during layout when the box got taller or shorter by itself.
+  ValueChanged<double> onGrow;
+
   bool _overflowing = false;
-  bool get _clamped => _overflowing && !_expanded;
+  double _contentHeight = 0;
+
+  /// What the clamp hides when closed.
+  double get hiddenHeight => _overflowing ? _contentHeight - max : 0;
+  double get _visible => max + hiddenHeight * _progress;
+  bool get _clipped => _overflowing && _progress < 1;
 
   RenderBox get _content => firstChild!;
   RenderBox get _toggle => lastChild!;
@@ -1438,13 +1557,16 @@ class _RenderClamp extends RenderBox
         ? _content.getDryLayout(loose)
         : (_content..layout(loose, parentUsesSize: true)).size;
     final overflowing = content.height > max + slack;
-    if (!dry) _overflowing = overflowing;
+    if (!dry) {
+      _overflowing = overflowing;
+      _contentHeight = content.height;
+    }
     var width = content.width, height = content.height;
     if (overflowing) {
       final toggle = dry
           ? _toggle.getDryLayout(loose)
           : (_toggle..layout(loose, parentUsesSize: true)).size;
-      if (!_expanded) height = max;
+      height = max + (content.height - max) * _progress;
       if (!dry) {
         (_toggle.parentData as _ClampParentData).offset = Offset(0, height);
       }
@@ -1457,7 +1579,19 @@ class _RenderClamp extends RenderBox
   }
 
   @override
-  void performLayout() => size = _measure(constraints, dry: false);
+  void performLayout() {
+    final before = hasSize ? size.height : null;
+    final progress = _progress;
+    size = _measure(constraints, dry: false);
+    if (before != null && size.height != before && progress == _laidOutAt) {
+      onGrow(size.height - before);
+    }
+    _laidOutAt = progress;
+  }
+
+  /// The [progress] of the last layout: a change in height at the same
+  /// progress is the content's own.
+  double? _laidOutAt;
 
   @override
   Size computeDryLayout(BoxConstraints constraints) =>
@@ -1472,14 +1606,14 @@ class _RenderClamp extends RenderBox
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    if (!_clamped) {
+    if (!_clipped) {
       context.paintChild(_content, offset);
     } else {
-      final visible = offset & Size(size.width, max);
+      final visible = offset & Size(size.width, _visible);
       context.pushClipRect(
         needsCompositing,
         offset,
-        Offset.zero & Size(size.width, max),
+        Offset.zero & Size(size.width, _visible),
         (context, offset) => context.paintChild(_content, offset),
       );
       final band = Rect.fromLTRB(
@@ -1488,13 +1622,15 @@ class _RenderClamp extends RenderBox
         visible.right,
         visible.bottom,
       );
+      // The fade lifts as the box opens.
+      final fade = _fade.withValues(alpha: _fade.a * (1 - _progress));
       context.canvas.drawRect(
         band,
         Paint()
           ..shader = LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [_fade.withValues(alpha: 0), _fade],
+            colors: [fade.withValues(alpha: 0), fade],
           ).createShader(band),
       );
     }
@@ -1517,7 +1653,7 @@ class _RenderClamp extends RenderBox
         )) {
       return true;
     }
-    if (_clamped && position.dy > max) return false;
+    if (_clipped && position.dy > _visible) return false;
     return _content.hitTest(result, position: position);
   }
 }

@@ -25,7 +25,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useTaskSession } from '../api/queries';
-import { useLiveTurn } from '../lib/live';
+import { setLiveExpanded, useLiveTurn } from '../lib/live';
 import { AgentAvatar, formatCost, formatDuration, formatTokens } from './agents';
 import { Time } from './common';
 import { Markdown } from './Markdown';
@@ -126,23 +126,23 @@ function ActivityView({ entries }: { entries: ActivityEntry[] }) {
           type="button"
           aria-expanded={open}
           onClick={() => setOpen(!open)}
-          className="flex items-center gap-2 rounded-md pt-0.5 text-muted-foreground hover:text-foreground"
+          className="flex max-w-full items-center gap-2 rounded-md pt-0.5 text-muted-foreground hover:text-foreground"
         >
-          <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
-          <span className="font-medium">
+          <ChevronRight className={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} />
+          <span className="shrink-0 font-medium">
             {total} {total === 1 ? 'action' : 'actions'}
           </span>
-          <span className="flex items-center gap-1 opacity-70">
+          <span className="flex shrink-0 items-center gap-1 opacity-70">
             {icons.map((Icon, i) => (
               <Icon key={i} className="size-3" />
             ))}
           </span>
           {errors > 0 && (
-            <span className="flex items-center gap-1 text-red-400">
+            <span className="flex shrink-0 items-center gap-1 text-red-400">
               <CircleX className="size-3" /> {errors} failed
             </span>
           )}
-          {!open && entries.length > 0 && <span className="truncate opacity-70"><Summary text={entries[entries.length - 1]!.summary} /></span>}
+          {!open && entries.length > 0 && <span className="min-w-0 truncate opacity-70"><Summary text={entries[entries.length - 1]!.summary} /></span>}
         </button>
         {open && (
           <ul className="mt-1.5 space-y-0.5 rounded-lg border bg-muted/20 p-1.5">
@@ -274,7 +274,7 @@ export function LiveTurnView({ taskId }: { taskId: string }) {
             )}
           </div>
           <div className="min-w-0 flex-1 rounded-xl border border-dashed border-violet-500/30 bg-violet-500/[0.04] px-4 py-3">
-            <CollapsibleBody follow>
+            <CollapsibleBody expand={live.expanded} onExpandedChange={(expanded) => setLiveExpanded(taskId, expanded)}>
               <Markdown source={live.text} />
               <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-violet-400 align-middle" />
             </CollapsibleBody>

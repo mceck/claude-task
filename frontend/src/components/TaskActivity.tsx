@@ -4,7 +4,7 @@ import type { ReactNode, RefObject } from 'react';
 import { put } from '../api/client';
 import { useTimeline } from '../api/queries';
 import { Composer, useCommentDraft } from './Composer';
-import { Timeline } from './Timeline';
+import { StopFollowing, Timeline } from './Timeline';
 
 interface Props {
   task: Task;
@@ -34,6 +34,10 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
     observer.observe(scroll);
     return () => observer.disconnect();
   }, []);
+  // Following resumes when the reader scrolls back to the bottom.
+  const stopFollowing = useCallback(() => {
+    following.current = false;
+  }, []);
 
   return (
     <section aria-label="Task activity" className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -49,7 +53,9 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
         }}
       >
         <div ref={content} className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
-          <Timeline taskId={task.id} hideChanges={hideChanges} statuses={statuses} tags={tags} users={users} />
+          <StopFollowing.Provider value={stopFollowing}>
+            <Timeline taskId={task.id} hideChanges={hideChanges} statuses={statuses} tags={tags} users={users} />
+          </StopFollowing.Provider>
         </div>
       </div>
       <div className="shrink-0 border-t bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">

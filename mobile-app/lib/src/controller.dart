@@ -57,6 +57,10 @@ class TaskController extends ChangeNotifier {
   List<TimelineEntry> timeline = [];
   String? nextCursor;
   final Map<String, String> liveText = {};
+
+  /// Live text boxes the reader expanded, by [liveText] key, and the Agent
+  /// Comments that replaced them, which open expanded too (as on the web).
+  final Set<String> liveExpanded = {}, expandedComments = {};
   String liveThinking = '', liveStatus = '';
   bool _olderLoaded = false;
   int _profileEpoch = 0;
@@ -1011,6 +1015,8 @@ class TaskController extends ChangeNotifier {
         liveThinking += delta['text'] as String;
       } else {
         final id = delta['commentId'] as String? ?? 'current';
+        // A new box starts clamped.
+        if (!liveText.containsKey(id)) liveExpanded.remove(id);
         liveText[id] = (liveText[id] ?? '') + (delta['text'] as String);
       }
       notifyListeners();
@@ -1098,7 +1104,12 @@ class TaskController extends ChangeNotifier {
   void _retireLive(String type, Json event) {
     if (type.startsWith('comment.')) {
       final comment = event['comment'] as Map;
-      liveText.remove(comment['id']);
+      final id = comment['id'] as String;
+      final wasExpanded =
+          liveExpanded.remove(id) |
+          (comment['kind'] == 'agent' && liveExpanded.remove('current'));
+      if (wasExpanded) expandedComments.add(id);
+      liveText.remove(id);
       if (comment['kind'] == 'agent') liveText.remove('current');
     } else if (type.startsWith('agent_item.')) {
       switch (((event['item'] as Map)['payload'] as Map?)?['kind']) {

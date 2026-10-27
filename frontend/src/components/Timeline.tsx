@@ -3,7 +3,8 @@ import type { Agent, AgentItem, Attachment, Comment, GitProviderKind, Tag, Prior
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRightLeft, Bot, ChevronDown, ChevronUp, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,6 +14,7 @@ import { del, errorMessage, patch } from '../api/client';
 import { withProvider } from './Git';
 import { useAgents, useMe, useTimeline } from '../api/queries';
 import { putTimelineItem } from '../lib/cache';
+import { expandedFromLive } from '../lib/live';
 import { AgentItemView, LiveTurnView } from './AgentTimeline';
 import { AgentAvatar, DeliveryBadge } from './agents';
 import { ErrorText, Loading, Time, useConfirm, UserAvatar } from './common';
@@ -222,7 +224,7 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
           </div>
         ) : (
           comment.body && (
-            <CollapsibleBody>
+            <CollapsibleBody expand={expandedFromLive(comment.id)}>
               <Markdown source={comment.body} />
             </CollapsibleBody>
           )
@@ -235,11 +237,32 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
 
 const COLLAPSED_MAX_HEIGHT = 320;
 
-/** Clamps long content to a max height with a fade and a toggle to expand it. With `follow` (streaming) the clamped box tails the newest content. */
-export function CollapsibleBody({ children, follow }: { children: React.ReactNode; follow?: boolean }) {
+/** Stops the conversation from following new output at the bottom, so an expanded box stays put to be read from its top. */
+export const StopFollowing = createContext<() => void>(() => {});
+
+/**
+ * Clamps long content to a max height with a fade and a toggle to expand it. The clamped box stays anchored at the top, also while streaming.
+ * Expanding and collapsing animate the max height between the clamp and the content's height; once settled, an expanded box has no limit, so it keeps growing.
+ */
+export function CollapsibleBody({
+  children,
+  expand,
+  onExpandedChange,
+}: {
+  children: React.ReactNode;
+  /** Opens the box, e.g. for the Comment that replaces a live box the reader had expanded. */
+  expand?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [overflowing, setOverflowing] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(!!expand);
+  // A Comment the live text was appended to is already on screen.
+  useEffect(() => {
+    if (expand) setExpanded(true);
+  }, [expand]);
+  const [animatedHeight, setAnimatedHeight] = useState<number>();
+  const stopFollowing = useContext(StopFollowing);
 
   useEffect(() => {
     const el = ref.current;
@@ -251,24 +274,41 @@ export function CollapsibleBody({ children, follow }: { children: React.ReactNod
     return () => observer.disconnect();
   }, []);
 
-  const clamped = overflowing && !expanded;
-  useEffect(() => {
+  const toggle = () => {
+    if (!expanded) stopFollowing();
     const el = ref.current;
-    if (follow && clamped && el) el.scrollTop = el.scrollHeight;
-  });
+    if (el && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      if (expanded) {
+        // No limit can't be animated from: pin the current height and reflow before heading to the clamp.
+        flushSync(() => setAnimatedHeight(el.scrollHeight));
+        void el.offsetHeight;
+        setAnimatedHeight(COLLAPSED_MAX_HEIGHT);
+      } else {
+        setAnimatedHeight(el.scrollHeight);
+      }
+    }
+    setExpanded(!expanded);
+    onExpandedChange?.(!expanded);
+  };
+
+  const clamped = overflowing && !expanded;
+  const maxHeight = animatedHeight ?? (clamped ? COLLAPSED_MAX_HEIGHT : undefined);
   return (
     <div>
       <div
         ref={ref}
         data-testid="comment-body"
-        className={cn('relative', clamped && 'overflow-hidden')}
-        style={clamped ? { maxHeight: COLLAPSED_MAX_HEIGHT } : undefined}
+        className={cn('relative transition-[max-height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]', maxHeight !== undefined && 'overflow-hidden')}
+        style={maxHeight !== undefined ? { maxHeight } : undefined}
+        onTransitionEnd={(e) => {
+          if (e.target === e.currentTarget && e.propertyName === 'max-height') setAnimatedHeight(undefined);
+        }}
       >
         {children}
-        {clamped && !follow && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background to-transparent" />}
+        {clamped && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background to-transparent" />}
       </div>
       {overflowing && (
-        <Button variant="ghost" size="xs" className="mt-1 text-muted-foreground" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+        <Button variant="ghost" size="xs" className="mt-1 text-muted-foreground" aria-expanded={expanded} onClick={toggle}>
           {expanded ? <ChevronUp /> : <ChevronDown />}
           {expanded ? 'Show less' : 'Show more'}
         </Button>
