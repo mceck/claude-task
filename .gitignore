@@ -9,3 +9,4 @@ frontend/test-results/
 frontend/playwright-report/
 .playwright-mcp/
 .DS_Store
+.secrets/

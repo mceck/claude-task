@@ -47,7 +47,7 @@ app.*.map.json
 # Deployment-specific Firebase identifiers and credentials.
 **/GoogleService-Info.plist
 **/google-services.json
-**/firebase-options.json
+**/firebase-options*.json
 android/key.properties
 *.jks
 *.keystore
