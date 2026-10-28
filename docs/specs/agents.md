@@ -60,7 +60,7 @@ An Admin creates an Agent from the Agents page. The fields and their rules:
 
 An invalid field is answered with `400` and nothing is stored. The service selection is stored in a fixed canonical order, whatever order the request used.
 
-Creating the Agent starts its first Build right away and answers immediately; the Agent shows `building` until the Build ends. Once the image is built the backend creates the container and the Runner connects, which brings the Agent to `idle`. The form links to the Credentials page when no Credential exists yet, since an Agent needs one.
+Creating the Agent starts its first Build right away and answers immediately; the Agent shows `building` until the Build ends. Once the image is built the Agent has an image; its container is created and its Runner connects, which brings the Agent to `idle`, as soon as the Agent has work (see [Agent Containers and the reconciler](#agent-containers-and-the-reconciler)). Until then the Agent shows `offline`. The form links to the Credentials page when no Credential exists yet, since an Agent needs one.
 
 The model, effort, permission mode and system prompt travel with each Job, and the Runner passes them to `claude` when it starts it (see [Agent sessions](agent-sessions.md) and [Runner](runner.md)).
 
@@ -93,7 +93,7 @@ An Admin duplicates an Agent to add throughput with the same environment. The co
 
 ### Disabling an Agent
 
-A disabled Agent shows `disabled`, keeps its container running and its Extensions synchronized, and keeps its Queue. Its running Job finishes normally; Comments keep queueing for it. No new Job starts until an Admin enables it again.
+A disabled Agent shows `disabled`, follows the same container rule as any other Agent (running while it has work, see [Agent Containers and the reconciler](#agent-containers-and-the-reconciler)), keeps its Extensions synchronized while its container runs, and keeps its Queue. Its running Job finishes normally; Comments keep queueing for it. No new Job starts until an Admin enables it again.
 
 ### Deleting an Agent
 
@@ -241,7 +241,7 @@ After a new container starts, the Agent's older images are removed, keeping the 
 
 ### Agent Containers and the reconciler
 
-The backend's reconciler brings each Agent's image and container in line with its configuration. It runs for every Agent at startup, every 30 seconds, after every Build, after each Job ends, when a Runner connects, and after configuration changes. Runs for one Agent are serialized.
+The backend's reconciler brings each Agent's image and container in line with its configuration, and keeps the container running only while the Agent has work. It runs for every Agent at startup, every 30 seconds, after every Build, after each Job ends, when a Runner connects, and after configuration changes. Runs for one Agent are serialized.
 
 ```mermaid
 flowchart TD
@@ -250,7 +250,10 @@ flowchart TD
   N --> Q{Has a successful image?}
   B --> Q
   Q -- no --> R[Record container state]
-  Q -- yes --> M{Container missing, or created with another image or limits?}
+  Q -- yes --> W{Agent has work?}
+  W -- no --> Z[Stop the container if it runs]
+  Z --> R
+  W -- yes --> M{Container missing, or created with another image or limits?}
   M -- yes --> J{Missing, or Agent idle, or forced?}
   J -- yes --> C[Recreate container with a new Runner token]
   J -- no --> P[Wait: recreation pending]
@@ -266,10 +269,26 @@ flowchart TD
   X --> K
 ```
 
-Every Agent with a successful image gets a container, enabled or not. A container:
+**Work.** An Agent has work, and so needs its container running, while at least one of these holds: a Job is active, its Queue has an entry, or it has a Session in the `idle` or `running` state. A Task in the `done` category keeps its Session `idle`, because the Agent can still receive Comments there, so it counts as work. The Agent has no work when all its Sessions are `pending` (assigned, no User Comment yet), `paused` (unassigned) or `closed`, or when it has none. When `AGENT_STOP_WHEN_UNUSED` is set to false, every Agent is treated as having work.
+
+```mermaid
+flowchart LR
+  A[No work: container stopped or not yet created] -- "Comment queued, Task reopened or reassigned" --> B[Reconciler starts or creates the container]
+  B --> C[Runner connects, Jobs dispatch]
+  C -- "Last Job ended, last open Task closed or Agent unassigned" --> D[Reconciler stops the container]
+  D --> A
+```
+
+An Agent without work has its container stopped, not removed: the image and the Agent Volume stay, so repositories, Worktrees, transcripts and Development Service data survive. A container that does not exist yet is not created until work arrives, and a pending recreation (new image, limits or an Admin's Recreate) is applied at that wake-up. A Queue Entry held after a failed Job still counts as work, so the container stays up until the entry is retried or removed. The Runner connection closes when the container stops (close code 4003), and the Agent shows `offline` with container state `exited` (or `missing`). The reconciler leaves a stopped container without work alone on its periodic pass.
+
+A Comment that queues an entry, a reopened Task, a Task assigned back to an Agent that worked on it and a retry all start the container right away: the dispatcher asks the reconciler to start it when it finds work and no running container, and every Session change triggers a reconcile of the Agents involved. The first Job dispatches once the Runner has connected and the Extensions are synchronized, so the first reply after a stop waits for the container and its Development Services to start (up to 60 seconds for the services, see [Development services](#development-services)).
+
+The stop is decided under the Agent's row lock: the container state is set to stopped in the same transaction that re-checks for work, so a Job cannot be dispatched to a container that is about to stop.
+
+Every Agent with a successful image gets a container while it has work, enabled or not. A container:
 
 - is named after the Agent (`claude-task-agent-‹agent id›`) and labelled with the Agent's id;
-- restarts automatically unless stopped by hand;
+- restarts automatically unless stopped, by hand or by the reconciler for lack of work;
 - mounts the Agent's named volume (also named after the Agent) as the agent user's home;
 - joins the network named by the `AGENT_NETWORK` setting, or Docker's default bridge, with outbound internet access and no published ports; `host.docker.internal` resolves to the Docker host, so a backend running on the host is reachable;
 - gets the Agent's CPU and memory limits;
@@ -283,14 +302,14 @@ On a graceful backend shutdown, the Agent Containers of this Installation are st
 
 The backend stops scheduling new Jobs, Builds and reconciliations, drains work already started, then stops the containers belonging to the Installation's stored Agents concurrently. Docker gets 10 seconds per container to stop its processes before terminating them. Missing and already stopped containers count as stopped. An error stopping one container is logged, the remaining stops are attempted, and backend cleanup finishes with a failed shutdown result.
 
-Stopping preserves containers, images and Agent Volumes, including repositories, Worktrees, Session transcripts and Development Service data. At the next backend start the reconciler restarts stopped containers; running Jobs interrupted by the stop recover through the existing Runner reconnection and Session resume rules. With the setting disabled, containers continue running through backend restarts and their Runners reconnect.
+Stopping preserves containers, images and Agent Volumes, including repositories, Worktrees, Session transcripts and Development Service data. At the next backend start the reconciler restarts the stopped containers of Agents that have work; running Jobs interrupted by the stop recover through the existing Runner reconnection and Session resume rules. With the setting disabled, containers continue running through backend restarts and their Runners reconnect.
 
 ### Restart and recreate
 
 Admins have three container actions:
 
-- **Restart** restarts the existing container. The running Job, if any, stops; when the Runner reconnects without it, the Job is treated as interrupted and its Session resumes at the front of the Queue (see [Agent sessions](agent-sessions.md)). When the container is missing, Restart is answered with `409`; the reconciler creates the container on its next run once the Agent has an image.
-- **Recreate when idle** recreates the container with the current image and limits as soon as the Agent has no active Job. It is answered with `409` while the Agent has no image yet.
+- **Restart** restarts the existing container. The running Job, if any, stops; when the Runner reconnects without it, the Job is treated as interrupted and its Session resumes at the front of the Queue (see [Agent sessions](agent-sessions.md)). When the container is missing, Restart is answered with `409`; the reconciler creates the container on its next run once the Agent has an image. An Agent without work (see [Agent Containers and the reconciler](#agent-containers-and-the-reconciler)) answers Restart with `409` too, since its container starts when work arrives.
+- **Recreate when idle** recreates the container with the current image and limits as soon as the Agent has no active Job. It is answered with `409` while the Agent has no image yet. An Agent without work keeps the request pending and applies it when work arrives.
 - **Force recreate** recreates it immediately. The running Job is interrupted and resumes after the new Runner connects, like after a crash.
 
 A container found stopped (for example after `docker stop` or a crash that Docker did not restart) is restarted by the next reconciler run.
@@ -520,7 +539,7 @@ Sessions, Jobs and Queue Entries belong to [Agent sessions](agent-sessions.md).
 - **Secrets**: encrypted at rest with AES-256-GCM; returned only as their last four characters (none for secrets under 12 characters); decrypted only to build a Job payload for the owning Agent's Runner; absent from logs and from container environments.
 - **Runner token**: 256 random bits, stored as a SHA-256 hash, rotated on every container recreation, readable only by the Runner process inside the container.
 - **Isolation**: every Agent runs as the non-root `agent` user in its own container and volume, with optional CPU and memory limits, loopback-only services and no published ports. The backend holds the host's Docker socket, which gives it full control of the Docker host, so it is the only component with that access.
-- **Availability**: a failed Build keeps the previous container serving; a configuration change interrupts a running Job only when an Admin forces it; containers restart automatically; the reconciler repairs drift within 30 seconds.
+- **Availability**: an Agent with work has a running container, and one without work is started within one reconcile when work arrives; a failed Build keeps the previous container serving; a configuration change interrupts a running Job only when an Admin forces it; containers restart automatically; the reconciler repairs drift within 30 seconds.
 - **Responsiveness**: Extension synchronization holds no database lock while Docker works, so Comments on the Agent's Tasks keep flowing during long Plugin installs.
 - **Observability**: Build logs stream live and are kept per Build; container logs are available to Admins; the Agent view shows image, container, Runner and Extension status with their errors.
 
@@ -530,7 +549,8 @@ Sessions, Jobs and Queue Entries belong to [Agent sessions](agent-sessions.md).
 
 - **Automatic saves for Agent settings, explicit application of Docker configuration.** Saving only edited fields keeps other Users' settings and Extension assignments intact, and serializing saves preserves the latest edits during slow requests. Dockerfile, Development Services and resource limits share an explicit action because applying them can build an image or recreate a container.
 
-- **One long-lived container per Agent, one Job at a time.** An Agent behaves like one teammate doing one thing at a time, and its Dockerfile, not the Project's, defines the toolchains. Tasks in one container would otherwise share ports, local databases and background processes. More throughput comes from duplicating an Agent. A container per Task was rejected (more images and volumes to manage, and it breaks the teammate model), as was a container per Project shared by its Agents (Agents are global and bring their own environment). The cost: feedback on one Task can wait behind a long Job on another, which Users mitigate by reordering the Queue.
+- **Stop an Agent's container while it has no work, keeping its volume.** Idle Agents hold CPU, memory and Development Services (PostgreSQL, Redis, ...) for nothing, and an Installation can configure many Agents. Work means an active Job, a Queue entry or an `idle` or `running` Session. A `pending` Session does not count because the first User Comment is the trigger and queues an entry that wakes the container; a `done` Task counts because it still takes Comments, and only `closed` ends a Session. The cost is a start delay on the first Job after a stop. The `AGENT_STOP_WHEN_UNUSED` setting turns the behaviour off. Keeping every container running was the previous behaviour; stopping after a grace period was not needed because the Session rule already keeps the container up while people may still write to the Agent.
+- **One container per Agent, one Job at a time.** An Agent behaves like one teammate doing one thing at a time, and its Dockerfile, not the Project's, defines the toolchains. Tasks in one container would otherwise share ports, local databases and background processes. More throughput comes from duplicating an Agent. A container per Task was rejected (more images and volumes to manage, and it breaks the teammate model), as was a container per Project shared by its Agents (Agents are global and bring their own environment). The cost: feedback on one Task can wait behind a long Job on another, which Users mitigate by reordering the Queue.
 - **Sessions live on the Agent Volume.** Claude's transcripts and the Worktrees survive any container recreation because they live on the volume, and resume needs the same working directory, so Worktree paths are deterministic per Project and Task. Deleting an Agent deletes its volume and with it its transcripts.
 - **Credentials and Project environment travel per Job, not as container environment.** Rotation applies on the next Job without recreating anything, and a Project's secrets reach only that Project's Tasks although Agents are global. The container environment carries only the Runner's connection details.
 - **The Runner token is handed to the Runner alone.** Every tool the Agent runs shares the `agent` user, which can read any of its processes' start-up environment. The entrypoint therefore re-executes without the token and passes it over a pipe, the Runner scrubs it and makes itself non-dumpable, and the backend's own execs blank it. The token outlives any single Job, unlike the Job token, so it has to stay out of reach of Agent code.

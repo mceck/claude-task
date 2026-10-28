@@ -3,8 +3,9 @@
 import { agentTopic, pinAgentBase, projectTopic, taskTopic } from '@claude-task/shared';
 import { and, eq, inArray } from 'drizzle-orm';
 import type { AppContext } from '../context';
+import type { ContainerInfo } from './runtime';
 import { agentBuilds, agents, jobs, queueEntries, sessions } from '../db/schema';
-import { ACTIVE_JOB_STATES, desiredContainerSpec, loadJobs, publishAgent, serializeBuild } from '../modules/agents/service';
+import { ACTIVE_JOB_STATES, agentNeedsContainer, desiredContainerSpec, getAgentRow, loadJobs, publishAgent, serializeBuild } from '../modules/agents/service';
 import { loadCommentsById } from '../modules/comments/service';
 import { agentExtensions } from '../modules/extensions/service';
 import { loadCard } from '../modules/tasks/service';
@@ -13,6 +14,8 @@ import { newToken } from '../secrets';
 import { dispatchNext, runnerWsUrl } from '../sessions/dispatch';
 import { loadQueue } from '../sessions/queue';
 import { loadTaskSession } from '../sessions/view';
+
+const isUp = (state: string) => ['running', 'restarting'].includes(state);
 
 const BUILD_LOG_CAP = 256 * 1024;
 const BUILD_LOG_FLUSH_MS = 500;
@@ -102,11 +105,28 @@ export class Scheduler {
     const run = (async () => {
       do {
         this.dispatchAgain.delete(agentId);
-        await dispatchNext(this.ctx, agentId).catch((err) => this.ctx.log.error({ err, agentId }, 'dispatch failed'));
+        const dispatched = await dispatchNext(this.ctx, agentId).catch((err) => {
+          this.ctx.log.error({ err, agentId }, 'dispatch failed');
+          return true;
+        });
+        if (!dispatched) await this.wake(agentId);
       } while (!this.stopping && this.dispatchAgain.has(agentId));
     })().finally(() => this.dispatching.delete(agentId));
     this.dispatching.set(agentId, run);
     this.track(run);
+  }
+
+  /** Work is waiting for an Agent whose container was stopped for lack of it: start it. */
+  private async wake(agentId: string): Promise<void> {
+    if (this.stopping || !this.ctx.config.agents.stopWhenUnused) return;
+    const { state } = await this.ctx.runtime.inspect(agentId);
+    if (isUp(state)) return;
+    if (await agentNeedsContainer(this.ctx.db, agentId)) await this.reconcile(agentId);
+  }
+
+  /** A Session changed: the Agent may have gained work (wake it) or lost its last (stop it). */
+  refresh(agentId: string): void {
+    if (this.ctx.config.agents.stopWhenUnused) void this.reconcile(agentId);
   }
 
   /** After a Job: a pending container recreation goes first, then the next Queue Entry. */
@@ -239,7 +259,11 @@ export class Scheduler {
 
     const desired = desiredContainerSpec(agent);
     let info = await runtime.inspect(agentId);
-    if (desired) {
+    const unused = this.ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(db, agentId));
+    if (desired && unused) {
+      // Recreation and restarts wait for the next wake-up; a missing container is not created.
+      if (isUp(info.state)) info = await this.sleep(agentId, info);
+    } else if (desired) {
       if (info.state === 'missing' || agent.containerSpec !== desired) {
         const [busy] = await db
           .select({ id: jobs.id })
@@ -250,7 +274,7 @@ export class Scheduler {
           await this.recreate(agent, desired);
           info = await runtime.inspect(agentId);
         }
-      } else if (!['running', 'restarting'].includes(info.state)) {
+      } else if (!isUp(info.state)) {
         await runtime.restartContainer(agentId);
         info = await runtime.inspect(agentId);
       }
@@ -286,6 +310,29 @@ export class Scheduler {
       await this.publishAgent(agentId);
       if (configured) this.kick(agentId);
     }
+  }
+
+  /** Stops the container of an Agent with no work, keeping it (and its volume) for the next wake-up. */
+  private async sleep(agentId: string, info: ContainerInfo): Promise<ContainerInfo> {
+    // Dispatch only starts Jobs on a `running` container and locks this row, so marking it stopped
+    // first closes the window between the check and Docker's stop.
+    const stopping = await this.ctx.db.transaction(async (tx) => {
+      await getAgentRow(tx, agentId, { lock: true });
+      if (await agentNeedsContainer(tx, agentId)) return false;
+      await tx.update(agents).set({ containerState: 'exited' }).where(eq(agents.id, agentId));
+      return true;
+    });
+    if (!stopping) return info;
+    this.ctx.runners.disconnect(agentId, 4003, 'container stopped: no work');
+    try {
+      await this.ctx.runtime.stopContainer(agentId);
+    } catch (err) {
+      // Keep the stored state true to Docker's, so the next reconcile decides again.
+      await this.ctx.db.update(agents).set({ containerState: (await this.ctx.runtime.inspect(agentId)).state }).where(eq(agents.id, agentId));
+      throw err;
+    }
+    await this.publishAgent(agentId);
+    return this.ctx.runtime.inspect(agentId);
   }
 
   private async recreate(agent: typeof agents.$inferSelect, desired: string): Promise<void> {

@@ -45,7 +45,11 @@ export async function activeJob(db: Executor, sessionId: string, lock = false): 
 }
 
 function publishSession(after: AfterCommit, taskId: string, agentIds: (string | null)[]): void {
-  for (const agentId of agentIds) if (agentId) after.effect((ctx) => ctx.scheduler.publishQueue(agentId, [taskId]));
+  for (const agentId of agentIds) {
+    if (!agentId) continue;
+    after.effect((ctx) => ctx.scheduler.publishQueue(agentId, [taskId]));
+    after.effect((ctx) => ctx.scheduler.refresh(agentId));
+  }
   after.effect((ctx) => ctx.scheduler.publishTask(taskId));
 }
 

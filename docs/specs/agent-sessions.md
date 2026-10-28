@@ -170,7 +170,7 @@ Any User can manage an Agent's Queue from the Agent's page:
 
 ### Dispatch
 
-The dispatcher runs per Agent. It is triggered when work is queued, when a Job ends (after any pending container recreation), when the Runner says hello, when the container becomes running, when Extensions finish synchronizing, and by a periodic tick every 30 seconds.
+The dispatcher runs per Agent. When it finds a Queue Entry but the Agent's container is stopped for lack of work, it asks the reconciler to start the container (see [Agents](agents.md)); the Job dispatches once the Runner has connected. It is triggered when work is queued, when a Job ends (after any pending container recreation), when the Runner says hello, when the container becomes running, when Extensions finish synchronizing, and by a periodic tick every 30 seconds.
 
 An Agent can take a Job when all of these hold: it is enabled, its Extensions are synchronized, its Runner is connected, its container is running with the current configuration (no recreation pending), and it has no Job in `dispatched`, `running` or `finishing`. The dispatcher then takes the first entry by position that is not held, locking it so that two dispatchers never take the same entry, and in one transaction:
 

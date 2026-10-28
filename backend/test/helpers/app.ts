@@ -92,6 +92,8 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
         commitEmailDomain: 'agents.test',
         reconcileIntervalMs: 60 * 60_000,
         runnerReconnectTimeoutMs: 5 * 60_000,
+        // Most tests keep Agents running; the idle-stop tests turn it on.
+        stopWhenUnused: false,
         ...options.agents,
       },
       github: { appId: '1', privateKey: 'unused by the fake provider' },

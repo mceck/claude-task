@@ -202,7 +202,7 @@ A global, named Claude Code worker with its own environment, Credential and inst
 _Avoid_: bot, assistant, worker
 
 **Agent State**:
-The summary of an Agent's condition: disabled, building, build_failed, offline, idle or working.
+The summary of an Agent's condition: disabled, building, build_failed, offline, idle or working. `offline` also covers an Agent whose container is stopped because it has no work.
 
 **Agent Prompt**:
 An Agent's own instructions, added to every Session it runs.

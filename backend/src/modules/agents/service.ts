@@ -3,13 +3,27 @@ import type { Agent, AgentRef, AgentState, AgentBuild, Job, QueueEntryKind, Task
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentBuilds, agentMcpServers, agentPlugins, agents, agentSkills, credentials, jobs, projects, queueEntries, skills, tasks, turns } from '../../db/schema';
+import { agentBuilds, agentMcpServers, agentPlugins, agents, agentSkills, credentials, jobs, projects, queueEntries, sessions, skills, tasks, turns } from '../../db/schema';
 import { notFound } from '../../errors';
 
 export type AgentRow = typeof agents.$inferSelect;
 export type JobRow = typeof jobs.$inferSelect;
 
 export const ACTIVE_JOB_STATES = ['dispatched', 'running', 'finishing'] as const;
+
+/**
+ * Whether the Agent has work its container must be running for: an active Job, a Queue Entry, or
+ * a Session that can still receive Comments (`idle` or `running`). A `pending` Session waits for its
+ * first Comment, which queues an entry, and a `closed` or `paused` one takes no Comments.
+ */
+export async function agentNeedsContainer(db: Executor, agentId: string): Promise<boolean> {
+  const [job] = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES]))).limit(1);
+  if (job) return true;
+  const [entry] = await db.select({ id: queueEntries.id }).from(queueEntries).where(eq(queueEntries.agentId, agentId)).limit(1);
+  if (entry) return true;
+  const [session] = await db.select({ id: sessions.id }).from(sessions).where(and(eq(sessions.agentId, agentId), inArray(sessions.state, ['idle', 'running']))).limit(1);
+  return !!session;
+}
 
 /** What the container should be: compared with what it was created with to spot pending recreations. */
 export function desiredContainerSpec(a: Pick<AgentRow, 'imageTag' | 'cpuLimit' | 'memoryMb'>): string | null {

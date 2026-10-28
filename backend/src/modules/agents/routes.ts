@@ -24,7 +24,7 @@ import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { retrySession, stopTurn } from '../../sessions/lifecycle';
 import { notifyAgent } from '../../sessions/notify';
 import { loadTaskSession } from '../../sessions/view';
-import { getAgentRow, loadAgent, loadAgents, loadBuilds, loadJobs, serializeBuild, taskRefs } from './service';
+import { agentNeedsContainer, getAgentRow, loadAgent, loadAgents, loadBuilds, loadJobs, serializeBuild, taskRefs } from './service';
 import type { AgentRow } from './service';
 import { agentExtensions, setAssignments } from '../extensions/service';
 import { idOrKey } from '../../ids';
@@ -222,6 +222,9 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/agents/:id/restart', admin, async (request) => {
     const { id } = parse(params, request.params);
     await getAgentRow(ctx.db, id);
+    if (ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(ctx.db, id))) {
+      throw conflict('The agent has no work; its container starts when work arrives');
+    }
     await ctx.runtime.restartContainer(id).catch((err) => {
       throw conflict(`Could not restart the container: ${(err as Error).message}`);
     });

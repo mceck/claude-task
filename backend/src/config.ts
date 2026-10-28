@@ -48,6 +48,8 @@ export interface AgentsConfig {
   uploadTimeoutMs?: number;
   /** Stop this Installation's Agent Containers on graceful backend shutdown. */
   stopOnShutdown?: boolean;
+  /** Stop an Agent's container while it has no work: no Job, empty Queue and no open Session. */
+  stopWhenUnused: boolean;
 }
 
 /** The Claude Code version the Base Image installs, verified against the stream-json format in tests. */
@@ -111,6 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       reconcileIntervalMs: 30_000,
       runnerReconnectTimeoutMs: 5 * 60_000,
       stopOnShutdown: bool(env.AGENT_STOP_ON_SHUTDOWN, env.NODE_ENV !== 'production'),
+      stopWhenUnused: bool(env.AGENT_STOP_WHEN_UNUSED, true),
     },
   };
 }
