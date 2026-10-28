@@ -1,4 +1,4 @@
-# TURN relay
+# Optional TURN relay
 
 Use this service when Voice Room participants cannot connect directly. WebRTC keeps direct links when possible and can relay encrypted audio through coturn. The application backend handles signaling and temporary credentials; it does not relay media.
 
@@ -14,21 +14,23 @@ Add the entries from [.env.example](.env.example) to the existing root `.env`, p
 - `VOICE_TURN_CERTS_DIR`: directory containing `fullchain.pem` and `privkey.pem` for the configured hostname. Defaults to `./deploy/turn/certs`; files are mounted read-only. Required and readable by the container user when TLS is enabled. Certificate issuance is managed by the operator.
 - `VOICE_TURN_TTL_SECONDS`: lifetime of temporary credentials, default `86400` (24 hours), range `300` through `86400`. Clients refresh halfway through the lifetime and renew their peer connections.
 
-The backend also accepts these `VOICE_TURN_*` settings in its own environment when run outside Compose. `VOICE_TURN_EXTERNAL_IP` and `VOICE_TURN_CERTS_DIR` are used only by the relay deployment. Outside Compose, leaving both hostname and secret empty keeps TURN disabled in the backend. Partial backend configuration fails at startup; the main Compose stack always requires the hostname, secret and external IP explicitly.
+The backend also accepts these `VOICE_TURN_*` settings in its own environment when run outside Compose. `VOICE_TURN_EXTERNAL_IP` and `VOICE_TURN_CERTS_DIR` are used only by the relay deployment. Leaving hostname, secret and TLS port unset keeps TURN disabled in the backend, including in development. Partial backend configuration fails at startup. Starting the optional relay requires the hostname, secret and external IP explicitly; its entrypoint rejects missing values without inventing a hostname.
 
 ## Start
 
 ```sh
-docker compose up -d --build
+docker compose --profile turn up -d --build
 ```
 
 For TLS, also include its port-publication overlay after setting `VOICE_TURN_TLS_PORT` and installing the certificate:
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.turn-tls.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.turn-tls.yml --profile turn up -d --build
 ```
 
-The main Compose file starts the application, database and TURN relay together and publishes no TLS port. The TLS overlay requires an explicit public TLS port.
+Normal `docker compose up -d --build` starts only the application and database. The `turn` profile explicitly adds coturn; it publishes no TLS port unless the TLS overlay is also included. The TLS overlay requires an explicit public TLS port. The application has no dependency on coturn, so it can also use an independently deployed compatible relay by configuring its hostname and shared secret without enabling the local profile.
+
+In development, use the normal application commands and leave `VOICE_TURN_HOST`, `VOICE_TURN_SECRET` and `VOICE_TURN_TLS_PORT` unset. Voice then uses direct connections and configured STUN discovery.
 
 The main Compose stack runs pinned `coturn/coturn:4.18.0-r0` on a separate network, with a read-only root filesystem and temporary runtime configuration. The secret is written only to a mode-0600 file in container temporary storage. Anonymous allocations and the administration interface are disabled.
 
@@ -49,7 +51,7 @@ Production relay destinations exclude loopback, private, link-local and multicas
 ## Verify
 
 ```sh
-docker compose logs --tail=50 turn
+docker compose --profile turn logs --tail=50 turn
 ```
 
 Join the same Task's Voice Room from two different networks. A connected state confirms a working ICE path; it can be direct or relayed. To diagnose TURN specifically, inspect the selected ICE candidate pair in the browser's WebRTC diagnostics (`chrome://webrtc-internals` in Chromium) and check for a `relay` candidate.

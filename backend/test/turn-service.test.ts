@@ -12,11 +12,42 @@ const secret = 'turn-service-test-secret-000000000000000000';
 const mounts = ['-v', `${root}/deploy/turn/start.sh:/etc/coturn/start.sh:ro`, '-v', `${root}/deploy/turn/turnserver.conf:/etc/coturn/base.conf:ro`];
 
 describe.runIf(process.env.TEST_TURN_DOCKER === '1')('additional TURN service', () => {
-  it('includes the relay in the main deployment and publishes TLS only with its overlay', () => {
-    const env = { ...process.env, ADMIN_PASSWORD: 'local-test-password', SECRETS_MASTER_KEY: Buffer.alloc(32, 7).toString('base64'), VOICE_TURN_HOST: 'relay.example.test', VOICE_TURN_SECRET: secret, VOICE_TURN_EXTERNAL_IP: '203.0.113.5', VOICE_TURN_PORT: '3478', VOICE_TURN_TLS_PORT: '' };
+  it('leaves TURN out of the default stack without requiring relay configuration', () => {
+    const env = { ...process.env, COMPOSE_PROFILES: '', ADMIN_PASSWORD: 'local-test-password', SECRETS_MASTER_KEY: Buffer.alloc(32, 7).toString('base64'), VOICE_TURN_HOST: '', VOICE_TURN_SECRET: '', VOICE_TURN_EXTERNAL_IP: '', VOICE_TURN_TLS_PORT: '' };
     const config = JSON.parse(execFileSync('docker', ['compose', '-f', 'docker-compose.yml', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env }));
+    expect(Object.keys(config.services).sort()).toEqual(['app', 'db']);
+    expect(config.services.app.depends_on).not.toHaveProperty('turn');
+    expect(config.services.app.environment.VOICE_TURN_HOST || '').toBe('');
+    expect(config.services.app.environment.VOICE_TURN_SECRET || '').toBe('');
+  });
+
+  it('passes explicitly configured dotenv settings to the optional relay and application', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'task-turn-compose-'));
+    try {
+      const envFile = path.join(dir, '.env');
+      writeFileSync(envFile, `VOICE_TURN_HOST=relay.example.test\nVOICE_TURN_SECRET=${secret}\nVOICE_TURN_EXTERNAL_IP=203.0.113.5\n`);
+      const env: NodeJS.ProcessEnv = { ...process.env, COMPOSE_PROFILES: '', ADMIN_PASSWORD: 'local-test-password', SECRETS_MASTER_KEY: Buffer.alloc(32, 7).toString('base64') };
+      delete env.VOICE_TURN_HOST;
+      delete env.VOICE_TURN_SECRET;
+      delete env.VOICE_TURN_EXTERNAL_IP;
+      const config = JSON.parse(execFileSync('docker', ['compose', '--env-file', envFile, '-f', 'docker-compose.yml', '--profile', 'turn', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env }));
+      expect(config.services.app.environment.VOICE_TURN_HOST).toBe('relay.example.test');
+      expect(config.services.turn.environment.VOICE_TURN_HOST).toBe('relay.example.test');
+      expect(config.services.app.environment.VOICE_TURN_SECRET).toBe(secret);
+      expect(config.services.turn.environment.VOICE_TURN_SECRET).toBe(secret);
+      expect(config.services.turn.environment.VOICE_TURN_EXTERNAL_IP).toBe('203.0.113.5');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('includes the relay only with its profile and publishes TLS only with its overlay', () => {
+    const env = { ...process.env, ADMIN_PASSWORD: 'local-test-password', SECRETS_MASTER_KEY: Buffer.alloc(32, 7).toString('base64'), VOICE_TURN_HOST: 'relay.example.test', VOICE_TURN_SECRET: secret, VOICE_TURN_EXTERNAL_IP: '203.0.113.5', VOICE_TURN_PORT: '3478', VOICE_TURN_TLS_PORT: '' };
+    const withoutProfile = JSON.parse(execFileSync('docker', ['compose', '-f', 'docker-compose.yml', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env: { ...env, COMPOSE_PROFILES: '' } }));
+    expect(Object.keys(withoutProfile.services).sort()).toEqual(['app', 'db']);
+    const config = JSON.parse(execFileSync('docker', ['compose', '-f', 'docker-compose.yml', '--profile', 'turn', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env }));
     expect(Object.keys(config.services).sort()).toEqual(['app', 'db', 'turn']);
-    expect(config.services.app.depends_on.turn.condition).toBe('service_started');
+    expect(config.services.app.depends_on).not.toHaveProperty('turn');
     expect(config.services.app.environment.VOICE_TURN_HOST).toBe('relay.example.test');
     expect(config.services.turn.environment.VOICE_TURN_HOST).toBe('relay.example.test');
     expect(config.services.app.environment.VOICE_TURN_SECRET).toBe(config.services.turn.environment.VOICE_TURN_SECRET);
@@ -27,17 +58,12 @@ describe.runIf(process.env.TEST_TURN_DOCKER === '1')('additional TURN service', 
       expect.objectContaining({ target: 30199, published: '30199', protocol: 'udp' }),
     ]));
     expect(config.services.turn.ports.some((port: { target: number }) => port.target === 5349)).toBe(false);
-    const tlsConfig = JSON.parse(execFileSync('docker', ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.turn-tls.yml', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env: { ...env, VOICE_TURN_TLS_PORT: '443' } }));
+    const tlsConfig = JSON.parse(execFileSync('docker', ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.turn-tls.yml', '--profile', 'turn', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env: { ...env, VOICE_TURN_TLS_PORT: '443' } }));
     expect(tlsConfig.services.turn.ports).toContainEqual(expect.objectContaining({ target: 5349, published: '443', protocol: 'tcp' }));
     expect(tlsConfig.services.app.environment.VOICE_TURN_TLS_PORT).toBe('443');
   });
 
-  it('requires a hostname with no Compose or startup-script fallback', () => {
-    const compose = spawnSync('docker', ['compose', 'config', '--quiet'], {
-      cwd: root, encoding: 'utf8', env: { ...process.env, ADMIN_PASSWORD: 'local-test-password', SECRETS_MASTER_KEY: Buffer.alloc(32, 7).toString('base64'), VOICE_TURN_HOST: '', VOICE_TURN_SECRET: secret, VOICE_TURN_EXTERNAL_IP: '203.0.113.5' },
-    });
-    expect(compose.status).not.toBe(0);
-    expect(compose.stderr).toContain('VOICE_TURN_HOST');
+  it('requires an explicit hostname when the relay actually starts', () => {
     const start = spawnSync('docker', ['run', '--rm', '--entrypoint', '/bin/sh', ...mounts, image, '/etc/coturn/start.sh'], { encoding: 'utf8', timeout: 15_000 });
     expect(start.status).not.toBe(0);
     expect(start.stderr).toContain('VOICE_TURN_HOST');

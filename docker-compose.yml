@@ -1,4 +1,4 @@
-# Production stack: Postgres, the application and the authenticated TURN relay.
+# Postgres and the application; enable the optional relay with --profile turn.
 services:
   db:
     image: postgres:17
@@ -15,12 +15,15 @@ services:
       retries: 10
   turn:
     image: coturn/coturn:4.18.0-r0
+    profiles: [turn]
     restart: unless-stopped
     entrypoint: ['/bin/sh', '/etc/coturn/start.sh']
     environment:
-      VOICE_TURN_HOST: ${VOICE_TURN_HOST:?set VOICE_TURN_HOST explicitly}
-      VOICE_TURN_SECRET: ${VOICE_TURN_SECRET:?generate VOICE_TURN_SECRET with openssl rand -hex 32}
-      VOICE_TURN_EXTERNAL_IP: ${VOICE_TURN_EXTERNAL_IP:?set the public IPv4 address of the relay}
+      # Pass through explicit settings without requiring them for inactive profiles.
+      # The relay entrypoint validates all three when the service starts.
+      VOICE_TURN_HOST:
+      VOICE_TURN_SECRET:
+      VOICE_TURN_EXTERNAL_IP:
       VOICE_TURN_TLS_PORT: ${VOICE_TURN_TLS_PORT:-}
     ports:
       - '${VOICE_TURN_PORT:-3478}:3478/udp'
@@ -42,8 +45,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      turn:
-        condition: service_started
     ports: ['3000:3000']
     environment:
       DATABASE_URL: postgres://claude_task:claude_task@db:5432/claude_task
@@ -54,8 +55,8 @@ services:
       CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.310}
       APP_URL: ${APP_URL:-http://localhost:3000}
       VOICE_STUN_URLS: ${VOICE_STUN_URLS-stun:stun.l.google.com:19302}
-      VOICE_TURN_HOST: ${VOICE_TURN_HOST:?set VOICE_TURN_HOST explicitly}
-      VOICE_TURN_SECRET: ${VOICE_TURN_SECRET:?generate VOICE_TURN_SECRET with openssl rand -hex 32}
+      VOICE_TURN_HOST:
+      VOICE_TURN_SECRET:
       VOICE_TURN_PORT: ${VOICE_TURN_PORT:-3478}
       VOICE_TURN_TLS_PORT: ${VOICE_TURN_TLS_PORT:-}
       VOICE_TURN_TTL_SECONDS: ${VOICE_TURN_TTL_SECONDS:-86400}

@@ -15,7 +15,7 @@ Some Users cannot connect to other participants from their networks because dire
 
 ## Solution
 
-Start coturn as a service in the main Docker Compose stack together with the application and database. Configure its public hostname through a required environment variable with no default. Clients receive temporary credentials and let WebRTC choose a working direct or relayed path. Administrators can enable TLS transport when they provide a certificate and an available public TLS port.
+Offer coturn as an optional service in the main Docker Compose stack, enabled through an explicit `turn` profile. Normal deployment and development start without coturn or mandatory relay configuration. Configure its public hostname through a required environment variable with no default. Clients receive temporary credentials and let WebRTC choose a working direct or relayed path. Administrators can enable TLS transport when they provide a certificate and an available public TLS port.
 
 ## User Stories
 
@@ -34,8 +34,9 @@ Start coturn as a service in the main Docker Compose stack together with the app
 - Mint coturn REST credentials using timestamped, User-specific random usernames and HMAC-SHA1. The shared secret stays on the backend and relay. Credentials last 24 hours by default, configurable from 5 minutes to 24 hours.
 - Add an authenticated participation-scoped ICE refresh command. Both clients refresh before expiry and recreate peer connections with the new configuration. Stale participation requests return the existing stale error.
 - Keep the current room membership, transfer, six-User limit and local noise processing.
-- Configure TURN through environment variables. Outside Compose, an unset hostname and secret leave TURN disabled; partial or invalid settings fail at startup. The main Compose deployment requires the hostname, secret and public IPv4 address explicitly. The hostname has no default in backend, Compose, scripts or example configuration.
-- Add a service to the main Compose file with a pinned official coturn image, separate network, bounded UDP relay range, authenticated allocations and optional mounted TLS certificate. Generate its secret-bearing runtime configuration in temporary storage with restrictive permissions.
+- Configure TURN through environment variables. Leaving hostname, secret and TLS port unset keeps TURN disabled in the backend, including in development and normal Compose deployment; partial or invalid settings fail at startup. The optional relay entrypoint requires the hostname, secret and public IPv4 address explicitly when started. The hostname has no default in backend, Compose, scripts or example configuration.
+- Add a service behind the explicit `turn` profile in the main Compose file with a pinned official coturn image, separate network, bounded UDP relay range, authenticated allocations and optional mounted TLS certificate. Generate its secret-bearing runtime configuration in temporary storage with restrictive permissions.
+- Keep the application independent of the local relay service so a normal Compose launch needs no TURN settings and explicit backend settings may instead identify an independently deployed compatible relay.
 - Protect loopback, link-local, private and multicast peer destinations in production and bound allocation count and bandwidth. Keep test-only local-address permissions outside production configuration.
 - Document operator setup alongside the service, including external-IP forwarding, TLS on an explicitly configured public port, and direct-only deployment compatibility.
 
@@ -51,7 +52,7 @@ Start coturn as a service in the main Docker Compose stack together with the app
 
 - [x] Living specs describe optional TURN fallback and its credential lifecycle.
 - [x] TURN hostname is an explicit variable with no default; enabling the service without it fails clearly.
-- [x] coturn starts with the normal Compose deployment as a separate service with authenticated allocations and documented ports, external IP and optional TLS.
+- [x] Normal Compose deployment and development work without TURN settings or relay startup; the explicit `turn` profile enables the separate service with authenticated allocations and documented ports, external IP and optional TLS.
 - [x] Backend issues expiring User-specific credentials and omits the shared secret from all client messages.
 - [x] ICE refresh is scoped to the current authenticated participation.
 - [x] Web and Flutter retain TURN credentials, forward relay candidates and renew configuration before expiry.
@@ -65,12 +66,11 @@ Managed Cloudflare TURN, Lambda/Workers hosting, external DNS or firewall change
 
 ## Further Notes
 
-The User explicitly replaces the initial P2P-only decision with a separate self-hosted TURN service and will supply the hostname. The User requests that normal `docker compose up -d` includes coturn, with only TLS retaining an optional overlay. The original voice-room task remains a record of that earlier delivery; the current living spec describes the resulting behavior.
+The User explicitly replaces the initial P2P-only decision with a separate self-hosted TURN service and will supply the hostname. The User keeps coturn optional, including in development: normal `docker compose up -d` omits it, and `--profile turn` explicitly enables it. TLS retains a separate optional overlay. The original voice-room task remains a record of that earlier delivery; the current living spec describes the resulting behavior.
 
 ## Verification
 
-- Main Compose follow-up: 427 backend tests passed, including four real Docker/Compose service checks; 3 existing opt-in external checks skipped. TypeScript typechecks pass. Default Compose includes app, database and coturn with matching relay settings; TLS publication is added only by its optional overlay. No client or media code changed in this follow-up.
-- 426 backend tests passed, including the opt-in Docker service checks; 3 existing opt-in external checks skipped.
+- Optional Compose profile: 429 backend tests passed, including six real Docker/Compose service checks; 3 existing opt-in external checks skipped. TypeScript typechecks pass. Default Compose includes only app and database with TURN settings absent or supplied. The explicit relay profile passes matching shell and dotenv settings to app and coturn; TLS publication is added only by its optional overlay. Required hostname validation is enforced by the relay entrypoint at startup. No client or media code changed in this follow-up. Standards and Task reviews report no findings.
 - All 59 browser tests passed with real coturn enabled. Relay-only UDP and TCP tests verify received audio and selected relay candidates. The UDP test advances the browser clock and confirms credential renewal and continued audio. The six-User relay test verifies all fifteen links and five inbound audio streams per client with both TURN transports configured.
 - All 183 Flutter tests passed, including authenticated ICE configuration and renewal through the existing media boundary. Flutter analysis and TypeScript typechecks pass. Production web/backend builds and the Android debug APK build pass.
 - Actual Docker checks verify mandatory hostname configuration, missing TLS certificate errors and a TLS handshake using the production startup script and a temporary test certificate. Compose configuration and shell syntax are validated.
