@@ -164,6 +164,30 @@ void main() {
     }
   });
 
+  testWidgets('Projects show running and unread badges only when there is activity', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _WorkspaceApi();
+    api.projects[0] = {
+      ...projectData,
+      'activity': {'runningAgents': 1, 'unreadTasks': 3},
+    };
+    final h = Harness(api: api);
+    addTearDown(h.dispose);
+    await h.login();
+    await tester.pumpWidget(TaskApp(controller: h.controller));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('project-running:project-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('project-unread:project-1')), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
+    expect(find.byKey(const ValueKey('project-running:project-2')), findsNothing);
+    expect(find.byKey(const ValueKey('project-unread:project-2')), findsNothing);
+  });
+
   testWidgets('mobile Projects layout and navigation', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;

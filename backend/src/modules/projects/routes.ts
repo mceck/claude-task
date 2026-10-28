@@ -12,6 +12,7 @@ import { listTags } from '../tags/service';
 import { listStatuses } from '../statuses/service';
 import { assertNoActiveJobs } from '../tasks/service';
 import { createProject, getBoardProject, listProjects, serializeProject } from './service';
+import { currentUser } from '../../auth/guard';
 import { idOrKey } from '../../ids';
 import { resolveRepository } from '../../git/service';
 
@@ -20,7 +21,7 @@ const params = z.object({ id: idOrKey });
 export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/projects', async (request) => {
     const query = parse(listProjectsQuery, request.query);
-    return { projects: await listProjects(ctx.db, query.archived === 'true') };
+    return { projects: await listProjects(ctx.db, currentUser(request).id, query.archived === 'true') };
   });
 
   app.post('/projects', async (request, reply) => {

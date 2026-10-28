@@ -98,7 +98,24 @@ function ProjectCard({ project: p }: { project: ProjectSummary }) {
       <div className="flex items-start gap-3">
         <ProjectLogo project={p} className="size-10" />
         <div className="min-w-0">
-          <p className="truncate font-medium group-hover:text-primary">{p.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="truncate font-medium group-hover:text-primary">{p.name}</p>
+            {p.activity.runningAgents > 0 && (
+              <span title="Agents running" aria-label="Agents running" data-testid="project-running" className="relative flex size-2 shrink-0">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+              </span>
+            )}
+            {p.activity.unreadTasks > 0 && (
+              <span
+                title={`${p.activity.unreadTasks} unread ${p.activity.unreadTasks === 1 ? 'task' : 'tasks'}`}
+                data-testid="project-unread"
+                className="shrink-0 rounded-full bg-primary px-1.5 text-[10px] font-semibold leading-4 text-primary-foreground"
+              >
+                {p.activity.unreadTasks}
+              </span>
+            )}
+          </div>
           <p className="line-clamp-2 text-sm text-muted-foreground">{p.description || 'No description'}</p>
         </div>
       </div>

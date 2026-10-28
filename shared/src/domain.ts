@@ -53,8 +53,17 @@ export interface Project {
   updatedAt: string;
 }
 
+/** What is going on in a Project right now, for the User who asks. */
+export interface ProjectActivity {
+  /** Sessions with a Turn in progress. */
+  runningAgents: number;
+  /** Open Tasks with Timeline entries the User has not read, not muted by them. */
+  unreadTasks: number;
+}
+
 export interface ProjectSummary extends Project {
   taskCounts: CategoryCounts;
+  activity: ProjectActivity;
 }
 
 export interface Status {

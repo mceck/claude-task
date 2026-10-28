@@ -37,6 +37,9 @@ class Project {
 
   /// Task counts per Status category, from the Projects list.
   final Map<String, int> taskCounts;
+
+  /// Sessions running and open Tasks unread by this User, from the Projects list.
+  final int runningAgents, unreadTasks;
   Project.fromJson(Json json)
     : id = json['id'] as String,
       key = json['key'] as String,
@@ -46,7 +49,11 @@ class Project {
       taskCounts = {
         for (final e in (json['taskCounts'] as Map? ?? {}).entries)
           e.key as String: (e.value as num).toInt(),
-      };
+      },
+      runningAgents =
+          ((json['activity'] as Map?)?['runningAgents'] as num? ?? 0).toInt(),
+      unreadTasks = ((json['activity'] as Map?)?['unreadTasks'] as num? ?? 0)
+          .toInt();
   int get taskTotal => taskCounts.values.fold(0, (a, b) => a + b);
 }
 
@@ -89,9 +96,9 @@ class Agent implements Identified {
       enabled = json['enabled'] == true,
       extensionsPending = json['extensionsPending'] == true,
       extensionsError = json['extensionsError'] as String?,
-      skillCommands = objects(
-        json['skillCommands'],
-      ).map(SkillCommand.fromJson).toList();
+      skillCommands = objects(json['skillCommands'])
+          .map(SkillCommand.fromJson)
+          .toList();
 }
 
 class SkillCommand {
@@ -299,12 +306,12 @@ class Survey {
   Survey.fromJson(Json json)
     : items = QuestionItem.list(json['items']),
       open = json['state'] == 'open',
-      expectedRespondents = objects(
-        json['expectedRespondents'],
-      ).map(Actor.fromJson).toList(),
-      responses = objects(
-        json['responses'],
-      ).map(SurveyResponse.fromJson).toList(),
+      expectedRespondents = objects(json['expectedRespondents'])
+          .map(Actor.fromJson)
+          .toList(),
+      responses = objects(json['responses'])
+          .map(SurveyResponse.fromJson)
+          .toList(),
       closedBy = Actor.maybe(json['closedBy']),
       closedAt = DateTime.tryParse(json['closedAt'] as String? ?? '');
 
