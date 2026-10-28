@@ -145,7 +145,7 @@ export function Composer({
 
   const empty = !body.trim() && files.length === 0;
 
-  const placeholder = internal ? 'Write an internal chat…' : 'Leave a comment… Markdown, drop or paste files.';
+  const placeholder = internal ? 'Write an internal chat…' : 'Leave a comment…';
 
   return (
     <Popover open={suggestions.length > 0}>

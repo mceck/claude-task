@@ -585,7 +585,7 @@ function Title({ title, onSave }: { title: string; onSave: (title: string) => Pr
   );
 }
 
-const DESCRIPTION_PLACEHOLDER = 'Add a description… Markdown with checklists and code blocks is supported.';
+const DESCRIPTION_PLACEHOLDER = 'Add a description…';
 
 /**
  * The description, edited in place: clicking the text makes it editable with the caret there, and the toolbar
