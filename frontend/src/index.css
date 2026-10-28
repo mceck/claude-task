@@ -285,18 +285,3 @@ div.mdxeditor-popup-container {
   --code-type: oklch(0.82 0.09 200);
   --code-property: oklch(0.85 0.04 275);
 }
-
-/* Comments get a lighter, smaller toolbar than descriptions: just the buttons, in the composer's flow.
-   Pulled left so the first icon's glyph lines up with the text (group margin, button padding, icon inset). */
-.rich-editor-comment .mdxeditor-toolbar {
-  @apply static -ml-3 mb-1 min-h-0 gap-0.5 border-0 bg-transparent p-0;
-}
-.rich-editor-comment .mdxeditor-toolbar :is(button, [role='radio']) {
-  @apply p-[3px];
-}
-.rich-editor-comment .mdxeditor-toolbar svg {
-  @apply size-4;
-}
-.rich-editor-comment .mdxeditor-toolbar [role='separator'] {
-  @apply mx-1 my-0 h-3.5;
-}

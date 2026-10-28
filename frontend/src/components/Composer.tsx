@@ -169,10 +169,7 @@ export function Composer({
           )}
           <Suspense
             fallback={
-              <div className="rich-editor">
-                <div className="rich-editor-toolbar-space" />
-                <p className="min-h-16 text-sm text-muted-foreground">{placeholder}</p>
-              </div>
+              <p className="text-sm leading-relaxed text-muted-foreground">{placeholder}</p>
             }
           >
             <CommentEditor
@@ -183,6 +180,7 @@ export function Composer({
               initialValue={body}
               onChange={setBody}
               onSubmit={() => void submit()}
+              compact
               onCommandToken={(next) => {
                 if (next?.query !== token?.query || next?.atStart !== token?.atStart) setActive(0);
                 setToken(next);

@@ -555,7 +555,7 @@ const chatPlugin = realmPlugin<{ hooks: { current: ChatHooks }; editor: { curren
 });
 
 /**
- * The same WYSIWYG editor for comments: a compact toolbar, Enter to send (when `onSubmit` is given) and
+ * The same WYSIWYG editor for comments: no toolbar (keyboard and markdown shortcuts format), Enter to send (when `onSubmit` is given) and
  * `/command` completion through `onCommandToken`/`onCommandKey`, shown by the caller. Files pasted or dropped
  * are the caller's to handle (comments attach them rather than embed them).
  */
@@ -572,6 +572,7 @@ export function CommentEditor({
   autoFocus,
   ariaControls,
   ariaActiveDescendant,
+  compact,
 }: ChatHooks & {
   taskId: string;
   label: string;
@@ -582,6 +583,8 @@ export function CommentEditor({
   autoFocus?: boolean;
   ariaControls?: string;
   ariaActiveDescendant?: string;
+  /** One line that grows to three, then scrolls (the composer). */
+  compact?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const [fallbackValue, setFallbackValue] = useState(initialValue);
@@ -594,17 +597,6 @@ export function CommentEditor({
   const [plugins] = useState(() => [
     ...contentPlugins(taskId),
     chatPlugin({ hooks, editor: lexical }),
-    toolbarPlugin({
-      toolbarContents: () => (
-        <>
-          <BoldItalicUnderlineToggles options={['Bold', 'Italic']} />
-          <CodeButton />
-          <Separator />
-          <ListsToggle />
-          <CreateLink />
-        </>
-      ),
-    }),
   ]);
   useFocusNewCodeBlocks(root, !failed);
   useEffect(() => {
@@ -646,7 +638,7 @@ export function CommentEditor({
     return (
       <MarkdownEditor
         label={label}
-        rows={3}
+        rows={compact ? 1 : 3}
         value={fallbackValue}
         onChange={(md) => (setFallbackValue(md), onChange(md))}
         placeholder={placeholder}
@@ -672,7 +664,7 @@ export function CommentEditor({
         // MDXEditor labels its contenteditable through this one translation.
         translation={(key, defaultValue) => (key === 'contentArea.editableMarkdown' ? label : defaultValue)}
         className={cn(isDark() && 'dark-theme')}
-        contentEditableClassName="markdown min-h-16 p-0! outline-none"
+        contentEditableClassName={cn('markdown p-0! outline-none', compact ? 'max-h-[3lh] overflow-y-auto' : 'min-h-16')}
         plugins={plugins}
       />
     </div>

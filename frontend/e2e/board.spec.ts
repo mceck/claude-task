@@ -94,6 +94,15 @@ test('posts a comment and an internal chat, seen live elsewhere', async ({ brows
   // One WYSIWYG editor: no Write/Preview tabs.
   await expect(pageA.getByRole('textbox', { name: 'Comment', exact: true })).toBeVisible();
   await expect(pageA.getByRole('button', { name: /^(write|preview)$/i })).toHaveCount(0);
+  // No toolbar, and one line that grows to three, then scrolls.
+  const composer = pageA.getByRole('textbox', { name: 'Comment', exact: true });
+  await expect(pageA.getByRole('toolbar')).toHaveCount(0);
+  const lineHeight = await composer.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+  expect((await composer.boundingBox())!.height).toBeCloseTo(lineHeight, 0);
+  await composer.click();
+  for (let i = 0; i < 5; i++) await pageA.keyboard.press('Shift+Enter');
+  expect((await composer.boundingBox())!.height).toBeCloseTo(3 * lineHeight, 0);
+  for (let i = 0; i < 5; i++) await pageA.keyboard.press('Backspace');
   // Markdown typed in the editor becomes formatting, and Enter sends.
   await pageA.getByRole('textbox', { name: 'Comment', exact: true }).click();
   await pageA.keyboard.type('This is **important**');
