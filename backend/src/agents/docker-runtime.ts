@@ -118,7 +118,7 @@ export class DockerRuntime implements AgentRuntime {
     const container = this.docker.getContainer(containerName(agentId));
     // Arguments go straight to `claude` (no shell), so names and sources can't inject anything.
     const claude = async (...args: string[]) => {
-      const { stdout, stderr } = await execIn(container, ['claude', 'plugin', ...args]);
+      const { stdout, stderr } = await execIn(container, ['mise', 'exec', '--', 'claude', 'plugin', ...args]);
       const line = stdout.trim().split('\n').pop() ?? '';
       try {
         return JSON.parse(line) as { outcome?: string; pluginId?: string; message?: string; failureCode?: string };
@@ -128,7 +128,7 @@ export class DockerRuntime implements AgentRuntime {
     };
     const state = await execIn(container, ['cat', PLUGIN_STATE]);
     let managed: string[] = state.exitCode === 0 ? parseIds(state.stdout) : [];
-    const listed = await execIn(container, ['claude', 'plugin', 'list', '--json']);
+    const listed = await execIn(container, ['mise', 'exec', '--', 'claude', 'plugin', 'list', '--json']);
     if (listed.exitCode !== 0) throw new Error(`claude plugin list failed: ${(listed.stderr || listed.stdout).trim().slice(0, 500)}`);
     const unmanaged = new Set(parseIds(listed.stdout, 'id').filter((id) => !managed.includes(id)));
     const wanted = new Set<string>();

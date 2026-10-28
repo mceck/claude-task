@@ -15,6 +15,7 @@ if { true <&3; } 2>/dev/null; then
   exec 3<&-
 fi
 export PATH="/usr/lib/postgresql/16/bin:$PATH"
+source /etc/profile.d/mise.sh
 for plugin in /opt/mise/plugins/*; do
   if [[ -d "$plugin" && ! -e "$HOME/.local/share/mise/plugins/${plugin##*/}" ]]; then
     mise plugins link "${plugin##*/}" "$plugin" || echo "could not link mise plugin ${plugin##*/}" >&2

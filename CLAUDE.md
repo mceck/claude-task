@@ -36,7 +36,7 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 - **One Session per (Task, Agent)**, resumed with `claude --resume <id>`. Worktree paths are deterministic per (project, task) because resume needs the same cwd.
 - **Agents run `claude -p --input-format stream-json --output-format stream-json`**, not `--bare` (repo CLAUDE.md, `.claude/` and `.mcp.json` must load). Comments for the running Task are written to stdin mid-turn. Everything else waits in the Queue.
 - **The Timeline is projected from the stdout stream, never from hooks.** The platform configures no hooks. The projection is a pure function over stored raw events.
-- **The `claude` version is pinned centrally** (`CLAUDE_CODE_VERSION`, auto-updater off). The stream-json format is a contract.
+- **The default `claude` version comes from `CLAUDE_CODE_VERSION`**, with the auto-updater off. Repository and user mise configurations can override it through mise's shims. The stream-json format remains a contract for the selected version.
 - **Secrets** (Credentials, project secret env) are encrypted at rest (`SECRETS_MASTER_KEY`), write-only in the API (last4 only), never logged, and sent per Job, never as container env.
 - **The agent user is non-root** (`bypassPermissions` refuses root). Agent Dockerfiles must start `FROM claude-task/agent-base` and end as `USER agent`.
 - **Agents reach git only through the Git Proxy** with their Job token, valid only for that Job's Repository while the Job is active (see `docs/specs/git-integration.md`). Provider credentials (Git Connections) never leave the backend. The proxy's Push Policy (only the Task Branch, no deletions or tags) keeps Agents off the Base Branch; provider-side protection is informational.
