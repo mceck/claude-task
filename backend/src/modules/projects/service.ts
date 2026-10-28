@@ -1,5 +1,5 @@
 import { API_PREFIX, CATEGORIES } from '@claude-task/shared';
-import type { Category, CategoryCounts, Project, ProjectSummary } from '@claude-task/shared';
+import type { Category, CategoryCounts, Project, ProjectActivity, ProjectSummary } from '@claude-task/shared';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client';
 import { projects, statuses } from '../../db/schema';
@@ -65,7 +65,7 @@ export async function createProject(
   return project!;
 }
 
-export async function listProjects(db: Executor, archived: boolean): Promise<ProjectSummary[]> {
+export async function listProjects(db: Executor, userId: string, archived: boolean): Promise<ProjectSummary[]> {
   const rows = await db
     .select()
     .from(projects)
@@ -81,7 +81,25 @@ export async function listProjects(db: Executor, archived: boolean): Promise<Pro
     if (!entry) byProject.set(c.project_id, (entry = emptyCounts()));
     entry[c.category] = c.n;
   }
-  return rows.map((p) => ({ ...serializeProject(p), taskCounts: byProject.get(p.id) ?? emptyCounts() }));
+  const activity = await db.execute<{ project_id: string; running: number; unread: number }>(sql`
+    select t.project_id,
+      (select count(*)::int from sessions se where se.task_id = t.id and se.state = 'running') as running,
+      (coalesce(a.latest, 0) > coalesce(p.read_position, 0) and not coalesce(p.muted, false) and s.category <> 'closed') as unread
+    from tasks t join statuses s on s.id = t.status_id
+    left join task_preferences p on p.task_id = t.id and p.user_id = ${userId}::uuid
+    left join lateral (select max(position) as latest from task_activity where task_id = t.id) a on true`);
+  const activityByProject = new Map<string, ProjectActivity>();
+  for (const r of activity.rows) {
+    let entry = activityByProject.get(r.project_id);
+    if (!entry) activityByProject.set(r.project_id, (entry = { runningAgents: 0, unreadTasks: 0 }));
+    entry.runningAgents += r.running;
+    if (r.unread) entry.unreadTasks += 1;
+  }
+  return rows.map((p) => ({
+    ...serializeProject(p),
+    taskCounts: byProject.get(p.id) ?? emptyCounts(),
+    activity: activityByProject.get(p.id) ?? { runningAgents: 0, unreadTasks: 0 },
+  }));
 }
 
 function emptyCounts(): CategoryCounts {

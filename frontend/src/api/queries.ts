@@ -76,6 +76,8 @@ export function useProjects(archived: boolean) {
   return useQuery({
     queryKey: keys.projects(archived),
     queryFn: () => get<{ projects: ProjectSummary[] }>(`/projects?archived=${archived}`).then((r) => r.projects),
+    // The list is not on a live topic: keep the activity badges fresh while it is open.
+    refetchInterval: 15_000,
   });
 }
 

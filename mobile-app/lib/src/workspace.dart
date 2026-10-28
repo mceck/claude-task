@@ -82,8 +82,7 @@ class Workspace extends StatelessWidget {
                   ? const EmptyState(
                       icon: Icons.forum_outlined,
                       title: 'Select a Task to join the conversation',
-                      message:
-                          'Tasks are grouped by Status. Open one to talk with its Agent.',
+                      message: 'Tasks are grouped by Status. Open one to talk with its Agent.',
                     )
                   : Conversation(
                       key: ValueKey(c.task!.id),
@@ -649,6 +648,28 @@ class _ProjectRow extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (p.runningAgents > 0) ...[
+                      const SizedBox(width: 8),
+                      Tooltip(
+                        message: 'Agents running',
+                        child: Container(
+                          key: ValueKey('project-running:${p.id}'),
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Color(0xff10b981),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (p.unreadTasks > 0) ...[
+                      const SizedBox(width: 8),
+                      Badge(
+                        key: ValueKey('project-unread:${p.id}'),
+                        label: Text('${p.unreadTasks}'),
+                      ),
+                    ],
                     const SizedBox(width: 8),
                     const Icon(
                       Icons.chevron_right_rounded,

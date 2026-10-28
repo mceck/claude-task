@@ -218,7 +218,7 @@ Each User has a read position per Task:
 - fetching the Timeline or receiving live events leaves it unchanged;
 - advancing it never makes the User follow the Task.
 
-A Task is **unread** for a User when its latest entry position is greater than their read position. Timeline pages carry each entry's position so clients can mark progress precisely. Reset Chat sets every User's read position on the Wiki back to zero along with the cleared Timeline (see [Wikis](wikis.md)).
+A Task is **unread** for a User when its latest entry position is greater than their read position. Timeline pages carry each entry's position so clients can mark progress precisely. The Projects list aggregates it: a Project's `unreadTasks` counts its Tasks that are unread for the asking User, leaving out Tasks they muted and Tasks in a `closed` Status. Reset Chat sets every User's read position on the Wiki back to zero along with the cleared Timeline (see [Wikis](wikis.md)).
 
 The Flutter app advances the read position when the conversation is visible, the app is in the foreground and online, and the reader has reached the latest entry. The web app advances it whenever the Task's conversation is on screen and scrolled to the bottom, each time a newer entry arrives or the reader scrolls back down, and only while the browser tab is visible. Both clients report the newest entry they have loaded, so reading a Task on one client clears its unread state on the other.
 

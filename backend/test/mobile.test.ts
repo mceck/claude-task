@@ -38,6 +38,25 @@ async function register(client: Awaited<ReturnType<typeof app.admin>>, token: st
   return deviceId;
 }
 
+describe('Project activity', () => {
+  const unread = async (client: Awaited<ReturnType<typeof app.admin>>, key: string) =>
+    (await client.get('/projects')).body.projects.find((p: { id: string }) => p.id === key).activity;
+
+  it('counts unread open Tasks per User, skipping muted and closed ones', async () => {
+    const { admin, project, task, member } = await setup();
+    const last = await comment(admin, task.id, 'Hello');
+    expect(await unread(member.client, project.id)).toEqual({ runningAgents: 0, unreadTasks: 1 });
+    await member.client.put(`/tasks/${task.id}/read-position`, { itemId: last.id });
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(0);
+    expect((await unread(admin, project.id)).unreadTasks).toBe(1);
+
+    await comment(admin, task.id, 'Again');
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(1);
+    await member.client.patch(`/tasks/${task.id}/preferences`, { muted: true });
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(0);
+  });
+});
+
 describe('Task preferences and read positions', () => {
   it('auto-follows creators, User assignees and participants including Internal Notes; explicit choices win', async () => {
     const { admin, task, member } = await setup();
