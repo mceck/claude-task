@@ -1,6 +1,6 @@
 # Claude Task
 
-Self-hosted kanban board (ClickUp-style) where tasks are worked by Claude Code agents running in Docker containers. People talk to agents through task comments, and each task keeps one continuous Claude Code session until it's closed. It's for internal team use.
+Self-hosted kanban board where tasks are worked by Claude Code agents running in Docker containers. People talk to agents through task comments, and each task keeps one continuous Claude Code session until it's closed. It's for internal team use.
 
 ## Docs (read before changing behavior)
 
