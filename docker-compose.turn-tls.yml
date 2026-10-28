@@ -1,4 +1,4 @@
-# Add after docker-compose.turn.yml when enabling a certificate-backed TLS listener.
+# Add after docker-compose.yml when enabling a certificate-backed TLS listener.
 services:
   turn:
     ports:

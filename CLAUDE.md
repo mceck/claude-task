@@ -27,7 +27,7 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 - Dev: `cp .env.example backend/.env`, then `pnpm dev:backend` (:3000) and `pnpm dev:frontend` (:5173, proxies `/api`).
 - `pnpm --filter @claude-task/backend cli create-admin --email <e> [--password <p>]`: create or promote an admin.
 - `pnpm --filter @claude-task/backend db:generate --name <name>`: new migration after editing `backend/src/db/schema.ts`.
-- `docker build -t claude-task .` / `docker compose up`: the production image serves API, WebSocket and frontend.
+- `docker build -t claude-task .` / `docker compose up`: the production image serves API, WebSocket and frontend. Compose also starts the TURN relay; set `VOICE_TURN_HOST`, `VOICE_TURN_SECRET` and `VOICE_TURN_EXTERNAL_IP` explicitly.
 
 ## Invariants (don't break these)
 

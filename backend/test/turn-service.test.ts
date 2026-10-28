@@ -12,8 +12,28 @@ const secret = 'turn-service-test-secret-000000000000000000';
 const mounts = ['-v', `${root}/deploy/turn/start.sh:/etc/coturn/start.sh:ro`, '-v', `${root}/deploy/turn/turnserver.conf:/etc/coturn/base.conf:ro`];
 
 describe.runIf(process.env.TEST_TURN_DOCKER === '1')('additional TURN service', () => {
+  it('includes the relay in the main deployment and publishes TLS only with its overlay', () => {
+    const env = { ...process.env, ADMIN_PASSWORD: 'local-test-password', SECRETS_MASTER_KEY: Buffer.alloc(32, 7).toString('base64'), VOICE_TURN_HOST: 'relay.example.test', VOICE_TURN_SECRET: secret, VOICE_TURN_EXTERNAL_IP: '203.0.113.5', VOICE_TURN_PORT: '3478', VOICE_TURN_TLS_PORT: '' };
+    const config = JSON.parse(execFileSync('docker', ['compose', '-f', 'docker-compose.yml', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env }));
+    expect(Object.keys(config.services).sort()).toEqual(['app', 'db', 'turn']);
+    expect(config.services.app.depends_on.turn.condition).toBe('service_started');
+    expect(config.services.app.environment.VOICE_TURN_HOST).toBe('relay.example.test');
+    expect(config.services.turn.environment.VOICE_TURN_HOST).toBe('relay.example.test');
+    expect(config.services.app.environment.VOICE_TURN_SECRET).toBe(config.services.turn.environment.VOICE_TURN_SECRET);
+    expect(config.services.turn.ports).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target: 3478, published: '3478', protocol: 'udp' }),
+      expect.objectContaining({ target: 3478, published: '3478', protocol: 'tcp' }),
+      expect.objectContaining({ target: 30000, published: '30000', protocol: 'udp' }),
+      expect.objectContaining({ target: 30199, published: '30199', protocol: 'udp' }),
+    ]));
+    expect(config.services.turn.ports.some((port: { target: number }) => port.target === 5349)).toBe(false);
+    const tlsConfig = JSON.parse(execFileSync('docker', ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.turn-tls.yml', 'config', '--format', 'json'], { cwd: root, encoding: 'utf8', env: { ...env, VOICE_TURN_TLS_PORT: '443' } }));
+    expect(tlsConfig.services.turn.ports).toContainEqual(expect.objectContaining({ target: 5349, published: '443', protocol: 'tcp' }));
+    expect(tlsConfig.services.app.environment.VOICE_TURN_TLS_PORT).toBe('443');
+  });
+
   it('requires a hostname with no Compose or startup-script fallback', () => {
-    const compose = spawnSync('docker', ['compose', '-f', 'docker-compose.yml', '-f', 'docker-compose.turn.yml', 'config', '--quiet'], {
+    const compose = spawnSync('docker', ['compose', 'config', '--quiet'], {
       cwd: root, encoding: 'utf8', env: { ...process.env, ADMIN_PASSWORD: 'local-test-password', SECRETS_MASTER_KEY: Buffer.alloc(32, 7).toString('base64'), VOICE_TURN_HOST: '', VOICE_TURN_SECRET: secret, VOICE_TURN_EXTERNAL_IP: '203.0.113.5' },
     });
     expect(compose.status).not.toBe(0);
