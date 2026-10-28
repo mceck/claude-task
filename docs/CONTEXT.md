@@ -186,7 +186,7 @@ A User's choice to silence a Task's alerts while still following it.
 The latest Timeline entry of a Task a User has read. A Task is unread while it has newer entries.
 
 **Notification Event**:
-A completed Turn, failed Turn or failed Job that alerts the Task's followers.
+A completed Turn, failed Turn, failed Job or User mention that alerts its recipients.
 
 **Device Registration**:
 A phone's push token, tied to one Login.

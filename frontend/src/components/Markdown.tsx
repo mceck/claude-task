@@ -1,3 +1,4 @@
+import { isUserMentionPath } from '@claude-task/shared';
 import { useState } from 'react';
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -10,7 +11,7 @@ export function Markdown({ source, className }: { source: string; className?: st
     <div className={cn('markdown', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{ a: ({ node: _n, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" /> }}
+        components={{ a: ({ node: _n, ...props }) => isUserMentionPath(props.href ?? '') ? <span className="rounded bg-primary/10 px-0.5 font-medium text-primary">{props.children}</span> : <a {...props} target="_blank" rel="noreferrer noopener" /> }}
       >
         {source}
       </ReactMarkdown>

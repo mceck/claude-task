@@ -38,7 +38,7 @@ export class FirebasePushTransport implements PushTransport {
       await getMessaging(this.app).send({
         token: message.token,
         // No title, body, Project name or generated prose from a Task on the lock screen.
-        notification: { title: 'Claude Task', body: 'A Task you follow has an update.' },
+        notification: { title: 'Claude Task', body: message.kind === 'comment.mentioned' ? 'You were mentioned in a Comment.' : 'A Task you follow has an update.' },
         data: { taskId: message.taskId, eventId: message.eventId, kind: message.kind },
         android: { priority: 'high', collapseKey: taskKey, notification: { tag: taskKey } },
         apns: { headers: { 'apns-collapse-id': taskKey, 'apns-push-type': 'alert', 'apns-priority': '10' },

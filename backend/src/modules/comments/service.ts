@@ -1,3 +1,4 @@
+import { notifyMentions } from '../../notifications/mentions';
 import { autoFollow } from '../../notifications/preferences';
 import { API_PREFIX, projectTopic, taskTopic } from '@claude-task/shared';
 import type { Actor, Attachment, Comment, Question, QuestionItem, QuestionKind, Survey, TimelineItem, TimelinePage } from '@claude-task/shared';
@@ -170,7 +171,10 @@ export async function createUserComment(
   if (input.attachments.length > 0) {
     await tx.insert(attachments).values(input.attachments.map((a, position) => ({ ...a, position, commentId: row!.id })));
   }
-  if (author.type === 'user' && author.id) await autoFollow(tx, after, task.id, [author.id]);
+  if (author.type === 'user' && author.id) {
+    await autoFollow(tx, after, task.id, [author.id]);
+    await notifyMentions(tx, task.id, row!.id, input.body, author.id);
+  }
   await deliverComment(tx, after, task, row!);
   const comment = await loadComment(tx, row!.id);
   after.emit(taskTopic(task.id), { type: 'comment.created', comment });

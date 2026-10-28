@@ -18,6 +18,7 @@ import 'ui/theme.dart';
 import 'ui/widgets.dart';
 import 'ui/user_avatar.dart';
 import 'ui/skill_suggestions.dart';
+import 'ui/mention_suggestions.dart';
 
 /// Within this distance of the bottom, the Timeline follows new content.
 const _followSlack = 80.0;
@@ -2171,6 +2172,7 @@ class _ComposerState extends State<Composer> {
   final _focus = FocusNode();
   final _link = LayerLink();
   final _suggestions = OverlayPortalController();
+  final _mentions = GlobalKey<MentionSuggestionsState>();
   @override
   void initState() {
     super.initState();
@@ -2213,6 +2215,9 @@ class _ComposerState extends State<Composer> {
   }
 
   KeyEventResult _handleComposerKey(FocusNode node, KeyEvent event) {
+    if (_mentions.currentState?.handleKey(event) == true) {
+      return KeyEventResult.handled;
+    }
     if (event.logicalKey != LogicalKeyboardKey.enter &&
         event.logicalKey != LogicalKeyboardKey.numpadEnter) {
       return KeyEventResult.ignored;
@@ -2381,9 +2386,8 @@ class _ComposerState extends State<Composer> {
                   // Desktop's compact density would trim the field's padding
                   // and lift the text off the buttons' center line.
                   child: Theme(
-                    data: Theme.of(
-                      context,
-                    ).copyWith(visualDensity: VisualDensity.standard),
+                    data: Theme.of(context)
+                        .copyWith(visualDensity: VisualDensity.standard),
                     child: Focus(
                       onKeyEvent: _handleComposerKey,
                       child: TextField(
@@ -2521,14 +2525,24 @@ class _ComposerState extends State<Composer> {
                       showWhenUnlinked: false,
                       targetAnchor: Alignment.topLeft,
                       followerAnchor: Alignment.bottomLeft,
-                      child: internal
-                          ? const SizedBox.shrink()
-                          : SkillSuggestions(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          MentionSuggestions(
+                            key: _mentions,
+                            text: _text,
+                            users: c.users,
+                            onSelected: (value) =>
+                                c.setDraft(c.draft.copyWith(text: value)),
+                          ),
+                          if (!internal)
+                            SkillSuggestions(
                               text: _text,
                               skills: c.session?['commands'] is List
-                                  ? objects(
-                                      c.session?['commands'],
-                                    ).map(SkillCommand.fromJson).toList()
+                                  ? objects(c.session?['commands'])
+                                        .map(SkillCommand.fromJson)
+                                        .toList()
                                   : c.agents
                                             .where(
                                               (a) => a.id == c.task?.agentId,
@@ -2539,6 +2553,8 @@ class _ComposerState extends State<Composer> {
                               onSelected: (value) =>
                                   c.setDraft(c.draft.copyWith(text: value)),
                             ),
+                        ],
+                      ),
                     ),
                   ),
                   // Always wrapped, only its color changes: swapping the parent

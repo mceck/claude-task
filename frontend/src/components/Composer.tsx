@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
 import { putTimelineItem } from '../lib/cache';
 import { commentDrafts } from '../lib/drafts';
-import { useAgent } from '../api/queries';
+import { useAgent, useUsers } from '../api/queries';
 import { ErrorText, Kbd } from './common';
 import type { CommandToken, CommentEditorHandle } from './RichMarkdownEditor';
 
@@ -50,6 +50,8 @@ export function Composer({
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
+  const users = useUsers();
+  const [mention, setMention] = useState<{ query: string } | null>(null);
   const agent = useAgent(agentId ?? undefined);
   const editor = useRef<CommentEditorHandle>(null);
   const listId = useId();
@@ -57,13 +59,17 @@ export function Composer({
   const [active, setActive] = useState(0);
   // Escape hides the suggestions for this token only; typing on shows them again.
   const [dismissed, setDismissed] = useState<string | null>(null);
-  const tokenKey = token && `${token.query}|${token.atStart}|${body}`;
+  const tokenKey = mention ? `@${mention.query}|${body}` : token && `${token.query}|${token.atStart}|${body}`;
   const available = commands ?? (agentId ? chatCommands(null, agent.data?.skillCommands ?? []) : []);
   const suggestions =
-    token && !internal && dismissed !== tokenKey
+    token && !mention && !internal && dismissed !== tokenKey
       ? available.filter((s) => s.name.toLowerCase().startsWith(token.query) && (token.atStart || s.kind === 'skill'))
       : [];
-  const selected = Math.min(active, suggestions.length - 1);
+  const people = mention && dismissed !== tokenKey
+    ? (users.data ?? []).filter((u) => u.active && `${u.displayName} ${u.email}`.toLowerCase().includes(mention.query))
+    : [];
+  const count = mention ? people.length : suggestions.length;
+  const selected = Math.min(active, count - 1);
   useEffect(() => {
     document.getElementById(`${listId}-${selected}`)?.scrollIntoView({ block: 'nearest' });
   }, [listId, selected]);
@@ -72,10 +78,14 @@ export function Composer({
     setActive(0);
   };
   const onCommandKey = (key: 'ArrowUp' | 'ArrowDown' | 'Enter' | 'Tab' | 'Escape') => {
-    if (suggestions.length === 0) return false;
-    if (key === 'ArrowDown' || key === 'ArrowUp') setActive((selected + (key === 'ArrowDown' ? 1 : -1) + suggestions.length) % suggestions.length);
+    if (count === 0) return false;
+    if (key === 'ArrowDown' || key === 'ArrowUp') setActive((selected + (key === 'ArrowDown' ? 1 : -1) + count) % count);
     else if (key === 'Escape') setDismissed(tokenKey);
-    else chooseSkill(suggestions[selected]!.name);
+    else if (mention) {
+      const user = people[selected]!;
+      editor.current?.chooseMention(user.id, user.displayName);
+      setActive(0);
+    } else chooseSkill(suggestions[selected]!.name);
     return true;
   };
 
@@ -148,7 +158,7 @@ export function Composer({
   const placeholder = internal ? 'Write an internal chat…' : 'Leave a comment…';
 
   return (
-    <Popover open={suggestions.length > 0}>
+    <Popover open={count > 0}>
       <PopoverAnchor asChild>
         <div
           data-internal={internal}
@@ -185,9 +195,13 @@ export function Composer({
                 if (next?.query !== token?.query || next?.atStart !== token?.atStart) setActive(0);
                 setToken(next);
               }}
+              onMentionToken={(next) => {
+                if (next?.query !== mention?.query) setActive(0);
+                setMention(next);
+              }}
               onCommandKey={onCommandKey}
-              ariaControls={suggestions.length ? listId : undefined}
-              ariaActiveDescendant={suggestions.length ? `${listId}-${selected}` : undefined}
+              ariaControls={count ? listId : undefined}
+              ariaActiveDescendant={count ? `${listId}-${selected}` : undefined}
             />
           </Suspense>
           {files.length > 0 && (
@@ -263,7 +277,24 @@ export function Composer({
         onInteractOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
-        <ul id={listId} role="listbox" aria-label="Chat commands" className="max-h-60 overflow-auto">
+        <ul id={listId} role="listbox" aria-label={mention ? "Mention people" : "Chat commands"} className="max-h-60 overflow-auto">
+          {people.map((user, i) => (
+            <li key={user.id}>
+              <button
+                id={`${listId}-${i}`}
+                type="button"
+                role="option"
+                aria-selected={i === selected}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => { editor.current?.chooseMention(user.id, user.displayName); setActive(0); }}
+                className={cn('w-full rounded-md px-3 py-2 text-left text-sm', i === selected && 'bg-accent')}
+              >
+                <span className="font-medium">@{user.displayName}</span>
+                <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
+              </button>
+            </li>
+          ))}
           {suggestions.map((skill, i) => (
             <li key={skill.name}>
               <button

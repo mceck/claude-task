@@ -53,6 +53,14 @@ Internal Notes stay among Users everywhere the Agent could see them:
 
 Internal Notes look distinct on every client: a dashed, slate-coloured box with a lock and an "Internal chat" label. While the composer is in internal mode it takes the same styling, shows "Internal chat: only people see this, never the agent", and hides the slash-command suggestions. Posting an Internal Note counts as participation for following.
 
+### Mentioning Users
+
+In both clients, typing `@` at the start of text or after whitespace opens a suggestion overlay above the composer. Suggestions contain active Users, matched by display name or email, and remain available in Internal Notes. Users choose a suggestion by pointer, touch, or Up and Down followed by Enter or Tab. Escape dismisses the current suggestions; typing again reopens them. Shift+Enter inserts a newline. An `@` inside an email address stays ordinary text.
+
+Choosing a User inserts a Markdown link labelled with `@` and their display name, targeting the User's stable identifier. The web composer displays the label while editing; the native plain Markdown composer keeps the link syntax in the Draft. The posted Comment displays the mention as highlighted text. Users with the same display name are distinguished by their email in the suggestions. Renaming a User preserves the recipient identity and the original label in existing Comments.
+
+Posting a User Comment or Internal Note with selected mentions plans a `comment.mentioned` notification for each mentioned active User other than the author. Each recipient receives at most one alert per phone for that Comment, including when mentioned several times. Receipt is independent of following, including an explicit unfollow, and respects mute. The remaining device and Login eligibility rules below apply. Text mentions, email addresses, code, images and escaped Markdown links stay ordinary content. Saving an edit preserves the notification history; another alert requires a new Comment. Agent and System Comments follow their existing lifecycle notification rules.
+
 ### Editing a Comment
 
 Editing applies to User Comments, and only their author can edit them; Admins edit their own Comments like everyone else. The new body must contain non-blank text and is at most 100,000 characters. Saving an unchanged body changes nothing; any other edit sets the "edited" time, which clients show next to the Comment, and is broadcast live. Editing a deleted Comment answers `404`.
@@ -216,25 +224,28 @@ The Flutter app advances the read position when the conversation is visible, the
 
 ### Notifications
 
-Notifications are phone alerts sent to the Users who follow a Task. A Notification Event is recorded in the same transaction as the fact it reports:
+Notifications are phone alerts sent to Task followers for Agent outcomes and to mentioned Users for new User Comments. A Notification Event is recorded in the same transaction as the fact it reports:
 
 | Event | When |
 | --- | --- |
 | Turn completed | A Turn of the Task's Agent ends successfully. |
 | Turn failed | A Turn ends with an error. |
 | Needs intervention | A Job fails (for example at Worktree, setup or start) without a failed Turn already reporting it. |
+| User mentioned | A User posts a Comment or Internal Note containing a selected User mention. |
 
-Each event is identified by the Turn or the Job it reports, so the same fact is recorded once. Streaming fragments, individual Agent Comments, and the wording of the Agent's text never produce a notification.
+Each event is identified by the Turn, Job or Comment it reports, so the same fact is recorded once. Streaming fragments, individual Agent Comments, and the wording of the Agent's text never produce a notification.
 
-The recipients of an event are the Users who, at that moment, follow the Task, have not muted it, are active, have no pending forced password change, and have a registered phone whose Login is still valid. One delivery is planned per recipient and phone. Just before sending, every condition is checked again (a User who unfollowed, muted, was deactivated or whose Login expired in between receives nothing), and events older than 24 hours are dropped.
+The recipients of an Agent outcome are the Users who, at that moment, follow the Task, have not muted it, are active, have no pending forced password change, and have a registered phone whose Login is still valid. One delivery is planned per recipient and phone. Just before sending, every condition is checked again (a User who unfollowed, muted, was deactivated or whose Login expired in between receives nothing), and events older than 24 hours are dropped.
 
-The alert shows a fixed text, "A Task you follow has an update.", with no Task title, Project or generated text, and carries the Task's id so the app opens its conversation after sign-in; for a Wiki's backing Task the app opens the Wiki. Alerts for the same Task collapse into one on the phone. Device registration, the push provider, retries and the unconfigured state are described in [Clients](clients.md).
+Mention recipients are determined from the stored User Comment in its posting transaction. Before dispatch, eligibility is checked again and only Comments still present on the Timeline qualify. Muting between posting and dispatch suppresses the alert. Mentioned Users keep their existing following preference.
+
+The alert shows a fixed text, "You were mentioned in a Comment." for mentions and "A Task you follow has an update." for Agent outcomes, with no Task title, Project or generated text, and carries the Task's id so the app opens its conversation after sign-in; for a Wiki's backing Task the app opens the Wiki. Alerts for the same Task collapse into one on the phone. Device registration, the push provider, retries and the unconfigured state are described in [Clients](clients.md).
 
 ## Architecture
 
 - The **Comments module** owns Comments and Attachments: posting, editing, soft deletion, uploads and downloads, and the merged Timeline read. It hands every new non-internal User Comment to the Session lifecycle, which decides between delivering it to the running Job and queueing it (see [Agent sessions](agent-sessions.md)), and it publishes Comment events on the Task's real-time topic after the transaction commits.
 - The **Blob store** keeps the bytes of every Attachment behind a small interface: store a stream with its name and type and get an id and size back, read it by id, delete it. The implementation writes each blob as a file plus a metadata sidecar in the backend's data directory. Database records point to blob ids; blobs are deleted only after the transaction that removed their records commits, and blobs stored for a request that fails are removed straight away.
-- The **Notifications module** owns Task Preferences, read positions and phone registrations. The Timeline position of each entry and the Notification Events are written by the database itself when the underlying row is inserted, so they share the transaction of the Comment, Revision, Agent item, Turn or Job change that caused them.
+- The **Notifications module** owns Task Preferences, read positions and phone registrations. The database assigns Timeline positions and records Agent outcome Notification Events. The Comments module records mention events and their planned recipients in the same transaction as the new Comment.
 - The **push dispatcher** reads planned deliveries from the database and sends them through the push transport (see [Clients](clients.md)).
 - **Real-time:** Comment created, updated and deleted events go to the Task topic; answering a Question and answering or closing a Survey publish the updated Comment, with its structured part, as an update event; the refreshed card goes to the Project topic; preference changes go to the User's private topic. Transport and reconnection are described in [Clients](clients.md).
 
@@ -268,7 +279,7 @@ sequenceDiagram
 - **Blob**: the stored bytes, identified by a random UUID, with file name, content type and size in a sidecar.
 - **Task Preference**: User and Task, following, muted, whether following was set explicitly, read position.
 - **Timeline position**: Task, entry id, position; one per persisted Timeline entry.
-- **Notification Event**: id derived from the Turn or Job it reports, Task, kind (`turn.completed`, `turn.failed`, `session.intervention`), created at.
+- **Notification Event**: id derived from the Turn, Job or Comment it reports, Task, kind (`turn.completed`, `turn.failed`, `session.intervention`, `comment.mentioned`), created at.
 - **Push delivery**: event, User, phone, attempts, next attempt time, finished time. Unique per event, User and phone.
 
 ## Non-functional requirements
@@ -300,7 +311,9 @@ sequenceDiagram
 - **Survey Expected Respondents are fixed at creation.** A moving target would make "everyone answered" unpredictable; Send now covers anyone missing.
 - **Survey results reach the Agent as a System Comment with a notice, like Notify agent.** One Message with the whole picture, delivered through the normal Queue, and a Timeline entry that says why the Agent resumed.
 - **Question and Survey bodies carry a Markdown version of the items.** Older clients and later Agents read them without knowing the structure.
-- **Notification Events are written by the database in the same transaction as the Turn or Job change.** An event exists exactly when its cause is committed, with no window where one is lost or invented. Events come from the Turn and Job lifecycle, never from reading the Agent's prose, so "intervention" means a Job that failed, which is reliable.
+- **Mention identity travels in Markdown links to stable User identifiers.** Both clients preserve mentions in Drafts and Comments with the existing Markdown contract, while names can change and duplicate names remain distinguishable. The backend parses Markdown to distinguish links from code, images and escaped text.
+- **Mention alerts use the durable notification outbox and respect mute independently of following.** A direct mention can reach a User who has yet to participate while preserving their existing Task preferences. A Comment creates at most one event, and edits keep its notification history.
+- **Agent outcome Notification Events are written by the database in the same transaction as the Turn or Job change.** An event exists exactly when its cause is committed, with no window where one is lost or invented. Events come from the Turn and Job lifecycle, never from reading the Agent's prose, so "intervention" means a Job that failed, which is reliable.
 - **Unread comes from server-assigned positions, not timestamps.** Timestamps can tie and device clocks drift; a commit-ordered position per Task makes "read up to here" exact.
 
 ## Related specs

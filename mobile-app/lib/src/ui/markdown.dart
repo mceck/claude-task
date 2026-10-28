@@ -63,6 +63,9 @@ class Md extends StatelessWidget {
   });
 
   void _open(String? href, String label) {
+    if (href != null && RegExp(r'^/users/[0-9a-fA-F-]{36}$').hasMatch(href)) {
+      return;
+    }
     if (href != null &&
         onAttachment != null &&
         RegExp(r'^/api/v1/attachments/[^/?#]+$').hasMatch(href)) {

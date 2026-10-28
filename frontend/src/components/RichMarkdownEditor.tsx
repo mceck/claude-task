@@ -1,4 +1,5 @@
-import { ATTACHMENT_MAX_BYTES, skillToken } from '@claude-task/shared';
+import { ATTACHMENT_MAX_BYTES, skillToken, mentionToken, userMentionPath } from '@claude-task/shared';
+import { $createLinkNode, $isLinkNode } from '@lexical/link';
 import type { Attachment } from '@claude-task/shared';
 import {
   $createCodeBlockNode,
@@ -40,6 +41,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { EditorView } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import {
+  $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
@@ -484,10 +486,12 @@ export interface CommentEditorHandle {
   focus(): void;
   /** Replaces the `/command` being typed with the chosen one. */
   chooseCommand(name: string): void;
+  chooseMention(id: string, displayName: string): void;
 }
 
 type ChatKey = 'ArrowUp' | 'ArrowDown' | 'Enter' | 'Tab' | 'Escape';
 interface ChatHooks {
+  onMentionToken?: (token: { query: string } | null) => void;
   onSubmit?: () => void;
   onCommandToken?: (token: CommandToken | null) => void;
   /** Keys for an open suggestion list; returns whether it used the key. */
@@ -505,6 +509,17 @@ function $commandAtCaret(): { node: TextNode; offset: number; start: number; que
   return token && { node, offset, ...token };
 }
 
+/** Ignore code and existing links while completing a User mention. */
+function $mentionAtCaret() {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
+  const node = selection.anchor.getNode();
+  if (!$isTextNode(node) || node.hasFormat('code') || $isLinkNode(node.getParent())) return null;
+  const offset = selection.anchor.offset;
+  const token = mentionToken(node.getTextContent(), offset);
+  return token && { node, offset, ...token };
+}
+
 /** Chat keys on the Lexical editor itself, so they run before its own handling (new paragraphs, list items…). */
 const chatPlugin = realmPlugin<{ hooks: { current: ChatHooks }; editor: { current: LexicalEditor | null } }>({
   init(realm, params) {
@@ -516,7 +531,7 @@ const chatPlugin = realmPlugin<{ hooks: { current: ChatHooks }; editor: { curren
           command,
           (event) => {
             if (event?.isComposing) return false;
-            if (hooks.current.onCommandKey?.(name)) {
+            if (!(name === 'Enter' && event?.shiftKey) && hooks.current.onCommandKey?.(name)) {
               event?.preventDefault();
               return true;
             }
@@ -538,6 +553,8 @@ const chatPlugin = realmPlugin<{ hooks: { current: ChatHooks }; editor: { curren
         key('Escape', KEY_ESCAPE_COMMAND),
         theEditor.registerUpdateListener(({ editorState }) =>
           editorState.read(() => {
+            const mention = $mentionAtCaret();
+            hooks.current.onMentionToken?.(mention ? { query: mention.query } : null);
             const command = $commandAtCaret();
             const first = $getRoot().getFirstChild();
             hooks.current.onCommandToken?.(
@@ -567,6 +584,7 @@ export function CommentEditor({
   onChange,
   onSubmit,
   onCommandToken,
+  onMentionToken,
   onCommandKey,
   handle,
   autoFocus,
@@ -591,7 +609,7 @@ export function CommentEditor({
   const root = useRef<HTMLDivElement>(null);
   const editor = useRef<MDXEditorMethods>(null);
   const hooks = useRef<ChatHooks>({});
-  hooks.current = { onSubmit, onCommandToken, onCommandKey };
+  hooks.current = { onSubmit, onCommandToken, onMentionToken, onCommandKey };
   const lexical = useRef<LexicalEditor | null>(null);
   // The plugin list is built once: MDXEditor initializes plugins on mount only.
   const [plugins] = useState(() => [
@@ -622,7 +640,43 @@ export function CommentEditor({
       // Someone typing goes on at the end of the text.
       if (typing) lexical.current?.update(() => $getRoot().selectEnd());
     },
-    focus: () => editor.current?.focus(undefined, { defaultSelection: 'rootEnd' }),
+    focus: () => {
+      if (failed) root.current?.querySelector('textarea')?.focus();
+      else editor.current?.focus(undefined, { defaultSelection: 'rootEnd' });
+    },
+    chooseMention: (id, displayName) => {
+      if (failed) {
+        const textarea = root.current?.querySelector('textarea');
+        if (!textarea) return;
+        const token = mentionToken(textarea.value, textarea.selectionStart);
+        if (!token) return;
+        const label = displayName.replace(/[\\[\]]/g, '\\$&');
+        const replacement = `[@${label}](${userMentionPath(id)}) `;
+        const caret = textarea.selectionStart;
+        const rest = /^[^\s@\[\]()]*/.exec(textarea.value.slice(caret))![0].length;
+        const next = textarea.value.slice(0, token.start) + replacement + textarea.value.slice(caret + rest);
+        setFallbackValue(next);
+        onChange(next);
+        onMentionToken?.(null);
+        requestAnimationFrame(() => {
+          textarea.focus();
+          textarea.setSelectionRange(token.start + replacement.length, token.start + replacement.length);
+        });
+        return;
+      }
+      lexical.current?.update(() => {
+        const mention = $mentionAtCaret();
+        if (!mention) return;
+        const rest = /^[^\s@\[\]()]*/.exec(mention.node.getTextContent().slice(mention.offset))![0].length;
+        const selection = mention.node.select(mention.start, mention.offset + rest);
+        const link = $createLinkNode(userMentionPath(id));
+        link.append($createTextNode(`@${displayName}`));
+        const space = $createTextNode(' ');
+        selection.insertNodes([link, space]);
+        space.selectEnd();
+      });
+      lexical.current?.focus();
+    },
     chooseCommand: (name) => {
       lexical.current?.update(() => {
         const command = $commandAtCaret();
@@ -636,20 +690,30 @@ export function CommentEditor({
 
   if (failed) {
     return (
-      <MarkdownEditor
-        label={label}
-        rows={compact ? 1 : 3}
-        value={fallbackValue}
-        onChange={(md) => (setFallbackValue(md), onChange(md))}
-        placeholder={placeholder}
-        autoFocus={autoFocus}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey && onSubmit) {
-            e.preventDefault();
-            onSubmit();
-          }
-        }}
-      />
+      <div ref={root}>
+        <MarkdownEditor
+          label={label}
+          rows={compact ? 1 : 3}
+          value={fallbackValue}
+          onChange={(md) => (setFallbackValue(md), onChange(md))}
+          placeholder={placeholder}
+          autoFocus={autoFocus}
+          onCaretChange={(caret) => onMentionToken?.(mentionToken(root.current?.querySelector('textarea')?.value ?? '', caret))}
+          onSelect={(e) => onMentionToken?.(e.currentTarget.selectionStart === e.currentTarget.selectionEnd ? mentionToken(e.currentTarget.value, e.currentTarget.selectionStart) : null)}
+          ariaControls={ariaControls}
+          ariaActiveDescendant={ariaActiveDescendant}
+          onKeyDown={(e) => {
+            if (!e.nativeEvent.isComposing && !e.shiftKey && ['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key) && onCommandKey?.(e.key as ChatKey)) {
+              e.preventDefault();
+              return;
+            }
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey && onSubmit) {
+              e.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+      </div>
     );
   }
   return (

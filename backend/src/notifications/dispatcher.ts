@@ -61,7 +61,10 @@ export class PushDispatcher {
       for (let i = 0; i < SEND_CONCURRENCY; i++) {
         const d = await this.ctx.db.transaction(async (tx) => {
           const rows = await tx.execute<Delivery>(sql`select d.event_id, d.user_id, d.device_id, d.attempts, d.token_hash, e.task_id, e.kind, v.token_ciphertext,
-            (p.following and not p.muted and u.active and not u.must_change_password
+            ((case when e.kind = 'comment.mentioned' then not coalesce(p.muted, false)
+                else p.following and not p.muted end) and u.active and not u.must_change_password
+              and (e.kind <> 'comment.mentioned' or exists (select 1 from comments c
+                where c.id::text = substring(e.id from 9) and c.deleted_at is null))
               and l.expires_at > now() and v.user_id = d.user_id and v.token_hash = d.token_hash
               and e.created_at > now() - interval '24 hours') as valid
             from push_deliveries d join notification_events e on e.id = d.event_id

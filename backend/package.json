@@ -27,6 +27,7 @@
     "fastify": "^5.12.7",
     "firebase-admin": "^14.5.0",
     "fractional-indexing": "^4.0.0",
+    "mdast-util-from-markdown": "^2.1.0",
     "pg": "^8.23.1",
     "skills": "1.7.4",
     "tar-stream": "^3.2.2",

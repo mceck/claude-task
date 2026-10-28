@@ -166,3 +166,86 @@ describe('durable phone notifications', () => {
     expect((await app.server.ctx.db.execute(sql`select * from push_devices`)).rows).toHaveLength(0);
   });
 });
+
+describe('User mentions', () => {
+  it('alerts the mentioned User once per device, including Internal Notes and explicit unfollow', async () => {
+    const { admin, task, member } = await setup();
+    await register(admin, 'author-phone-token-123456');
+    await register(member.client, 'mentioned-phone-token-123456');
+    await register(member.client, 'second-mentioned-phone');
+    const other = await createUser(app, admin);
+    await register(other.client, 'unmentioned-phone-token-123456');
+    await member.client.patch(`/tasks/${task.id}/preferences`, { following: false });
+    const me = (await admin.get('/auth/me')).body.user;
+    const mention = `[@${member.user.displayName}](/users/${member.user.id})`;
+    const body = `${mention} please review ${mention} [@Me](/users/${me.id})`;
+    const posted = await comment(admin, task.id, body, true);
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages.map(m => m.token).sort()).toEqual(['mentioned-phone-token-123456', 'second-mentioned-phone']);
+    expect(push.messages.every(m => m.kind === 'comment.mentioned' && m.taskId === task.id && m.eventId === `mention:${posted.id}`)).toBe(true);
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toHaveLength(2);
+    expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.following).toBe(false);
+    await admin.patch(`/comments/${posted.id}`, { body: `${body} edited [@Other](/users/${other.user.id})` });
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toHaveLength(2);
+  });
+
+  it('keeps ordinary @ text, emails, code, escaped links and images inert', async () => {
+    const { admin, task, member } = await setup();
+    await register(member.client);
+    const link = `[@${member.user.displayName}](/users/${member.user.id})`;
+    await comment(admin, task.id, `@${member.user.displayName} ${member.user.email}\n\n\`${link}\`\n\n\`\`\`md\n${link}\n\`\`\`\n\n!${link}\n\n\\${link}`);
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toEqual([]);
+  });
+
+  it('respects mute, deactivation and deletion both at send and before dispatch', async () => {
+    const { admin, task, member } = await setup();
+    await register(member.client);
+    const body = `[@User](/users/${member.user.id})`;
+    await member.client.patch(`/tasks/${task.id}/preferences`, { muted: true });
+    await comment(admin, task.id, body);
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toEqual([]);
+    await member.client.patch(`/tasks/${task.id}/preferences`, { muted: false });
+    await comment(admin, task.id, body);
+    await member.client.patch(`/tasks/${task.id}/preferences`, { muted: true });
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toEqual([]);
+    await member.client.patch(`/tasks/${task.id}/preferences`, { muted: false });
+    const removed = await comment(admin, task.id, body);
+    await admin.delete(`/comments/${removed.id}`);
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toEqual([]);
+    await comment(admin, task.id, body);
+    await admin.patch(`/users/${member.user.id}`, { active: false });
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toEqual([]);
+    await comment(admin, task.id, `${body} [@Missing](/users/${randomUUID()})`);
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toEqual([]);
+  });
+
+  it('alerts for multipart Comments and ignores Agent output', async () => {
+    const { admin, task, member } = await setup();
+    await register(member.client);
+    const body = `[@User](/users/${member.user.id})`;
+    const { agent, runner } = await createAgent(app, admin);
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text(body), stream.result()]);
+    await app.settle();
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toEqual([]);
+    const form = new FormData();
+    form.set('body', body);
+    form.set('internal', 'true');
+    form.append('files', new Blob(['review']), 'review.txt');
+    const response = await fetch(`${app.url}/api/v1/tasks/${task.id}/comments`, { method: 'POST', headers: { cookie: admin.cookie!, 'x-claude-task': '1' }, body: form });
+    expect(response.status).toBe(201);
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toHaveLength(1);
+    expect(push.messages[0]!.kind).toBe('comment.mentioned');
+  });
+});
