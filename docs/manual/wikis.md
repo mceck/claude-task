@@ -29,6 +29,8 @@ The Conversation is shared with everyone using the Wiki. The Agent reads and cha
 
 Use **Stop** to interrupt a running Turn. If starting work failed, fix the reported problem and use **Retry**. See [Agent sessions and queues](agent-sessions-and-queues.md).
 
+If a Wiki has not been used for a while (30 minutes by default), its Agent's container stops to free resources. Your next Comment starts it again, and the first reply takes a little longer. See [Agents and credentials](admin-agents.md#containers-and-work).
+
 ## Change the Wiki's settings
 
 1. Open **Wiki settings**, the gear button in the header.

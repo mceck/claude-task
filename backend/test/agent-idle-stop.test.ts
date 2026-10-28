@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import type { TestApp } from './helpers/app';
@@ -103,6 +104,42 @@ describe('Restart and Recreate on an Agent without work', () => {
     expect((await admin.post(`/agents/${agent.id}/recreate`, {})).status).toBe(200);
     expect(await state(app, agent.id)).toBe('missing');
     await work();
+    expect(await state(app, agent.id)).toBe('running');
+  });
+});
+
+describe('Wiki Sessions', () => {
+  const app = useTestApp({ agents: { stopWhenUnused: true } });
+
+  it('keep the container up for a while after their last Job, then let it stop', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { connect: false });
+    const created = await admin.post('/wikis', {
+      name: 'Team wiki',
+      description: 'Shared knowledge',
+      agentId: agent.id,
+      repository: { connectionId: 'env-github', providerRepoId: '1' },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const taskId = created.body.wiki.taskId as string;
+    await comment(admin, taskId, 'Read the wiki.');
+    await app.settle();
+    const runner = await FakeRunner.connect(app, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text('Done.'), stream.result()]);
+    await app.settle();
+
+    // The Session stays idle, but a recent Job keeps the container up.
+    await app.server.ctx.scheduler.reconcileAll();
+    expect(await state(app, agent.id)).toBe('running');
+
+    await app.server.ctx.db.execute(sql`update jobs set finished_at = now() - interval '2 hours'`);
+    await app.server.ctx.scheduler.reconcileAll();
+    expect(await state(app, agent.id)).toBe('exited');
+
+    // A new Comment starts it again.
+    await comment(admin, taskId, 'One more question.');
+    await app.settle();
     expect(await state(app, agent.id)).toBe('running');
   });
 });

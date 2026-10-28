@@ -121,7 +121,7 @@ export class Scheduler {
     if (this.stopping || !this.ctx.config.agents.stopWhenUnused) return;
     const { state } = await this.ctx.runtime.inspect(agentId);
     if (isUp(state)) return;
-    if (await agentNeedsContainer(this.ctx.db, agentId)) await this.reconcile(agentId);
+    if (await agentNeedsContainer(this.ctx.db, agentId, this.ctx.config.agents.wikiIdleStopMs)) await this.reconcile(agentId);
   }
 
   /** A Session changed: the Agent may have gained work (wake it) or lost its last (stop it). */
@@ -259,7 +259,7 @@ export class Scheduler {
 
     const desired = desiredContainerSpec(agent);
     let info = await runtime.inspect(agentId);
-    const unused = this.ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(db, agentId));
+    const unused = this.ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(db, agentId, this.ctx.config.agents.wikiIdleStopMs));
     if (desired && unused) {
       // Recreation and restarts wait for the next wake-up; a missing container is not created.
       if (isUp(info.state)) info = await this.sleep(agentId, info);
@@ -318,7 +318,7 @@ export class Scheduler {
     // first closes the window between the check and Docker's stop.
     const stopping = await this.ctx.db.transaction(async (tx) => {
       await getAgentRow(tx, agentId, { lock: true });
-      if (await agentNeedsContainer(tx, agentId)) return false;
+      if (await agentNeedsContainer(tx, agentId, this.ctx.config.agents.wikiIdleStopMs)) return false;
       await tx.update(agents).set({ containerState: 'exited' }).where(eq(agents.id, agentId));
       return true;
     });

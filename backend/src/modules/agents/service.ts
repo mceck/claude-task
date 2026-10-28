@@ -1,6 +1,6 @@
 import { AGENTS_TOPIC, agentTopic, API_PREFIX, taskKey } from '@claude-task/shared';
 import type { Agent, AgentRef, AgentState, AgentBuild, Job, QueueEntryKind, TaskRef } from '@claude-task/shared';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
 import { agentBuilds, agentMcpServers, agentPlugins, agents, agentSkills, credentials, jobs, projects, queueEntries, sessions, skills, tasks, turns } from '../../db/schema';
@@ -14,14 +14,28 @@ export const ACTIVE_JOB_STATES = ['dispatched', 'running', 'finishing'] as const
 /**
  * Whether the Agent has work its container must be running for: an active Job, a Queue Entry, or
  * a Session that can still receive Comments (`idle` or `running`). A `pending` Session waits for its
- * first Comment, which queues an entry, and a `closed` or `paused` one takes no Comments.
+ * first Comment, which queues an entry, and a `closed` or `paused` one takes no Comments. A Wiki's
+ * Session never closes, so it counts only for `wikiIdleMs` after its last Job ended.
  */
-export async function agentNeedsContainer(db: Executor, agentId: string): Promise<boolean> {
+export async function agentNeedsContainer(db: Executor, agentId: string, wikiIdleMs: number): Promise<boolean> {
   const [job] = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES]))).limit(1);
   if (job) return true;
   const [entry] = await db.select({ id: queueEntries.id }).from(queueEntries).where(eq(queueEntries.agentId, agentId)).limit(1);
   if (entry) return true;
-  const [session] = await db.select({ id: sessions.id }).from(sessions).where(and(eq(sessions.agentId, agentId), inArray(sessions.state, ['idle', 'running']))).limit(1);
+  const lastUse = sql`coalesce((select max(${jobs.finishedAt}) from ${jobs} where ${jobs.sessionId} = ${sessions.id}), ${sessions.lastJobAt}, ${sessions.createdAt})`;
+  const [session] = await db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .innerJoin(tasks, eq(tasks.id, sessions.taskId))
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .where(
+      and(
+        eq(sessions.agentId, agentId),
+        inArray(sessions.state, ['idle', 'running']),
+        or(ne(projects.kind, 'wiki'), sql`${lastUse} > now() - ${wikiIdleMs} * interval '1 millisecond'`),
+      ),
+    )
+    .limit(1);
   return !!session;
 }
 

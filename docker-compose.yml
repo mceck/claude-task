@@ -69,6 +69,7 @@ services:
       AGENT_NETWORK: claude-task-agents
       AGENT_STOP_ON_SHUTDOWN: ${AGENT_STOP_ON_SHUTDOWN:-true}
       AGENT_STOP_WHEN_UNUSED: ${AGENT_STOP_WHEN_UNUSED:-true}
+      AGENT_WIKI_IDLE_MINUTES: ${AGENT_WIKI_IDLE_MINUTES:-30}
     stop_grace_period: 30s
     group_add:
       - ${DOCKER_GID:-0}

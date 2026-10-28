@@ -222,7 +222,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/agents/:id/restart', admin, async (request) => {
     const { id } = parse(params, request.params);
     await getAgentRow(ctx.db, id);
-    if (ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(ctx.db, id))) {
+    if (ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(ctx.db, id, ctx.config.agents.wikiIdleStopMs))) {
       throw conflict('The agent has no work; its container starts when work arrives');
     }
     await ctx.runtime.restartContainer(id).catch((err) => {

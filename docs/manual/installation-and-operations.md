@@ -41,6 +41,7 @@ These are backend environment settings. The supplied Compose file exposes a subs
 | `AGENT_BACKEND_URL` | Backend URL reachable from Agent Containers; host-mode default `http://host.docker.internal:3000`, Compose `http://app:3000`. |
 | `AGENT_NETWORK` | Agent Docker network; empty uses Docker's default bridge. |
 | `AGENT_STOP_WHEN_UNUSED` | Stop an Agent's container while the Agent has no work, and start it again when work arrives. Defaults to `true`; set `false` to keep every Agent's container running. See [Agents and credentials](admin-agents.md). |
+| `AGENT_WIKI_IDLE_MINUTES` | Minutes after the last Job that a Wiki keeps its Agent's container running. Default `30`. |
 | `AGENT_STOP_ON_SHUTDOWN` | Stop this installation's Agent Containers on graceful backend shutdown. Defaults to `true` in local development and `false` with `NODE_ENV=production`; the supplied Compose stack explicitly defaults to `true`. Set `false` to keep Agents running through backend restarts. |
 | `CLAUDE_CODE_VERSION` | Pinned Claude Code version used in Agent Images; current default `2.1.310`. |
 | `AGENT_COMMIT_EMAIL_DOMAIN` | Email domain used for Agent commits; default `agents.claude-task.local`. |

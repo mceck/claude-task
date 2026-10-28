@@ -50,6 +50,8 @@ export interface AgentsConfig {
   stopOnShutdown?: boolean;
   /** Stop an Agent's container while it has no work: no Job, empty Queue and no open Session. */
   stopWhenUnused: boolean;
+  /** How long a Wiki's idle Session keeps its Agent's container running after its last Job. */
+  wikiIdleStopMs: number;
 }
 
 /** The Claude Code version the Base Image installs, verified against the stream-json format in tests. */
@@ -58,6 +60,11 @@ export const DEFAULT_CLAUDE_CODE_VERSION = '2.1.310';
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === '') return fallback;
   return ['1', 'true', 'yes'].includes(value.toLowerCase());
+}
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -114,6 +121,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       runnerReconnectTimeoutMs: 5 * 60_000,
       stopOnShutdown: bool(env.AGENT_STOP_ON_SHUTDOWN, env.NODE_ENV !== 'production'),
       stopWhenUnused: bool(env.AGENT_STOP_WHEN_UNUSED, true),
+      wikiIdleStopMs: positiveInt(env.AGENT_WIKI_IDLE_MINUTES, 30) * 60_000,
     },
   };
 }

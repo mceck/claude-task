@@ -51,6 +51,7 @@ The Wiki Agent Instructions, appended to every Wiki Session's system prompt as t
 
 The Wiki's conversation is the backing Task's conversation, open to every User: Comments, Internal Notes, Attachments, delivery badges, streaming Agent output, Thinking, Activity and Turn Summaries all work as on a Task (see [Conversation](conversation.md) and [Agent sessions](agent-sessions.md)).
 
+- A Wiki's Session stays `idle` between conversations. It keeps the Agent's container running for 30 minutes after the last Job (`AGENT_WIKI_IDLE_MINUTES`); after that the container stops until the next Comment (see [Agents](agents.md)).
 - Assigning the Agent starts nothing. The first User Comment starts the Session; later Comments are injected into the running Turn or queued, as on any Task.
 - The Agent works in the Worktree of the Wiki's Repository on the backing Task's Task Branch. `claude` loads the Repository's `CLAUDE.md`, Skills and settings, so the Wiki's own conventions drive the Agent.
 - The Agent reaches git only through the Git Proxy and pushes only its Task Branch; it opens or updates a pull request towards the Base Branch with its Task Tools, as on a Task (see [Git integration](git-integration.md)). The Wiki view shows the Task Branch link and the pull request badge once they exist.

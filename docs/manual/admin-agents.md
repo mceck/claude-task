@@ -54,6 +54,8 @@ Repositories, Worktrees, Claude transcripts, installed tools and Development Ser
 
 An Agent's container runs while the Agent has work: a Job is running, a Comment waits in its Queue, or it has a Session that can still receive Comments (a Task that is not closed, `done` included). An Agent assigned only to Tasks that have no Comment yet, or only to closed Tasks, has its container stopped. Its image and storage stay, so repositories, Worktrees and Development Service data are there when it starts again.
 
+A Wiki never closes, so its Session keeps the container running for 30 minutes after the Wiki's last Job (`AGENT_WIKI_IDLE_MINUTES`) and then lets it stop.
+
 The container starts again when a Comment is queued, a Task is reopened or an Agent is assigned back to a Task it worked on. The first Job waits for the container and its Development Services to start, which can take up to a minute. While the container is stopped the Agent shows `offline`. Setting `AGENT_STOP_WHEN_UNUSED` to `false` keeps every container running (see [Installation and operations](installation-and-operations.md)).
 
 ## Change configuration
