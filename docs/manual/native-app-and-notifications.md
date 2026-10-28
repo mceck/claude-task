@@ -76,7 +76,7 @@ Use **Attach local files** to stage files. They stay with your Draft until you s
 
 Scroll to the latest entry to mark the Conversation read while online and in the foreground. A bold Task row with a dot means it has unread entries. Read state is shared with your other devices and the web app. While reading older entries, use **Jump to latest** to return to the bottom.
 
-The **Wiki** section offers shared Wiki Conversations and their settings, **Reset chat** and deletion. See [Wikis](wikis.md) before resetting a shared Conversation.
+The **Wiki** section offers each Wiki's list of Chats, with **New chat**, rename and delete, plus the Wiki's settings and deletion. See [Wikis](wikis.md) before deleting a shared Chat.
 
 ## Continue while offline
 

@@ -15,7 +15,7 @@ Use this reference when an action is unavailable or an input is rejected. All ac
 | Post Comments and Internal Notes; edit own Comments | Yes | Yes |
 | Delete own Comments | Yes | Yes |
 | Delete other Users', Agent and System Comments | No | Yes |
-| Create, edit, reset and delete Wikis | Yes | Yes |
+| Create, edit and delete Wikis; start, rename and delete Chats | Yes | Yes |
 | Inspect Agent Queue, Jobs, Builds and usage | Yes | Yes |
 | Reorder or remove eligible Queue entries; Stop and Retry | Yes | Yes |
 | Configure Agents, containers and Credentials | No | Yes |

@@ -48,8 +48,10 @@ These are the terms you will meet while using Claude Task.
 | Base Branch | The branch Task Branches start from and pull requests target. |
 | Task Branch | The branch dedicated to one Task's changes. |
 | Pull Request | A proposal to merge the Task Branch into the Base Branch; called a merge request on GitLab. |
-| Wiki | Shared repository-backed knowledge with an Agent Conversation. |
-| Reset Chat | Clear a Wiki Conversation for everyone, preserving repository files. |
+| Wiki | Shared repository-backed knowledge with Chats open to everyone. |
+| Chat | One of a Wiki's separate Conversations with its Agent. A Wiki can have many, and each can be continued later. |
+| New Chat | Start a clean Chat in a Wiki without losing the others. |
+| Delete Chat | Remove one Chat for everyone, keeping the repository files. |
 | Follow | Choose to receive alerts for a Task or Wiki. |
 | Mute | Silence alerts while keeping your follow choice. |
 | Unread | The Task has newer Timeline entries than your read position. |

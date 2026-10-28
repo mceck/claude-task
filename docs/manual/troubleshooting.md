@@ -83,7 +83,7 @@ An Internal Note never reaches the Agent. Editing an already delivered Comment a
 
 Use [Native app and notifications](native-app-and-notifications.md) to check connection status, pending Comments and phone permissions. Offline cached content can be read, but new server actions need a connection.
 
-**Reset chat** removes a Wiki's Conversation for everyone. Its repository files remain. It is not a way to undo file changes or reset Git history.
+**Delete** on a Wiki's Chat removes that Chat for everyone. Its repository files and the other Chats remain. It is not a way to undo file changes or reset Git history. A Chat run by an earlier Agent is read-only until the Wiki is assigned back to that Agent.
 
 ## Related
 
