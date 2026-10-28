@@ -49,6 +49,7 @@ dependencies:
   fleather: ^1.28.0
   markdown: ^7.3.0
   parchment: ^1.27.0
+  flutter_webrtc: ^1.6.3
 
 dev_dependencies:
   integration_test:

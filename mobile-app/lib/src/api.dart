@@ -170,6 +170,7 @@ abstract class LiveConnection {
   void subscribe(Set<String> topics);
   void connect();
   void close();
+  bool send(Json message);
 }
 
 class TaskSocket implements LiveConnection {
@@ -186,6 +187,13 @@ class TaskSocket implements LiveConnection {
   Stream<Json> get events => _events.stream;
   @override
   Stream<ConnectionState> get states => _states.stream;
+  @override
+  bool send(Json message) {
+    if (_socket == null) return false;
+    _socket!.add(jsonEncode(message));
+    return true;
+  }
+
   @override
   void subscribe(Set<String> topics) {
     final removed = _topics.difference(topics);
@@ -234,6 +242,8 @@ class TaskSocket implements LiveConnection {
           }
           if (message['type'] == 'event') {
             _events.add(Map<String, dynamic>.from(message['event'] as Map));
+          } else if ((message['type'] as String? ?? '').startsWith('voice.')) {
+            _events.add(message);
           }
         },
         onDone: () {

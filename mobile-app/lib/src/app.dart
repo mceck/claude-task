@@ -7,6 +7,7 @@ import 'controller.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 import 'workspace.dart';
+import 'voice_widgets.dart';
 
 class TaskApp extends StatefulWidget {
   final TaskController controller;
@@ -110,6 +111,15 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
                     child: page,
                   ),
                 ),
+                if (c.user != null && !c.user!.mustChangePassword)
+                  VoiceControls(
+                    voice: c.voice,
+                    onOpenTask: () => perform(
+                      context,
+                      () =>
+                          c.openNotification(c.voice.room!['taskId'] as String),
+                    ),
+                  ),
               ],
             ),
           ),

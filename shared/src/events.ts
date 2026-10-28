@@ -1,6 +1,7 @@
 // Real-time events pushed to browsers over the WebSocket. Events are notifications
 // carrying the new projection; on reconnect clients refetch instead of replaying.
 import type { UserEvent } from './mobile';
+import type { VoiceCommand, VoiceServerMessage, VoiceRoom } from './voice';
 import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, TaskSession } from './agents';
 import type { AgentItem, Comment, Tag, Project, Revision, Status, Task, TaskCard } from './domain';
 
@@ -49,13 +50,15 @@ export type AgentEvent =
   | { type: 'build.log'; agentId: string; buildId: string; chunk: string }
   | { type: 'job.updated'; job: Job };
 
-export type RealtimeEvent = { type: 'wiki.changed'; wikiId: string } | BoardEvent | TaskEvent | AgentEvent | UserEvent;
+export type RealtimeEvent = { type: 'voice.room'; room: VoiceRoom } | { type: 'wiki.changed'; wikiId: string } | BoardEvent | TaskEvent | AgentEvent | UserEvent;
 
 export type ClientMessage =
+  | VoiceCommand
   | { type: 'subscribe'; topics: Topic[] }
   | { type: 'unsubscribe'; topics: Topic[] };
 
 export type ServerMessage =
+  | VoiceServerMessage
   | { type: 'event'; topic: Topic; event: RealtimeEvent }
   /** Acknowledges a subscribe: events on these topics will be delivered from now on. */
   | { type: 'subscribed'; topics: Topic[] }

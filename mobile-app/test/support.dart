@@ -215,6 +215,13 @@ class MemoryStorage implements ProfileStorage {
 }
 
 class FakeLive implements LiveConnection {
+  final List<Json> sent = [];
+  @override
+  bool send(Json message) {
+    sent.add(message);
+    return true;
+  }
+
   final eventController = StreamController<Json>.broadcast(sync: true);
   final stateController = StreamController<ConnectionState>.broadcast(
     sync: true,
@@ -308,6 +315,15 @@ class FakeApi implements TaskApi {
       return {'user': user};
     }
     if (path == '/auth/logout') return {};
+    if (method == 'GET' && RegExp(r'^/tasks/[^/]+/voice$').hasMatch(path)) {
+      return {
+        'room': {
+          'taskId': path.split('/')[2],
+          'taskKey': currentTask['key'],
+          'participants': <Json>[],
+        },
+      };
+    }
     if (path == '/wikis') return {'wikis': <Json>[]};
     if (path == '/projects') {
       return {

@@ -1,5 +1,6 @@
 import type { RealtimeEvent, ServerMessage, Topic } from '@claude-task/shared';
 import type { WebSocket } from 'ws';
+import { VoiceRooms } from './voice';
 
 const MAX_BACKLOG_BYTES = 16 * 1024 * 1024;
 const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents|wikis)$/;
@@ -17,6 +18,7 @@ interface Connection {
 
 /** Fans events out to the browsers subscribed to each topic. */
 export class RealtimeHub {
+  readonly voice = new VoiceRooms((topic, event) => this.publish(topic, event));
   private readonly connections = new Map<WebSocket, Connection>();
   private readonly byTopic = new Map<Topic, Set<Connection>>();
 
@@ -37,6 +39,10 @@ export class RealtimeHub {
     }
   }
 
+  has(socket: WebSocket): boolean {
+    return this.connections.has(socket) && socket.readyState === socket.OPEN;
+  }
+
   unsubscribe(socket: WebSocket, topics: Topic[]): void {
     const conn = this.connections.get(socket);
     if (!conn) return;
@@ -47,6 +53,7 @@ export class RealtimeHub {
   }
 
   publish(topic: Topic, event: RealtimeEvent): void {
+    if (event.type === 'task.removed') this.voice.deleteTask(event.taskId);
     const set = this.byTopic.get(topic);
     if (!set) return;
     const data = JSON.stringify({ type: 'event', topic, event } satisfies ServerMessage);
@@ -76,7 +83,10 @@ export class RealtimeHub {
   }
 
   closeAll(): void {
-    for (const conn of this.connections.values()) conn.socket.close(1001, 'server shutting down');
+    for (const conn of [...this.connections.values()]) {
+      conn.socket.close(1001, 'server shutting down');
+      this.remove(conn.socket);
+    }
     this.connections.clear();
     this.byTopic.clear();
   }
@@ -84,6 +94,7 @@ export class RealtimeHub {
   private remove(socket: WebSocket): void {
     const conn = this.connections.get(socket);
     if (!conn) return;
+    this.voice.disconnect(socket);
     this.connections.delete(socket);
     for (const topic of conn.topics) this.dropFromTopic(topic, conn);
   }

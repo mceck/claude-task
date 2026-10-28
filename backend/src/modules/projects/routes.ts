@@ -125,6 +125,7 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
       // Tasks reference statuses without cascade, so remove them first.
       await tx.delete(tasks).where(eq(tasks.projectId, project.id));
       await tx.delete(projects).where(eq(projects.id, project.id));
+      after.effect((ctx) => { for (const task of doomed) ctx.hub.voice.deleteTask(task.id); });
       if (project.logoBlobId) after.run(() => ctx.blobs.delete(project.logoBlobId!));
       for (const b of blobs) after.run(() => ctx.blobs.delete(b.blobId));
     });

@@ -1,7 +1,7 @@
 // The single WebSocket to the backend. Components subscribe to topics while mounted;
 // events update the query caches. After a reconnect we refetch instead of replaying.
 import { API_PREFIX } from '@claude-task/shared';
-import type { ServerMessage, Topic } from '@claude-task/shared';
+import type { ClientMessage, ServerMessage, Topic } from '@claude-task/shared';
 import type { QueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { keys } from '../api/queries';
@@ -16,6 +16,8 @@ class Realtime {
   private qc: QueryClient | null = null;
   private attempts = 0;
   private connectedOnce = false;
+  private readonly messageListeners = new Set<(message: ServerMessage) => void>();
+  private readonly disconnectListeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   start(qc: QueryClient): void {
@@ -25,6 +27,7 @@ class Realtime {
   }
 
   stop(): void {
+    for (const listener of this.disconnectListeners) listener();
     clearLiveTurns();
     this.qc = null;
     clearTimeout(this.timer);
@@ -45,8 +48,20 @@ class Realtime {
     };
   }
 
-  private send(msg: unknown) {
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(msg));
+  onMessage(listener: (message: ServerMessage) => void): () => void {
+    this.messageListeners.add(listener);
+    return () => { this.messageListeners.delete(listener); };
+  }
+
+  onDisconnect(listener: () => void): () => void {
+    this.disconnectListeners.add(listener);
+    return () => { this.disconnectListeners.delete(listener); };
+  }
+
+  send(msg: ClientMessage): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    this.socket.send(JSON.stringify(msg));
+    return true;
   }
 
   private connect() {
@@ -64,6 +79,7 @@ class Realtime {
     socket.onmessage = (e) => {
       const msg = JSON.parse(e.data as string) as ServerMessage;
       if (!this.qc) return;
+      for (const listener of this.messageListeners) listener(msg);
       if (msg.type === 'event') {
         applyEvent(this.qc, msg.event);
         applyLiveEvent(msg.event);
@@ -74,6 +90,7 @@ class Realtime {
     socket.onclose = (e) => {
       if (this.socket !== socket || !this.qc) return;
       this.socket = null;
+      for (const listener of this.disconnectListeners) listener();
       clearLiveTurns();
       // Logged out elsewhere, deactivated, or (when the handshake itself is refused) expired:
       // re-check the Login, so the app goes to /login instead of reconnecting forever.

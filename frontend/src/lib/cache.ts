@@ -103,6 +103,12 @@ export function putTimelineItem(qc: QueryClient, taskId: string, item: TimelineI
 }
 
 export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
+  if (event.type === 'voice.room') {
+    // A snapshot requested before this event must not replace newer presence.
+    void qc.cancelQueries({ queryKey: ['voice', event.room.taskId], exact: true });
+    qc.setQueryData(['voice', event.room.taskId], { room: event.room });
+    return;
+  }
   switch (event.type) {
     case 'wiki.changed':
       void qc.invalidateQueries({ queryKey: keys.wikis });
@@ -221,6 +227,7 @@ export function refreshTopic(qc: QueryClient, topic: Topic): void {
     void qc.invalidateQueries({ queryKey: keys.tasks(id) });
     void qc.invalidateQueries({ queryKey: ['project'], predicate: (q) => (q.state.data as ProjectBundle | undefined)?.project.id === id });
   } else {
+    void qc.invalidateQueries({ queryKey: ['voice', id] });
     void qc.invalidateQueries({ queryKey: ['task'], predicate: (q) => (q.state.data as Task | undefined)?.id === id });
     void qc.invalidateQueries({ queryKey: keys.timeline(id) });
     void qc.invalidateQueries({ queryKey: keys.session(id) });

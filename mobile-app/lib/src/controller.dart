@@ -8,6 +8,7 @@ import 'api.dart';
 import 'models.dart';
 import 'push.dart';
 import 'storage.dart';
+import 'voice.dart';
 
 /// Colors handed to Tags created inline, cycling so neighbours differ (the
 /// same cycle as the web app).
@@ -23,6 +24,7 @@ const _tagColors = [
 ];
 
 class TaskController extends ChangeNotifier {
+  late final VoiceController voice;
   final ProfileStorage storage;
   final TaskApi Function(Uri, String?) apiFactory;
   final LiveConnection Function(TaskApi) socketFactory;
@@ -76,7 +78,9 @@ class TaskController extends ChangeNotifier {
     LiveConnection Function(TaskApi)? socketFactory,
   }) : apiFactory =
            apiFactory ?? ((uri, cookie) => HttpTaskApi(uri, cookie: cookie)),
-       socketFactory = socketFactory ?? TaskSocket.new;
+       socketFactory = socketFactory ?? TaskSocket.new {
+    voice = VoiceController(send: (message) => _socket?.send(message) ?? false);
+  }
 
   Future<void> initialize() async {
     _pushOpens = push.taskOpens.listen((id) {
@@ -86,8 +90,7 @@ class TaskController extends ChangeNotifier {
       if (user != null && !user!.mustChangePassword) {
         unawaited(
           _registerToken(token).catchError((Object _) {
-            error =
-                'Phone token registration failed; try Enable notifications again';
+            error = 'Phone token registration failed; try Enable notifications again';
             notifyListeners();
           }),
         );
@@ -209,12 +212,14 @@ class TaskController extends ChangeNotifier {
   }
 
   void _connectSocket() {
+    voice.disconnected();
     _socket?.close();
     unawaited(_events?.cancel());
     unawaited(_states?.cancel());
     _socket = socketFactory(api!);
     _events = _socket!.events.listen(_event);
     _states = _socket!.states.listen((state) {
+      if (state != ConnectionState.connected) voice.disconnected();
       final previous = connection;
       connection = state;
       notifyListeners();
@@ -297,6 +302,7 @@ class TaskController extends ChangeNotifier {
   }
 
   Future<void> _expire() async {
+    voice.leave();
     _profileEpoch++;
     _socket?.close();
     user = null;
@@ -353,6 +359,7 @@ class TaskController extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    voice.leave();
     _profileEpoch++;
     final login = _login;
     _socket?.close();
@@ -724,9 +731,9 @@ class TaskController extends ChangeNotifier {
       }
     }
     unawaited(
-      _fetchProject(
-        projectId,
-      ).then((_) => notifyListeners()).catchError((Object _) {}),
+      _fetchProject(projectId)
+          .then((_) => notifyListeners())
+          .catchError((Object _) {}),
     );
     notifyListeners();
     return task;
@@ -853,8 +860,7 @@ class TaskController extends ChangeNotifier {
   Future<void> reconcileSend() async {
     await _fetchTask(task!.id);
     await setDraft(draft.copyWith(ambiguous: false));
-    error =
-        'Conversation refreshed. Check for your Comment; sending again is a manual action.';
+    error = 'Conversation refreshed. Check for your Comment; sending again is a manual action.';
     notifyListeners();
   }
 
@@ -1082,6 +1088,10 @@ class TaskController extends ChangeNotifier {
 
   void _event(Json event) {
     final type = event['type'] as String? ?? '';
+    if (type.startsWith('voice.')) {
+      voice.handle(event);
+      return;
+    }
     if (type == 'login.expired') {
       unawaited(_expire());
       return;
@@ -1256,6 +1266,7 @@ class TaskController extends ChangeNotifier {
 
   @override
   void dispose() {
+    voice.dispose();
     _socket?.close();
     _refreshTimer?.cancel();
     api?.close();

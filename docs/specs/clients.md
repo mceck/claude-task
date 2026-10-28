@@ -359,6 +359,10 @@ The native app shows the User's following, mute and unread state per Task, share
 
 Every Task and Timeline page carries its conversation generation. When another User resets a Wiki's chat, the reset event clears the open conversation, its Live Turn preview and its cached pages, or just the cache for a Wiki not currently open. When the app missed the event (offline, closed), the next fetch finds a newer generation than the cached one and discards the cached conversation before showing the fresh one. A page that arrives with a different generation from the Task fetched with it is refetched, up to two more times.
 
+### Voice Rooms
+
+Both clients show a Task’s Voice Room, its participant names and an explicit Join action. An active room has persistent controls outside Task navigation: microphone mute, incoming-audio silence, per-peer connection status, retry, leave and return to the Task. Confirmed transfers keep one participation per User across devices. Native clients configure communication audio and background microphone support so active rooms continue while another app is open or the screen is locked. Connection loss releases audio and offers explicit rejoining. See [Voice Rooms](voice-rooms.md) for membership, media and failure rules.
+
 ### Serving the clients
 
 The production image runs one process that serves the HTTP API and the WebSocket under the API prefix, the Git Proxy under its own path, and the built web app from a static folder. When the static folder contains the app, every `GET` outside the API that matches no file returns the app's page, so client-side addresses work on reload and from shared links; other methods there answer `404`. Unknown API paths answer `404` in JSON. Web app files are served with security headers: a Content Security Policy allowing scripts, styles, fonts and connections from the same origin only (inline styles allowed for the editors, images from the same origin, `data:`, `blob:` and any HTTPS URL), no framing by other sites, no MIME sniffing, and same-origin referrers.
@@ -457,3 +461,5 @@ Client-side state, by client:
 - [Runner](runner.md): the Runner's own WebSocket to the backend, separate from the clients' live connection.
 - [Git integration](git-integration.md): Task Branches, Pull Requests and Git Connections linked from Task views and settings.
 - [Wikis](wikis.md): Wikis, their shared conversation and Reset Chat.
+
+- [Voice Rooms](voice-rooms.md): Voice Rooms provide persistent voice controls in both clients and use the authenticated live connection for presence and signaling.

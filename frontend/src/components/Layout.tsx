@@ -22,6 +22,7 @@ import { clearCommentDrafts } from '../lib/drafts';
 import { realtime } from '../lib/realtime';
 import { Loading, UserAvatar } from './common';
 import { Logo } from './Logo';
+import { VoiceBar } from './VoiceRoom';
 
 /** Everything behind login. Forces a pending password change first. */
 export function Layout() {
@@ -61,9 +62,10 @@ export function Layout() {
           <UserMenu name={user.displayName} email={user.email} id={user.id} canChangePassword={ready} />
         </div>
       </aside>
-      <main className="min-w-0 flex-1 overflow-auto">
-        <Outlet />
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <main className="min-h-0 min-w-0 flex-1 overflow-auto"><Outlet /></main>
+        {ready && <VoiceBar />}
+      </div>
     </div>
   );
 }

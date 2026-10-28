@@ -27,6 +27,7 @@ services:
       SECRETS_MASTER_KEY: ${SECRETS_MASTER_KEY:?set SECRETS_MASTER_KEY}
       CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.310}
       APP_URL: ${APP_URL:-http://localhost:3000}
+      VOICE_STUN_URLS: ${VOICE_STUN_URLS-stun:stun.l.google.com:19302}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITLAB_URL: ${GITLAB_URL:-https://gitlab.com}

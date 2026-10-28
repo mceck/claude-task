@@ -12,3 +12,4 @@ export * from './commands';
 export * from './dotenv';
 export * from './wiki';
 export * from './mentions';
+export * from './voice';

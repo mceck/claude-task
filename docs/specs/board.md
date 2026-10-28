@@ -271,3 +271,5 @@ Deleting a Project removes its Statuses, Tags and Tasks; deleting a Task removes
 - [Git integration](git-integration.md): the Project's Repository, Task Branches, Worktrees and pull requests shown on Tasks.
 - [Wikis](wikis.md): Projects of kind `wiki`.
 - [Clients](clients.md): the web and Flutter interfaces and the realtime transport.
+
+- [Voice Rooms](voice-rooms.md): Deleting a Task also ends its active Voice Room participation; Task Status remains independent of voice.

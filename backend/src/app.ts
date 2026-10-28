@@ -42,6 +42,7 @@ const WEB_APP_HEADERS = {
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
+    "media-src 'self' blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
     "object-src 'none'",

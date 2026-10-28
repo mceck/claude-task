@@ -228,3 +228,5 @@ The **command-line entry point** runs outside the web server, connects to the sa
 - [Git integration](git-integration.md): Admin-managed Git Connections and the Git Proxy's Job-token authentication.
 - [Wikis](wikis.md): Wikis, open to every User.
 - [Clients](clients.md): the web and native apps, the realtime transport, local storage and push registrations.
+
+- [Voice Rooms](voice-rooms.md): Voice Room membership uses the authenticated User identity and ends with the owning Login.

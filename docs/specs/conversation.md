@@ -324,3 +324,5 @@ sequenceDiagram
 - [Clients](clients.md): composer and Timeline UI, drafts, offline cache, real-time transport, phone registration and push delivery.
 - [Users and authentication](users-and-auth.md): who is a signed-in User, roles, Logins.
 - [Runner](runner.md): how attached files are fetched into the Worktree and how an Agent's files are uploaded.
+
+- [Voice Rooms](voice-rooms.md): Voice Rooms provide live audio between Users alongside the text Conversation.

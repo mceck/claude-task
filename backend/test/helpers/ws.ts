@@ -6,6 +6,7 @@ type EventMessage = Extract<ServerMessage, { type: 'event' }>;
 
 /** A WebSocket client that records every event so tests can wait for or rule out events. */
 export class WsTestClient {
+  readonly messages: ServerMessage[] = [];
   readonly received: EventMessage[] = [];
   private waiters: { match: (m: ServerMessage) => boolean; resolve: (m: ServerMessage) => void }[] = [];
   closed: Promise<{ code: number }>;
@@ -13,6 +14,7 @@ export class WsTestClient {
   private constructor(private readonly socket: WebSocket) {
     socket.on('message', (raw) => {
       const msg = JSON.parse(raw.toString()) as ServerMessage;
+      this.messages.push(msg);
       if (msg.type === 'event') this.received.push(msg);
       this.waiters = this.waiters.filter((w) => {
         if (!w.match(msg)) return true;
@@ -66,6 +68,14 @@ export class WsTestClient {
 
   close(): void {
     this.socket.close();
+  }
+
+  send(message: unknown): void {
+    this.socket.send(JSON.stringify(message));
+  }
+
+  message(match: (message: ServerMessage) => boolean, timeoutMs = 2000): Promise<ServerMessage> {
+    return this.wait(match, timeoutMs);
   }
 
   /** Plays a browser that stopped reading (a frozen tab or a dead network). */

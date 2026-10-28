@@ -102,6 +102,10 @@ _Avoid_: chat generation
 
 ### Conversation
 
+**Voice Room**:
+The shared audio space of a Task, where Users talk to one another live.
+_Avoid_: voice session (a Session is the Agent's conversation on a Task)
+
 **Conversation**:
 A Task's Comments and Agent output, as Users see and write them.
 _Avoid_: chat, thread

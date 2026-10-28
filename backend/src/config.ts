@@ -1,6 +1,8 @@
 import { SecretBox } from './secrets';
+import { DEFAULT_VOICE_STUN_URLS } from '@claude-task/shared';
 
 export interface Config {
+  voiceStunUrls?: string[];
   databaseUrl: string;
   host: string;
   port: number;
@@ -61,7 +63,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!databaseUrl) throw new Error('DATABASE_URL is required');
   const adminEmail = env.ADMIN_EMAIL?.trim();
   const adminPassword = env.ADMIN_PASSWORD;
+  const voiceStunUrls = env.VOICE_STUN_URLS === undefined ? DEFAULT_VOICE_STUN_URLS : env.VOICE_STUN_URLS.split(',').map((url) => url.trim()).filter(Boolean);
+  if (voiceStunUrls.length > 8 || voiceStunUrls.some((url) => !/^stuns?:[^\s/?#@]+(?::[0-9]+)?$/.test(url))) throw new Error('VOICE_STUN_URLS accepts up to eight stun: or stuns: URLs');
   return {
+    voiceStunUrls,
     databaseUrl,
     host: env.HOST ?? '0.0.0.0',
     port: Number(env.PORT ?? 3000),

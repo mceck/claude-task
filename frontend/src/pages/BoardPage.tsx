@@ -1,3 +1,4 @@
+import { VoiceBar } from '../components/VoiceRoom';
 import { ProjectLogo } from '../components/ProjectLogo';
 import { PullRequestBadge } from '../components/Git';
 import { AGENTS_TOPIC, emptyBoardFilter, isFilterActive, matchesBoardFilter, PRIORITIES, projectTopic } from '@claude-task/shared';
@@ -127,6 +128,7 @@ export function BoardPage() {
         >
           <DialogTitle className="sr-only">{openTask}</DialogTitle>
           {openTask && <TaskDetail key={openTask} taskKey={openTask} onClose={() => setParam('task', null)} />}
+          <VoiceBar />
         </DialogContent>
       </Dialog>
     </div>

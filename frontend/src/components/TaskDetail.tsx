@@ -1,3 +1,4 @@
+import { VoiceRoomPanel } from './VoiceRoom';
 import { BranchLink, PullRequestBadge, capitalize, withProvider } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
@@ -195,6 +196,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <VoiceRoomPanel task={task} />
       <div className="flex shrink-0 flex-wrap items-start gap-x-4 gap-y-2 border-b px-5 py-3">
         <div className="min-w-0 flex-1 basis-64">
           <div className="flex items-center gap-2 text-xs">
