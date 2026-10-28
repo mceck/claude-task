@@ -37,6 +37,122 @@ test('creates a task from the board', async ({ page }) => {
   await expect(column(page, 'Todo').getByRole('article', { name: `${project.key}-1` })).toBeVisible();
 });
 
+test('marks cards with unread comments and clears them once the task is read', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Has news');
+  const posted = await page.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'Fresh news' }, headers: { 'x-claude-task': '1' } });
+  expect(posted.status()).toBe(201);
+  await page.goto(`/p/${project.key}`);
+
+  const card = page.getByRole('article', { name: task.key });
+  await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+  await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+  await expect(card.locator('p')).toHaveCSS('font-weight', '600');
+  await card.click();
+  await expect(page.getByText('Fresh news')).toBeVisible();
+  await expect
+    .poll(async () => (await (await page.request.get(`/api/v1/tasks/${task.id}/preferences`)).json()).preference.unreadComments)
+    .toBe(0);
+
+  await page.keyboard.press('Escape');
+  await expect(card.getByTestId('task-unread')).toHaveCount(0);
+  await expect(card.locator('p')).toHaveCSS('font-weight', '500');
+});
+
+test('updates muted Task badges live for Comments, deletions and reads on another client', async ({ browser }) => {
+  const a = await loggedInContext(browser);
+  const b = await loggedInContext(browser);
+  try {
+    const project = await createProject(a.request);
+    const task = await createTask(a.request, project, 'Muted news');
+    const headers = { 'x-claude-task': '1' };
+    const mute = await a.request.patch(`/api/v1/tasks/${task.id}/preferences`, { data: { muted: true, following: false }, headers });
+    expect(mute.status()).toBe(200);
+    const page = await a.newPage();
+    await page.goto(`/p/${project.key}`);
+    const card = page.getByRole('article', { name: task.key });
+    await expect(card).toBeVisible();
+    await expect(card.getByTestId('task-unread')).toHaveCount(0);
+    const current = (await (await a.request.get(`/api/v1/tasks/${task.id}`)).json()).task;
+    expect((await a.request.patch(`/api/v1/tasks/${task.id}`, { data: { version: current.version, priority: 'high' }, headers })).status()).toBe(200);
+    await expect(card.locator('p')).toHaveCSS('font-weight', '600');
+    await expect(card.getByTestId('task-unread')).toHaveCount(0);
+
+    const first = await a.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'Public news' }, headers });
+    expect(first.status()).toBe(201);
+    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+    const second = await b.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'Internal news', internal: true }, headers });
+    expect(second.status()).toBe(201);
+    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('2 unread comments');
+    const secondComment = (await second.json()).comment;
+    expect((await b.request.delete(`/api/v1/comments/${secondComment.id}`, { headers })).status()).toBe(204);
+    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+
+    const reader = await b.newPage();
+    await reader.goto(`/t/${task.key}`);
+    await expect(reader.getByText('Public news')).toBeVisible();
+    await expect(card.getByTestId('task-unread')).toHaveCount(0);
+    await expect(card.locator('p')).toHaveCSS('font-weight', '500');
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});
+
+for (const initial of [true, false]) {
+  test(`a delayed ${initial ? 'initial' : 'refreshed'} preference response preserves a newer read position`, async ({ page }) => {
+    await login(page.request);
+    const project = await createProject(page.request);
+    const task = await createTask(page.request, project, 'Delayed snapshot');
+    const headers = { 'x-claude-task': '1' };
+    const first = await page.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'First news' }, headers });
+    expect(first.status()).toBe(201);
+    const card = page.getByRole('article', { name: task.key });
+    if (!initial) {
+      await page.goto(`/p/${project.key}`);
+      await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+    }
+
+    let release!: () => void;
+    let captured!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const snapshot = new Promise<void>((resolve) => { captured = resolve; });
+    let delayed = false;
+    await page.route(`**/projects/${project.id}/task-preferences`, async (route) => {
+      const response = await route.fetch();
+      if (!delayed) {
+        delayed = true;
+        captured();
+        await held;
+      }
+      await route.fulfill({ response });
+    });
+    try {
+      let comment = (await first.json()).comment;
+      if (initial) {
+        await page.goto(`/p/${project.key}`);
+      } else {
+        const second = await page.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'Second news' }, headers });
+        expect(second.status()).toBe(201);
+        comment = (await second.json()).comment;
+      }
+      await snapshot;
+      await expect(card).toBeVisible();
+      const read = await page.request.put(`/api/v1/tasks/${task.id}/read-position`, { data: { itemId: comment.id }, headers });
+      expect(read.status()).toBe(200);
+      await expect(card.getByTestId('task-unread')).toHaveCount(0);
+      const staleResponse = page.waitForResponse(`**/projects/${project.id}/task-preferences`);
+      release();
+      await staleResponse;
+      await expect(card.getByTestId('task-unread')).toHaveCount(0);
+    } finally {
+      release();
+      await page.unrouteAll({ behavior: 'wait' });
+    }
+  });
+}
+
 test('drags between columns and within a column; another browser sees it live', async ({ browser }) => {
   const a = await loggedInContext(browser);
   const b = await loggedInContext(browser);

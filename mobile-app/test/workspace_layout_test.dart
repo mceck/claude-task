@@ -254,6 +254,49 @@ void main() {
   });
 
   testWidgets(
+    'Task badges count unread Comments even when muted and clear on reading',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final h = Harness();
+      addTearDown(h.dispose);
+      h.api.currentTask = {...h.api.currentTask, 'commentCount': 5};
+      h.api.pref = {...preferenceData(muted: true), 'unreadComments': 2};
+      await h.login();
+      await h.controller.selectProject(h.controller.projects.first);
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+      final badge = find.byKey(const ValueKey('task-unread:task-1'));
+      expect(badge, findsOneWidget);
+      expect(find.byTooltip('2 unread comments'), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.text('Fix login')).style!.fontWeight,
+        FontWeight.w600,
+      );
+
+      h.live.eventController.add({
+        'type': 'task.preference',
+        'preference': {...h.api.pref, 'unreadComments': 3},
+      });
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('3 unread comments'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('task-row:task-1')));
+      await tester.pumpAndSettle();
+      expect(h.api.readCount, greaterThan(0));
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(badge, findsNothing);
+      expect(
+        tester.widget<Text>(find.text('Fix login')).style!.fontWeight,
+        FontWeight.w500,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'Projects support long names, empty projects and larger text on small phones',
     (tester) async {
       tester.view.physicalSize = const Size(320, 700);

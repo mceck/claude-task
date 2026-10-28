@@ -176,11 +176,13 @@ class Task {
 class TaskPreference {
   final String taskId, readPosition, latestPosition;
   final bool following, muted, unread;
+  final int unreadComments;
   TaskPreference.fromJson(Json json)
     : taskId = json['taskId'] as String,
       following = json['following'] == true,
       muted = json['muted'] == true,
       unread = json['unread'] == true,
+      unreadComments = (json['unreadComments'] as num?)?.toInt() ?? 0,
       readPosition = json['readPosition'] as String? ?? '0',
       latestPosition = json['latestPosition'] as String? ?? '0';
 }

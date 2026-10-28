@@ -8,6 +8,8 @@ export interface TaskPreference {
   readPosition: string;
   latestPosition: string;
   unread: boolean;
+  /** Non-deleted Comments newer than the read position. */
+  unreadComments: number;
 }
 export const taskPreferenceBody = z.strictObject({
   following: z.boolean().optional(),

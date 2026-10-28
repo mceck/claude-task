@@ -222,6 +222,10 @@ A Task is **unread** for a User when its latest entry position is greater than t
 
 The Flutter app advances the read position when the conversation is visible, the app is in the foreground and online, and the reader has reached the latest entry. The web app advances it whenever the Task's conversation is on screen and scrolled to the bottom, each time a newer entry arrives or the reader scrolls back down, and only while the browser tab is visible. Both clients report the newest entry they have loaded, so reading a Task on one client clears its unread state on the other.
 
+Task Preferences include `unreadComments`, the count of Comments after the User's read position. It includes User, Agent and System Comments, Internal Notes and the User's own Comments. Deleted Comments contribute zero; Revisions and Agent Items affect the Task's unread state and contribute zero to this count. The count is computed on the server for the asking User, both for one Task and for every Task in a Project. Following and mute leave the Task's unread state and unread Comment count unchanged.
+
+The Board and native Task list show unread Tasks with a bold title and, when there are unread Comments, an orange glowing Comment icon and count (the count stays the total of Comments). Unread activity that isn't a Comment only bolds the title. Muted Tasks keep these indicators. New and deleted Comments refresh the count live; read-position changes reach the same User's other clients through their private topic. Reconnecting or subscribing to a Project refreshes its Task Preferences.
+
 ### Notifications
 
 Notifications are phone alerts sent to Task followers for Agent outcomes and to mentioned Users for new User Comments. A Notification Event is recorded in the same transaction as the fact it reports:
@@ -315,6 +319,7 @@ sequenceDiagram
 - **Mention alerts use the durable notification outbox and respect mute independently of following.** A direct mention can reach a User who has yet to participate while preserving their existing Task preferences. A Comment creates at most one event, and edits keep its notification history.
 - **Agent outcome Notification Events are written by the database in the same transaction as the Turn or Job change.** An event exists exactly when its cause is committed, with no window where one is lost or invented. Events come from the Turn and Job lifecycle, never from reading the Agent's prose, so "intervention" means a Job that failed, which is reliable.
 - **Unread comes from server-assigned positions, not timestamps.** Timestamps can tie and device clocks drift; a commit-ordered position per Task makes "read up to here" exact.
+- **Task badges count Comments separately from unread Timeline activity.** The number represents the conversation waiting to be read, while the existing unread state also covers Revisions and Agent Items. Mute controls alerts; Task indicators continue to show unread activity so Users can find it when they return.
 
 ## Related specs
 

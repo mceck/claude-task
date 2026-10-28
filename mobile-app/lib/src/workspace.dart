@@ -82,7 +82,8 @@ class Workspace extends StatelessWidget {
                   ? const EmptyState(
                       icon: Icons.forum_outlined,
                       title: 'Select a Task to join the conversation',
-                      message: 'Tasks are grouped by Status. Open one to talk with its Agent.',
+                      message:
+                          'Tasks are grouped by Status. Open one to talk with its Agent.',
                     )
                   : Conversation(
                       key: ValueKey(c.task!.id),
@@ -1311,6 +1312,55 @@ class _GroupHeader extends StatelessWidget {
   );
 }
 
+/// The Comment count; unread Comments light it up in orange.
+class _CommentCount extends StatelessWidget {
+  final String taskId;
+  final int total, unread;
+  const _CommentCount({
+    required this.taskId,
+    required this.total,
+    required this.unread,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final lit = unread > 0;
+    final color = lit ? Palette.orange : Palette.fgSubtle;
+    final description = lit
+        ? '$unread unread ${unread == 1 ? 'comment' : 'comments'}'
+        : '$total ${total == 1 ? 'comment' : 'comments'}';
+    return Tooltip(
+      message: description,
+      child: Semantics(
+        label: description,
+        child: Row(
+          key: lit ? ValueKey('task-unread:$taskId') : null,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              lit
+                  ? Icons.chat_bubble_rounded
+                  : Icons.chat_bubble_outline_rounded,
+              size: 11,
+              color: color,
+              shadows: lit ? [Shadow(color: color, blurRadius: 6)] : null,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              '$total',
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: lit ? FontWeight.w700 : FontWeight.w400,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _TaskRow extends StatelessWidget {
   final Task task;
   final TaskController controller;
@@ -1369,10 +1419,6 @@ class _TaskRow extends StatelessWidget {
                             ),
                           ),
                         ),
-                        if (unread) ...[
-                          const SizedBox(width: 8),
-                          const Dot(color: Palette.primary, size: 5),
-                        ],
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -1459,18 +1505,10 @@ class _TaskRow extends StatelessWidget {
                         ],
                         if (task.commentCount > 0) ...[
                           const SizedBox(width: 8),
-                          const Icon(
-                            Icons.chat_bubble_outline_rounded,
-                            size: 11,
-                            color: Palette.fgSubtle,
-                          ),
-                          const SizedBox(width: 3),
-                          Text(
-                            '${task.commentCount}',
-                            style: const TextStyle(
-                              fontSize: 10.5,
-                              color: Palette.fgSubtle,
-                            ),
+                          _CommentCount(
+                            taskId: task.id,
+                            total: task.commentCount,
+                            unread: pref?.unreadComments ?? 0,
                           ),
                         ],
                       ],

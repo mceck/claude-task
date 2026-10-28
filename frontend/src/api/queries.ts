@@ -21,6 +21,7 @@ import type {
   Skill,
   Task,
   TaskCard,
+  TaskPreference,
   TimelinePage,
   User,
 } from '@claude-task/shared';
@@ -38,6 +39,8 @@ export const keys = {
   tasks: (projectId: string) => ['tasks', projectId] as const,
   board: (projectId: string, includeClosed: boolean) => ['tasks', projectId, { includeClosed }] as const,
   task: (idOrKey: string) => ['task', idOrKey.toUpperCase()] as const,
+  /** The asking User's private state for every Task of a Project. */
+  taskPreferences: (projectId: string) => ['task-preferences', projectId] as const,
   timeline: (taskId: string) => ['timeline', taskId] as const,
   session: (taskId: string) => ['session', taskId] as const,
   agents: ['agents'] as const,
@@ -94,6 +97,15 @@ export function useBoardTasks(projectId: string | undefined, includeClosed: bool
     queryKey: keys.board(projectId ?? '', includeClosed),
     queryFn: () =>
       get<{ tasks: TaskCard[] }>(`/projects/${projectId}/tasks?includeClosed=${includeClosed}`).then((r) => r.tasks),
+    enabled: !!projectId,
+  });
+}
+
+export function useTaskPreferences(projectId: string | undefined) {
+  return useQuery({
+    queryKey: keys.taskPreferences(projectId ?? ''),
+    queryFn: () =>
+      get<{ preferences: TaskPreference[] }>(`/projects/${projectId}/task-preferences`).then((r) => r.preferences),
     enabled: !!projectId,
   });
 }

@@ -76,11 +76,11 @@ describe('Task preferences and read positions', () => {
     const first = await comment(admin, task.id, 'First');
     const last = await comment(admin, task.id, 'Last');
     const initial = (await member.client.get(`/projects/${project.id}/task-preferences`)).body.preferences[0];
-    expect(initial).toMatchObject({ unread: true, readPosition: '0', following: false });
+    expect(initial).toMatchObject({ unread: true, readPosition: '0', following: false, unreadComments: 2 });
     await member.client.get(`/tasks/${task.id}/timeline`);
     expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.readPosition).toBe('0');
     const read = await member.client.put(`/tasks/${task.id}/read-position`, { itemId: last.id });
-    expect(read.body.preference.unread).toBe(false);
+    expect(read.body.preference).toMatchObject({ unread: false, unreadComments: 0 });
     const older = await member.client.put(`/tasks/${task.id}/read-position`, { itemId: first.id });
     expect(older.body.preference.readPosition).toBe(read.body.preference.readPosition);
     expect(older.body.preference.following).toBe(false);
@@ -89,6 +89,50 @@ describe('Task preferences and read positions', () => {
     expect((await member.client.put(`/tasks/${task.id}/read-position`, { itemId: foreign.id })).status).toBe(400);
     await comment(member.client, task.id, 'Now participating');
     expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.following).toBe(true);
+  });
+  it('counts unread Comments for the badge, leaving deleted Comments out', async () => {
+    const { admin, project, task, member } = await setup();
+    const pref = async () => (await member.client.get(`/tasks/${task.id}/preferences`)).body.preference;
+    await comment(admin, task.id, 'First');
+    const second = await comment(admin, task.id, 'Second');
+    expect(await pref()).toMatchObject({ unread: true, unreadComments: 2 });
+    await member.client.put(`/tasks/${task.id}/read-position`, { itemId: second.id });
+    expect(await pref()).toMatchObject({ unread: false, unreadComments: 0 });
+
+    const third = await comment(admin, task.id, 'Third');
+    expect(await pref()).toMatchObject({ unread: true, unreadComments: 1 });
+    await admin.delete(`/comments/${third.id}`);
+    expect(await pref()).toMatchObject({ unread: true, unreadComments: 0 });
+
+    // The member's own Comment counts too, and internal notes are still Comments.
+    await comment(member.client, task.id, 'Internal note', true);
+    expect(await pref()).toMatchObject({ unread: true, unreadComments: 1 });
+    const [row] = (await member.client.get(`/projects/${project.id}/task-preferences`)).body.preferences;
+    expect(row.unreadComments).toBe(1);
+    await member.client.patch(`/tasks/${task.id}/preferences`, { following: false, muted: true });
+    expect(await pref()).toMatchObject({ unread: true, unreadComments: 1, following: false, muted: true });
+    // Reading on another User's Login leaves this User's count unchanged.
+    expect((await admin.get(`/tasks/${task.id}/preferences`)).body.preference.unreadComments).toBe(3);
+  });
+  it('counts Agent and System Comments while Revisions and Agent Items only affect unread state', async () => {
+    const { admin, task, member } = await setup();
+    const { agent, runner } = await createAgent(app, admin);
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.thinking('Checking'), stream.text('Ready'), stream.result()]);
+    await app.settle();
+    const current = (await admin.get(`/tasks/${task.id}`)).body.task;
+    await admin.patch(`/tasks/${task.id}`, { version: current.version, title: 'Updated title' });
+    expect((await admin.post(`/tasks/${task.id}/session/notify`)).status).toBe(200);
+
+    const items = (await member.client.get(`/tasks/${task.id}/timeline`)).body.items;
+    const comments = items.filter((i: { type: string }) => i.type === 'comment');
+    expect(comments.map((i: { comment: { kind: string } }) => i.comment.kind).sort()).toEqual(['agent', 'system', 'user']);
+    expect(items.length).toBeGreaterThan(comments.length);
+    expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.unreadComments).toBe(3);
+    const notice = comments.find((i: { comment: { kind: string } }) => i.comment.kind === 'system');
+    await member.client.put(`/tasks/${task.id}/read-position`, { itemId: notice.id });
+    expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.unreadComments).toBe(0);
   });
   it('keeps preferences private across authenticated WebSocket instances', async () => {
     const { admin, task, member } = await setup();

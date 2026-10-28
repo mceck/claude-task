@@ -1,10 +1,17 @@
 // Applies real-time events to the TanStack Query caches.
-import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, Task, TaskCard, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
+import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { keys } from '../api/queries';
 
 type BoardKey = ReturnType<typeof keys.board>;
 type Timeline = InfiniteData<TimelinePage, string | null>;
+
+/** Replace even an initial in-flight snapshot: it may predate the event or subscription. */
+function refreshTaskPreferences(qc: QueryClient, projectId?: string): void {
+  const queryKey = projectId ? keys.taskPreferences(projectId) : ['task-preferences'];
+  void qc.cancelQueries({ queryKey }, { silent: true });
+  void qc.invalidateQueries({ queryKey });
+}
 
 export function compareCards(a: TaskCard, b: TaskCard): number {
   // Plain string comparison matches the server's C-collated fractional keys.
@@ -123,6 +130,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
     case 'task.created':
     case 'task.updated':
     case 'task.moved':
+      // Comments change the count; Revisions can also make a previously read Task unread.
+      refreshTaskPreferences(qc, event.task.projectId);
       return upsertCard(qc, event.task);
     case 'task.deleted':
       return removeCard(qc, event.projectId, event.taskId);
@@ -141,6 +150,13 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
     case 'task.changed':
       setTask(qc, event.task);
       void qc.invalidateQueries({ queryKey: keys.session(event.task.id) });
+      return;
+    case 'task.preference':
+      qc.setQueriesData<TaskPreference[]>({ queryKey: ['task-preferences'] }, (list) =>
+        list?.map((p) => (p.taskId === event.preference.taskId ? event.preference : p)),
+      );
+      // Reconcile the whole Project, including new Tasks and concurrent changes to other Tasks.
+      refreshTaskPreferences(qc);
       return;
     case 'task.removed':
       void qc.invalidateQueries({ queryKey: ['task'] });
@@ -215,16 +231,23 @@ function upsertAgent(qc: QueryClient, agent: Agent): void {
 
 /** Refetches the queries a topic's events keep up to date. */
 export function refreshTopic(qc: QueryClient, topic: Topic): void {
-  const [kind, id] = topic.split(':') as ['project' | 'task' | 'agents' | 'agent', string];
   if (topic === 'wikis') {
     void qc.invalidateQueries({ queryKey: keys.wikis });
     void qc.invalidateQueries({ queryKey: ['wiki'] });
-  } else if (kind === 'agents') {
+    return;
+  }
+  if (topic.startsWith('user:')) {
+    refreshTaskPreferences(qc);
+    return;
+  }
+  const [kind, id] = topic.split(':') as ['project' | 'task' | 'agents' | 'agent', string];
+  if (kind === 'agents') {
     void qc.invalidateQueries({ queryKey: keys.agents });
   } else if (kind === 'agent') {
     for (const key of [keys.agent(id), keys.queue(id), keys.builds(id), keys.jobs(id), keys.usage(id)]) void qc.invalidateQueries({ queryKey: key });
   } else if (kind === 'project') {
     void qc.invalidateQueries({ queryKey: keys.tasks(id) });
+    refreshTaskPreferences(qc, id);
     void qc.invalidateQueries({ queryKey: ['project'], predicate: (q) => (q.state.data as ProjectBundle | undefined)?.project.id === id });
   } else {
     void qc.invalidateQueries({ queryKey: ['voice', id] });

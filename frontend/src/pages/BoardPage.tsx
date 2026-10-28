@@ -2,7 +2,7 @@ import { VoiceBar } from '../components/VoiceRoom';
 import { ProjectLogo } from '../components/ProjectLogo';
 import { PullRequestBadge } from '../components/Git';
 import { AGENTS_TOPIC, emptyBoardFilter, isFilterActive, matchesBoardFilter, PRIORITIES, projectTopic } from '@claude-task/shared';
-import type { BoardFilter, Tag, Priority, Status, Task, TaskCard, User } from '@claude-task/shared';
+import type { BoardFilter, Tag, Priority, Status, Task, TaskCard, TaskPreference, User } from '@claude-task/shared';
 import {
   closestCenter,
   DndContext,
@@ -33,7 +33,7 @@ import { Label as FieldLabel } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
-import { keys, useAgents, useBoardTasks, useProject, useUsers } from '../api/queries';
+import { keys, useAgents, useBoardTasks, useProject, useTaskPreferences, useUsers } from '../api/queries';
 import { AgentAvatar } from '../components/agents';
 import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, UserAvatar } from '../components/common';
 import { MultiPick } from '../components/MultiPick';
@@ -52,8 +52,13 @@ export function BoardPage() {
   const bundle = useProject(projectKey);
   const project = bundle.data?.project;
   const tasks = useBoardTasks(project?.id, showClosed);
+  const preferences = useTaskPreferences(project?.id);
   const users = useUsers();
   const [filter, setFilter] = useState<BoardFilter>(emptyBoardFilter);
+  const preferenceByTask = useMemo(
+    () => new Map((preferences.data ?? []).map((p) => [p.taskId, p])),
+    [preferences.data],
+  );
   useTopic(project ? projectTopic(project.id) : null);
   useTopic(AGENTS_TOPIC);
 
@@ -108,6 +113,7 @@ export function BoardPage() {
             projectId={project!.id}
             columns={columns}
             cards={tasks.data ?? []}
+            preferences={preferenceByTask}
             filter={filter}
             tags={tags}
             users={users.data ?? []}
@@ -139,6 +145,7 @@ interface BoardProps {
   projectId: string;
   columns: Status[];
   cards: TaskCard[];
+  preferences: Map<string, TaskPreference>;
   filter: BoardFilter;
   tags: Tag[];
   users: User[];
@@ -148,7 +155,7 @@ interface BoardProps {
 
 type Columns = Record<string, string[]>;
 
-function Board({ projectId, columns, cards, filter, tags, users, selectedKey, onOpen }: BoardProps) {
+function Board({ projectId, columns, cards, preferences, filter, tags, users, selectedKey, onOpen }: BoardProps) {
   const qc = useQueryClient();
   const [drag, setDrag] = useState<{ activeId: string; columns: Columns } | null>(null);
   const sensors = useSensors(
@@ -266,7 +273,15 @@ function Board({ projectId, columns, cards, filter, tags, users, selectedKey, on
                 {shown[status.id]!.map((id) => {
                   const card = byId.get(id);
                   return card ? (
-                    <SortableCard key={id} card={card} tags={tags} users={users} selected={card.key === selectedKey} onOpen={onOpen} />
+                    <SortableCard
+                      key={id}
+                      card={card}
+                      preference={preferences.get(card.id)}
+                      tags={tags}
+                      users={users}
+                      selected={card.key === selectedKey}
+                      onOpen={onOpen}
+                    />
                   ) : null;
                 })}
               </SortableContext>
@@ -274,7 +289,7 @@ function Board({ projectId, columns, cards, filter, tags, users, selectedKey, on
           ))}
         </div>
         {/* No drop animation: while it runs, a new drag can't start, so quick successive moves get lost. */}
-        <DragOverlay dropAnimation={null}>{active ? <Card card={active} tags={tags} users={users} dragging /> : null}</DragOverlay>
+        <DragOverlay dropAnimation={null}>{active ? <Card card={active} preference={preferences.get(active.id)} tags={tags} users={users} dragging /> : null}</DragOverlay>
       </DndContext>
     </div>
   );
@@ -356,6 +371,7 @@ function QuickAdd({ projectId, statusId }: { projectId: string; statusId: string
 
 interface CardProps {
   card: TaskCard;
+  preference?: TaskPreference;
   tags: Tag[];
   users: User[];
   onOpen?: (key: string) => void;
@@ -378,11 +394,16 @@ function SortableCard(props: CardProps) {
   );
 }
 
-function Card({ card, tags, users, onOpen, dragging, selected }: CardProps) {
+function Card({ card, preference, tags, users, onOpen, dragging, selected }: CardProps) {
   const agents = useAgents();
   const agent = agents.data?.find((a) => a.id === card.agentId);
   const cardTags = card.tagIds.map((id) => tags.find((l) => l.id === id)).filter((l): l is Tag => !!l);
   const assignees = card.assigneeIds.map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u);
+  const unread = preference?.unread ?? false;
+  const unreadComments = preference?.unreadComments ?? 0;
+  const commentsLabel = unreadComments > 0
+    ? `${unreadComments} unread ${unreadComments === 1 ? 'comment' : 'comments'}`
+    : `${card.commentCount} comments`;
   return (
     <article
       aria-label={card.key}
@@ -409,15 +430,20 @@ function Card({ card, tags, users, onOpen, dragging, selected }: CardProps) {
         )}
       </div>
       {card.pullRequest && <div className="mb-2"><PullRequestBadge pr={card.pullRequest} /></div>}
-      <p className="text-[13px] leading-snug font-medium text-foreground/90 group-hover:text-foreground">{card.title}</p>
+      <p className={cn('text-[13px] leading-snug', unread ? 'font-semibold text-foreground' : 'font-medium text-foreground/90 group-hover:text-foreground')}>{card.title}</p>
       {(cardTags.length > 0 || card.commentCount > 0) && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1">
           {cardTags.map((l) => (
             <TagChip key={l.id} name={l.name} color={l.color} />
           ))}
           {card.commentCount > 0 && (
-            <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground" title={`${card.commentCount} comments`}>
-              <MessageSquare className="size-3" /> {card.commentCount}
+            <span
+              data-testid={unreadComments > 0 ? 'task-unread' : undefined}
+              className={cn('ml-auto flex items-center gap-1 text-[11px]', unreadComments > 0 ? 'font-semibold text-amber-500' : 'text-muted-foreground')}
+              title={commentsLabel}
+              aria-label={commentsLabel}
+            >
+              <MessageSquare className={cn('size-3', unreadComments > 0 && 'fill-amber-500/30 drop-shadow-[0_0_4px_var(--color-amber-500)]')} /> {card.commentCount}
             </span>
           )}
         </div>

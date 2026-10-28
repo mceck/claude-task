@@ -1,6 +1,7 @@
 import { ProjectLogo } from './ProjectLogo';
 import { useQueryClient } from '@tanstack/react-query';
 import { BookOpen, GitBranch, Bot, ChevronsUpDown, FolderKanban, KeyRound, LogOut, Monitor, Moon, Sun, Users } from 'lucide-react';
+import { userTopic } from '@claude-task/shared';
 import { useTheme } from '@/lib/theme';
 import type { Theme } from '@/lib/theme';
 import { useEffect } from 'react';
@@ -19,7 +20,7 @@ import { cn } from '@/lib/utils';
 import { ApiError, post } from '../api/client';
 import { useMe, useProjects } from '../api/queries';
 import { clearCommentDrafts } from '../lib/drafts';
-import { realtime } from '../lib/realtime';
+import { realtime, useTopic } from '../lib/realtime';
 import { Loading, UserAvatar } from './common';
 import { Logo } from './Logo';
 import { VoiceBar } from './VoiceRoom';
@@ -31,6 +32,9 @@ export function Layout() {
   const qc = useQueryClient();
   const user = me.data;
   const ready = !!user && !user.mustChangePassword;
+
+  // This User's own connection carries their private Task preferences (follow, mute, read position).
+  useTopic(ready && user ? userTopic(user.id) : null);
 
   useEffect(() => {
     if (!ready) return;
