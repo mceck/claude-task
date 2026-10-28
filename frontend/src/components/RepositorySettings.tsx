@@ -5,6 +5,7 @@ import type { FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Combobox } from './Combobox';
 import { errorMessage, post, put } from '../api/client';
 import { useRepositoryGroups, useRepositorySettings, keys } from '../api/queries';
 import { Field, ErrorText, Loading, Time } from './common';
@@ -29,7 +30,6 @@ export function RepositorySettings({ projectId }: { projectId: string }) {
 function RepositoryForm({ projectId, settings, groups }: { projectId: string; settings: Settings; groups: RepositoryGroup[] }) {
   const qc = useQueryClient();
   const current = settings.repository;
-  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(current ? optionValue(current.connectionId, current.providerRepoId) : '');
   const [base, setBase] = useState(current?.baseBranch ?? '');
   const [busy, setBusy] = useState(false);
@@ -75,7 +75,6 @@ function RepositoryForm({ projectId, settings, groups }: { projectId: string; se
     }
   };
   const currentValue = current ? optionValue(current.connectionId, current.providerRepoId) : undefined;
-  const term = search.toLowerCase();
   const failing = groups.filter((g) => g.error);
   return (
     <div className="space-y-4">
@@ -88,37 +87,28 @@ function RepositoryForm({ projectId, settings, groups }: { projectId: string; se
           </p>
         )}
         <form onSubmit={save} className="space-y-4">
-          <Field label="Search repositories">
-            <Input aria-label="Search repositories" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Owner, group or repository name" />
-          </Field>
           <Field label="Repository" hint="Repositories of every Git Connection, grouped by connection.">
-            <select
+            <Combobox
               aria-label="Repository"
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-              required
+              placeholder="Choose a repository"
+              searchPlaceholder="Search by owner, group or name"
               disabled={busy || settings.hasOpenSessions}
               value={selected}
-              onChange={(e) => {
-                setSelected(e.target.value);
-                setBase(find(e.target.value)?.repository.defaultBranch ?? '');
+              onValueChange={(value) => {
+                setSelected(value);
+                setBase(find(value)?.repository.defaultBranch ?? '');
               }}
-            >
-              <option value="">Choose a repository</option>
-              {groups
+              groups={groups
                 .filter((g) => g.repositories.length)
-                .map((g) => (
-                  <optgroup key={g.connection.id} label={`${providerName(g.connection.provider)} · ${g.connection.name} · ${g.connection.host}`}>
-                    {g.repositories
-                      .filter((r) => optionValue(g.connection.id, r.providerRepoId) === selected || `${r.owner}/${r.name}`.toLowerCase().includes(term))
-                      .map((r) => (
-                        <option key={r.providerRepoId} value={optionValue(g.connection.id, r.providerRepoId)}>
-                          {r.owner}/{r.name}
-                          {r.private ? ' (private)' : ''}
-                        </option>
-                      ))}
-                  </optgroup>
-                ))}
-            </select>
+                .map((g) => ({
+                  label: `${providerName(g.connection.provider)} · ${g.connection.name} · ${g.connection.host}`,
+                  options: g.repositories.map((r) => ({
+                    value: optionValue(g.connection.id, r.providerRepoId),
+                    label: `${r.owner}/${r.name}`,
+                    hint: r.private ? 'private' : undefined,
+                  })),
+                }))}
+            />
           </Field>
           {failing.length > 0 && (
             <ul aria-label="Unavailable connections" className="space-y-1 text-sm text-amber-500">

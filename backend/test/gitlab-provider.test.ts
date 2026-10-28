@@ -61,6 +61,22 @@ describe('GitLab provider HTTP contract', () => {
     ]);
     expect(requests[0]!.path).toContain('membership=true&min_access_level=30');
   });
+  it('fetches the remaining pages concurrently when GitLab reports the page count', async () => {
+    const { provider } = await harness((r) => {
+      const page = /&page=(\d+)$/.exec(r.path)?.[1];
+      if (r.path.startsWith('/projects?') && page)
+        return { body: [gitlabProject(Number(page), 'acme', `repo-${page}`)], headers: { 'x-total-pages': '6', 'x-next-page': Number(page) < 6 ? String(Number(page) + 1) : '' } };
+    });
+    expect((await provider.listAccessibleRepositories()).map((r) => r.name)).toEqual(['repo-1', 'repo-2', 'repo-3', 'repo-4', 'repo-5', 'repo-6']);
+  });
+  it('retries a transient failure while listing', async () => {
+    let calls = 0;
+    const { provider } = await harness((r) => {
+      if (r.path.startsWith('/projects?') && ++calls === 1) return { status: 503, body: {} };
+      if (r.path.startsWith('/projects?')) return { body: [gitlabProject(1, 'acme', 'a')] };
+    });
+    expect(await provider.listAccessibleRepositories()).toHaveLength(1);
+  });
   it('looks up repositories by id, branches and branch links', async () => {
     const { provider } = await harness((r) => {
       if (r.path === '/projects/42') return { body: gitlabProject(42, 'acme/platform', 'service') };

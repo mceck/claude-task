@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { errorMessage, post } from '../api/client';
+import { Combobox } from '../components/Combobox';
 import { keys, useAgents, useProjects, useRepositoryGroups } from '../api/queries';
 import { ErrorText } from '../components/common';
 
@@ -165,7 +166,6 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [defaultAgentId, setDefaultAgentId] = useState('none');
   const [selected, setSelected] = useState('none');
   const [baseBranch, setBaseBranch] = useState('');
-  const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const agents = useAgents();
   const groups = useRepositoryGroups();
@@ -215,7 +215,7 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
-        <form onSubmit={submit} className="flex flex-col gap-4">
+        <form onSubmit={submit} className="flex min-w-0 flex-col gap-4">
           <DialogHeader>
             <DialogTitle>New project</DialogTitle>
             <DialogDescription>It starts with a default set of statuses you can change later.</DialogDescription>
@@ -264,28 +264,26 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                 {agents.error && <><ErrorText>{errorMessage(agents.error)}</ErrorText><Button type="button" variant="outline" onClick={() => void agents.refetch()}>Retry agents</Button></>}
               </Field>
               <Field>
-                <FieldLabel htmlFor="project-repository-search">Search repositories</FieldLabel>
-                <Input id="project-repository-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Owner, group or repository name" />
-              </Field>
-              <Field>
                 <FieldLabel htmlFor="project-repository">Repository</FieldLabel>
-                <Select value={selected} disabled={busy || groups.isPending} onValueChange={(value) => {
-                  setSelected(value);
-                  setBaseBranch(repositories.find((r) => `${r.connectionId}:${r.providerRepoId}` === value)?.defaultBranch ?? '');
-                }}>
-                  <SelectTrigger id="project-repository" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup><SelectItem value="none">No Repository</SelectItem></SelectGroup>
-                    {(groups.data ?? []).map((g) => (
-                      <SelectGroup key={g.connection.id}>
-                        <SelectLabel>{g.connection.name} · {g.connection.host}</SelectLabel>
-                        {g.repositories.filter((r) => `${r.connectionId}:${r.providerRepoId}` === selected || `${r.owner}/${r.name}`.toLowerCase().includes(search.toLowerCase())).map((r) => (
-                          <SelectItem key={r.providerRepoId} value={`${r.connectionId}:${r.providerRepoId}`}>{r.owner}/{r.name}{r.private ? ' (private)' : ''}</SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Combobox
+                  id="project-repository"
+                  value={selected}
+                  disabled={busy || groups.isPending}
+                  searchPlaceholder="Search by owner, group or name"
+                  onValueChange={(value) => {
+                    setSelected(value);
+                    setBaseBranch(repositories.find((r) => `${r.connectionId}:${r.providerRepoId}` === value)?.defaultBranch ?? '');
+                  }}
+                  groups={[
+                    { options: [{ value: 'none', label: 'No Repository' }] },
+                    ...(groups.data ?? [])
+                      .filter((g) => g.repositories.length)
+                      .map((g) => ({
+                        label: `${g.connection.name} · ${g.connection.host}`,
+                        options: g.repositories.map((r) => ({ value: `${r.connectionId}:${r.providerRepoId}`, label: `${r.owner}/${r.name}`, hint: r.private ? 'private' : undefined })),
+                      })),
+                  ]}
+                />
                 {groups.isPending && <FieldDescription>Loading repositories…</FieldDescription>}
                 {groups.data?.length === 0 && <FieldDescription>An Admin can add a Git Connection in Git settings to link a Repository.</FieldDescription>}
                 {groups.error && <><ErrorText>{errorMessage(groups.error)}</ErrorText><Button type="button" variant="outline" onClick={() => void groups.refetch()}>Retry repositories</Button></>}

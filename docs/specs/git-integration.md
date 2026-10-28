@@ -106,14 +106,14 @@ The lock and the re-read matter because GitLab revokes the whole token family wh
 
 Any User can choose a Project's Repository and Base Branch during creation in the web and native apps or link it later from **Project settings → Repository**. Creation resolves and checks the selected Repository before saving the Project, its default Statuses and its optional default Agent atomically. Wikis link theirs when they are created (see [Wikis](wikis.md)), through the same checks.
 
-The repository picker lists the Repositories of every Git Connection, grouped by connection and labelled with provider, connection name and host. Each entry shows `owner/name` (the GitLab namespace may be a nested group path) and "(private)" for non-public ones. A search field filters by owner, group or name. A connection that can't list its Repositories appears in an "Unavailable connections" list with its reason, and the other groups still show. With no Git Connection at all, the tab explains that an Admin must add one first.
+The repository picker lists the Repositories of every Git Connection, grouped by connection and labelled with provider, connection name and host. Each entry shows `owner/name` (the GitLab namespace may be a nested group path) and "(private)" for non-public ones. The picker has a search field inside its popover that filters by owner, group or name. A connection that can't list its Repositories appears in an "Unavailable connections" list with its reason, and the other groups still show. With no Git Connection at all, the tab explains that an Admin must add one first.
 
 The backend caches successful Repository lists in process memory for 60 seconds per Git Connection, counted from completion. Simultaneous requests share one provider call. Each connection has its own cache, so a failing connection leaves the others available. Errors are returned to the picker and retried on its next request. Connection edits, credential changes and automatic token rotations invalidate the snapshot through the connection's fingerprint; deleted connections disappear from the next list. Provider-side changes appear after at most 60 seconds. Saving a Repository selection checks accessibility, identity and the Base Branch directly against the provider, independently of this picker cache.
 
 Which Repositories a connection lists:
 
 - GitHub: every Repository of every non-suspended installation of the App, sorted by owner and name.
-- GitLab: every non-archived project where the token's user has at least Developer access, across all pages, sorted by namespace and name. A project without a default branch reports `main`.
+- GitLab: every non-archived project where the token's user has at least Developer access, across all pages, sorted by namespace and name. A project without a default branch reports `main`. Pages are fetched concurrently (four at a time) once the first page reports the page count. Each GitLab read has a 30-second timeout and is retried twice on timeouts, network errors, `429` and `5xx`. A timeout reports "GitLab took too long to answer"; "doesn't answer like a GitLab instance" is reserved for answers that aren't JSON.
 
 Choosing a Repository fills the Base Branch with its default branch, which the User can change (up to 250 characters). On save the backend:
 

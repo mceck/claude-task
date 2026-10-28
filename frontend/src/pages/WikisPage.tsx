@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { del, errorMessage, patch, post } from '../api/client';
+import { Combobox } from '../components/Combobox';
 import { keys, useAgents, useRepositoryGroups, useTask, useTaskSession, useUsers, useWiki, useWikis } from '../api/queries';
 import { ErrorText, Field, Loading, useConfirm } from '../components/common';
 import { BranchLink, PullRequestBadge } from '../components/Git';
@@ -262,7 +263,7 @@ function WikiForm({ wiki, onSaved }: { wiki?: Wiki; onSaved: () => void }) {
     }
   };
   return (
-    <form onSubmit={save} className="space-y-4">
+    <form onSubmit={save} className="min-w-0 space-y-4">
       <Field label="Name">
         <Input aria-label="Wiki name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={200} />
       </Field>
@@ -290,23 +291,22 @@ function WikiForm({ wiki, onSaved }: { wiki?: Wiki; onSaved: () => void }) {
       {!wiki && (
         <>
           <Field label="Repository" hint="The repository already contains Markdown files and the skills to maintain them.">
-            <select
+            <Combobox
               aria-label="Repository"
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-              required
+              placeholder="Choose a repository"
+              searchPlaceholder="Search by owner, group or name"
               value={selected}
-              onChange={(e) => {
-                setSelected(e.target.value);
-                setBaseBranch(repositories.find((r) => `${r.connectionId}:${r.providerRepoId}` === e.target.value)?.defaultBranch ?? '');
+              onValueChange={(value) => {
+                setSelected(value);
+                setBaseBranch(repositories.find((r) => `${r.connectionId}:${r.providerRepoId}` === value)?.defaultBranch ?? '');
               }}
-            >
-              <option value="">Choose a repository</option>
-              {repositories.map((r) => (
-                <option key={`${r.connectionId}:${r.providerRepoId}`} value={`${r.connectionId}:${r.providerRepoId}`}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+              groups={(groups.data ?? [])
+                .filter((g) => g.repositories.length)
+                .map((g) => ({
+                  label: `${g.connection.name} · ${g.connection.host}`,
+                  options: g.repositories.map((r) => ({ value: `${r.connectionId}:${r.providerRepoId}`, label: `${r.owner}/${r.name}`, hint: r.private ? 'private' : undefined })),
+                }))}
+            />
           </Field>
           <Field label="Base branch">
             <Input aria-label="Base branch" value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} />

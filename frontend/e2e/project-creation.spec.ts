@@ -29,10 +29,10 @@ async function setup(page: Page) {
   await dialog.getByLabel('Key', { exact: true }).fill(key);
   await dialog.getByLabel('Default Agent', { exact: true }).click();
   await page.getByRole('option', { name, exact: true }).click();
-  await dialog.getByLabel('Search repositories').fill('platform/service');
   await dialog.getByLabel('Repository', { exact: true }).click();
-  await page.locator('[data-slot="select-group"]').filter({ hasText: name })
-    .getByRole('option', { name: 'acme/platform/service (private)', exact: true }).click();
+  await page.getByPlaceholder('Search by owner, group or name').fill('platform/service');
+  await page.locator('[cmdk-group]').filter({ hasText: name })
+    .getByRole('option', { name: /acme\/platform\/service/ }).click();
   await expect(dialog.getByLabel('Base branch')).toHaveValue('main');
   return { name, key, agent, connection, dialog };
 }

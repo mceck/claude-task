@@ -30,7 +30,7 @@ Stored GitLab tokens are rotated automatically before expiry. If a card reports 
 
 1. Open the Project's Board and click **Settings**.
 2. Open the **Repository** tab.
-3. Use **Search repositories** to find an owner, group or Repository name.
+3. Open the **Repository** picker and type in its search field to find an owner, group or Repository name.
 4. Choose **Repository** from the groups organized by Git Connection.
 5. Check **Base branch**. It defaults to the Repository's default branch and must already exist on the code host.
 6. Click **Save repository**. You see **Repository saved** when it succeeds.
@@ -66,7 +66,7 @@ Each card shows health, expiry when available, access links and the linked Proje
 
 1. Choose **Projects settings** in the phone drawer, or **Projects** in the desktop Settings hub.
 2. Open the Project, scroll to **Repository**, and open it.
-3. Use **Search repositories** to filter by owner, group or name. Select a Repository from its connection’s group.
+3. Open the **Repository** picker and type to filter by owner, group or name. Repositories are grouped by connection.
 4. Check **Base Branch** and choose **Save repository**.
 
 A failed connection shows its own error while other connections remain available. The currently linked Repository stays selected if its connection is unavailable. Pending, paused or active Sessions lock Repository changes; you can still save another Base Branch for the current Repository.

@@ -19,6 +19,10 @@ type ProtectedBranch = { name: string; push_access_levels: AccessEntry[]; allow_
 type TokenSelf = { active: boolean; revoked: boolean; scopes: string[]; expires_at: string | null };
 type User = { id: number; username: string; web_url: string; is_admin?: boolean };
 
+const REQUEST_TIMEOUT_MS = 30_000;
+const RETRIES = 2;
+const RETRY_DELAY_MS = 500;
+const PAGE_CONCURRENCY = 4;
 export const GITLAB_SCOPES = ['api', 'write_repository'];
 const DRAFT = /^\s*(\[draft\]|\(draft\)|draft:|draft\s)\s*/i;
 const projectPath = (ref: RepositoryRef) => `/projects/${encodeURIComponent(ref.providerRepoId)}`;
@@ -45,22 +49,38 @@ export class GitLabProvider implements GitProvider {
   ) {}
 
   private async send<T>(path: string, method = 'GET', body?: unknown): Promise<{ data: T; headers: Headers }> {
+    // Only reads are retried: a transient failure on a write may have been applied.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.sendOnce<T>(path, method, body);
+      } catch (err) {
+        const transient = err instanceof GitProviderError && (err.status === 429 || err.status >= 500);
+        if (method !== 'GET' || !transient || attempt >= RETRIES) throw err;
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)));
+      }
+    }
+  }
+  private async sendOnce<T>(path: string, method: string, body?: unknown): Promise<{ data: T; headers: Headers }> {
     let response: Response;
+    let text: string;
     try {
       response = await fetch(`${this.baseUrl}/api/v4${path}`, {
         method,
         headers: { 'PRIVATE-TOKEN': this.token, accept: 'application/json', 'user-agent': 'claude-task', ...(body ? { 'content-type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         redirect: 'error',
       });
-    } catch {
+      // The timeout also covers the body, so a slow download must not look like a non-GitLab answer.
+      text = await response.text();
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') throw new GitProviderError('GitLab took too long to answer. Try again in a moment.');
       throw new GitProviderError('GitLab could not be reached. Check the URL and try again later.');
     }
     // Provider messages may echo request bodies. Never include them (or the token) in errors/logs.
     if (!response.ok) throw new GitProviderError(`GitLab request failed (HTTP ${response.status}). Check the token and its project access.`, response.status);
     try {
-      return { data: (await response.json()) as T, headers: response.headers };
+      return { data: JSON.parse(text) as T, headers: response.headers };
     } catch {
       throw new GitProviderError('This URL does not answer like a GitLab instance', 400);
     }
@@ -68,14 +88,28 @@ export class GitLabProvider implements GitProvider {
   private async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
     return (await this.send<T>(path, method, body)).data;
   }
+  /** Every page of a list. When GitLab reports the page count, the pages after the first are fetched concurrently. */
   private async pages<T>(path: string): Promise<T[]> {
-    const all: T[] = [];
-    for (let page = '1'; page; ) {
-      const { data, headers } = await this.send<T[]>(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
-      all.push(...data);
-      page = headers.get('x-next-page') ?? '';
+    const url = (page: number | string) => `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`;
+    const first = await this.send<T[]>(url(1));
+    const totalPages = Number(first.headers.get('x-total-pages'));
+    if (!Number.isInteger(totalPages) || totalPages < 1) {
+      // No total (very large result sets): follow the next-page header one page at a time.
+      const all = [...first.data];
+      for (let page = first.headers.get('x-next-page') ?? ''; page; ) {
+        const next = await this.send<T[]>(url(page));
+        all.push(...next.data);
+        page = next.headers.get('x-next-page') ?? '';
+      }
+      return all;
     }
-    return all;
+    const rest = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+    const results: T[][] = [];
+    const worker = async () => {
+      for (let page = rest.shift(); page !== undefined; page = rest.shift()) results[page] = (await this.send<T[]>(url(page))).data;
+    };
+    await Promise.all(Array.from({ length: Math.min(PAGE_CONCURRENCY, rest.length) }, worker));
+    return [...first.data, ...results.flat()];
   }
   private me(): Promise<User> {
     this.user ??= this.request<User>('/user').catch((err) => {

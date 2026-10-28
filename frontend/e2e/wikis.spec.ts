@@ -27,7 +27,8 @@ test('creates a wiki, chats from two browsers and resets the chat for everyone',
   await page.getByLabel('Wiki name').fill(name);
   await page.getByLabel('Wiki description').fill('Documentation shared by the team');
   await page.getByLabel('Agent', { exact: true }).selectOption(agent.id);
-  await page.getByLabel('Repository', { exact: true }).selectOption(`${connection.id}:101`);
+  await page.getByRole('combobox', { name: 'Repository', exact: true }).click();
+  await page.locator(`[cmdk-item][data-value="${connection.id}:101"]`).click();
   await page.getByRole('button', { name: 'Create wiki' }).click();
   await expect(page).toHaveURL(/\/wikis\/[0-9a-f-]+$/);
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
