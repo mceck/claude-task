@@ -1,5 +1,5 @@
 import { VOICE_CONNECT_TIMEOUT_MS } from '@claude-task/shared';
-import type { VoiceRoom, VoiceServerMessage, VoiceSignal } from '@claude-task/shared';
+import type { VoiceRoom, VoiceServerMessage, VoiceSignal, VoiceIceConfiguration } from '@claude-task/shared';
 import { useSyncExternalStore } from 'react';
 import { realtime } from './realtime';
 
@@ -35,6 +35,7 @@ class VoiceController {
   private stream?: MediaStream;
   private pendingStream?: MediaStream;
   private iceServers: RTCIceServer[] = [];
+  private iceTimer?: ReturnType<typeof setTimeout>;
   private pending?: { requestId: string; resolve: (message: Extract<VoiceServerMessage, { type: 'voice.joined' }>) => void; reject: (error: Error) => void };
   private epoch = 0;
 
@@ -79,8 +80,8 @@ class VoiceController {
       this.clear(false);
       this.stream = stream;
       this.pendingStream = undefined;
-      this.iceServers = response.iceServers.map((server) => ({ urls: server.urls.filter((url) => /^stuns?:/.test(url)) }));
       this.update({ participantId: response.participantId, room: response.room, error: null });
+      this.configureIce(response);
       this.room(response.room);
       for (const track of stream.getAudioTracks()) track.onended = () => this.leave('Microphone disconnected. Join again to choose an available microphone.');
     } catch (error) {
@@ -137,6 +138,9 @@ class VoiceController {
     if (message.type === 'voice.joined') {
       if (this.pending?.requestId === message.requestId) this.pending.resolve(message);
       else realtime.send({ type: 'voice.leave', participantId: message.participantId });
+    } else if (message.type === 'voice.ice' && message.participantId === this.state.participantId) {
+      this.configureIce(message);
+      for (const id of this.peers.keys()) this.retry(id);
     } else if (message.type === 'voice.error') {
       if (message.requestId && message.requestId === this.pending?.requestId) this.pending.reject(new VoiceJoinError(message.message, message.current));
     } else if (message.type === 'voice.left' && message.participantId === this.state.participantId) {
@@ -147,6 +151,19 @@ class VoiceController {
       const peer = this.peers.get(message.fromId);
       if (peer) this.enqueue(peer, () => this.receive(peer, message.signal));
     }
+  }
+
+  private configureIce(ice: VoiceIceConfiguration) {
+    this.iceServers = ice.iceServers.map((server) => ({ ...server, urls: server.urls.filter((url) => /^(?:stun|turn)s?:/.test(url)) })).filter((server) => server.urls.length > 0);
+    clearTimeout(this.iceTimer);
+    if (!ice.iceExpiresAt) return;
+    const participantId = this.state.participantId;
+    const refresh = () => {
+      if (!participantId || participantId !== this.state.participantId) return;
+      realtime.send({ type: 'voice.ice', participantId });
+      this.iceTimer = setTimeout(refresh, 30_000);
+    };
+    this.iceTimer = setTimeout(refresh, Math.max(1000, (Date.parse(ice.iceExpiresAt) - Date.now()) / 2));
   }
 
   private room(room: VoiceRoom) {
@@ -176,7 +193,7 @@ class VoiceController {
     peer.pc = pc;
     for (const track of this.stream!.getAudioTracks()) pc.addTrack(track, this.stream!);
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate && peer.pc === pc && candidate.type !== 'relay') this.signal(peer.id, { type: 'candidate', exchangeId, candidate: candidate.candidate, sdpMid: candidate.sdpMid, sdpMLineIndex: candidate.sdpMLineIndex });
+      if (candidate && peer.pc === pc) this.signal(peer.id, { type: 'candidate', exchangeId, candidate: candidate.candidate, sdpMid: candidate.sdpMid, sdpMLineIndex: candidate.sdpMLineIndex });
     };
     pc.ontrack = ({ track, streams }) => {
       if (peer.pc !== pc) return;
@@ -245,6 +262,7 @@ class VoiceController {
     peer.candidates = [];
   }
   private clear(stopPending = true) {
+    clearTimeout(this.iceTimer);
     for (const peer of this.peers.values()) this.resetPeer(peer);
     this.peers.clear();
     this.stream?.getTracks().forEach((track) => { track.onended = null; track.stop(); });

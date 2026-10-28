@@ -13,6 +13,7 @@ class FakeAudio implements VoiceAudio {
   Set<String> connectedPeers = {};
   final List<String> retried = [];
   final List<Json> signals = [];
+  List<dynamic> configuredIce = [];
   Completer<void>? permission, stopWait;
   @override
   Future<void> start() async {
@@ -26,7 +27,10 @@ class FakeAudio implements VoiceAudio {
     List<dynamic> iceServers,
     void Function(String, Json) send,
     void Function(String, String) link,
-  ) {}
+  ) {
+    configuredIce = iceServers;
+  }
+
   @override
   void peers(Set<String> ids) {
     connectedPeers = ids;
@@ -251,6 +255,77 @@ void main() {
   );
 
   testWidgets(
+    'TURN credentials reach media and renew before expiry without leaving the room',
+    (tester) async {
+      final audio = FakeAudio(), sent = <Json>[];
+      final voice = VoiceController(
+        send: (m) {
+          sent.add(m);
+          return true;
+        },
+        audioFactory: () => audio,
+        background: FakeBackground(),
+      );
+      addTearDown(voice.dispose);
+      final joining = voice.join('task-a', 'API-1');
+      await tester.pump();
+      final ice = <Json>[
+        {
+          'urls': ['turn:relay.example.test:3478?transport=udp'],
+          'username': 'temporary-user',
+          'credential': 'temporary-password',
+        },
+      ];
+      voice.handle({
+        'type': 'voice.joined',
+        'requestId': sent.last['requestId'],
+        'participantId': 'participant-a',
+        'room': room(),
+        'iceServers': ice,
+        'iceExpiresAt': DateTime.now()
+            .add(const Duration(seconds: 10))
+            .toIso8601String(),
+      });
+      await joining;
+      expect(audio.configuredIce, ice);
+      voice.links['participant-b'] = 'connected';
+      await tester.pump(const Duration(seconds: 6));
+      expect(sent.last, {
+        'type': 'voice.ice',
+        'participantId': 'participant-a',
+      });
+      final refreshed = <Json>[
+        {
+          'urls': ['turns:relay.example.test:443?transport=tcp'],
+          'username': 'new-user',
+          'credential': 'new-password',
+        },
+      ];
+      voice.handle({
+        'type': 'voice.ice',
+        'participantId': 'stale',
+        'iceServers': refreshed,
+      });
+      expect(audio.configuredIce, ice);
+      voice.handle({
+        'type': 'voice.ice',
+        'participantId': 'participant-a',
+        'iceServers': refreshed,
+        'iceExpiresAt': DateTime.now()
+            .add(const Duration(seconds: 10))
+            .toIso8601String(),
+      });
+      expect(audio.configuredIce, refreshed);
+      expect(audio.retried, ['participant-b']);
+      expect(voice.participantId, 'participant-a');
+      final requests = sent.where((m) => m['type'] == 'voice.ice').length;
+      voice.leave();
+      await tester.pump(const Duration(seconds: 40));
+      expect(sent.where((m) => m['type'] == 'voice.ice').length, requests);
+    },
+  );
+
+  testWidgets(
     'late admission after timeout leaves while microphone teardown is pending',
     (tester) async {
       final audio = FakeAudio()..stopWait = Completer<void>();
@@ -314,7 +389,7 @@ void main() {
     expect(find.text('Voice · API-1'), findsOneWidget);
     expect(
       find.text(
-        'Some people cannot hear you. Retry or try another network to make a direct connection.',
+        'Some people cannot hear you. Retry or try another network to restore audio.',
       ),
       findsOneWidget,
     );

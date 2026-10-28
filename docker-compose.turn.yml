@@ -1,0 +1,35 @@
+# Add to docker-compose.yml to enable the optional authenticated TURN service.
+services:
+  app:
+    environment:
+      VOICE_TURN_HOST: ${VOICE_TURN_HOST:?set VOICE_TURN_HOST explicitly}
+      VOICE_TURN_SECRET: ${VOICE_TURN_SECRET:?generate VOICE_TURN_SECRET with openssl rand -hex 32}
+      VOICE_TURN_PORT: ${VOICE_TURN_PORT:-3478}
+      VOICE_TURN_TLS_PORT: ${VOICE_TURN_TLS_PORT:-}
+      VOICE_TURN_TTL_SECONDS: ${VOICE_TURN_TTL_SECONDS:-86400}
+  turn:
+    image: coturn/coturn:4.18.0-r0
+    restart: unless-stopped
+    entrypoint: ['/bin/sh', '/etc/coturn/start.sh']
+    environment:
+      VOICE_TURN_HOST: ${VOICE_TURN_HOST:?set VOICE_TURN_HOST explicitly}
+      VOICE_TURN_SECRET: ${VOICE_TURN_SECRET:?generate VOICE_TURN_SECRET with openssl rand -hex 32}
+      VOICE_TURN_EXTERNAL_IP: ${VOICE_TURN_EXTERNAL_IP:?set the public IPv4 address of the relay}
+      VOICE_TURN_TLS_PORT: ${VOICE_TURN_TLS_PORT:-}
+    ports:
+      - '${VOICE_TURN_PORT:-3478}:3478/udp'
+      - '${VOICE_TURN_PORT:-3478}:3478/tcp'
+      - '30000-30199:30000-30199/udp'
+    networks: [voice-relay]
+    volumes:
+      - ./deploy/turn/start.sh:/etc/coturn/start.sh:ro
+      - ./deploy/turn/turnserver.conf:/etc/coturn/base.conf:ro
+      - ${VOICE_TURN_CERTS_DIR:-./deploy/turn/certs}:/certs:ro
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,nodev,size=16m']
+    cap_drop: [ALL]
+    # The upstream turnserver binary carries this file capability, even on high ports.
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ['no-new-privileges:true']
+networks:
+  voice-relay:

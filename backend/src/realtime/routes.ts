@@ -1,4 +1,4 @@
-import { DEFAULT_VOICE_STUN_URLS, taskKey, voiceCommandSchema } from '@claude-task/shared';
+import { taskKey, voiceCommandSchema } from '@claude-task/shared';
 import type { ServerMessage, VoiceCommand, VoiceServerMessage } from '@claude-task/shared';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
@@ -9,6 +9,7 @@ import { idOrKey } from '../ids';
 import type { AppContext } from '../context';
 import { forbidden, HttpError, parse } from '../errors';
 import { isTopic } from './hub';
+import { voiceIceConfiguration } from './ice';
 
 const PING_INTERVAL_MS = 30_000;
 
@@ -49,14 +50,14 @@ export function realtimeRoutes(app: FastifyInstance, ctx: AppContext): void {
       };
       const voiceCommand = async (command: VoiceCommand) => {
         if (!ctx.hub.has(socket)) return;
+        if (command.type === 'voice.ice') return ctx.hub.voice.refresh(socket, command.participantId, voiceIceConfiguration(ctx.config, user.id));
         if (command.type !== 'voice.join') return ctx.hub.voice.command(socket, command);
         try {
           await ctx.db.transaction(async (tx) => {
             // Serialize with Task deletion until membership has been admitted.
             const row = await getTaskRow(tx, command.taskId, { lock: true });
             const [project] = await tx.select({ key: projects.key }).from(projects).where(eq(projects.id, row.projectId));
-            const urls = ctx.config.voiceStunUrls ?? DEFAULT_VOICE_STUN_URLS;
-            if (ctx.hub.has(socket)) ctx.hub.voice.join(socket, user, { id: row.id, key: taskKey(project!.key, row.number) }, command, urls.length ? [{ urls }] : []);
+            if (ctx.hub.has(socket)) ctx.hub.voice.join(socket, user, { id: row.id, key: taskKey(project!.key, row.number) }, command, voiceIceConfiguration(ctx.config, user.id));
           });
         } catch (err) {
           sendVoiceError({ type: 'voice.error', requestId: command.requestId, code: err instanceof HttpError && err.statusCode === 404 ? 'not_found' : 'invalid', message: err instanceof HttpError ? err.message : 'Could not join the Voice Room. Try again.' });

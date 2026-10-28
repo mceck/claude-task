@@ -3,6 +3,7 @@ import { DEFAULT_VOICE_STUN_URLS } from '@claude-task/shared';
 
 export interface Config {
   voiceStunUrls?: string[];
+  voiceTurn?: { host: string; port: number; tlsPort: number | null; secret: string; ttlSeconds: number };
   databaseUrl: string;
   host: string;
   port: number;
@@ -65,8 +66,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const adminPassword = env.ADMIN_PASSWORD;
   const voiceStunUrls = env.VOICE_STUN_URLS === undefined ? DEFAULT_VOICE_STUN_URLS : env.VOICE_STUN_URLS.split(',').map((url) => url.trim()).filter(Boolean);
   if (voiceStunUrls.length > 8 || voiceStunUrls.some((url) => !/^stuns?:[^\s/?#@]+(?::[0-9]+)?$/.test(url))) throw new Error('VOICE_STUN_URLS accepts up to eight stun: or stuns: URLs');
+  const turnHost = env.VOICE_TURN_HOST?.trim();
+  const turnSecret = env.VOICE_TURN_SECRET;
+  const turnEnabled = !!(turnHost || turnSecret || env.VOICE_TURN_TLS_PORT?.trim());
+  const turnPort = env.VOICE_TURN_PORT || '3478';
+  const turnTlsPort = env.VOICE_TURN_TLS_PORT?.trim();
+  const turnTtl = env.VOICE_TURN_TTL_SECONDS || '86400';
+  const validPort = (value: string) => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 65535;
+  if (turnEnabled) {
+    if (!turnHost || !/^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(turnHost) || turnHost.includes('..')) throw new Error('VOICE_TURN_HOST is required when TURN is enabled; supply a hostname without protocol, port or path');
+    if (!turnSecret || turnSecret.length < 32 || !/^[A-Za-z0-9_+/=-]+$/.test(turnSecret)) throw new Error('VOICE_TURN_SECRET must contain at least 32 base64 or hexadecimal characters');
+    if (!validPort(turnPort) || (turnTlsPort && !validPort(turnTlsPort))) throw new Error('VOICE_TURN_PORT and VOICE_TURN_TLS_PORT must be valid ports (1-65535)');
+    if (!/^\d+$/.test(turnTtl) || Number(turnTtl) < 300 || Number(turnTtl) > 86400) throw new Error('VOICE_TURN_TTL_SECONDS must be between 300 and 86400');
+  }
   return {
     voiceStunUrls,
+    voiceTurn: turnEnabled ? { host: turnHost!, port: Number(turnPort), tlsPort: turnTlsPort ? Number(turnTlsPort) : null, secret: turnSecret!, ttlSeconds: Number(turnTtl) } : undefined,
     databaseUrl,
     host: env.HOST ?? '0.0.0.0',
     port: Number(env.PORT ?? 3000),

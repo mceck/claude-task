@@ -66,7 +66,7 @@ export function VoiceBar() {
           </>}
         </div>)}
       </div>
-      {Object.values(state.links).includes('unavailable') && <p className="text-xs text-destructive" role="status">Some people cannot hear you. Your current networks may prevent a direct connection. Retry or try another network.</p>}
+      {Object.values(state.links).includes('unavailable') && <p className="text-xs text-destructive" role="status">Some people cannot hear you. An audio connection could not be established. Retry or try another network.</p>}
       {state.playbackBlocked && <Button variant="outline" size="xs" onClick={() => void voice.resumeAudio()}>Enable voice playback</Button>}
     </>}
   </section>;

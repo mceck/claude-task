@@ -85,7 +85,7 @@ describe('Task Voice Rooms', () => {
     expect((await admin.get(`/tasks/${other.id}/voice`)).body.room.participants[0].id).toBe(original.participantId);
   });
 
-  it('forwards signals privately within a room and rejects forged identity, malformed and relay candidates', async () => {
+  it('forwards signals privately within a room and rejects forged identity and malformed candidates', async () => {
     const admin = await app.admin();
     const { client } = await createUser(app, admin);
     const outsider = (await createUser(app, admin)).client;
@@ -101,7 +101,7 @@ describe('Task Voice Rooms', () => {
       { type: 'voice.signal', participantId: aa.participantId, targetId: cc.participantId, signal },
       { type: 'voice.signal', participantId: bb.participantId, targetId: cc.participantId, signal },
       { type: 'voice.signal', participantId: aa.participantId, targetId: bb.participantId, signal: { ...signal, sdp: 'x'.repeat(17 * 1024) } },
-      { type: 'voice.signal', participantId: aa.participantId, targetId: bb.participantId, signal: { type: 'candidate', exchangeId: randomUUID(), candidate: 'candidate:1 1 udp 1 1.2.3.4 1234 typ relay', sdpMid: null, sdpMLineIndex: 0 } },
+      { type: 'voice.signal', participantId: aa.participantId, targetId: bb.participantId, signal: { type: 'candidate', exchangeId: randomUUID(), candidate: 'x'.repeat(2049), sdpMid: null, sdpMLineIndex: 0 } },
     ]) {
       const error = a.message((m) => m.type === 'voice.error');
       a.send(command);

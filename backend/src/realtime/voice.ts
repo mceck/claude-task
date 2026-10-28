@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { VOICE_ROOM_LIMIT, taskTopic } from '@claude-task/shared';
-import type { VoiceCommand, VoiceParticipant, VoiceRoom, VoiceServerMessage } from '@claude-task/shared';
+import type { VoiceCommand, VoiceParticipant, VoiceRoom, VoiceServerMessage, VoiceIceConfiguration } from '@claude-task/shared';
 import type { WebSocket } from 'ws';
 
 interface Participation { socket: WebSocket; participant: VoiceParticipant; taskId: string }
@@ -16,7 +16,7 @@ export class VoiceRooms {
     return this.rooms.get(task.id) ?? { taskId: task.id, taskKey: task.key, participants: [] };
   }
 
-  join(socket: WebSocket, user: VoiceParticipant['user'], task: { id: string; key: string }, command: Extract<VoiceCommand, { type: 'voice.join' }>, iceServers: { urls: string[] }[]): void {
+  join(socket: WebSocket, user: VoiceParticipant['user'], task: { id: string; key: string }, command: Extract<VoiceCommand, { type: 'voice.join' }>, ice: VoiceIceConfiguration): void {
     const old = this.byUser.get(user.id);
     if (old && command.replace !== old.participant.id) {
       this.send(socket, { type: 'voice.error', requestId: command.requestId, code: 'already_joined', message: `You are already in ${this.rooms.get(old.taskId)!.taskKey}. Transfer your voice participation?`, current: { participantId: old.participant.id, taskKey: this.rooms.get(old.taskId)!.taskKey } });
@@ -38,16 +38,26 @@ export class VoiceRooms {
     this.byUser.set(user.id, participation);
     this.bySocket.set(socket, participation);
     this.rooms.set(task.id, { ...room, participants: [...others, participant] });
-    this.send(socket, { type: 'voice.joined', requestId: command.requestId, participantId: participant.id, room: this.rooms.get(task.id)!, iceServers });
+    this.send(socket, { type: 'voice.joined', requestId: command.requestId, participantId: participant.id, room: this.rooms.get(task.id)!, ...ice });
     this.broadcast(task.id);
   }
 
-  command(socket: WebSocket, command: Exclude<VoiceCommand, { type: 'voice.join' }>): void {
+  refresh(socket: WebSocket, participantId: string, ice: VoiceIceConfiguration): void {
+    if (this.current(socket, participantId)) this.send(socket, { type: 'voice.ice', participantId, ...ice });
+  }
+
+  private current(socket: WebSocket, participantId: string): Participation | undefined {
     const current = this.bySocket.get(socket);
-    if (!current || current.participant.id !== command.participantId) {
+    if (!current || current.participant.id !== participantId) {
       this.send(socket, { type: 'voice.error', code: 'stale', message: 'This voice participation has ended.' });
-      return;
+      return undefined;
     }
+    return current;
+  }
+
+  command(socket: WebSocket, command: Exclude<VoiceCommand, { type: 'voice.join' | 'voice.ice' }>): void {
+    const current = this.current(socket, command.participantId);
+    if (!current) return;
     if (command.type === 'voice.leave') return this.remove(current, 'left');
     if (command.type === 'voice.mute') {
       current.participant.muted = command.muted;

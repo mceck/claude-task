@@ -87,9 +87,12 @@ class WebRtcVoiceAudio implements VoiceAudio {
     _iceServers = [
       for (final raw in iceServers)
         {
+          if ((raw as Map)['username'] is String) 'username': raw['username'],
+          if (raw['credential'] is String) 'credential': raw['credential'],
           'urls': [
-            for (final url in (raw as Map)['urls'] as List)
-              if (url is String && RegExp(r'^stuns?:').hasMatch(url)) url,
+            for (final url in raw['urls'] as List)
+              if (url is String && RegExp(r'^(?:stun|turn)s?:').hasMatch(url))
+                url,
           ],
         },
     ];
@@ -142,9 +145,7 @@ class WebRtcVoiceAudio implements VoiceAudio {
       await pc.addTrack(track, _stream!);
     }
     pc.onIceCandidate = (candidate) {
-      if (candidate.candidate?.isNotEmpty == true &&
-          peer.pc == pc &&
-          !candidate.candidate!.contains(' typ relay')) {
+      if (candidate.candidate?.isNotEmpty == true && peer.pc == pc) {
         _send?.call(peer.id, {
           'type': 'candidate',
           'exchangeId': exchangeId,

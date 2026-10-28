@@ -257,7 +257,7 @@ class VoiceControls extends StatelessWidget {
                 const Padding(
                   padding: EdgeInsets.only(top: 6),
                   child: Text(
-                    'Some people cannot hear you. Retry or try another network to make a direct connection.',
+                    'Some people cannot hear you. Retry or try another network to restore audio.',
                     style: TextStyle(color: Palette.danger, fontSize: 11),
                   ),
                 ),

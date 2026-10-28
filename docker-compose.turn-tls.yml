@@ -1,0 +1,5 @@
+# Add after docker-compose.turn.yml when enabling a certificate-backed TLS listener.
+services:
+  turn:
+    ports:
+      - '${VOICE_TURN_TLS_PORT:?set VOICE_TURN_TLS_PORT and mount its certificate}:5349/tcp'

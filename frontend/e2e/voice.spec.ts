@@ -17,19 +17,31 @@ async function otherUser(browser: Browser, admin: APIRequestContext): Promise<Br
   return context;
 }
 
-async function inspectMedia(page: Page) {
-  await page.addInitScript(() => {
-    const root = window as unknown as { voicePeers: RTCPeerConnection[]; voiceStreams: MediaStream[] };
-    root.voicePeers = []; root.voiceStreams = [];
+async function inspectMedia(page: Page, transport?: 'udp' | 'tcp' | 'all') {
+  await page.addInitScript((transport) => {
+    const root = window as unknown as { voicePeers: RTCPeerConnection[]; voiceStreams: MediaStream[]; voiceIceErrors: unknown[] };
+    root.voicePeers = []; root.voiceStreams = []; root.voiceIceErrors = [];
     const NativePeer = window.RTCPeerConnection;
     window.RTCPeerConnection = class extends NativePeer {
-      constructor(config?: RTCConfiguration) { super(config); root.voicePeers.push(this); }
+      constructor(config?: RTCConfiguration) {
+        const selected = transport ? {
+          ...config,
+          iceTransportPolicy: 'relay' as const,
+          iceServers: (config?.iceServers ?? []).map((server) => ({
+            ...server,
+            urls: (Array.isArray(server.urls) ? server.urls : [server.urls]).filter((url) => url.startsWith('turn:') && (transport === 'all' || url.endsWith(`?transport=${transport}`))),
+          })).filter((server) => server.urls.length > 0),
+        } : config;
+        super(selected); root.voicePeers.push(this);
+        this.addEventListener('icecandidateerror', (event) => root.voiceIceErrors.push({ code: event.errorCode, text: event.errorText, url: event.url }));
+      }
+
     };
     const capture = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = async (constraints) => {
       const stream = await capture(constraints); root.voiceStreams.push(stream); return stream;
     };
-  });
+  }, transport);
 }
 async function receivedAudio(page: Page) {
   return page.evaluate(async () => {
@@ -120,7 +132,9 @@ test('a failed peer is visible and retryable without leaving the room', async ({
   } finally { await context.close(); }
 });
 
-test('six Users establish all fifteen direct audio links', async ({ page, browser }) => {
+for (const relayOnly of [false, true]) {
+  test(`six Users establish all fifteen ${relayOnly ? 'TURN relay' : 'direct'} audio links`, async ({ page, browser }) => {
+  test.skip(relayOnly && process.env.VOICE_TURN_E2E !== '1', 'Enable VOICE_TURN_E2E=1 for the real coturn fixture');
   test.setTimeout(60_000);
   await login(page.request);
   const project = await createProject(page.request);
@@ -133,7 +147,7 @@ test('six Users establish all fifteen direct audio links', async ({ page, browse
       contexts.push(context); pages.push(await context.newPage());
     }
     for (const participant of pages) {
-      await inspectMedia(participant);
+      await inspectMedia(participant, relayOnly ? 'all' : undefined);
       await participant.goto(`/t/${task.key}`);
       await participant.getByRole('button', { name: 'Join voice', exact: true }).click();
       await expect(participant.getByRole('button', { name: 'Leave voice' })).toBeVisible();
@@ -148,8 +162,17 @@ test('six Users establish all fifteen direct audio links', async ({ page, browse
       }), { timeout: 15_000 }).toBe(5);
     }
     await page.getByRole('button', { name: 'Leave voice' }).click();
+  } catch (error) {
+    for (const participant of pages) {
+      console.log('Six-user ICE diagnostics', await participant.evaluate(() => {
+        const root = window as unknown as { voicePeers: RTCPeerConnection[]; voiceIceErrors: unknown[] };
+        return { errors: root.voiceIceErrors, states: root.voicePeers.map((p) => p.connectionState) };
+      }));
+    }
+    throw error;
   } finally { await Promise.all(contexts.map((context) => context.close())); }
 });
+}
 
 test('a delayed initial snapshot cannot erase newer live room presence', async ({ page, browser }) => {
   await login(page.request);
@@ -179,3 +202,46 @@ test('a delayed initial snapshot cannot erase newer live room presence', async (
     await expect(room).toContainText('1/6');
   } finally { release(); await context.close(); }
 });
+
+for (const transport of ['udp', 'tcp'] as const) {
+  test(`audio works through real TURN over ${transport.toUpperCase()} with direct ICE disabled`, async ({ page, browser }) => {
+    test.skip(process.env.VOICE_TURN_E2E !== '1', 'Enable VOICE_TURN_E2E=1 for the real coturn fixture');
+    test.setTimeout(60_000);
+    await login(page.request);
+    const project = await createProject(page.request);
+    const task = await createTask(page.request, project, 'Relay-only voice');
+    const context = await otherUser(browser, page.request);
+    const bea = await context.newPage();
+    try {
+      if (transport === 'udp') await page.clock.install();
+      await Promise.all([inspectMedia(page, transport), inspectMedia(bea, transport)]);
+      await Promise.all([page.goto(`/t/${task.key}`), bea.goto(`/t/${task.key}`)]);
+      await page.getByRole('button', { name: 'Join voice', exact: true }).click();
+      await bea.getByRole('button', { name: 'Join voice', exact: true }).click();
+      for (const participant of [page, bea]) {
+        await expect(participant.getByRole('region', { name: 'Voice controls' }).getByText('connected', { exact: true })).toBeVisible({ timeout: 25_000 });
+        await expect.poll(() => receivedAudio(participant), { timeout: 15_000 }).toBeGreaterThan(0);
+        await expect.poll(() => participant.evaluate(async () => {
+          const peers = (window as unknown as { voicePeers: RTCPeerConnection[] }).voicePeers;
+          const stats = await peers.at(-1)!.getStats();
+          const reports = new Map<string, { id: string; type: string; nominated?: boolean; state?: string; localCandidateId?: string; candidateType?: string; relayProtocol?: string; selectedCandidatePairId?: string }>();
+          stats.forEach((report) => reports.set(report.id, report));
+          const selected = [...reports.values()].find((report) => report.type === 'transport' && report.selectedCandidatePairId)?.selectedCandidatePairId;
+          const pair = reports.get(selected ?? '');
+          const candidate = reports.get(pair?.localCandidateId ?? '');
+          return { type: candidate?.candidateType, transport: candidate?.relayProtocol };
+        }), { timeout: 5000 }).toEqual({ type: 'relay', transport });
+      }
+      if (transport === 'udp') {
+        const username = () => page.evaluate(() => (window as unknown as { voicePeers: RTCPeerConnection[] }).voicePeers.at(-1)?.getConfiguration().iceServers?.find((s) => s.username)?.username);
+        const initial = await username();
+        expect(initial).toBeTruthy();
+        await page.clock.fastForward(151_000);
+        await expect.poll(username).not.toBe(initial);
+        await expect(page.getByRole('region', { name: 'Voice controls' }).getByText('connected', { exact: true })).toBeVisible({ timeout: 15_000 });
+        await expect.poll(() => receivedAudio(page), { timeout: 15_000 }).toBeGreaterThan(0);
+      }
+      await page.getByRole('button', { name: 'Leave voice' }).click();
+    } finally { await context.close(); }
+  });
+}

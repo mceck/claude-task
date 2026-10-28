@@ -1,6 +1,6 @@
 # Voice Rooms
 
-Each Task has a shared Voice Room where up to six Users talk simultaneously. Users join from the web app or native app and keep talking while navigating elsewhere. Audio travels directly between devices; the backend handles membership and connection negotiation.
+Each Task has a shared Voice Room where up to six Users talk simultaneously. Users join from the web app or native app and keep talking while navigating elsewhere. WebRTC prefers direct audio between devices and uses an optional TURN service when direct connectivity fails. The backend handles membership, connection negotiation and temporary relay credentials.
 
 ## Concepts
 
@@ -18,7 +18,7 @@ The room displays participant names, microphone mute state and each local connec
 
 ### Connection failures
 
-Each participant connects directly to every other participant. With six Users, each device has five peer connections. Successful links remain usable when another link fails. The interface identifies each connecting, connected or unavailable peer and offers retry. A device marks a link unavailable after 20 seconds without a successful connection. It explains that the current network may prevent a direct connection.
+Each participant creates a WebRTC connection to every other participant. ICE chooses direct connectivity where possible and may use the configured TURN relay when needed. With six Users, each device has five peer connections. Successful links remain usable when another link fails. The interface identifies each connecting, connected or unavailable peer and offers retry. A device marks a link unavailable after 20 seconds without a successful connection. It explains that the current networks may prevent an audio connection and offers retry or a different network.
 
 Losing the signaling connection stops local audio and clears participation. The client explains the interruption and offers an explicit join after signaling reconnects. This prevents an old device from silently reclaiming participation after a transfer. A backend restart clears the in-memory rooms; clients recover through the same explicit join flow.
 
@@ -32,7 +32,7 @@ Audio is live communication between Users. The Conversation and Agent Session re
 
 ## Architecture
 
-The authenticated live WebSocket carries join, leave, mute and peer-directed signaling commands. Shared types define the contract. Room snapshots reach participants directly and Task observers through the existing Task topic. An authenticated HTTP endpoint returns a room snapshot for initial loading, and join responses include the Installation's STUN configuration.
+The authenticated live WebSocket carries join, leave, mute and peer-directed signaling commands. Shared types define the contract. Room snapshots reach participants directly and Task observers through the existing Task topic. An authenticated HTTP endpoint returns a room snapshot for initial loading, and join responses include the Installation's STUN/TURN configuration and the expiry of any temporary relay credentials.
 
 The backend keeps membership in memory and indexes it by User and connection. Each room's membership changes are synchronous after asynchronous Task validation. It validates command schemas and applies per-connection rate and message-size limits. Signaling accepts bounded offers, answers and ICE candidates only between current participants of the same room. Sender identity comes from the authenticated socket. Expired participation identifiers are rejected. Each negotiation has a fresh exchange identifier; peers discard candidates from older negotiations and buffer at most 64 candidates while awaiting a description. The participant whose identifier sorts first creates offers, including when its peer requests a retry.
 
@@ -43,9 +43,23 @@ flowchart LR
   A <-->|Direct encrypted audio| C
   A -->|Address discovery| S[Configured STUN]
   C -->|Address discovery| S
+  A <-->|Relayed encrypted audio when needed| T[Optional coturn]
+  C <-->|Relayed encrypted audio when needed| T
 ```
 
-STUN URLs are configured through `VOICE_STUN_URLS`, a comma-separated list of `stun:` or `stuns:` URLs; an empty value selects host candidates only. The default is `stun:stun.l.google.com:19302`. Configuration rejects relay URLs. Peers use the supplied STUN servers for address discovery and direct ICE candidates for audio transport.
+STUN URLs are configured through `VOICE_STUN_URLS`, a comma-separated list of `stun:` or `stuns:` URLs; an empty value selects host candidates only. The default is `stun:stun.l.google.com:19302`. Peers use STUN for address discovery. When `VOICE_TURN_HOST` and `VOICE_TURN_SECRET` are both set, the backend also provides authenticated `turn:` URLs for UDP and TCP on `VOICE_TURN_PORT` (default 3478). Setting `VOICE_TURN_TLS_PORT` additionally provides a `turns:` TCP URL for that public port. The TURN hostname has no default. Partial settings, URLs in place of hostnames, invalid ports and secrets shorter than 32 characters fail at startup.
+
+### Temporary relay access
+
+Each successful join receives credentials scoped to a User and a random issuance identifier. The username starts with its Unix expiry timestamp. The password is a base64 HMAC-SHA1 of that username using the shared TURN secret, following coturn REST authentication. `VOICE_TURN_TTL_SECONDS` defaults to 86400 and accepts 300 through 86400 seconds. Only the temporary username and password reach the joining client; the shared secret stays on the backend and relay.
+
+Clients request fresh ICE configuration halfway through its remaining lifetime using the authenticated live connection and current participation identifier. The backend rejects stale participation identifiers. A successful refresh supplies new credentials and expiry; clients renew their peer connections with the new configuration while retaining room membership. A failed refresh or temporary signaling issue follows the existing connection recovery behavior.
+
+### Additional relay service
+
+An opt-in Compose overlay adds a pinned coturn service on its own network. It publishes UDP and TCP 3478 and UDP relay ports 30000 through 30199. Administrators set the public hostname and external IPv4 address explicitly and forward these ports unchanged through NAT. The relay binds its concrete container IPv4 address and maps that address to the supplied public IPv4 address. A separate optional TLS overlay publishes an explicitly supplied public TLS port mapped to container TCP 5349 and requires a certificate and private key mounted read-only. TLS uses version 1.2 or newer. Empty TLS configuration enables UDP/TCP relay without TLS.
+
+The service renders its shared secret into a temporary configuration with mode 0600, uses a read-only root filesystem and disables its administration interface. Allocations require temporary credentials. Production peer policy excludes loopback, private, link-local and multicast destinations. Each credential accepts 64 allocations; total allocations are bounded at 1000, bandwidth at 64 KiB/s per allocation and 10 MiB/s overall. Coturn reserves per-allocation bandwidth while gathering candidates, including unused transport alternatives. The 64 KiB/s reservation and 10 MiB/s overall cap accommodate the six-User mesh across UDP, TCP and TLS candidates. The relay range bounds simultaneous UDP allocation capacity independently of those quotas.
 
 ## Data model
 
@@ -53,12 +67,12 @@ Room snapshots contain Task identity and participants. Each participant contains
 
 ## Non-functional requirements
 
-Each room accepts at most six Users. Client control messages accept up to 64 KiB; individual descriptions accept up to 16 KiB and candidate strings up to 2 KiB. Voice commands accept 120 messages per ten seconds per live connection, with at most 128 queued commands. Overloaded leave requests close the live connection and release membership. Media packets and audio processing remain on the participating devices. The existing live connection heartbeat removes dead clients. Server logs omit SDP, candidate payloads and microphone content.
+Each room accepts at most six Users. Client control messages accept up to 64 KiB; individual descriptions accept up to 16 KiB and candidate strings up to 2 KiB. Voice commands accept 120 messages per ten seconds per live connection, with at most 128 queued commands. Overloaded leave requests close the live connection and release membership. Audio processing remains on participating devices. Media packets travel directly or through the separate TURN service; the application backend carries signaling. The existing live connection heartbeat removes dead clients. Server logs omit SDP, candidate payloads and microphone content.
 
 ## Decisions
 
-- **A direct WebRTC mesh serves small rooms.** The six-person limit bounds device fan-out and keeps media off the backend.
-- **STUN supports direct discovery.** The chosen P2P-only deployment accepts failed links on restrictive networks; the UI preserves working links and makes failures visible.
+- **A WebRTC mesh serves small rooms with an optional TURN fallback.** The six-person limit bounds device fan-out. TURN improves connectivity while keeping media off the application backend.
+- **TURN is a separate optional service.** Deployments retain direct media and add coturn when restrictive networks require a relay. Explicit environment configuration controls the public hostname, with no assumed domain.
 - **Existing live connections carry signaling.** Authentication, Login revocation and reconnect behavior stay consistent with the rest of the app.
 - **Membership is transient.** Voice has no durable content; storing membership would retain stale participants after restarts.
 - **Transfers require a current participation identifier.** Confirmation is deliberate and a delayed confirmation cannot evict a newer device.

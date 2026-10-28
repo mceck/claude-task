@@ -55,6 +55,7 @@ class VoiceController extends ChangeNotifier {
   Completer<void>? _pending;
   String? _requestId;
   int _epoch = 0;
+  Timer? _iceTimer;
   bool _disposed = false;
 
   VoiceController({
@@ -143,27 +144,17 @@ class VoiceController extends ChangeNotifier {
         deafened = false;
         links.clear();
         error = null;
-        _audio!.configure(
-          participantId!,
-          message['iceServers'] as List,
-          (target, signal) {
-            if (participantId != null) {
-              send({
-                'type': 'voice.signal',
-                'participantId': participantId,
-                'targetId': target,
-                'signal': signal,
-              });
-            }
-          },
-          (id, status) {
-            links[id] = status;
-            _notify();
-          },
-        );
+        _configureIce(message);
         room = Map<String, dynamic>.from(message['room'] as Map);
         _room(room!);
         _pending!.complete();
+      case 'voice.ice':
+        if (message['participantId'] == participantId) {
+          _configureIce(message);
+          for (final id in links.keys.toList()) {
+            _audio?.retry(id);
+          }
+        }
       case 'voice.error':
         if (_requestId == message['requestId'] &&
             _pending != null &&
@@ -199,6 +190,40 @@ class VoiceController extends ChangeNotifier {
           _notify();
         }
     }
+  }
+
+  void _configureIce(Json message) {
+    _audio!.configure(
+      participantId!,
+      message['iceServers'] as List,
+      (target, signal) {
+        if (participantId != null) {
+          send({
+            'type': 'voice.signal',
+            'participantId': participantId,
+            'targetId': target,
+            'signal': signal,
+          });
+        }
+      },
+      (id, status) {
+        links[id] = status;
+        _notify();
+      },
+    );
+    _iceTimer?.cancel();
+    final expires = DateTime.tryParse(message['iceExpiresAt'] as String? ?? '');
+    if (expires == null) return;
+    final id = participantId;
+    void refresh() {
+      if (id == null || id != participantId || _disposed) return;
+      _iceTimer = Timer(const Duration(seconds: 30), refresh);
+      send({'type': 'voice.ice', 'participantId': id});
+    }
+
+    final delay = (expires.difference(DateTime.now()).inMilliseconds ~/ 2)
+        .clamp(1000, 86400000);
+    _iceTimer = Timer(Duration(milliseconds: delay), refresh);
   }
 
   void _room(Json value) {
@@ -266,6 +291,7 @@ class VoiceController extends ChangeNotifier {
   }
 
   void _clear({bool keepPending = false}) {
+    _iceTimer?.cancel();
     final audio = _audio;
     _audio = null;
     if (audio != null) unawaited(audio.stop());

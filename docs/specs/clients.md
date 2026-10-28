@@ -361,7 +361,7 @@ Every Task and Timeline page carries its conversation generation. When another U
 
 ### Voice Rooms
 
-Both clients show a Task’s Voice Room, its participant names and an explicit Join action. An active room has persistent controls outside Task navigation: microphone mute, incoming-audio silence, per-peer connection status, retry, leave and return to the Task. Confirmed transfers keep one participation per User across devices. Native clients configure communication audio and background microphone support so active rooms continue while another app is open or the screen is locked. Connection loss releases audio and offers explicit rejoining. See [Voice Rooms](voice-rooms.md) for membership, media and failure rules.
+Both clients show a Task’s Voice Room, its participant names and an explicit Join action. An active room has persistent controls outside Task navigation: microphone mute, incoming-audio silence, per-peer connection status, retry, leave and return to the Task. Confirmed transfers keep one participation per User across devices. Native clients configure communication audio and background microphone support so active rooms continue while another app is open or the screen is locked. Both clients accept authenticated STUN/TURN configuration, renew expiring relay credentials through their live connection and use relay candidates when direct connectivity fails. Connection loss releases audio and offers explicit rejoining. See [Voice Rooms](voice-rooms.md) for membership, media and failure rules.
 
 ### Serving the clients
 
