@@ -26,7 +26,7 @@ To rotate a secret, click **Edit / rotate**, enter **New secret** and save. Leav
 5. Choose **Services**, check the **Dockerfile**, and set resource limits if needed.
 6. Leave **Enabled** checked and click **Create agent**.
 
-Creation starts an image Build. Open **Builds** to follow the log. Once its container starts and the Runner connects, the Agent becomes `idle`. Assigning it to a Task creates a pending Session; the first User Comment starts work.
+Creation starts an image Build. Open **Builds** to follow the log. Once its container starts and the Runner connects, the Agent becomes `idle`. The container runs only while the Agent has work (see [Containers and work](#containers-and-work)); until then the Agent shows `offline`. Assigning it to a Task creates a pending Session; the first User Comment starts work.
 
 ![Agents list showing Rowan ready and idle](images/admin-agents/agents.png)
 
@@ -49,6 +49,12 @@ The Dockerfile must start from `claude-task/agent-base` and finish as `USER agen
 Under **Services**, select PostgreSQL, Redis, MySQL, Mailpit or RustFS/MinIO. Mailpit receives test email on SMTP port 1025; its mailbox interface is available inside the Agent Container on port 8025. RustFS/MinIO serves S3 on port 9000 and also provides a `minio` command, so a Project that starts its own MinIO (`minio server ./data --address :9100`) gets a RustFS server with the same flags and `MINIO_*` variables. PostgreSQL and Redis are selected by default. Each Agent has its own local Development Services; all its Tasks share them, so give different Projects distinct databases, namespaces and buckets.
 
 Repositories, Worktrees, Claude transcripts, installed tools and Development Service data persist across container recreation. Deselecting a Development Service keeps its data for later use.
+
+## Containers and work
+
+An Agent's container runs while the Agent has work: a Job is running, a Comment waits in its Queue, or it has a Session that can still receive Comments (a Task that is not closed, `done` included). An Agent assigned only to Tasks that have no Comment yet, or only to closed Tasks, has its container stopped. Its image and storage stay, so repositories, Worktrees and Development Service data are there when it starts again.
+
+The container starts again when a Comment is queued, a Task is reopened or an Agent is assigned back to a Task it worked on. The first Job waits for the container and its Development Services to start, which can take up to a minute. While the container is stopped the Agent shows `offline`. Setting `AGENT_STOP_WHEN_UNUSED` to `false` keeps every container running (see [Installation and operations](installation-and-operations.md)).
 
 ## Change configuration
 
@@ -81,8 +87,8 @@ The Agents list shows pending Extension changes and synchronization errors. Upda
 | Action | Result |
 | --- | --- |
 | **Rebuild image** | Builds the current configuration again. |
-| **Restart** | Restarts the container, interrupting its current Job; its Session resumes after reconnection. |
-| **Recreate when idle** | Replaces the container using the current image and limits after the current Job ends. |
+| **Restart** | Restarts the container, interrupting its current Job; its Session resumes after reconnection. An Agent without work answers with an error, since its container starts when work arrives. |
+| **Recreate when idle** | Replaces the container using the current image and limits after the current Job ends. An Agent without work applies it when work arrives. |
 | **Force recreate** | Replaces the container immediately; interrupted work resumes after reconnection. |
 | **Duplicate** | Copies settings into a new Agent with its own empty storage, Build and container. History stays with the original. |
 | **Delete** | Removes the Agent, its container, images, persistent storage, Sessions and execution history. Agent Comments remain on Tasks. |

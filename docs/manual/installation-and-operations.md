@@ -40,6 +40,7 @@ These are backend environment settings. The supplied Compose file exposes a subs
 | `DOCKER_SOCKET` | Docker socket; default `/var/run/docker.sock`. |
 | `AGENT_BACKEND_URL` | Backend URL reachable from Agent Containers; host-mode default `http://host.docker.internal:3000`, Compose `http://app:3000`. |
 | `AGENT_NETWORK` | Agent Docker network; empty uses Docker's default bridge. |
+| `AGENT_STOP_WHEN_UNUSED` | Stop an Agent's container while the Agent has no work, and start it again when work arrives. Defaults to `true`; set `false` to keep every Agent's container running. See [Agents and credentials](admin-agents.md). |
 | `AGENT_STOP_ON_SHUTDOWN` | Stop this installation's Agent Containers on graceful backend shutdown. Defaults to `true` in local development and `false` with `NODE_ENV=production`; the supplied Compose stack explicitly defaults to `true`. Set `false` to keep Agents running through backend restarts. |
 | `CLAUDE_CODE_VERSION` | Pinned Claude Code version used in Agent Images; current default `2.1.310`. |
 | `AGENT_COMMIT_EMAIL_DOMAIN` | Email domain used for Agent commits; default `agents.claude-task.local`. |
@@ -56,7 +57,7 @@ The backend handles `SIGINT` and `SIGTERM` as graceful shutdown requests. Whethe
 
 With this setting enabled, the backend stops scheduling new work, finishes in-flight scheduling and maintenance operations, and stops the containers belonging to its stored Agents. Active Jobs are interrupted when their containers stop. Each container has 10 seconds to stop its processes. The supplied Compose stack allows 30 seconds for the app's shutdown. Missing or already stopped containers are accepted; failed stops are logged and make the shutdown finish with an error.
 
-Stopping keeps the containers, images and Agent Volumes, including Worktrees, Claude transcripts and Development Service data. On the next backend start, stopped containers are started again and interrupted work recovers through the normal Session resume flow.
+Stopping keeps the containers, images and Agent Volumes, including Worktrees, Claude transcripts and Development Service data. On the next backend start, the containers of Agents that have work are started again and interrupted work recovers through the normal Session resume flow.
 
 With the setting disabled, Agent Containers keep running while the backend restarts and their Runners reconnect afterward. Closing a browser or native app leaves both the backend and its Agents running.
 
@@ -100,7 +101,7 @@ For an upgrade, preserve those volumes and the master key, then rebuild and rest
 
 Check its Build log first, then **Container logs** and the Runner connection status. A Runner that cannot reach `AGENT_BACKEND_URL` leaves the Agent `offline`. A Development Service that cannot start can cause repeated container restarts. A failed Extension synchronization prevents new Jobs and shows its error on the Agent page.
 
-Use **Recreate when idle** for a planned container replacement. **Restart** and **Force recreate** interrupt active work, which resumes after reconnection. Avoid deleting an Agent to fix an ordinary startup failure: deletion removes its persistent storage.
+An Agent without work has no running container, so it shows `offline` until a Comment, a reopened Task or a reassignment gives it work; that is not a fault. Use **Recreate when idle** for a planned container replacement. **Restart** and **Force recreate** interrupt active work, which resumes after reconnection. Avoid deleting an Agent to fix an ordinary startup failure: deletion removes its persistent storage.
 
 ## Related
 

@@ -79,7 +79,7 @@ The current Job finishes before the Agent takes another Task. Reordering waiting
 
 To withdraw waiting Messages, use the entry's remove button and confirm **Remove**. Those Comments become **Not delivered**. An entry for a new Session cannot be removed here: unassign the Agent from its Task instead.
 
-If the Agent is disabled, offline, building, awaiting container recreation or applying Extension changes, queued work waits until it is ready. An Admin manages these conditions.
+If the Agent is disabled, offline, building, awaiting container recreation or applying Extension changes, queued work waits (a stopped container starts as soon as work is queued) until it is ready. An Admin manages these conditions.
 
 ## Inspect results and failures
 
