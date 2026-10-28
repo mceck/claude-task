@@ -164,29 +164,42 @@ void main() {
     }
   });
 
-  testWidgets('Projects show running and unread badges only when there is activity', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final api = _WorkspaceApi();
-    api.projects[0] = {
-      ...projectData,
-      'activity': {'runningAgents': 1, 'unreadTasks': 3},
-    };
-    final h = Harness(api: api);
-    addTearDown(h.dispose);
-    await h.login();
-    await tester.pumpWidget(TaskApp(controller: h.controller));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('project-running:project-1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('project-unread:project-1')), findsOneWidget);
-    expect(find.text('3'), findsOneWidget);
-    expect(find.byKey(const ValueKey('project-running:project-2')), findsNothing);
-    expect(find.byKey(const ValueKey('project-unread:project-2')), findsNothing);
-  });
+  testWidgets(
+    'Projects show running and unread badges only when there is activity',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _WorkspaceApi();
+      api.projects[0] = {
+        ...projectData,
+        'activity': {'runningAgents': 1, 'unreadTasks': 3},
+      };
+      final h = Harness(api: api);
+      addTearDown(h.dispose);
+      await h.login();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('project-running:project-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('project-unread:project-1')),
+        findsOneWidget,
+      );
+      expect(find.text('3'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('project-running:project-2')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('project-unread:project-2')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('mobile Projects layout and navigation', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -201,7 +214,7 @@ void main() {
     };
     api.projects[1] = {
       ...api.projects[1],
-      'taskCounts': {'open': 1, 'active': 2},
+      'taskCounts': {'open': 1, 'active': 2, 'done': 1, 'closed': 2},
     };
     final h = Harness(api: api);
     addTearDown(h.dispose);
@@ -214,8 +227,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('2 projects · 11 tasks'), findsOneWidget);
+    expect(find.text('2 projects · 12 tasks'), findsOneWidget);
     expect(find.text('38% done'), findsOneWidget);
+    expect(find.text('4 tasks'), findsOneWidget);
+    expect(find.text('25% done'), findsOneWidget);
+    expect(find.textContaining('active'), findsNothing);
     final row = find.byKey(const ValueKey('project-row:project-1'));
     expect(tester.getSize(row).height, lessThanOrEqualTo(112));
     expect(tester.takeException(), isNull);
@@ -254,12 +270,20 @@ void main() {
         'description': 'A description that should stay on one line',
         'taskCounts': {'done': 1, 'closed': 1},
       };
+      api.projects.add({
+        'id': 'project-3',
+        'key': 'OLD',
+        'name': 'Retired work',
+        'taskCounts': {'closed': 3},
+      });
       final h = Harness(api: api);
       addTearDown(h.dispose);
       await h.login();
       await tester.pumpWidget(TaskApp(controller: h.controller));
       await tester.pumpAndSettle();
       expect(find.text('100% done'), findsOneWidget);
+      expect(find.text('1 task'), findsOneWidget);
+      expect(find.text('All tasks closed'), findsOneWidget);
       expect(find.text('No tasks yet'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

@@ -55,6 +55,9 @@ class Project {
       unreadTasks = ((json['activity'] as Map?)?['unreadTasks'] as num? ?? 0)
           .toInt();
   int get taskTotal => taskCounts.values.fold(0, (a, b) => a + b);
+
+  /// Tasks outside the closed Category, which Project progress leaves out.
+  int get progressTaskTotal => taskTotal - (taskCounts['closed'] ?? 0);
 }
 
 class TaskStatus implements Identified {

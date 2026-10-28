@@ -1,5 +1,5 @@
 import { ProjectLogo } from '../components/ProjectLogo';
-import { CATEGORIES, PROJECT_KEY_PATTERN } from '@claude-task/shared';
+import { PROJECT_KEY_PATTERN } from '@claude-task/shared';
 import type { Category, ProjectBundle, ProjectSummary } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Archive, FolderKanban, Plus } from 'lucide-react';
@@ -26,6 +26,13 @@ export const CATEGORY_COLOR: Record<Category, string> = {
   done: 'bg-emerald-500',
   closed: 'bg-zinc-600',
 };
+
+/** Project progress shows only open, review and done; active counts as open. */
+const PROGRESS_GROUPS: { key: string; categories: Category[]; color: string }[] = [
+  { key: 'open', categories: ['open', 'active'], color: CATEGORY_COLOR.open },
+  { key: 'review', categories: ['review'], color: CATEGORY_COLOR.review },
+  { key: 'done', categories: ['done'], color: CATEGORY_COLOR.done },
+];
 
 export function PageHeader({ title, description, children }: { title: React.ReactNode; description?: React.ReactNode; children?: React.ReactNode }) {
   return (
@@ -88,8 +95,13 @@ export function ProjectsPage() {
 }
 
 function ProjectCard({ project: p }: { project: ProjectSummary }) {
-  const total = CATEGORIES.reduce((n, c) => n + p.taskCounts[c], 0);
-  const finished = p.taskCounts.done + p.taskCounts.closed;
+  const counts = PROGRESS_GROUPS.map((group) => ({
+    ...group,
+    count: group.categories.reduce((n, c) => n + p.taskCounts[c], 0),
+  }));
+  const total = counts.reduce((n, group) => n + group.count, 0);
+  const closed = p.taskCounts.closed;
+  const finished = p.taskCounts.done;
   return (
     <Link
       to={`/p/${p.key}`}
@@ -121,21 +133,21 @@ function ProjectCard({ project: p }: { project: ProjectSummary }) {
       </div>
       <div className="mt-auto pt-5">
         <div className="mb-2 flex justify-between text-xs text-muted-foreground">
-          <span>{total} tasks</span>
+          <span>{total > 0 ? `${total} ${total === 1 ? 'task' : 'tasks'}` : closed > 0 ? 'All tasks closed' : '0 tasks'}</span>
           {total > 0 && <span>{Math.round((finished / total) * 100)}% done</span>}
         </div>
         <div className="flex h-1.5 overflow-hidden rounded-full bg-muted" aria-label="Task counts">
-          {CATEGORIES.map((c) =>
-            p.taskCounts[c] > 0 ? (
-              <span key={c} title={`${p.taskCounts[c]} ${c}`} className={CATEGORY_COLOR[c]} style={{ width: `${(p.taskCounts[c] / total) * 100}%` }} />
+          {counts.map((group) =>
+            group.count > 0 ? (
+              <span key={group.key} title={`${group.count} ${group.key}`} className={group.color} style={{ width: `${(group.count / total) * 100}%` }} />
             ) : null,
           )}
         </div>
         <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-          {CATEGORIES.map((c) => (
-            <span key={c} className="flex items-center gap-1">
-              <span className={`size-1.5 rounded-full ${CATEGORY_COLOR[c]}`} />
-              {c} {p.taskCounts[c]}
+          {counts.map((group) => (
+            <span key={group.key} className="flex items-center gap-1">
+              <span className={`size-1.5 rounded-full ${group.color}`} />
+              {group.key} {group.count}
             </span>
           ))}
         </div>

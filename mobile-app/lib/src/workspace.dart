@@ -523,14 +523,18 @@ class _RailItem extends StatelessWidget {
   );
 }
 
-/// Status categories use the same semantic tones as the rest of the app.
+/// The web Project card's Category colors, so the native stacked bar matches
+/// it. Active Tasks count as open, and closed Tasks are left out of progress.
 const categoryColors = {
-  'open': Palette.slate,
-  'active': Palette.info,
-  'review': Palette.violet,
-  'done': Palette.success,
-  'closed': Palette.fgSubtle,
+  'open': Color(0xff94a3b8),
+  'review': Color(0xff8b5cf6),
+  'done': Color(0xff10b981),
 };
+
+/// Progress counts active Tasks as open.
+int progressCount(Project p, String category) => category == 'open'
+    ? (p.taskCounts['open'] ?? 0) + (p.taskCounts['active'] ?? 0)
+    : (p.taskCounts[category] ?? 0);
 
 class ProjectList extends StatelessWidget {
   final TaskController controller;
@@ -540,7 +544,7 @@ class ProjectList extends StatelessWidget {
     final c = controller;
     final totalTasks = c.projects.fold(
       0,
-      (total, project) => total + project.taskTotal,
+      (total, project) => total + project.progressTaskTotal,
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -608,11 +612,15 @@ class _ProjectRow extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    final p = project, total = p.taskTotal;
-    final finished =
-        (p.taskCounts['done'] ?? 0) + (p.taskCounts['closed'] ?? 0);
-    final progress = total == 0 ? 0.0 : (finished / total).clamp(0.0, 1.0);
-    final percent = (progress * 100).round();
+    final p = project,
+        closed = p.taskCounts['closed'] ?? 0,
+        total = p.progressTaskTotal,
+        done = p.taskCounts['done'] ?? 0;
+    final counts = {
+      for (final category in categoryColors.keys)
+        category: progressCount(p, category),
+    };
+    final percent = total == 0 ? 0 : ((done / total) * 100).round();
     return Pressable(
       key: ValueKey('project-row:${p.id}'),
       onTap: onTap,
@@ -712,9 +720,11 @@ class _ProjectRow extends StatelessWidget {
                       child: Dot(color: Palette.borderStrong, size: 3),
                     ),
                     Text(
-                      total == 0
-                          ? 'No tasks yet'
-                          : '$total ${total == 1 ? 'task' : 'tasks'}',
+                      total > 0
+                          ? '$total ${total == 1 ? 'task' : 'tasks'}'
+                          : closed > 0
+                          ? 'All tasks closed'
+                          : 'No tasks yet',
                       style: const TextStyle(
                         fontSize: 11.5,
                         height: 1.2,
@@ -729,23 +739,24 @@ class _ProjectRow extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Semantics(
-                          label: 'Task completion',
-                          value: '$finished of $total completed',
+                          label: 'Task counts',
+                          value: [
+                            for (final entry in counts.entries)
+                              '${entry.value} ${entry.key}',
+                          ].join(', '),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(99),
                             child: SizedBox(
-                              height: 3,
-                              child: Stack(
-                                fit: StackFit.expand,
+                              height: 6,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  const ColoredBox(color: Palette.muted),
-                                  FractionallySizedBox(
-                                    alignment: Alignment.centerLeft,
-                                    widthFactor: progress,
-                                    child: const ColoredBox(
-                                      color: Palette.primary,
-                                    ),
-                                  ),
+                                  for (final entry in categoryColors.entries)
+                                    if (counts[entry.key]! > 0)
+                                      Expanded(
+                                        flex: counts[entry.key]!,
+                                        child: ColoredBox(color: entry.value),
+                                      ),
                                 ],
                               ),
                             ),
