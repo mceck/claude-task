@@ -85,19 +85,26 @@ Whoever performed an action: a User, an Agent or the system.
 ### Wiki
 
 **Wiki**:
-A shared knowledge base kept in a Repository of Markdown files, including its own Skills and conventions, with one assigned Agent and a Conversation open to all Users.
+A shared knowledge base kept in a Repository of Markdown files, including its own Skills and conventions, with one assigned Agent and Chats open to all Users.
 
 **Wiki Project**:
 The Project of kind `wiki` that carries a Wiki, hidden from the Projects list.
 
 **Backing Task**:
-The single Task of a Wiki Project, whose Conversation and Session are the Wiki's.
+The first Task of a Wiki Project. It holds what all of the Wiki's Chats share: the Task Branch, the pull request and the Wiki's following.
 
-**Reset Chat**:
-Clearing a Wiki's Conversation for every User and starting a fresh Claude conversation on the next Comment, while preserving its Repository files.
+**Chat**:
+One of a Wiki's separate Conversations, held by one Task of its Wiki Project and with its own Session. A Wiki has any number of Chats, all open to every User, and each can be continued independently. A Task of an ordinary Project has a single Conversation instead.
+_Avoid_: thread, conversation (for a Wiki's Chat, say Chat)
+
+**New Chat**:
+Starting an empty Chat in a Wiki. Existing Chats are kept.
+
+**Delete Chat**:
+Permanently clearing one Chat, with everything in it, for every User. The Wiki's Repository files are kept.
 
 **Conversation Generation**:
-The count of a Task's Reset Chats, which lets clients spot a reset they missed.
+The count of a Task's Delete Chats, which lets clients spot a deletion they missed.
 _Avoid_: chat generation
 
 ### Conversation
@@ -287,11 +294,11 @@ Linking an Agent to a Task. It doesn't start any work by itself: the Session sta
 _Avoid_: dispatch, scheduling
 
 **Session**:
-The single continuous Claude Code conversation between a Task and one Agent. It lasts until the Task is closed and resumes when the Task is reopened.
-_Avoid_: conversation, chat, thread, run
+The single continuous Claude Code conversation between a Task and one Agent, or for a Wiki between one Chat and its Agent. It lasts until the Task is closed (or the Chat deleted) and resumes when the Task is reopened.
+_Avoid_: conversation, thread, run
 
 **Claude Session Identity**:
-The id a Session's Claude Code conversation runs under. It starts equal to the Session and changes on Reset Chat.
+The id a Session's Claude Code conversation runs under. It starts equal to the Session and changes only when a Chat restarts from its history.
 
 **Job**:
 One execution of an Agent on a Session, from start to exit. An Agent runs at most one Job at a time.

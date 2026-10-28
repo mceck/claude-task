@@ -7,6 +7,7 @@ import type { Executor } from '../db/client';
 import { comments, jobs, projects, sessions, taskRevisions, tasks } from '../db/schema';
 import { badRequest, conflict } from '../errors';
 import { GitProviderError } from './provider';
+import { gitOwnerTask } from './owner';
 import { getProject, serializeProject } from '../modules/projects/service';
 import { emitTasksChanged, getTaskRow } from '../modules/tasks/service';
 import type { TaskRow } from '../modules/tasks/service';
@@ -118,7 +119,10 @@ export async function openPullRequest(
     const peek = await getTaskRow(tx, scope.taskId);
     const p = await getProject(tx, peek.projectId);
     await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, p.id)).for('share');
-    const task = await getTaskRow(tx, scope.taskId, { lock: true });
+    const jobTask = await getTaskRow(tx, scope.taskId, { lock: true });
+    // A Wiki's Chats share the branch and the pull request of the Wiki's first Task.
+    const ownerId = (await gitOwnerTask(tx, jobTask)).id;
+    const task = ownerId === jobTask.id ? jobTask : await getTaskRow(tx, ownerId, { lock: true });
     const [job] = await tx
       .select({ id: jobs.id })
       .from(jobs)
@@ -144,7 +148,7 @@ export async function openPullRequest(
     const [notice] = await tx
       .insert(comments)
       .values({
-        taskId: task.id,
+        taskId: jobTask.id,
         kind: 'system',
         authorType: 'system',
         body: `${capitalize(pullRequestNoun(pr.provider))} [${pullRequestRef(pr)}](${pr.url}) ${task.pullRequest?.number === pr.number && task.pullRequest.provider === pr.provider ? 'updated' : 'opened'}.`,

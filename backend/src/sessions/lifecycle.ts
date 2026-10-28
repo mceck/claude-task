@@ -7,6 +7,7 @@ import type { AfterCommit } from '../context';
 import type { Executor } from '../db/client';
 import { comments, jobs, projects, sessions, statuses, tasks } from '../db/schema';
 import { conflict } from '../errors';
+import { gitOwnerTask } from '../git/owner';
 import { ACTIVE_JOB_STATES, lockAgents } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
 import type { TaskRow } from '../modules/tasks/service';
@@ -16,9 +17,10 @@ import { attachComments, enqueue, getEntry, removeEntry } from './queue';
 import type { SessionRow } from './view';
 
 /** Deterministic per (Project, Task), because `--resume` needs the same cwd (docs/specs/agent-sessions.md). */
-export async function worktreePathFor(db: Executor, task: Pick<TaskRow, 'projectId' | 'number'>): Promise<string> {
+export async function worktreePathFor(db: Executor, task: Pick<TaskRow, 'id' | 'projectId' | 'number'>): Promise<string> {
+  const owner = await gitOwnerTask(db, task);
   const [p] = await db.select({ key: projects.key }).from(projects).where(eq(projects.id, task.projectId));
-  return `worktrees/${task.projectId}/${taskKey(p!.key, task.number)}`;
+  return `worktrees/${task.projectId}/${taskKey(p!.key, owner.number)}`;
 }
 
 async function isClosedStatus(db: Executor, statusId: string): Promise<boolean> {
@@ -146,6 +148,26 @@ async function pauseSession(tx: Executor, after: AfterCommit, session: SessionRo
   const entry = await getEntry(tx, session.agentId, session.taskId, true);
   if (entry) await removeEntry(tx, after, entry, reason);
   await tx.update(sessions).set({ state: 'paused' }).where(eq(sessions.id, session.id));
+}
+
+/** A Wiki's Chat whose Agent is no longer the Wiki's: its Session pauses, whatever it was doing. */
+export async function pauseTaskSession(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
+  if (!task.agentId) return;
+  await lockAgents(tx, [task.agentId]);
+  const session = await lockSession(tx, task.id, task.agentId);
+  if (!session || session.state === 'paused' || session.state === 'closed') return;
+  await pauseSession(tx, after, session, 'agent unassigned');
+  publishSession(after, task.id, [task.agentId]);
+}
+
+/** The Wiki is back to the Agent that runs this Chat: its Session is available again. */
+export async function resumeTaskSession(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
+  if (!task.agentId) return;
+  await lockAgents(tx, [task.agentId]);
+  const session = await lockSession(tx, task.id, task.agentId);
+  if (!session || session.state !== 'paused') return;
+  await tx.update(sessions).set({ state: session.started ? 'idle' : 'pending' }).where(eq(sessions.id, session.id));
+  publishSession(after, task.id, [task.agentId]);
 }
 
 /** Closed: cancel any Job, drop undelivered Messages, close every Session and remove the Worktrees. */

@@ -98,7 +98,7 @@ export interface TaskCard {
   tagIds: string[];
   assigneeIds: string[];
   commentCount: number;
-  /** Incremented when Reset Chat clears the conversation. */
+  /** Incremented when Delete Chat clears the conversation of a Wiki's Chat. */
   chatGeneration?: number;
   /** The assigned Agent, if any. */
   agentId: string | null;
@@ -236,7 +236,7 @@ export type TimelineItem = (
 ) & { /** Persisted read position, supplied by Timeline HTTP responses. */ readPosition?: string };
 
 export interface TimelinePage {
-  /** Conversation generation for detecting a Reset Chat during page loads. */
+  /** Conversation generation for detecting a Delete Chat during page loads. */
   chatGeneration?: number;
   /** Newest first. */
   items: TimelineItem[];

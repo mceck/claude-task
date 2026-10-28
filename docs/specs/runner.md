@@ -117,7 +117,7 @@ The outbox keeps up to 50 MiB of messages in memory per Job. Beyond that, furthe
 
 On `hello` the backend reconciles the active Job:
 
-- When it is still active in the backend, the backend acknowledges up to the last seq it processed, so the Runner keeps only the rest; when the Task's conversation was reset in the meantime, it also cancels the Job.
+- When it is still active in the backend, the backend acknowledges up to the last seq it processed, so the Runner keeps only the rest; when the Job's Chat was deleted in the meantime, it also cancels the Job.
 - When the backend has already settled it, the backend acknowledges everything and sends `job.cancel`.
 - Every other Job the backend considers active for this Agent is gone (the container restarted or crashed) and the backend recovers it as interrupted (see [Agent sessions](agent-sessions.md)).
 

@@ -1,4 +1,5 @@
 import { gitSlug, taskBranch } from '../git/branches';
+import { gitOwnerTask } from '../git/owner';
 // The dispatcher: turns the first Queue Entry of an idle Agent into a Job (one at a time).
 import { commandName, GIT_PROXY_PATH, MCP_PATH, RUNNER_WS_PATH } from '@claude-task/shared';
 import type { JobStartMessage } from '@claude-task/shared';
@@ -48,7 +49,10 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     const [project] = await tx.select().from(projects).where(eq(projects.id, task!.projectId));
     const snapshot = await taskSnapshot(tx, task!.id);
     const repository = project!.repository;
-    const branch = repository ? (task!.branchName ?? taskBranch(snapshot.key, snapshot.title)) : null;
+    // A Wiki's Chats share the branch of the Wiki's first Task.
+    const owner = await gitOwnerTask(tx, task!);
+    const ownerSnapshot = owner.id === task!.id ? snapshot : await taskSnapshot(tx, owner.id);
+    const branch = repository ? (owner.branchName ?? taskBranch(ownerSnapshot.key, ownerSnapshot.title)) : null;
     let git: GitProvider | null = null;
     let branchExists = false;
     if (repository && branch) {
@@ -76,7 +80,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
       await tx
         .update(tasks)
         .set({ branchName: branch, branchUrl: git.branchWebUrl(repository, branch) })
-        .where(eq(tasks.id, task!.id));
+        .where(eq(tasks.id, owner.id));
     }
 
     // A Session `claude` never created starts from the whole Task, whatever the entry says.

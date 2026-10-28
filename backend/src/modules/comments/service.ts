@@ -1,11 +1,12 @@
 import { notifyMentions } from '../../notifications/mentions';
+import { ensureChatAgent } from '../wikis/service';
 import { autoFollow } from '../../notifications/preferences';
 import { API_PREFIX, projectTopic, taskTopic } from '@claude-task/shared';
 import type { Actor, Attachment, Comment, Question, QuestionItem, QuestionKind, Survey, TimelineItem, TimelinePage } from '@claude-task/shared';
 import { and, asc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentItems, attachments, comments, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
+import { agentItems, attachments, comments, projects, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
 import { lockAgents } from '../agents/service';
 import { dropIfEmpty } from '../../sessions/queue';
 import { serializeAgentItem } from '../../projection/apply';
@@ -144,6 +145,9 @@ async function getCommentRow(db: Executor, id: string, lock = false): Promise<Co
 async function emitCardRefresh(db: Executor, after: AfterCommit, taskId: string) {
   const card = await loadCard(db, taskId);
   after.emit(projectTopic(card.projectId), { type: 'task.updated', task: card });
+  // A Wiki's Chat list shows the last activity and unread state of its Chats.
+  const [project] = await db.select({ kind: projects.kind }).from(projects).where(eq(projects.id, card.projectId));
+  if (project?.kind === 'wiki') after.emit('wikis', { type: 'wiki.changed', wikiId: card.projectId });
 }
 
 export async function createUserComment(
@@ -156,6 +160,7 @@ export async function createUserComment(
   if (input.body.trim() === '' && input.attachments.length === 0) {
     throw badRequest('A comment needs a body or an attachment');
   }
+  if (author.type === 'user') await ensureChatAgent(tx, after, task, author, input.internal);
   const [row] = await tx
     .insert(comments)
     .values({

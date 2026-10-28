@@ -16,10 +16,12 @@ interface Props {
   notice?: ReactNode;
   /** Leaves field changes off the Timeline. */
   hideChanges: boolean;
+  /** Replaces the composer with this reason when the conversation cannot be written in. */
+  readOnly?: string;
 }
 
 /** The Task's conversation: the Timeline, following new output while at the bottom, with the composer docked below. */
-export function TaskActivity({ task, statuses, tags, users, session, notice, hideChanges }: Props) {
+export function TaskActivity({ task, statuses, tags, users, session, notice, hideChanges, readOnly }: Props) {
   const draft = useCommentDraft(task.id);
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -61,7 +63,11 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
       <div className="shrink-0 border-t bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
         <div className="mx-auto max-h-[45dvh] max-w-3xl space-y-3 overflow-y-auto">
           {notice}
-          <Composer taskId={task.id} agentId={task.agentId} commands={session?.commands} draft={draft} />
+          {readOnly ? (
+            <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">{readOnly}</p>
+          ) : (
+            <Composer taskId={task.id} agentId={task.agentId} commands={session?.commands} draft={draft} />
+          )}
         </div>
       </div>
     </section>

@@ -237,7 +237,7 @@ sequenceDiagram
 
 #### Authentication
 
-The proxy uses HTTP Basic: any username, the Job token as password. The request is admitted when the token belongs to a Job that is `running` or `finishing`, whose Task belongs to the Project in the URL, and that Project has a Repository. A Job whose output is being discarded (a Reset Chat waiting for its cancellation) is refused too.
+The proxy uses HTTP Basic: any username, the Job token as password. The request is admitted when the token belongs to a Job that is `running` or `finishing`, whose Task belongs to the Project in the URL, and that Project has a Repository. A Job whose output is being discarded (a deleted Chat waiting for its cancellation) is refused too.
 
 - Missing or malformed credentials, or an unknown token, get `401` with a `Basic realm="claude-task"` challenge, so git asks the credential helper.
 - A known token outside those conditions gets `403` with "no active task for this repository", which git prints.
@@ -339,7 +339,7 @@ Pull Request state never changes a Task's Status or a Session: merging doesn't c
 - **Task view**: a "Task code" section with the Task Branch name (linking to the branch page on the provider), the Pull Request badge and, while the Pull Request is open and not a draft, a **Merge pull request** / **Merge merge request** button that asks for confirmation first. The branch link appears once a Job has stored it; after a Repository change it returns with the next Job.
 - **Board card**: the Pull Request badge, linking to the provider: `#N` or `!N` followed by `open`, `draft`, `merged` or `closed`, coloured green for open, muted for draft, violet for merged and red for closed. Its label says "Pull request" or "Merge request" by provider.
 - **Timeline**: Pull Request changes appear as Revisions, such as "updated merge request !3 (merged)", next to the System Comments posted by `open_pull_request`.
-- **Wikis** show the branch and Pull Request of their Task the same way.
+- **Wikis** show the branch and Pull Request of their first Task the same way. Every Chat of a Wiki is a Task of its Wiki Project and shares that branch, Worktree and Pull Request: a Chat's Job pushes the first Task's Task Branch through the proxy and opens or updates its Pull Request with `open_pull_request`.
 - **Project settings → Repository**: the picker, the Base Branch, a link to the Repository on the provider, and the Base Branch Protection status.
 - **Git page** (Admins): Git Connections as described above.
 

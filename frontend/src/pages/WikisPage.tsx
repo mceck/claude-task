@@ -1,18 +1,19 @@
 import { AGENTS_TOPIC, taskTopic } from '@claude-task/shared';
-import type { Wiki } from '@claude-task/shared';
+import type { Wiki, WikiChat } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, BookOpen, Plus, RotateCcw, Settings, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, BookOpen, Loader2, MoreHorizontal, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { del, errorMessage, patch, post } from '../api/client';
 import { Combobox } from '../components/Combobox';
-import { keys, useAgents, useRepositoryGroups, useTask, useTaskSession, useUsers, useWiki, useWikis } from '../api/queries';
-import { ErrorText, Field, Loading, useConfirm } from '../components/common';
+import { keys, useAgents, useRepositoryGroups, useTask, useTaskSession, useUsers, useWiki, useWikiChats, useWikis } from '../api/queries';
+import { ErrorText, Field, Loading, Time, useConfirm } from '../components/common';
 import { BranchLink, PullRequestBadge } from '../components/Git';
 import { TaskActivity } from '../components/TaskActivity';
 import { SessionChip } from '../components/agents';
@@ -87,45 +88,86 @@ export function WikiPage() {
 }
 
 function WikiConversation({ wiki }: { wiki: Wiki }) {
-  const task = useTask(wiki.taskId);
-  const session = useTaskSession(wiki.taskId);
-  const users = useUsers();
+  const { chatId } = useParams();
+  const chats = useWikiChats(wiki.id);
+  const agents = useAgents();
+  const wikiTask = useTask(wiki.taskId);
   const qc = useQueryClient();
   const confirm = useConfirm();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
+  const [renaming, setRenaming] = useState<WikiChat | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  useTopic(taskTopic(wiki.taskId));
+  // The empty Chat reserved by New chat: it is listed only once it has a Comment.
+  const [reserved, setReserved] = useState<WikiChat | null>(null);
+  const reserving = useRef(false);
+  const list = chats.data;
+  const chat =
+    (chatId && (list?.find((c) => c.id === chatId) ?? (reserved?.id === chatId ? reserved : undefined))) || list?.[0] || reserved || undefined;
+  const task = useTask(chat?.id);
+  const session = useTaskSession(chat?.id);
+  const users = useUsers();
+  useTopic(chat ? taskTopic(chat.id) : null);
   useTopic(AGENTS_TOPIC);
-  const reset = async () => {
-    if (
-      !(await confirm({
-        title: 'Reset chat?',
-        description: 'Delete all messages for everyone and start a fresh agent session. Wiki files are kept.',
-        confirmLabel: 'Reset chat',
-        destructive: true,
-      }))
-    )
-      return;
+  // A Wiki without Chats opens an empty composer, which needs a Task to post to.
+  useEffect(() => {
+    if (!list || chat || reserving.current) return;
+    reserving.current = true;
+    post<{ chat: WikiChat }>(`/wikis/${wiki.id}/chats`)
+      .then((r) => setReserved(r.chat))
+      .catch((err) => setError(errorMessage(err)))
+      .finally(() => {
+        reserving.current = false;
+      });
+  }, [list, chat, wiki.id]);
+  const openChat = (id: string) => navigate(`/wikis/${wiki.id}/chats/${id}`);
+  const newChat = async () => {
     setBusy(true);
     setError('');
     try {
-      await post(`/wikis/${wiki.id}/reset`);
-      const event = { type: 'timeline.reset', taskId: wiki.taskId } as const;
-      applyEvent(qc, event);
-      applyLiveEvent(event);
+      const r = await post<{ chat: WikiChat }>(`/wikis/${wiki.id}/chats`);
+      setReserved(r.chat);
+      openChat(r.chat.id);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
   };
+  const deleteChat = async (target: WikiChat) => {
+    if (
+      !(await confirm({
+        title: 'Delete chat?',
+        description: 'Delete this chat and everything in it for everyone. Wiki files are kept.',
+        confirmLabel: 'Delete chat',
+        destructive: true,
+      }))
+    )
+      return;
+    setError('');
+    try {
+      await del(`/wikis/${wiki.id}/chats/${target.id}`);
+      const remaining = (qc.getQueryData<WikiChat[]>(keys.wikiChats(wiki.id)) ?? []).filter((c) => c.id !== target.id);
+      qc.setQueryData(keys.wikiChats(wiki.id), remaining);
+      const event = { type: 'timeline.reset', taskId: target.id } as const;
+      applyEvent(qc, event);
+      applyLiveEvent(event);
+      if (reserved?.id === target.id) setReserved(null);
+      if (chat?.id === target.id) {
+        if (remaining[0]) openChat(remaining[0].id);
+        else navigate(`/wikis/${wiki.id}`);
+      }
+      void qc.invalidateQueries({ queryKey: keys.wikiChats(wiki.id) });
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
   const remove = async () => {
     if (
       !(await confirm({
         title: 'Delete wiki?',
-        description: 'Delete this wiki and its chat from the app. The remote repository is kept.',
+        description: 'Delete this wiki and its chats from the app. The remote repository is kept.',
         confirmLabel: 'Delete wiki',
         destructive: true,
       }))
@@ -142,6 +184,11 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
       setBusy(false);
     }
   };
+  const owner = chat?.agentId && chat.agentId !== wiki.agentId ? agents.data?.find((a) => a.id === chat.agentId) : undefined;
+  const readOnly =
+    chat?.agentId && chat.agentId !== wiki.agentId
+      ? `This chat is run by ${owner?.name ?? 'another agent'}: assign the wiki back to that agent to continue it.`
+      : undefined;
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b p-4">
@@ -151,37 +198,11 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
           </Link>
         </Button>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate font-semibold">{task.data?.title ?? wiki.name}</h1>
+          <h1 className="truncate font-semibold">{wiki.name}</h1>
           <a href={wiki.repository.webUrl} target="_blank" rel="noreferrer" className="text-xs text-muted-foreground underline">
             {wiki.repository.owner}/{wiki.repository.name}
           </a>
         </div>
-        {session.data && <SessionChip session={session.data} />}
-        {session.data?.state === 'running' && (
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => {
-              void post(`/tasks/${wiki.taskId}/session/stop`).catch((e) => setError(errorMessage(e)));
-            }}
-          >
-            Stop
-          </Button>
-        )}
-        {session.data?.held && (
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => {
-              void post(`/tasks/${wiki.taskId}/session/retry`).catch((e) => setError(errorMessage(e)));
-            }}
-          >
-            Retry
-          </Button>
-        )}
-        <Button variant="outline" disabled={busy} onClick={reset}>
-          <RotateCcw /> Reset chat
-        </Button>
         <Button variant="ghost" size="icon-sm" aria-label="Wiki settings" onClick={() => setEditing(true)}>
           <Settings />
         </Button>
@@ -189,10 +210,10 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
           <Trash2 />
         </Button>
       </header>
-      {task.data?.branchName && task.data.branchUrl && (
+      {wikiTask.data?.branchName && wikiTask.data.branchUrl && (
         <div className="flex items-center gap-3 border-b px-4 py-2">
-          <BranchLink name={task.data.branchName} url={task.data.branchUrl} />
-          {task.data.pullRequest && <PullRequestBadge pr={task.data.pullRequest} />}
+          <BranchLink name={wikiTask.data.branchName} url={wikiTask.data.branchUrl} />
+          {wikiTask.data.pullRequest && <PullRequestBadge pr={wikiTask.data.pullRequest} />}
         </div>
       )}
       {error && (
@@ -200,13 +221,75 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
           <ErrorText>{error}</ErrorText>
         </div>
       )}
-      {task.isPending ? (
-        <Loading />
-      ) : task.error ? (
-        <ErrorText>{errorMessage(task.error)}</ErrorText>
-      ) : (
-        <TaskActivity task={task.data} statuses={[]} tags={[]} users={users.data ?? []} session={session.data} hideChanges />
-      )}
+      <div className="flex min-h-0 flex-1">
+        <nav aria-label="Chats" className="flex w-56 shrink-0 flex-col border-r md:w-72">
+          <div className="p-3">
+            <Button variant="outline" className="w-full" disabled={busy} onClick={newChat}>
+              <Plus /> New chat
+            </Button>
+          </div>
+          <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
+            {chats.isPending && <Loading />}
+            {chats.error && <ErrorText>{errorMessage(chats.error)}</ErrorText>}
+            {list?.map((c) => (
+              <ChatRow
+                key={c.id}
+                chat={c}
+                active={c.id === chat?.id}
+                onOpen={() => openChat(c.id)}
+                onRename={() => setRenaming(c)}
+                onDelete={() => void deleteChat(c)}
+              />
+            ))}
+          </ul>
+        </nav>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {chat && (
+            <div className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
+              <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{list?.find((c) => c.id === chat.id)?.title ?? 'New chat'}</h2>
+              {session.data && <SessionChip session={session.data} />}
+              {session.data?.state === 'running' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    void post(`/tasks/${chat.id}/session/stop`).catch((e) => setError(errorMessage(e)));
+                  }}
+                >
+                  Stop
+                </Button>
+              )}
+              {session.data?.held && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    void post(`/tasks/${chat.id}/session/retry`).catch((e) => setError(errorMessage(e)));
+                  }}
+                >
+                  Retry
+                </Button>
+              )}
+            </div>
+          )}
+          {!chat || task.isPending ? (
+            <Loading />
+          ) : task.error ? (
+            <ErrorText>{errorMessage(task.error)}</ErrorText>
+          ) : (
+            <TaskActivity
+              key={chat.id}
+              task={task.data}
+              statuses={[]}
+              tags={[]}
+              users={users.data ?? []}
+              session={session.data}
+              hideChanges
+              readOnly={readOnly}
+            />
+          )}
+        </div>
+      </div>
       <Dialog open={editing} onOpenChange={setEditing}>
         <DialogContent>
           <DialogHeader>
@@ -215,7 +298,86 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
           <WikiForm wiki={wiki} onSaved={() => setEditing(false)} />
         </DialogContent>
       </Dialog>
+      <Dialog open={!!renaming} onOpenChange={(open) => !open && setRenaming(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename chat</DialogTitle>
+          </DialogHeader>
+          {renaming && <RenameChatForm key={renaming.id} wikiId={wiki.id} chat={renaming} onDone={() => setRenaming(null)} />}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+function ChatRow({
+  chat,
+  active,
+  onOpen,
+  onRename,
+  onDelete,
+}: {
+  chat: WikiChat;
+  active: boolean;
+  onOpen: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <li className={`group flex items-center gap-1 rounded-md pr-1 ${active ? 'bg-muted' : 'hover:bg-muted/50'}`}>
+      <button type="button" aria-current={active ? 'true' : undefined} className="min-w-0 flex-1 p-2 text-left" onClick={onOpen}>
+        <span className="flex items-center gap-1.5">
+          <span className="truncate text-sm">{chat.title}</span>
+          {chat.unread && !active && <span role="img" aria-label="Unread" className="size-2 shrink-0 rounded-full bg-primary" />}
+          {chat.running && <Loader2 role="img" aria-label="Working" className="size-3 shrink-0 animate-spin text-muted-foreground" />}
+        </span>
+        <Time iso={chat.lastActivityAt} className="text-xs text-muted-foreground" />
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" aria-label={`Chat actions: ${chat.title}`}>
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={onRename}>
+            <Pencil /> Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+            <Trash2 /> Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </li>
+  );
+}
+
+function RenameChatForm({ wikiId, chat, onDone }: { wikiId: string; chat: WikiChat; onDone: () => void }) {
+  const qc = useQueryClient();
+  const [title, setTitle] = useState(chat.title);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const r = await patch<{ chat: WikiChat }>(`/wikis/${wikiId}/chats/${chat.id}`, { title });
+      qc.setQueryData<WikiChat[]>(keys.wikiChats(wikiId), (list) => list?.map((c) => (c.id === r.chat.id ? r.chat : c)));
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <form onSubmit={save} className="min-w-0 space-y-4">
+      <Input aria-label="Chat title" value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} />
+      {error && <ErrorText>{error}</ErrorText>}
+      <Button type="submit" disabled={busy || !title.trim()}>
+        {busy ? 'Saving…' : 'Rename chat'}
+      </Button>
+    </form>
   );
 }
 

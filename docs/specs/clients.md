@@ -13,7 +13,7 @@ Users work with Claude Task through two clients that share one backend: the **we
 - **Live Turn preview**: the text, Thinking, API-retry status and Setup Script output of a running Turn, streamed as it is produced. It is transient: the stored Agent Comment, Thinking or Activity replaces it on the Timeline as soon as it is persisted (see [Agent sessions](agent-sessions.md)).
 - **Draft**: an unsent Comment kept per Task, with its Internal Note flag and the files picked for it.
 - **Following, mute and read position**: per-User, per-Task state, shared by both clients for unread indicators and by the native app for push notifications. Their data rules belong to [Conversation](conversation.md); this spec covers how the clients use them.
-- **Conversation generation**: a counter on a Task's conversation that grows each time a Wiki's Reset Chat clears it. Clients use it to notice a reset they missed while disconnected.
+- **Conversation generation**: a counter on a Task's conversation that grows each time a Wiki's Delete Chat clears it. Clients use it to notice a deletion they missed while disconnected.
 
 ## Behaviour
 
@@ -32,10 +32,10 @@ A client subscribes and unsubscribes by sending small control messages listing t
 | Topic | One per | Carries |
 | --- | --- | --- |
 | Project (`project:<id>`) | Project | The Board: Task cards created, updated, moved and deleted; the Status list; the Tag list; Project details. |
-| Task (`task:<id>`) | Task (including a Wiki's conversation) | The Task view: Task fields, removal, Comments, Revisions, Agent Timeline items, Session state, Live Turn preview, Setup Script output, conversation reset. |
+| Task (`task:<id>`) | Task (including a Wiki's conversation) | The Task view: Task fields, removal, Comments, Revisions, Agent Timeline items, Session state, Live Turn preview, Setup Script output, and for a Wiki's Chat the reset event sent when it is deleted. |
 | Agents (`agents`) | installation | Agent created, updated or deleted, for the Agents list and Agent pickers. |
 | Agent (`agent:<id>`) | Agent | One Agent's detail view: the Agent itself, its Queue, builds and build logs, Jobs. |
-| Wikis (`wikis`) | installation | A Wiki was created, changed, reset or deleted. |
+| Wikis (`wikis`) | installation | A Wiki was created, changed (including a Chat renamed or deleted, and every Comment in one of its Chats) or deleted. |
 | User (`user:<id>`) | User | Private changes to the User's own following, mute and read state. |
 
 A subscribe request lists up to 100 topics; extra topics are ignored. The backend answers every subscribe with an acknowledgement listing the topics now being delivered. Events start flowing at that moment, so anything that changed between a client's HTTP fetch and its subscription would be missed; both clients close that gap by refetching once the acknowledgement arrives (the web app refetches the data each acknowledged topic keeps current; the native app moves to its "connected" state and refreshes its open views).
@@ -51,7 +51,8 @@ Events are grouped by the area that emits them. Each one carries the new state, 
 | Board | Project | Task created, updated or moved (each with the Task card); Task deleted; Status list changed (whole list); Tag list changed (whole list); Project updated | Put the card in every cached Board list of that Project, or take it out; replace the Status or Tag list; refresh Project details and repository settings. A card update also reflects Session state and Queue position, since the scheduler emits one whenever they change. |
 | Task view | Task | Task changed (full Task); Task removed; Comment created, updated or deleted (an update also carries a Question's answer or a Survey's answers and state); Revision created; Session changed (new Session state, or none) | Replace the Task (and refresh its Session for the "unseen changes" flag); show the Task as deleted; place the item on the Timeline; replace the Session. |
 | Agent work | Task | Agent Timeline item created or updated (Thinking, Activity, Turn Summary, notices); Live Turn text or Thinking delta; Live Turn retry status (or cleared); Setup Script output chunk | Place stored items on the Timeline; append deltas to the Live Turn preview; show the retry line; show the Worktree preparation output. |
-| Wiki conversation | Task | Conversation reset | Empty the Timeline and the Live Turn preview for everyone viewing it, then refetch. |
+| Wiki Chat | Task | Reset event, sent when the Chat is deleted (the event keeps the name `timeline.reset`) | Remove the Chat from the list, empty its Timeline and Live Turn preview for everyone viewing it, and open the most recent remaining Chat. |
+| Wiki Chat list | Wikis | Wiki changed | Refetch the Wiki's Chat list (order, titles, unread and working indicators). |
 | Wikis | Wikis | Wiki changed | Refetch the Wikis list and that Wiki. |
 | Agents | Agents and Agent | Agent updated (full Agent); Agent deleted | Update the Agents list and the Agent's detail view; drop a deleted Agent. |
 | Agent detail | Agent | Queue changed (whole Queue); build updated; build log chunk; Job updated | Replace the Queue; update the build list and append log text; update the Job list, the Job's detail and usage figures. |
@@ -190,9 +191,9 @@ Sending keeps whatever the User typed or attached while the request was in fligh
 
 #### Wikis
 
-The Wiki section lists Wikis as cards (name, description or repository, repository) with a "New wiki" dialog that asks for name, description, Agent and repository (grouped by Git Connection, with unreachable connections listed as errors) and an optional Base Branch prefilled from the repository. A Wiki opens as a conversation page: name, repository link, Session chip, Stop and Retry, "Reset chat" (with confirmation), settings and delete. The Task Branch and review link appear under the header when they exist. The conversation is the same activity panel as a Task's, with Revisions always hidden.
+The Wiki section lists Wikis as cards (name, description or repository, repository) with a "New wiki" dialog that asks for name, description, Agent and repository (grouped by Git Connection, with unreachable connections listed as errors) and an optional Base Branch prefilled from the repository. A Wiki opens as a Chat page: name, repository link, settings and delete in the header, and under it the Chat list on the left (ordered by latest activity; each Chat with its title, time of last Comment, an unread indicator and a working indicator, a "New chat" button on top and a menu with Rename and Delete, confirmed with "Delete this chat and everything in it for everyone. Wiki files are kept.") beside the open Chat with its Session chip, Stop and Retry. The most recent Chat opens first; a Wiki without Chats shows an empty composer, and the Chat is listed once its first Comment is sent. The Task Branch and review link appear under the header when they exist. The Chat is the same activity panel as a Task's, with Revisions always hidden. The composer of a Chat run by another Agent than the Wiki's is disabled and says which Agent runs it.
 
-Resetting from this page empties the Timeline and Live Turn preview at once, without waiting for the event; everyone else viewing it sees the same through the reset event. Wiki rules are in [Wikis](wikis.md).
+Deleting a Chat from this page removes it from the list at once and empties its Timeline and Live Turn preview, without waiting for the event; everyone else viewing it sees the same through the reset event. Wiki rules are in [Wikis](wikis.md).
 
 #### Agents and administration
 
@@ -307,7 +308,7 @@ The description editor offers a visual mode (headings, emphasis, inline code, li
 
 #### Wikis
 
-The Wiki section lists Wikis and offers "New wiki" in its header and empty state. The same action is available from the phone drawer, including when the list is empty. Creation is available online for every User, asks for name, description, Agent (chosen from the Agent picker, listing enabled Agents and the current one), repository and Base Branch, and opens the new Wiki's conversation. Failed submissions keep the form and its input open and show the error. Wiki settings link to the repository, the Wiki's branch and its review. Opening a Wiki shows its conversation like a Task's, with Mute, Follow, Session actions, "Reset chat" (online only, with confirmation) and "Delete wiki". On wide windows the section shows the rail, the Wiki list and the conversation; on phones, the list and then the conversation.
+The Wiki section lists Wikis and offers "New wiki" in its header and empty state. The same action is available from the phone drawer, including when the list is empty. Creation is available online for every User, asks for name, description, Agent (chosen from the Agent picker, listing enabled Agents and the current one), repository and Base Branch, and opens the new Wiki's conversation. Failed submissions keep the form and its input open and show the error. Wiki settings link to the repository, the Wiki's branch and its review. Opening a Wiki shows its Chat list (title, time of last Comment, unread indicator, working indicator, "New chat", and Rename and "Delete chat" online only, with confirmation), and opening a Chat shows its conversation like a Task's, with Mute and Follow (for the whole Wiki), Session actions and "Delete wiki". The composer of a Chat run by another Agent is disabled with the reason. On wide windows the section shows the rail, the Wiki list, the Chat list and the conversation; on phones, the successive screens Wiki list, Chat list and Chat, and Back returns one level. Cached Chats are read offline, and a notification for a Wiki opens its Chat.
 
 #### Local state and offline use
 
@@ -359,7 +360,7 @@ The native app shows the User's following, mute and unread state per Task, share
 
 #### Reset detection
 
-Every Task and Timeline page carries its conversation generation. When another User resets a Wiki's chat, the reset event clears the open conversation, its Live Turn preview and its cached pages, or just the cache for a Wiki not currently open. When the app missed the event (offline, closed), the next fetch finds a newer generation than the cached one and discards the cached conversation before showing the fresh one. A page that arrives with a different generation from the Task fetched with it is refetched, up to two more times.
+Every Task and Timeline page carries its conversation generation. When another User deletes a Wiki's Chat, the reset event clears the open conversation, its Live Turn preview and its cached pages, or just the cache for a Wiki not currently open. When the app missed the event (offline, closed), the next fetch finds a newer generation than the cached one and discards the cached conversation before showing the fresh one. A page that arrives with a different generation from the Task fetched with it is refetched, up to two more times.
 
 ### Voice Rooms
 
@@ -449,7 +450,7 @@ Client-side state, by client:
 - **Reads advance only on visible content.** Marking read on fetch would clear unread state for conversations nobody looked at, including those refreshed in the background.
 - **Generic push content through FCM HTTP v1.** Lock screens show a fixed message and the Task id only, so no project information leaks to a locked phone. Notifications are generated from persisted Turn and Session outcomes and selected mentions in new User Comments. Each mention alert uses the fixed text "You were mentioned in a Comment." and the same Task navigation payload as outcome alerts. A real provider is required for push to count as working; without credentials, the app reports an unconfigured state and everything else works. Desktop notifications while the app is closed are left to a later version.
 - **Create and assign as two requests.** Task creation has no Agent field, so the native app creates the Task, then assigns the Agent against its version. A failed assignment keeps the Task and offers to retry only the assignment, so a retry never creates a duplicate Task.
-- **Conversation generation for Reset Chat.** A reset event is transient and a closed or offline app misses it. A counter on the Task and on each Timeline page lets the native app detect the reset on its next fetch and drop cached pages from before it.
+- **Conversation generation for Delete Chat.** A reset event is transient and a closed or offline app misses it. A counter on the Task and on each Timeline page lets the native app detect the reset on its next fetch and drop cached pages from before it.
 - **One image serves API, WebSocket and web app.** A single process and origin keeps cookies, CSRF checks and the WebSocket origin check simple and needs no separate web server. Client-side routes fall back to the app's page.
 - **Dark theme by default.** It matches the product's intended look and suits the code and logs Agents produce; light and system themes remain available per browser.
 
@@ -462,6 +463,6 @@ Client-side state, by client:
 - [Agent sessions](agent-sessions.md): Sessions, Jobs, the Queue and the Timeline projection behind the conversation and the Live Turn preview.
 - [Runner](runner.md): the Runner's own WebSocket to the backend, separate from the clients' live connection.
 - [Git integration](git-integration.md): Task Branches, Pull Requests and Git Connections linked from Task views and settings.
-- [Wikis](wikis.md): Wikis, their shared conversation and Reset Chat.
+- [Wikis](wikis.md): Wikis, their Chats and Delete Chat.
 
 - [Voice Rooms](voice-rooms.md): Voice Rooms provide persistent voice controls in both clients and use the authenticated live connection for presence and signaling.

@@ -55,6 +55,7 @@ const router = createBrowserRouter([
       { path: '/admin/users', element: <UsersPage /> },
       { path: '/wikis', element: <WikisPage /> },
       { path: '/wikis/:wikiId', element: <WikiPage /> },
+      { path: '/wikis/:wikiId/chats/:chatId', element: <WikiPage /> },
       { path: '/agents', element: <AgentsPage /> },
       { path: '/agents/:agentId', element: <AgentPage /> },
       { path: '/admin/credentials', element: <CredentialsPage /> },

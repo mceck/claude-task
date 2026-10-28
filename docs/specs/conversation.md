@@ -18,7 +18,7 @@ The conversation is the human side of a Task's Timeline: the Comments Users writ
 - A **Task Preference** is one User's private state on one Task: whether they follow it, whether they muted it, and how far they have read its Timeline.
 - A **Notification Event** is a moment worth alerting followers about: a completed Turn, a failed Turn, or a Job that needs intervention.
 
-Comments, Revisions and the Agent's work items together form the Task's Timeline (see [Agent sessions](agent-sessions.md) for the Agent's items and [Board](board.md) for Revisions). A Wiki's shared conversation is the conversation of its backing Task and follows every rule in this spec (see [Wikis](wikis.md)).
+Comments, Revisions and the Agent's work items together form the Task's Timeline (see [Agent sessions](agent-sessions.md) for the Agent's items and [Board](board.md) for Revisions). A Wiki has several shared conversations, its Chats, each a Task of its Wiki Project; every Chat follows every rule in this spec (see [Wikis](wikis.md)).
 
 ## Behaviour
 
@@ -218,7 +218,7 @@ Each User has a read position per Task:
 - fetching the Timeline or receiving live events leaves it unchanged;
 - advancing it never makes the User follow the Task.
 
-A Task is **unread** for a User when its latest entry position is greater than their read position. Timeline pages carry each entry's position so clients can mark progress precisely. The Projects list aggregates it: a Project's `unreadTasks` counts its Tasks that are unread for the asking User, leaving out Tasks they muted and Tasks in a `closed` Status. Reset Chat sets every User's read position on the Wiki back to zero along with the cleared Timeline (see [Wikis](wikis.md)).
+A Task is **unread** for a User when its latest entry position is greater than their read position. Timeline pages carry each entry's position so clients can mark progress precisely. The Projects list aggregates it: a Project's `unreadTasks` counts its Tasks that are unread for the asking User, leaving out Tasks they muted and Tasks in a `closed` Status. A Wiki's read position, Draft and Internal Note flag belong to each Chat, which is a Task, (see [Wikis](wikis.md)).
 
 The Flutter app advances the read position when the conversation is visible, the app is in the foreground and online, and the reader has reached the latest entry. The web app advances it whenever the Task's conversation is on screen and scrolled to the bottom, each time a newer entry arrives or the reader scrolls back down, and only while the browser tab is visible. Both clients report the newest entry they have loaded, so reading a Task on one client clears its unread state on the other.
 
@@ -243,7 +243,7 @@ The recipients of an Agent outcome are the Users who, at that moment, follow the
 
 Mention recipients are determined from the stored User Comment in its posting transaction. Before dispatch, eligibility is checked again and only Comments still present on the Timeline qualify. Muting between posting and dispatch suppresses the alert. Mentioned Users keep their existing following preference.
 
-The alert shows a fixed text, "You were mentioned in a Comment." for mentions and "A Task you follow has an update." for Agent outcomes, with no Task title, Project or generated text, and carries the Task's id so the app opens its conversation after sign-in; for a Wiki's backing Task the app opens the Wiki. Alerts for the same Task collapse into one on the phone. Device registration, the push provider, retries and the unconfigured state are described in [Clients](clients.md).
+The alert shows a fixed text, "You were mentioned in a Comment." for mentions and "A Task you follow has an update." for Agent outcomes, with no Task title, Project or generated text, and carries the Task's id so the app opens its conversation after sign-in; for a Wiki's Task the app opens the Wiki's Chat that the Task holds. Alerts for the same Task collapse into one on the phone. Device registration, the push provider, retries and the unconfigured state are described in [Clients](clients.md).
 
 ## Architecture
 
@@ -276,7 +276,7 @@ sequenceDiagram
 
 ## Data model
 
-- **Comment**: Task, kind (`user`, `agent`, `system`), author Actor, Markdown body, internal flag, edited at, deleted at, created at. Delivery fields: state (`none`, `queued`, `delivered`, `not_delivered`), reason, the Job it was delivered in, the Queue Entry it waits in. Notify agent notices and Survey results also hold the text the Agent receives; Notify agent notices also hold the Task version they cover. Agent Comments hold the Job that produced them. An answer to a Question holds the Question it answers. Comments are soft-deleted and removed only with their Task (or by Reset Chat on a Wiki).
+- **Comment**: Task, kind (`user`, `agent`, `system`), author Actor, Markdown body, internal flag, edited at, deleted at, created at. Delivery fields: state (`none`, `queued`, `delivered`, `not_delivered`), reason, the Job it was delivered in, the Queue Entry it waits in. Notify agent notices and Survey results also hold the text the Agent receives; Notify agent notices also hold the Task version they cover. Agent Comments hold the Job that produced them. An answer to a Question holds the Question it answers. Comments are soft-deleted and removed only with their Task (or by Delete Chat on a Wiki). 
 - **Attachment**: either a Comment or a Task (exactly one), blob id, file name, content type, size in bytes, order within its Comment, created at.
 - **Question or Survey**: its Comment, kind (`question`, `survey`), items, state (`open`, then `answered` for a Question or `closed` for a Survey), Expected Respondents (Survey), the answer, who answered and when, and the answer Comment (Question), who closed it and when, and the results Comment (Survey). Removed with its Comment.
 - **Survey answer**: Survey, User, one answer per item (chosen option labels and the "Other" text), created and updated at. One per Survey and User.
@@ -325,7 +325,7 @@ sequenceDiagram
 
 - [Agent sessions](agent-sessions.md): how Comments become Messages, the Queue, injection into a running Turn, Session commands, Notify agent's effect on the Agent's read point, and the Agent's Timeline items.
 - [Board](board.md): Tasks, Revisions and the description editor.
-- [Wikis](wikis.md): a Wiki's shared conversation and Reset Chat.
+- [Wikis](wikis.md): a Wiki's Chats and Delete Chat.
 - [Clients](clients.md): composer and Timeline UI, drafts, offline cache, real-time transport, phone registration and push delivery.
 - [Users and authentication](users-and-auth.md): who is a signed-in User, roles, Logins.
 - [Runner](runner.md): how attached files are fetched into the Worktree and how an Agent's files are uploaded.

@@ -174,7 +174,7 @@ There are no per-Project permissions: every active User sees and works on every 
 | Credentials | | Everything, including listing |
 | Extensions | List Skills and Plugins | Import and delete Skills; list, create, edit and delete MCP servers; create, edit, update and delete Plugins |
 | Git | List linkable Repositories | List, create, edit and delete Git Connections |
-| Wikis | Create, edit, Reset Chat, delete; converse | |
+| Wikis | Create, edit, start, rename and delete Chats, delete; converse | |
 | Notifications | Own follow, mute and read preferences; own push devices | |
 
 Admin-only actions answer anyone else with `403` "Admins only". The web app hides the Extensions, Credentials, Git and Users entries of the sidebar from Members, and shows "Delete permanently" on archived Projects to Admins only; a Member opening the Users, Credentials or Git page by URL sees "Not found", and the Extensions page says "Admin access required." Details of each action live in the area's own spec.

@@ -29,22 +29,38 @@ export async function emitPreference(db: Executor, after: AfterCommit, userId: s
 
 /** Explicit unfollow and mute persist. Automatic following never overwrites either. */
 export async function autoFollow(db: Executor, after: AfterCommit, taskId: string, userIds: string[]): Promise<void> {
+  const targets = await preferenceTargets(db, taskId);
   for (const userId of [...new Set(userIds)].sort()) {
-    const changed = await db.execute(sql`insert into task_preferences(user_id, task_id, following)
-      values (${userId}::uuid, ${taskId}::uuid, true)
-      on conflict(user_id, task_id) do update set following = true
-      where not task_preferences.explicit_follow and not task_preferences.following returning user_id`);
-    if (changed.rows.length) await emitPreference(db, after, userId, taskId);
+    for (const id of targets) {
+      const changed = await db.execute(sql`insert into task_preferences(user_id, task_id, following)
+        values (${userId}::uuid, ${id}::uuid, true)
+        on conflict(user_id, task_id) do update set following = true
+        where not task_preferences.explicit_follow and not task_preferences.following returning user_id`);
+      if (changed.rows.length) await emitPreference(db, after, userId, id);
+    }
   }
 }
 
+/** Following a Wiki's Chat is following the Wiki, so every Task of its Wiki Project is a target. */
+async function preferenceTargets(db: Executor, taskId: string): Promise<string[]> {
+  const targets = await db.execute<{ id: string }>(sql`select t.id from tasks t
+    where t.id = ${taskId}::uuid or t.project_id = (select p.id from tasks s join projects p on p.id = s.project_id
+      where s.id = ${taskId}::uuid and p.kind = 'wiki')
+    order by t.id`);
+  return targets.rows.map((r) => r.id);
+}
+
+/** Following and muting a Wiki's Chat applies to the whole Wiki, so every Task of its Wiki Project changes. */
 export async function setPreference(db: Executor, after: AfterCommit, userId: string, taskId: string, patch: { following?: boolean; muted?: boolean }): Promise<TaskPreference> {
-  await db.execute(sql`insert into task_preferences(user_id, task_id, following, muted, explicit_follow)
-    values (${userId}::uuid, ${taskId}::uuid, ${patch.following ?? false}, ${patch.muted ?? false}, ${patch.following !== undefined})
-    on conflict(user_id, task_id) do update set
-      following = ${patch.following !== undefined ? sql`${patch.following}` : sql`task_preferences.following`},
-      muted = ${patch.muted !== undefined ? sql`${patch.muted}` : sql`task_preferences.muted`},
-      explicit_follow = task_preferences.explicit_follow or ${patch.following !== undefined}`);
+  for (const id of await preferenceTargets(db, taskId)) {
+    await db.execute(sql`insert into task_preferences(user_id, task_id, following, muted, explicit_follow)
+      values (${userId}::uuid, ${id}::uuid, ${patch.following ?? false}, ${patch.muted ?? false}, ${patch.following !== undefined})
+      on conflict(user_id, task_id) do update set
+        following = ${patch.following !== undefined ? sql`${patch.following}` : sql`task_preferences.following`},
+        muted = ${patch.muted !== undefined ? sql`${patch.muted}` : sql`task_preferences.muted`},
+        explicit_follow = task_preferences.explicit_follow or ${patch.following !== undefined}`);
+    if (id !== taskId) await emitPreference(db, after, userId, id);
+  }
   return emitPreference(db, after, userId, taskId);
 }
 

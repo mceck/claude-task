@@ -314,7 +314,16 @@ class _ConversationState extends State<Conversation> {
             ],
           ),
         ),
-        Composer(key: ValueKey('composer:${t.id}'), controller: c),
+        if (c.chatReadOnlyReason != null)
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Notice(
+              key: const Key('chat-read-only'),
+              message: c.chatReadOnlyReason!,
+            ),
+          )
+        else
+          Composer(key: ValueKey('composer:${t.id}'), controller: c),
       ],
     );
   }
@@ -383,7 +392,7 @@ class _Header extends StatelessWidget {
     final unseen = c.online && session?['unseenChanges'] == true;
     return PageHeader(
       onBack: onBack,
-      title: t.title,
+      title: c.wiki != null ? (c.openChat?.title ?? t.title) : t.title,
       onTitleTap: showDetailsAction ? () => showDetails(context, c) : null,
       meta: Row(
         children: [
@@ -425,12 +434,6 @@ class _Header extends StatelessWidget {
         ],
       ),
       actions: [
-        if (c.wiki != null)
-          IconAction(
-            icon: Icons.restart_alt_rounded,
-            tooltip: 'Reset chat',
-            onPressed: c.online ? () => confirmResetWiki(context, c) : null,
-          ),
         if (showDetailsAction && c.wiki == null)
           IconAction(
             icon: Icons.info_outline_rounded,

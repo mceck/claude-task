@@ -29,12 +29,31 @@ class Workspace extends StatelessWidget {
             children: [
               SizedBox(width: 76, child: ProjectRail(controller: c)),
               SizedBox(width: 340, child: WikiList(controller: c)),
+              if (c.wiki != null)
+                Container(
+                  width: 300,
+                  decoration: const BoxDecoration(
+                    color: Palette.sidebar,
+                    border: Border(
+                      left: BorderSide(color: Palette.border),
+                      right: BorderSide(color: Palette.border),
+                    ),
+                  ),
+                  child: ChatList(
+                    key: ValueKey('chats:${c.wiki!.id}'),
+                    controller: c,
+                  ),
+                ),
               Expanded(
                 child: c.task == null
-                    ? const EmptyState(
+                    ? EmptyState(
                         icon: Icons.menu_book_outlined,
-                        title: 'Select a Wiki',
-                        message: 'Open a wiki to join its shared conversation.',
+                        title: c.wiki == null
+                            ? 'Select a Wiki'
+                            : 'Select a chat',
+                        message: c.wiki == null
+                            ? 'Open a wiki to join its shared conversation.'
+                            : 'Open a chat or start a new one.',
                       )
                     : Conversation(key: ValueKey(c.task!.id), controller: c),
               ),
@@ -44,11 +63,18 @@ class Workspace extends StatelessWidget {
         return PopScope(
           canPop: c.wiki == null,
           onPopInvokedWithResult: (popped, _) {
-            if (!popped) c.showWikis();
+            if (popped) return;
+            c.task != null ? c.showChats() : c.showWikis();
           },
           child: c.task != null
               ? Conversation(
                   key: ValueKey(c.task!.id),
+                  controller: c,
+                  onBack: c.showChats,
+                )
+              : c.wiki != null
+              ? ChatList(
+                  key: ValueKey('chats:${c.wiki!.id}'),
                   controller: c,
                   onBack: c.showWikis,
                 )

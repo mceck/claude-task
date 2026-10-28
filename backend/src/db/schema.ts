@@ -165,6 +165,8 @@ export const tasks = pgTable(
     agentId: uuid('agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'set null' }),
     currentSessionId: uuid('current_session_id'),
     chatGeneration: integer('chat_generation').notNull().default(0),
+    /** A Wiki Chat's title once someone renamed it; until then the Chat is titled by its first User Comment. */
+    chatTitle: text('chat_title'),
     version: integer('version').notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

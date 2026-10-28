@@ -46,6 +46,10 @@ class TaskController extends ChangeNotifier {
   List<Wiki> wikis = [];
   Wiki? wiki;
   bool wikiSection = false;
+
+  /// The open Wiki's Chats, most recently active first, and the one shown.
+  List<WikiChat> chats = [];
+  WikiChat? openChat;
   int _timelineEpoch = 0;
   List<Task> tasks = [];
   List<TaskStatus> statuses = [];
@@ -90,7 +94,8 @@ class TaskController extends ChangeNotifier {
       if (user != null && !user!.mustChangePassword) {
         unawaited(
           _registerToken(token).catchError((Object _) {
-            error = 'Phone token registration failed; try Enable notifications again';
+            error =
+                'Phone token registration failed; try Enable notifications again';
             notifyListeners();
           }),
         );
@@ -385,6 +390,8 @@ class TaskController extends ChangeNotifier {
     wikis = [];
     wiki = null;
     wikiSection = false;
+    chats = [];
+    openChat = null;
     tasks = [];
     statuses = [];
     tags = [];
@@ -429,6 +436,8 @@ class TaskController extends ChangeNotifier {
     user = users.byId(user!.id) ?? user;
     final selectedProject = project;
     if (selectedProject != null) await _fetchProject(selectedProject.id);
+    final selectedWiki = wiki;
+    if (selectedWiki != null) await _fetchChats(selectedWiki.id);
     final selectedTask = task;
     if (selectedTask != null) await _fetchTask(selectedTask.id);
     error = null;
@@ -438,6 +447,8 @@ class TaskController extends ChangeNotifier {
   void showWikis() {
     wikiSection = true;
     wiki = null;
+    chats = [];
+    openChat = null;
     project = null;
     task = null;
     _clearConversation();
@@ -450,23 +461,180 @@ class TaskController extends ChangeNotifier {
     backToProjects();
   }
 
-  Future<void> selectWiki(Wiki value) async {
+  /// Opens a Wiki on its Chat list. [chatId] opens that Chat, [openLatest]
+  /// the most recent one; a Wiki without Chats opens an empty composer.
+  Future<void> selectWiki(
+    Wiki value, {
+    String? chatId,
+    bool openLatest = false,
+  }) async {
     wikiSection = true;
     wiki = value;
     task = null;
+    openChat = null;
     _clearConversation();
     project = null;
     statuses = [];
     tags = [];
+    chats = _cachedChats(value.id);
+    _subscribe();
     notifyListeners();
-    final cachedTask = storage.read('task:${value.taskId}')?['task'];
+    if (!online) {
+      final target = chatId != null
+          ? chats.byId(chatId)
+          : openLatest
+          ? chats.firstOrNull
+          : null;
+      if (target != null) await selectChat(target);
+      return;
+    }
+    await _fetchChats(value.id);
+    if (wiki?.id != value.id) return;
+    var target = chatId == null ? null : chats.byId(chatId);
+    if (chatId != null && target == null) {
+      // A Chat that isn't listed (yet): open its Task as the Wiki's own.
+      target = WikiChat.fromJson({
+        'id': chatId,
+        'wikiId': value.id,
+        'agentId': value.agentId,
+      });
+    }
+    if (target == null && openLatest) target = chats.firstOrNull;
+    if (target != null) {
+      await selectChat(target);
+    } else if (chats.isEmpty) {
+      await newChat();
+    }
+  }
+
+  List<WikiChat> _cachedChats(String wikiId) => objects(
+    storage.read('chats:$wikiId')?['chats'],
+  ).map(WikiChat.fromJson).toList();
+
+  /// Loads the Wiki's Chat list. Cached Chats the server no longer lists are
+  /// dropped with their cached conversation, and when the open one is among
+  /// them the most recent remaining Chat (or an empty composer) opens.
+  Future<void> _fetchChats(String wikiId) async {
+    final result = await _request('GET', '/wikis/$wikiId/chats');
+    if (wiki?.id != wikiId) return;
+    final raw = objects(result['chats']);
+    final fresh = raw.map(WikiChat.fromJson).toList();
+    final previous = chats.isEmpty ? _cachedChats(wikiId) : chats;
+    final listed = fresh.map((c) => c.id).toSet();
+    final gone = previous.where((c) => !listed.contains(c.id)).toList();
+    for (final chat in gone) {
+      await storage.write('task:${chat.id}', {});
+    }
+    await storage.write('chats:$wikiId', {'chats': raw});
+    chats = fresh;
+    final open = openChat;
+    if (open != null) {
+      openChat = fresh.byId(open.id) ?? open;
+      if (gone.any((c) => c.id == open.id) && task?.id == open.id) {
+        await _openLatestOrNew();
+      }
+    }
+  }
+
+  Future<void> _openLatestOrNew() async {
+    _timelineEpoch++;
+    _clearConversation();
+    task = null;
+    openChat = null;
+    if (chats.isNotEmpty) {
+      await selectChat(chats.first);
+    } else if (online) {
+      await newChat();
+    }
+    notifyListeners();
+  }
+
+  /// Opens a Chat's conversation, driven by the Task that holds it.
+  Future<void> selectChat(WikiChat chat) async {
+    final wikiId = wiki?.id;
+    openChat = chat;
+    final cachedTask = storage.read('task:${chat.id}')?['task'];
     if (!online && cachedTask != null) {
       await selectTask(Task.fromJson(cachedTask as Json));
       return;
     }
-    final result = await _request('GET', '/tasks/${value.taskId}');
-    if (wiki?.id != value.id) return;
+    final result = await _request('GET', '/tasks/${chat.id}');
+    if (wiki?.id != wikiId || openChat?.id != chat.id) return;
     await selectTask(Task.fromJson(result['task'] as Json));
+  }
+
+  /// New chat: reserves an empty Chat to post the first Comment to.
+  Future<void> newChat() async {
+    final current = wiki!;
+    final result = await _request('POST', '/wikis/${current.id}/chats');
+    if (wiki?.id != current.id) return;
+    await selectChat(WikiChat.fromJson(result['chat'] as Json));
+  }
+
+  Future<void> renameChat(WikiChat chat, String title) async {
+    final current = wiki!;
+    final result = await _request(
+      'PATCH',
+      '/wikis/${current.id}/chats/${chat.id}',
+      body: {'title': title},
+    );
+    if (wiki?.id != current.id) return;
+    final renamed = WikiChat.fromJson(result['chat'] as Json);
+    chats = [for (final c in chats) c.id == renamed.id ? renamed : c];
+    if (openChat?.id == renamed.id) openChat = renamed;
+    await _cacheChats(current.id);
+    notifyListeners();
+  }
+
+  Future<void> deleteChat(WikiChat chat) async {
+    final current = wiki!;
+    await _request('DELETE', '/wikis/${current.id}/chats/${chat.id}');
+    await storage.write('task:${chat.id}', {});
+    if (wiki?.id != current.id) return;
+    chats = chats.where((c) => c.id != chat.id).toList();
+    await _cacheChats(current.id);
+    if (task?.id == chat.id) {
+      await _openLatestOrNew();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _cacheChats(String wikiId) => storage.write('chats:$wikiId', {
+    'chats': [
+      for (final c in chats)
+        {
+          'id': c.id,
+          'wikiId': c.wikiId,
+          'title': c.title,
+          'agentId': c.agentId,
+          'sessionState': c.sessionState,
+          'running': c.running,
+          'unread': c.unread,
+          'createdAt': c.createdAt.toUtc().toIso8601String(),
+          'lastActivityAt': c.lastActivityAt.toUtc().toIso8601String(),
+        },
+    ],
+  });
+
+  /// Back from a Chat to the Wiki's Chat list.
+  void showChats() {
+    task = null;
+    openChat = null;
+    conversationVisible = false;
+    _clearConversation();
+    _subscribe();
+    notifyListeners();
+  }
+
+  /// Why the open Chat can't be written to: another Agent runs it.
+  String? get chatReadOnlyReason {
+    final chat = openChat, w = wiki;
+    if (chat == null || w == null || task?.id != chat.id) return null;
+    if (chat.agentId == null || chat.agentId == w.agentId) return null;
+    final name = agents.byId(chat.agentId)?.name ?? 'another agent';
+    return 'This chat is run by $name: assign the wiki back to that agent '
+        'to continue it.';
   }
 
   Future<List<Json>> wikiRepositories() async {
@@ -493,7 +661,9 @@ class TaskController extends ChangeNotifier {
       body: body,
     );
     await refresh();
-    await selectWiki(Wiki.fromJson(result['wiki'] as Json));
+    if (existing == null) {
+      await selectWiki(Wiki.fromJson(result['wiki'] as Json));
+    }
   }
 
   void _clearConversation() {
@@ -506,21 +676,14 @@ class TaskController extends ChangeNotifier {
     liveStatus = '';
   }
 
-  Future<void> resetWiki() async {
-    final current = wiki!;
-    await _request('POST', '/wikis/${current.id}/reset');
-    if (wiki?.id != current.id) return;
-    _timelineEpoch++;
-    _clearConversation();
-    await _cacheTask();
-    await _fetchTask(current.taskId);
-    notifyListeners();
-  }
-
   Future<void> deleteWiki() async {
     final current = wiki!;
     await _request('DELETE', '/wikis/${current.id}');
+    for (final chat in chats) {
+      await storage.write('task:${chat.id}', {});
+    }
     await storage.write('task:${current.taskId}', {});
+    await storage.write('chats:${current.id}', {});
     showWikis();
     await refresh();
   }
@@ -528,6 +691,8 @@ class TaskController extends ChangeNotifier {
   Future<void> selectProject(Project value) async {
     wikiSection = false;
     wiki = null;
+    chats = [];
+    openChat = null;
     project = value;
     task = null;
     timeline = [];
@@ -731,9 +896,9 @@ class TaskController extends ChangeNotifier {
       }
     }
     unawaited(
-      _fetchProject(projectId)
-          .then((_) => notifyListeners())
-          .catchError((Object _) {}),
+      _fetchProject(
+        projectId,
+      ).then((_) => notifyListeners()).catchError((Object _) {}),
     );
     notifyListeners();
     return task;
@@ -799,7 +964,7 @@ class TaskController extends ChangeNotifier {
   }
 
   Future<void> send() async {
-    if (sending || task == null) return;
+    if (sending || task == null || chatReadOnlyReason != null) return;
     if (!online) {
       error = 'Offline. Draft saved; send manually after reconnecting.';
       notifyListeners();
@@ -860,7 +1025,8 @@ class TaskController extends ChangeNotifier {
   Future<void> reconcileSend() async {
     await _fetchTask(task!.id);
     await setDraft(draft.copyWith(ambiguous: false));
-    error = 'Conversation refreshed. Check for your Comment; sending again is a manual action.';
+    error =
+        'Conversation refreshed. Check for your Comment; sending again is a manual action.';
     notifyListeners();
   }
 
@@ -1068,9 +1234,11 @@ class TaskController extends ChangeNotifier {
       final result = await _request('GET', '/tasks/$id');
       final target = Task.fromJson(result['task'] as Json);
       if (!projects.any((p) => p.id == target.projectId)) await refresh();
-      final targetWiki = wikis.where((w) => w.taskId == target.id).firstOrNull;
+      final targetWiki = wikis
+          .where((w) => w.id == target.projectId || w.taskId == target.id)
+          .firstOrNull;
       if (targetWiki != null) {
-        await selectWiki(targetWiki);
+        await selectWiki(targetWiki, chatId: target.id);
         pendingTaskId = null;
         return;
       }

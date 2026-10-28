@@ -128,6 +128,30 @@ class Wiki implements Identified {
   String get repositoryName => '${repository['owner']}/${repository['name']}';
 }
 
+/// One of a Wiki's conversations. Its id is the id of the Task that holds it.
+class WikiChat implements Identified {
+  @override
+  final String id;
+  final String wikiId, title;
+  final String? agentId, sessionState;
+  final bool running, unread;
+  final DateTime createdAt, lastActivityAt;
+  WikiChat.fromJson(Json json)
+    : id = json['id'] as String,
+      wikiId = json['wikiId'] as String? ?? '',
+      title = json['title'] as String? ?? 'Chat',
+      agentId = json['agentId'] as String?,
+      sessionState = json['sessionState'] as String?,
+      running = json['running'] == true,
+      unread = json['unread'] == true,
+      createdAt =
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      lastActivityAt =
+          DateTime.tryParse(json['lastActivityAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+}
+
 class Task {
   final String id, projectId, key, title, description, statusId, priority;
   final String? agentId, branchName, branchUrl, pullRequestUrl;

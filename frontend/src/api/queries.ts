@@ -1,5 +1,6 @@
 import type {
   Wiki,
+  WikiChat,
   Agent,
   AgentBuild,
   AgentUsage,
@@ -31,6 +32,8 @@ import { get } from './client';
 export const keys = {
   wikis: ['wikis'] as const,
   wiki: (id: string) => ['wiki', id] as const,
+  /** Under the wiki key, so a wiki change refetches it too. */
+  wikiChats: (id: string) => ['wiki', id, 'chats'] as const,
   me: ['me'] as const,
   users: ['users'] as const,
   projects: (archived: boolean) => ['projects', { archived }] as const,
@@ -224,4 +227,7 @@ export function useWikis() {
 }
 export function useWiki(id: string) {
   return useQuery({ queryKey: keys.wiki(id), queryFn: () => get<{ wiki: Wiki }>(`/wikis/${id}`).then((r) => r.wiki) });
+}
+export function useWikiChats(id: string) {
+  return useQuery({ queryKey: keys.wikiChats(id), queryFn: () => get<{ chats: WikiChat[] }>(`/wikis/${id}/chats`).then((r) => r.chats) });
 }

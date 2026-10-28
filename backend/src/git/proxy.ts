@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppContext } from '../context';
 import { jobs, projects, tasks } from '../db/schema';
+import { gitOwnerTask } from './owner';
 import { hashToken } from '../secrets';
 
 const SERVICES = new Set(['git-upload-pack', 'git-receive-pack']);
@@ -109,7 +110,7 @@ async function authorize(ctx: AppContext, request: FastifyRequest, reply: Fastif
     return null;
   }
   const [row] = await ctx.db
-    .select({ jobId: jobs.id, agentId: jobs.agentId, state: jobs.state, discardOutput: jobs.discardOutput, projectId: tasks.projectId, branchName: tasks.branchName, repository: projects.repository })
+    .select({ jobId: jobs.id, agentId: jobs.agentId, state: jobs.state, discardOutput: jobs.discardOutput, taskId: tasks.id, number: tasks.number, projectId: tasks.projectId, repository: projects.repository })
     .from(jobs)
     .innerJoin(tasks, eq(tasks.id, jobs.taskId))
     .innerJoin(projects, eq(projects.id, tasks.projectId))
@@ -123,7 +124,9 @@ async function authorize(ctx: AppContext, request: FastifyRequest, reply: Fastif
     await deny(reply, 403, 'no active task for this repository');
     return null;
   }
-  return { jobId: row.jobId, agentId: row.agentId, projectId: row.projectId, repository: row.repository, branchName: row.branchName };
+  // A Wiki's Chats push the branch of the Wiki's first Task.
+  const owner = await gitOwnerTask(ctx.db, { id: row.taskId, projectId: row.projectId, number: row.number });
+  return { jobId: row.jobId, agentId: row.agentId, projectId: row.projectId, repository: row.repository, branchName: owner.branchName };
 }
 
 async function forward(

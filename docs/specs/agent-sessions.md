@@ -6,7 +6,7 @@ Agent Sessions are how an **Agent** works a **Task**. Assigning an Agent opens a
 
 - An **Assignment** links one Agent to a Task. A Task has at most one Agent at a time. Assignment creates the Session in `pending` and starts nothing.
 - A **Session** belongs to one (Task, Agent) pair, and there is exactly one per pair. It keeps the Claude session identity, the Worktree path, whether `claude` has already created the conversation (**started**), the last Task version the Agent has read, and when its latest Job was dispatched. The Task points to its **current Session**: the Session of its assigned Agent, or of the last Agent it had.
-- The **Claude session identity** is the id passed to `claude` with `--session-id` or `--resume`. It defaults to the Session's own id. Reset Chat replaces it with a fresh one (see [Claude session identity](#claude-session-identity)).
+- The **Claude session identity** is the id passed to `claude` with `--session-id` or `--resume`. It defaults to the Session's own id. Delete Chat on a Wiki replaces it with a fresh one (see [Claude session identity](#claude-session-identity)).
 - A **Job** is one `claude` process for a Session, from dispatch to exit. An Agent runs at most one Job at a time. A Job contains one or more **Turns**; each Turn ends with a `result` event in the stream.
 - A **Message** is what the Agent receives: one or more Comments merged into one stream-json user message, the opening Task snapshot of a new Session, or a platform notice (change list, resume or reassignment notice).
 - The **Queue** is the ordered list of pending work of one Agent. It holds at most one **Queue Entry** per Task. An entry has a kind (`start`, `messages` or `resume_interrupted`), a position, and the Comments waiting to be delivered with it. An entry can be **held**: it stays in the Queue but waits for a Retry or a new Comment.
@@ -105,11 +105,13 @@ Removing the Agent from a Task pauses its Session:
 
 Later Comments on the Task are marked `not delivered` with reason "no agent assigned".
 
-Assigning a **different Agent** pauses the previous Agent's Session as above, then:
+Assigning a **different Agent** to an ordinary Task pauses the previous Agent's Session as above, then:
 
 - if the new Agent never had a Session on this Task, a new `pending` Session is created and waits for the next Comment. Its opening Message carries the whole conversation, including the previous Agent's Comments, plus a line saying that another Agent worked on the Task before, on the same branch when there is one;
 - if the new Agent has an earlier Session that never started, it returns to `pending`;
 - if the new Agent has an earlier Session that did start, it returns to `idle` and a `messages` entry is queued right away. It carries every non-internal, non-deleted User and Agent Comment posted after that Session's last dispatch, leaving out the Agent's own Comments and System Comments. When there are none, the Agent receives a short notice: "You have been assigned to this task again. Read it with get_task to catch up on any changes."
+
+**Wikis.** A Wiki's Agent is not assigned to its Chats afterwards: each Chat keeps the Agent that was the Wiki's when it was created. Changing the Wiki's Agent pauses the Sessions of the Chats run by the previous Agent and returns the Sessions of the new Agent's earlier Chats to `idle` (or `pending` when they never started); a User Comment in a Chat whose Agent is not the Wiki's current one is answered with `409` naming that Agent (an empty Chat takes the current Agent instead). No Session is created by the change itself.
 
 Comments attached this way become `queued` again, including those previously marked "no agent assigned", and `delivered` once the Job starts.
 
@@ -229,7 +231,7 @@ The **Stop** button on a Task interrupts the current Turn without ending the Ses
 
 ### Cancellation
 
-A Job is cancelled when its Task is closed, or when Reset Chat clears its conversation. The Runner interrupts the Turn, closes stdin, and escalates to `SIGTERM` after 10 seconds and `SIGKILL` after 20 seconds. The Job keeps the Agent busy until the Runner reports the exit, so the next Job starts only afterwards. A cancelled Job's token stops working at once, and its exit or failure produces no System Comment.
+A Job is cancelled when its Task is closed, or when its Chat is deleted (see [Wikis](wikis.md)). The Runner interrupts the Turn, closes stdin, and escalates to `SIGTERM` after 10 seconds and `SIGKILL` after 20 seconds. The Job keeps the Agent busy until the Runner reports the exit, so the next Job starts only afterwards. A cancelled Job's token stops working at once, and its exit or failure produces no System Comment.
 
 ### Recovery after restarts
 
@@ -340,7 +342,7 @@ An item of `ask_question` and `create_survey` mirrors Claude Code's own question
 
 **Files from the container.** `paths` are relative to the Worktree or absolute, and name regular files of up to 25 MB that the `agent` user can read. Before posting anything, the backend asks the Agent's Runner for the files over its connection and waits up to 60 seconds for the Runner to upload them (see [Runner](runner.md)). The tool answers with an error naming each path that failed and why, and posts nothing, when any file is missing, not a regular file or too large; it fails at once when the Runner is not connected, and when the upload hasn't finished 60 seconds after the request. When the Job ended meanwhile (the Task was closed, the Agent unassigned or the Job cancelled), nothing is posted and the files are discarded.
 
-In a Wiki's Session, `get_task` and `list_tasks` read the Wiki and its Project as usual, `send_files`, `ask_question` and `create_survey` work as on any Task, while `update_task`, `set_status` and `create_task` answer with an error that a Wiki changes through the conversation and its Git Repository (see [Wikis](wikis.md)).
+In a Wiki's Session, the Task Tools act on the Task of the Job, which is the Chat the Agent is working in; `get_task` and `list_tasks` read the Wiki and its Project as usual, `send_files`, `ask_question` and `create_survey` work as on any Task, while `update_task`, `set_status` and `create_task` answer with an error that a Wiki changes through the conversation and its Git Repository (see [Wikis](wikis.md)).
 | `open_pull_request` | `title`, `body`, `draft` | Opens or updates the pull request of the Task Branch. See [Git integration](git-integration.md). |
 
 ### Notify agent of changes
@@ -358,14 +360,14 @@ Notify agent answers `409` when no Agent is assigned, when the Session is not `i
 
 ### Claude session identity
 
-A Session's Claude session identity defaults to the Session's own id. **Reset Chat** on a Wiki rotates it while keeping the Session, the Worktree and the Task Branch. For every Session of the conversation (the current Agent and any earlier ones), it:
+A Session's Claude session identity defaults to the Session's own id. **Delete Chat** on a Wiki (a Chat is a Task of the Wiki Project, see [Wikis](wikis.md)) rotates it while keeping the Session, the Worktree and the Task Branch. For every Session of the Chat's Task (the current Agent and any earlier ones), it:
 
 - sets a new random Claude session identity and marks the Session not started, so the next Job creates a new conversation with `--session-id` instead of resuming;
 - puts the current Agent's Session in `pending` and earlier Agents' Sessions in `paused`, and resets the last-read version and the last dispatch time;
 - removes the Queue Entries of the conversation;
 - cancels any active Job and flags it to **discard its output**. That Job keeps its Agent busy until the Runner reports its exit or failure; until then every message from it is acknowledged and ignored, a Runner that reconnects with it is told to cancel it again, recovery requeues nothing for it, and Comments posted meanwhile are queued instead of written to it.
 
-The next Comment then starts a new conversation in the same Worktree. What Reset Chat clears from the conversation and how clients learn about it are described in [Wikis](wikis.md).
+The next Comment in that Chat then starts a new conversation in the same Worktree. What Delete Chat clears and how clients learn about it are described in [Wikis](wikis.md).
 
 ### Observability of the Queue
 
@@ -452,7 +454,8 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 - **Only the `closed` Category of a Status affects an Agent.** Users prepare a Task in any Status and start the Agent with a Comment; moving cards between open Statuses leaves the work as it is. Closing is the one explicit end of a Session, and closing Tasks is reserved for humans.
 - **Failed setups wait for a Retry instead of looping.** A held entry keeps the rest of the Agent's Queue moving while a broken Setup Script, Worktree or provider problem is fixed. A new Comment also releases it, since writing to the Agent is a clear signal to try again.
 - **Deterministic Worktree paths and projection ids.** `--resume` and the transcript's relative paths depend on the working directory, so a recreated Worktree keeps its path. Item ids derived from the Job and a counter make reprocessing a resent event or replaying a stream idempotent.
-- **A rotatable Claude session identity on the Session.** Reset Chat needs a fresh conversation while keeping the Session row, its Worktree and the bookkeeping of a Job still being cancelled. Sessions created before the identity existed fall back to their own id, which is what their transcripts use. Cancelled Jobs discard their remaining output so a late event can't repopulate a cleared conversation.
+- **A rotatable Claude session identity on the Session.** Delete Chat needs a fresh conversation while keeping the Session row, its Worktree and the bookkeeping of a Job still being cancelled. Sessions created before the identity existed fall back to their own id, which is what their transcripts use. Cancelled Jobs discard their remaining output so a late event can't repopulate a cleared conversation.
+- **A Wiki's Chats are Tasks of its Wiki Project, so each has its own Session and Queue Entry.** Several independent Claude conversations per Wiki need several (Task, Agent) Sessions, and the Queue, delivery, projection and notification rules already work per Task. Chats of one Wiki share the Worktree, Task Branch and pull request of the Wiki's first Task, so every Session of a Wiki resumes in the same working directory.
 
 ## Related specs
 
@@ -462,5 +465,5 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 - [Agents](agents.md): Agent configuration, Credentials, Project secrets, the Base Image, Agent Containers, Extensions and the `claude` version.
 - [Runner](runner.md): the Runner binary, Worktree preparation and Setup Script, and the Runner Protocol (sequence numbers, acknowledgements, reconnection, message types).
 - [Git integration](git-integration.md): Task Branches, the Git Proxy and Push Policy with the Job token, and `open_pull_request`.
-- [Wikis](wikis.md): Wiki conversations built on a Task Session, and Reset Chat.
+- [Wikis](wikis.md): Wiki Chats, each a Task with its own Session, and Delete Chat.
 - [Clients](clients.md): how the web and mobile apps show Sessions, Deliveries and the live Timeline.
