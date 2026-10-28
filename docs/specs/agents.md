@@ -197,6 +197,8 @@ The Base Image is Ubuntu 24.04 (the `buildpack-deps:noble` image) with:
 - the development-service installer, used while building Agent Images, the container entrypoint and the `minio` command that the RustFS/MinIO service puts on the `PATH`;
 - the non-root user `agent` with uid 1000 and home `/home/agent`, which is also the image's final user and working directory.
 
+The Base Image sets `PLAYWRIGHT_MCP_ALLOW_UNRESTRICTED_FILE_ACCESS=true`, so Playwright MCP can save screenshots and read files outside the Worktree, including in `/tmp`. File access follows the `agent` user's filesystem permissions throughout the Agent Container.
+
 The backend builds the Base Image locally through the Docker socket, without a registry. It is built on demand, as the first step of an Agent Build, whenever the image for the current Platform Version is missing, and is tagged with the Platform Version and as `latest`. Its build output appears in the log of the Agent Build that triggered it. The production backend image ships the Base Image recipe and the Runner sources, so it builds the Base Image without a source checkout.
 
 The default Claude Code version comes from the `CLAUDE_CODE_VERSION` setting (2.1.310 by default). Repository and user mise configurations can override it, just like Node.js and Python. The selected Claude version is responsible for compatibility with the platform's stream-json contract.

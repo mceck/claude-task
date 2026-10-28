@@ -41,6 +41,7 @@ RUN chmod 755 /usr/local/bin/claude-task-install-services /usr/local/bin/claude-
 ENV DISABLE_AUTOUPDATER=1 \
     MISE_NODE_COREPACK=true \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    PLAYWRIGHT_MCP_ALLOW_UNRESTRICTED_FILE_ACCESS=true \
     CLAUDE_TASK_SERVICES="" \
     PATH=/usr/lib/postgresql/16/bin:$PATH
 COPY --from=ghcr.io/jdx/mise:latest /usr/local/bin/mise /usr/local/bin/mise
