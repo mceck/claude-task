@@ -46,7 +46,7 @@ You can upload PNG, JPEG, GIF or WebP avatar images up to 2 MB. **Remove image**
 
 The Dockerfile must start from `claude-task/agent-base` and finish as `USER agent`. Install your toolchains and any stdio MCP servers there. The platform pins the Base Image version during the Build.
 
-Under **Services**, select PostgreSQL, Redis, MySQL, Mailpit or RustFS. Mailpit receives test email on SMTP port 1025; its mailbox interface is available inside the Agent Container on port 8025. PostgreSQL and Redis are selected by default. Each Agent has its own local Development Services; all its Tasks share them, so give different Projects distinct databases, namespaces and buckets.
+Under **Services**, select PostgreSQL, Redis, MySQL, Mailpit or RustFS/MinIO. Mailpit receives test email on SMTP port 1025; its mailbox interface is available inside the Agent Container on port 8025. RustFS/MinIO serves S3 on port 9000 and also provides a `minio` command, so a Project that starts its own MinIO (`minio server ./data --address :9100`) gets a RustFS server with the same flags and `MINIO_*` variables. PostgreSQL and Redis are selected by default. Each Agent has its own local Development Services; all its Tasks share them, so give different Projects distinct databases, namespaces and buckets.
 
 Repositories, Worktrees, Claude transcripts, installed tools and Development Service data persist across container recreation. Deselecting a Development Service keeps its data for later use.
 

@@ -228,7 +228,7 @@ An Agent's own image, built from its Dockerfile on top of the Base Image.
 One attempt to produce an Agent Image, with its log.
 
 **Development Service**:
-A local database or tool (PostgreSQL, Redis, MySQL, Mailpit, RustFS, Chrome) run inside an Agent Container.
+A local database or tool (PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO, Chrome) run inside an Agent Container.
 _Avoid_: services (alone)
 
 **Runner**:

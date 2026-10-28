@@ -51,6 +51,8 @@ for service in "$@"; do
       unzip -jo /tmp/rustfs.zip rustfs -d /usr/local/bin
       chmod 755 /usr/local/bin/rustfs
       rm /tmp/rustfs.zip
+      # Projects that start `minio server` get RustFS instead.
+      ln -sf /usr/local/lib/claude-task/minio /usr/local/bin/minio
       ;;
     # Playwright's Chromium build, with the system libraries browsers need (installing those needs
     # root, which the agent lacks), so projects' own Playwright browsers run too.

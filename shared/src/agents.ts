@@ -15,7 +15,7 @@ export const AGENT_SERVICE_INFO: Record<AgentService, { name: string; descriptio
   redis: { name: 'Redis', description: '127.0.0.1:6379 · no password' },
   mysql: { name: 'MySQL', description: '127.0.0.1:3306 · database/user: agent · no password' },
   mailpit: { name: 'Mailpit', description: 'SMTP: 127.0.0.1:1025 · web/API: 127.0.0.1:8025' },
-  rustfs: { name: 'RustFS', description: 'S3: 127.0.0.1:9000 · console: 127.0.0.1:9001 · rustfsadmin / rustfsadmin' },
+  rustfs: { name: 'RustFS/MinIO', description: 'S3: 127.0.0.1:9000 · console: 127.0.0.1:9001 · rustfsadmin / rustfsadmin · `minio server` runs RustFS' },
   chrome: { name: 'Chrome', description: 'Chromium, started on demand · `chromium` on PATH · used by the Playwright MCP server' },
 };
 

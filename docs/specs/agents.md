@@ -11,7 +11,7 @@ Agents are the platform's Claude Code workers. This area covers an **Agent** as 
 - An **Agent Image** is built from the Agent's own Dockerfile on top of the Base Image at the current Platform Version. A **Build** is one attempt to produce it, with its log and outcome.
 - The **Agent Container** runs the Agent Image. The **Agent Volume** is mounted as the agent user's home and holds everything that must survive container recreation: bare repositories, Worktrees, Claude's configuration and Session transcripts, development-service data, mise tool installs, synchronized Skills and the record of installed Plugins.
 - The **Runner token** is the secret the Runner uses to connect to the backend. It identifies exactly one Agent and changes every time the container is recreated. It is distinct from the Job token, which authorizes one Job's MCP and Git Proxy calls (see [Agent sessions](agent-sessions.md) and [Git integration](git-integration.md)).
-- **Development services** are local databases and tools (PostgreSQL, Redis, MySQL, Mailpit, RustFS, Chrome) installed and started inside an Agent Container, selected per Agent.
+- **Development services** are local databases and tools (PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO, Chrome) installed and started inside an Agent Container, selected per Agent.
 - **Extensions** are the entries of a shared catalog that Admins assign to Agents: **Skills** (files synchronized into the Agent's Claude configuration), **MCP servers** (added to each Job's MCP configuration) and **Plugins** (installed with Claude Code's own plugin manager).
 - **Project environment variables** are name/value pairs defined per Project, optionally secret, delivered to every Job on that Project's Tasks.
 - The **Agent state** is the single status the Agents list shows, derived from the Agent's configuration, image, Runner connection and Jobs.
@@ -52,7 +52,7 @@ An Admin creates an Agent from the Agents page. The fields and their rules:
 | Permission mode | `bypassPermissions`, `auto`, `acceptEdits` or `dontAsk` | `bypassPermissions` |
 | System prompt | up to 50,000 characters, appended after the platform and Project sections of the Job's system prompt | empty |
 | Dockerfile | 1 to 100,000 characters, validated as described in [Agent Dockerfiles](#agent-dockerfiles) | `FROM claude-task/agent-base` followed by `USER agent` |
-| Services | any subset of PostgreSQL, Redis, MySQL, Mailpit, RustFS and Chrome, without duplicates | PostgreSQL and Redis |
+| Services | any subset of PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO and Chrome, without duplicates | PostgreSQL and Redis |
 | Skills, MCP servers, Plugins | up to 100 catalog entries of each kind, without duplicates | none |
 | CPU limit | more than 0 and up to 256 CPUs, fractions allowed | no limit |
 | Memory limit | 256 to 1,048,576 MB | no limit |
@@ -191,7 +191,7 @@ The Base Image is Ubuntu 24.04 (the `buildpack-deps:noble` image) with:
 - the `claude` CLI at the pinned version, installed outside the agent's home so that the Agent Volume mounted there leaves it visible, with the auto-updater turned off;
 - the Runner and the git credential helper, compiled from the Runner sources in the same build and configured system-wide as git's credential helper (see [Git integration](git-integration.md));
 - mise, with its shims on the `PATH` of every process, including login shells, and the `flutter` mise plugin. The plugin is installed outside the agent's home, and the container entrypoint links it into the Agent Volume's mise data when that has no plugin of the same name, so existing Agent Volumes get it too. Every Node.js that mise installs gets Corepack enabled, so `pnpm` and `yarn` are on the `PATH` at the version a `package.json`'s `packageManager` field names, downloaded without Corepack's confirmation prompt (a prompt would stall a Job). The container entrypoint also enables Corepack for Node.js versions already in the Agent Volume, so existing Agents get it too. Node.js 25 and later no longer ship Corepack: repositories on those versions declare `pnpm` or `yarn` in their mise configuration instead;
-- the development-service installer, used while building Agent Images, and the container entrypoint;
+- the development-service installer, used while building Agent Images, the container entrypoint and the `minio` command that the RustFS/MinIO service puts on the `PATH`;
 - the non-root user `agent` with uid 1000 and home `/home/agent`, which is also the image's final user and working directory.
 
 The backend builds the Base Image locally through the Docker socket, without a registry. It is built on demand, as the first step of an Agent Build, whenever the image for the current Platform Version is missing, and is tagged with the Platform Version and as `latest`. Its build output appears in the log of the Agent Build that triggered it. The production backend image ships the Base Image recipe and the Runner sources, so it builds the Base Image without a source checkout.
@@ -333,7 +333,7 @@ sequenceDiagram
 
 ### Agent development environment
 
-**Services.** Each Agent selects the development services installed in its image and started in its container. PostgreSQL and Redis are selected by default; MySQL, Mailpit, RustFS and Chrome are optional; an empty selection is valid. Selected services are installed while building the image (packages for PostgreSQL 16, Redis and MySQL 8.0; release binaries for Mailpit and RustFS, on amd64 or arm64; Playwright's Chromium build with the system libraries browsers need, so a Project's own Playwright browsers run too), and the container entrypoint starts them as the `agent` user before the Runner. Chrome is the exception: nothing runs until a tool launches it. The others listen on the loopback interface only:
+**Services.** Each Agent selects the development services installed in its image and started in its container. PostgreSQL and Redis are selected by default; MySQL, Mailpit, RustFS/MinIO and Chrome are optional; an empty selection is valid. Selected services are installed while building the image (packages for PostgreSQL 16, Redis and MySQL 8.0; release binaries for Mailpit and RustFS, on amd64 or arm64; Playwright's Chromium build with the system libraries browsers need, so a Project's own Playwright browsers run too), and the container entrypoint starts them as the `agent` user before the Runner. Chrome is the exception: nothing runs until a tool launches it. The others listen on the loopback interface only:
 
 | Service | Address | Access |
 | --- | --- | --- |
@@ -341,8 +341,19 @@ sequenceDiagram
 | Redis | `redis://127.0.0.1:6379` | no password; append-only persistence |
 | MySQL 8.0 | `mysql://agent@127.0.0.1:3306/agent` | no password; `agent` holds every privilege and can create databases |
 | Mailpit 1.32.0 | SMTP `127.0.0.1:1025`, web UI and API `http://127.0.0.1:8025` | messages kept in its own database |
-| RustFS 1.0.4 | S3 API `http://127.0.0.1:9000`, console `http://127.0.0.1:9001` | access key and secret key `rustfsadmin` |
+| RustFS/MinIO (RustFS 1.0.4) | S3 API `http://127.0.0.1:9000`, console `http://127.0.0.1:9001` | access key and secret key `rustfsadmin` |
 | Chrome (Chromium from Playwright 1.64.0) | `chromium` on the `PATH`, started on demand | the entrypoint points the Playwright MCP server at it (`PLAYWRIGHT_MCP_*` variables: Chromium, headless, without the browser sandbox), so that server works with no arguments |
+
+**`minio` on RustFS.** The RustFS/MinIO service also installs a `minio` command that runs `minio server` command lines on RustFS, so a Project whose scripts or tests start their own MinIO works unchanged. It is a separate server from the one the entrypoint starts, with its own storage, so a Project starting it picks a port other than 9000. The command:
+
+- accepts `minio server [flags] DIR...`, MinIO's `{1...N}` directory ranges included, plus `minio --version` and `minio --help`; other MinIO commands end with an error;
+- creates missing local storage directories, as MinIO does (RustFS stops when a volume is missing), and lets several directories on one disk form a pool, as MinIO does;
+- translates `--address`, `--console-address` and `--certs-dir` (MinIO's `public.crt` and `private.key`, also per-domain subdirectories, linked under RustFS's file names), defaulting to `~/.minio/certs` when it holds a certificate;
+- translates MinIO's environment: root user and password (also their `_FILE` variants, read from Docker secrets first), volumes, addresses, domain, region and `MINIO_BROWSER=off`. MinIO's variables win over RustFS's, and credentials default to MinIO's `minioadmin` / `minioadmin`;
+- serves the console on the first free port after the API's when no console address is given, standing in for MinIO's random console port, so it stays clear of the entrypoint's RustFS on 9001;
+- ignores, with a warning, MinIO flags RustFS has no equivalent for (configuration files, FTP and SFTP, network tuning) and passes RustFS's own flags through.
+
+MinIO's health endpoints (`/minio/health/live`, `/minio/health/ready`) answer on RustFS too.
 
 PostgreSQL and MySQL also listen on the Unix sockets their clients look for by default (`/var/run/postgresql` and `/var/run/mysqld/mysqld.sock`), so `psql`, `mysql` and applications with no host configured connect without options. The Agent learns the selected services, with their addresses, from its system prompt (see [Agent sessions](agent-sessions.md)).
 
@@ -522,6 +533,7 @@ Sessions, Jobs and Queue Entries belong to [Agent sessions](agent-sessions.md).
 - **Agent Dockerfiles start from the Base Image and end as the `agent` user.** `bypassPermissions` refuses to run as root, and the Runner, credential helper and entrypoint come from the Base Image. The backend pins the base to the exact Platform Version itself, so a Dockerfile naming any tag still builds on the current platform.
 - **A failed Build keeps the previous container in service, and recreation waits for idle.** A working Agent stays online through a typo in its Dockerfile, and a rebuild interrupts work in progress only when an Admin forces it.
 - **Chrome is installed, not started.** Browser clients (the Playwright MCP server, test runners) launch their own browser per session, so a resident browser would only cost memory on every idle Agent and share one profile across Tasks. Unconfigured, the Playwright MCP server looks for Google Chrome, which has no Linux arm64 build, and runs it headed with the sandbox, which needs a display and user namespaces; the entrypoint's variables point it at Chromium instead.
+- **MinIO is provided as a `minio` command on RustFS, not as MinIO itself.** MinIO's open-source server is no longer distributed as maintained binaries, while RustFS speaks the same S3 API and health endpoints. A `minio` command that translates MinIO's command line, environment and certificate layout keeps Projects that start MinIO themselves working without a second object store in the image.
 - **Development services run inside the Agent Container, as the `agent` user, on loopback.** Agents can run tests against real databases with no extra infrastructure or credentials; one set per Agent matches the one-Job-at-a-time model, and data lives on the volume so it survives rebuilds.
 - **Extensions synchronize into the running container instead of the image.** Skills and Plugins change more often than toolchains; synchronizing between Jobs avoids a rebuild and a recreation for each change. Plugins are installed with Claude Code's own plugin manager, so the platform stores only where they come from.
 - **The platform configures no hooks and no guardrails inside the container.** The Timeline comes from the stdout stream, and the Base Branch is protected by the Git Proxy's Push Policy, so an Agent's permission mode governs only what it does inside its own container.

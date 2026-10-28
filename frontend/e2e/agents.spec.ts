@@ -176,7 +176,7 @@ test('creates and rotates write-only credentials, configures an agent and reads 
   await page.getByRole('button', { name: 'New agent' }).click();
   await expect(page.getByRole('checkbox', { name: 'PostgreSQL', exact: true })).toBeChecked();
   await expect(page.getByRole('checkbox', { name: 'Redis', exact: true })).toBeChecked();
-  for (const name of ['MySQL', 'Mailpit', 'RustFS']) {
+  for (const name of ['MySQL', 'Mailpit', 'RustFS/MinIO']) {
     await expect(page.getByRole('checkbox', { name, exact: true })).not.toBeChecked();
   }
   await page.getByLabel('Agent name').fill('Release agent');
@@ -191,7 +191,7 @@ test('creates and rotates write-only credentials, configures an agent and reads 
   await page.getByRole('tab', { name: 'Configuration' }).click();
   await page.getByRole('checkbox', { name: 'PostgreSQL', exact: true }).uncheck();
   await page.getByRole('checkbox', { name: 'Redis', exact: true }).uncheck();
-  for (const name of ['MySQL', 'Mailpit', 'RustFS']) {
+  for (const name of ['MySQL', 'Mailpit', 'RustFS/MinIO']) {
     await page.getByRole('checkbox', { name, exact: true }).check();
   }
   await page.getByLabel('Model', { exact: true }).fill('claude-sonnet-5-5');
@@ -204,13 +204,13 @@ test('creates and rotates write-only credentials, configures an agent and reads 
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('claude-sonnet-5-5');
   await expect(page.getByRole('checkbox', { name: 'PostgreSQL', exact: true })).not.toBeChecked();
   await expect(page.getByRole('checkbox', { name: 'Redis', exact: true })).not.toBeChecked();
-  for (const name of ['MySQL', 'Mailpit', 'RustFS']) {
+  for (const name of ['MySQL', 'Mailpit', 'RustFS/MinIO']) {
     await expect(page.getByRole('checkbox', { name, exact: true })).toBeChecked();
   }
   await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Release agent (copy)' })).toBeVisible();
   await page.getByRole('tab', { name: 'Configuration' }).click();
-  for (const name of ['MySQL', 'Mailpit', 'RustFS']) {
+  for (const name of ['MySQL', 'Mailpit', 'RustFS/MinIO']) {
     await expect(page.getByRole('checkbox', { name, exact: true })).toBeChecked();
   }
   await page.goto('/admin/credentials');

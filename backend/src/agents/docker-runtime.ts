@@ -46,7 +46,7 @@ export class DockerRuntime implements AgentRuntime {
   constructor(private readonly config: AgentsConfig, paths = defaultPaths()) {
     this.docker = new Docker({ socketPath: config.dockerSocket });
     this.baseDockerfile = readFileSync(paths.baseDockerfile, 'utf8');
-    this.baseScripts = Object.fromEntries(['install-services.sh', 'entrypoint.sh'].map((name) => [
+    this.baseScripts = Object.fromEntries(['install-services.sh', 'entrypoint.sh', 'minio-shim.sh'].map((name) => [
       `agent-base/${name}`, readFileSync(path.join(path.dirname(paths.baseDockerfile), name)),
     ]));
     this.runner = { dir: paths.runnerDir, files: runnerFiles(paths.runnerDir) };

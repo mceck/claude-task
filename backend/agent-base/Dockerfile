@@ -36,7 +36,8 @@ RUN if getent passwd 1000 > /dev/null; then \
 # The backend includes these scripts in the Base Image context and its version hash.
 COPY agent-base/install-services.sh /usr/local/bin/claude-task-install-services
 COPY agent-base/entrypoint.sh /usr/local/bin/claude-task-entrypoint
-RUN chmod 755 /usr/local/bin/claude-task-install-services /usr/local/bin/claude-task-entrypoint \
+COPY agent-base/minio-shim.sh /usr/local/lib/claude-task/minio
+RUN chmod 755 /usr/local/bin/claude-task-install-services /usr/local/bin/claude-task-entrypoint /usr/local/lib/claude-task/minio \
  && printf '%s\n' 'export PATH="/home/agent/.local/share/mise/shims:$PATH"' > /etc/profile.d/mise.sh
 # Every Node mise installs gets Corepack's pnpm and yarn, at the version a package.json's
 # packageManager names, downloaded without the prompt that would stall a Job.
