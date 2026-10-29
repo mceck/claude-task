@@ -167,6 +167,8 @@ Positions are fractional keys, so a move rewrites only the moving Task. When con
 
 A Status change made through an update (instead of a move) uses the same rules, except that it carries a version, so it conflicts with a Status change made since that version.
 
+Merging a Task's Pull Request from the Task view moves the Task like a move to the next Status in order, skipping `closed`-category Statuses (see [Git integration](git-integration.md#merging-from-the-task-view)).
+
 ### Deleting Tasks
 
 Any User deletes a Task, after a confirmation in the web app. Deletion removes the Task with its Comments, attachments (stored files included), Revisions, Session history and preferences, and asks the Agent to remove its Worktree. A Task with an active Agent Job can be deleted once the Agent is stopped or the Task closed; until then the request is answered with `409` "An agent is working on this. Stop it, or close the task, before deleting." The removal is published as `task.deleted` on the Project's topic and `task.removed` on the Task's topic. The Task's number stays used.

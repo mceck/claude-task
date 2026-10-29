@@ -363,7 +363,7 @@ The Git Proxy's rule that an Agent may push only its own Task Branch (force push
 The name and email an Agent's commits carry.
 
 **Pull Request**:
-A request to review and merge a Task Branch into its Project's Base Branch, called a merge request on GitLab. Its state is independent of the Task's Status.
+A request to review and merge a Task Branch into its Project's Base Branch, called a merge request on GitLab. Its state is tracked separately from the Task's Status; merging it from the Task view advances the Task to the next Status.
 _Avoid_: merge request (except in GitLab-facing UI copy)
 
 **Base Branch Protection**:

@@ -153,14 +153,16 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     const noun = pullRequestNoun(pr.provider);
     const ok = await confirm({
       title: `Merge ${noun} ${pullRequestRef(pr)}?`,
-      description: `The ${noun} is merged into the base branch with the provider’s default merge method. This can’t be undone from here.`,
+      description: `The ${noun} is merged into the base branch with the provider’s default merge method. This can’t be undone from here. If there is a later status, the task advances to it.`,
       confirmLabel: 'Merge',
     });
     if (!ok) return;
     setMerging(true);
     try {
-      applied((await post<{ task: Task }>(`/tasks/${task.id}/pull-request/merge`)).task);
-      toast.success(`${capitalize(noun)} ${pullRequestRef(pr)} merged`);
+      const mergedTask = (await post<{ task: Task }>(`/tasks/${task.id}/pull-request/merge`)).task;
+      applied(mergedTask);
+      const movedTo = mergedTask.statusId === task.statusId ? undefined : statuses.find((s) => s.id === mergedTask.statusId);
+      toast.success(`${capitalize(noun)} ${pullRequestRef(pr)} merged`, movedTo ? { description: `The task moved to “${movedTo.name}”.` } : undefined);
     } catch (err) {
       toast.error(`Couldn’t merge the ${noun}`, { description: errorMessage(err) });
     } finally {

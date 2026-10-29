@@ -921,7 +921,7 @@ Future<void> confirmMergePullRequest(
     context,
     title: 'Merge $noun?',
     message:
-        'It is merged into the base branch with the provider\'s default merge method.',
+        'It is merged into the base branch with the provider\'s default merge method. If there is a later Status, the Task advances to it.',
     confirmLabel: 'Merge',
   );
   if (accepted && context.mounted) {

@@ -20,6 +20,7 @@ import { agents, jobs, tags, projects, statuses, taskAssignees, taskTags, taskRe
 import { onTaskChanged, removeDeletedWorktrees } from '../../sessions/lifecycle';
 import { badRequest, conflict, notFound } from '../../errors';
 import { actorResolver } from '../actors';
+import { listStatuses } from '../statuses/service';
 import { UUID } from '../../ids';
 import { ACTIVE_JOB_STATES } from '../agents/service';
 
@@ -389,6 +390,17 @@ export async function moveTask(
   await onTaskChanged(tx, after, await getTaskRow(tx, row.id), { agentId: row.agentId, statusId: row.statusId });
   const [task] = await emitTasksChanged(tx, after, [row.id], 'task.moved');
   return task!;
+}
+
+/** Advances a Task to the next non-closed Status in Board order; a Task already closed or at the end stays. */
+export async function advanceTaskStatus(tx: Executor, after: AfterCommit, taskId: string, actor: Actor): Promise<void> {
+  const row = await lockTaskForWrite(tx, taskId);
+  const ordered = await listStatuses(tx, row.projectId);
+  const current = ordered.findIndex((s) => s.id === row.statusId);
+  if (current === -1 || ordered[current]!.category === 'closed') return;
+  const next = ordered.slice(current + 1).find((s) => s.category !== 'closed');
+  if (!next) return;
+  await moveTask(tx, after, row.id, { statusId: next.id }, actor);
 }
 
 /**
