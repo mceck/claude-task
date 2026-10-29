@@ -156,7 +156,7 @@ class _ConversationState extends State<Conversation> {
           onBack: widget.onBack,
           showDetailsAction: widget.showDetailsAction,
         ),
-        TaskVoiceRoom(controller: c, task: t),
+        if (c.wiki == null) TaskVoiceRoom(controller: c, task: t),
         if (c.assignmentRetryId != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
