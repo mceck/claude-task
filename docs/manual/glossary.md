@@ -14,7 +14,7 @@ These are the terms you will meet while using Claude Task.
 | Project Key | The permanent uppercase prefix of a Project's Task Keys. |
 | Board | A Project's Tasks arranged in columns by Status. |
 | Status | A named step in the workflow, such as Todo or Done. |
-| Category | The meaning of a Status: open, active, review, done or closed. |
+| Category | The meaning of a Status: backlog, open, active, review, done or closed. |
 | Task | A unit of work with a description, assignments and Conversation. |
 | Task Key | A readable Task identifier, such as `PORTAL-1`. |
 | Assignee | A User responsible for a Task. |

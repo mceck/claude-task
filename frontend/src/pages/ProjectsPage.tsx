@@ -21,6 +21,7 @@ import { keys, useAgents, useProjects, useRepositoryGroups } from '../api/querie
 import { ErrorText } from '../components/common';
 
 export const CATEGORY_COLOR: Record<Category, string> = {
+  backlog: 'bg-slate-500',
   open: 'bg-slate-400',
   active: 'bg-blue-500',
   review: 'bg-violet-500',
@@ -28,9 +29,9 @@ export const CATEGORY_COLOR: Record<Category, string> = {
   closed: 'bg-zinc-600',
 };
 
-/** Project progress shows only open, review and done; active counts as open. */
+/** Project progress shows only open, review and done; backlog and active count as open. */
 const PROGRESS_GROUPS: { key: string; categories: Category[]; color: string }[] = [
-  { key: 'open', categories: ['open', 'active'], color: CATEGORY_COLOR.open },
+  { key: 'open', categories: ['backlog', 'open', 'active'], color: CATEGORY_COLOR.open },
   { key: 'review', categories: ['review'], color: CATEGORY_COLOR.review },
   { key: 'done', categories: ['done'], color: CATEGORY_COLOR.done },
 ];

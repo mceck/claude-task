@@ -8,7 +8,7 @@ export type Role = (typeof ROLES)[number];
 export const USER_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 export const USER_AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 
-export const CATEGORIES = ['open', 'active', 'review', 'done', 'closed'] as const;
+export const CATEGORIES = ['backlog', 'open', 'active', 'review', 'done', 'closed'] as const;
 export type Category = (typeof CATEGORIES)[number];
 
 export const PRIORITIES = ['urgent', 'high', 'normal', 'low', 'none'] as const;

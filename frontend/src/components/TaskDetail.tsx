@@ -150,6 +150,23 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     await moveTo(closedStatus.id);
   };
 
+  // An Agent takes a Task out of Backlog, into the first open Status.
+  const todoStatus = statuses.find((s) => s.category === 'open');
+  const changeAgent = async (agentId: string | null) => {
+    const current = statuses.find((s) => s.id === shown.statusId);
+    if (agentId && current?.category === 'backlog' && todoStatus) {
+      const ok = await confirm({
+        title: `Assign an agent to ${task.key}?`,
+        description: `The task moves from “${current.name}” to “${todoStatus.name}”.`,
+        confirmLabel: 'Assign and move',
+      });
+      if (!ok) return;
+      await save({ agentId, statusId: todoStatus.id });
+      return;
+    }
+    await save({ agentId });
+  };
+
   const mergePullRequest = async (pr: NonNullable<Task['pullRequest']>) => {
     const noun = pullRequestNoun(pr.provider);
     const ok = await confirm({
@@ -394,7 +411,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
 
                 <Prop label="Agent" className="@2xl:col-start-3 @2xl:row-start-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Select value={shown.agentId ?? 'none'} onValueChange={(id) => save({ agentId: id === 'none' ? null : id })}>
+                    <Select value={shown.agentId ?? 'none'} onValueChange={(id) => void changeAgent(id === 'none' ? null : id)}>
                       <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">No agent</SelectItem>
