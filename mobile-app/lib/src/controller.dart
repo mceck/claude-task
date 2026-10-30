@@ -75,6 +75,12 @@ class TaskController extends ChangeNotifier {
   final Set<String> liveExpanded = {}, expandedComments = {};
   String liveThinking = '', liveStatus = '';
 
+  /// The running Job's worktree preparation output, as on the web: the Job id
+  /// it belongs to and the last [setupOutputCap] characters streamed so far.
+  /// Not stored in the Timeline, so it is never cached.
+  Json? liveSetup;
+  static const setupOutputCap = 64 * 1024;
+
   /// The Task's Runs: what the bar lists and the live transcript of each
   /// (docs/specs/clients.md#runs). The backend keeps transcripts in memory for
   /// as long as the Job runs, so the phone never caches them.
@@ -281,6 +287,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    liveSetup = null;
     conversationVisible = false;
     assignmentRetryId = null;
     assignmentRetryTaskId = null;
@@ -495,6 +502,7 @@ class TaskController extends ChangeNotifier {
     session = null;
     liveText.clear();
     liveThinking = '';
+    liveSetup = null;
     pendingTaskId = null;
     _clearRuns();
     assignmentRetryId = null;
@@ -777,6 +785,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    liveSetup = null;
     _clearRuns();
   }
 
@@ -987,6 +996,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    liveSetup = null;
     _clearRuns();
     final cached = storage.read('task:${value.id}');
     if (cached != null && cached['task'] != null) {
@@ -1551,6 +1561,21 @@ class TaskController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (type == 'job.setup_output' && event['taskId'] == task?.id) {
+      final jobId = event['jobId'] as String? ?? '';
+      // A new Job's output starts over; the same Job's chunks append.
+      final output =
+          (liveSetup?['jobId'] == jobId ? liveSetup!['output'] as String : '') +
+          (event['chunk'] as String? ?? '');
+      liveSetup = {
+        'jobId': jobId,
+        'output': output.length > setupOutputCap
+            ? output.substring(output.length - setupOutputCap)
+            : output,
+      };
+      notifyListeners();
+      return;
+    }
     if (type.startsWith('run.') && event['taskId'] == task?.id) {
       _applyRunEvent(event);
       return;
@@ -1645,10 +1670,12 @@ class TaskController extends ChangeNotifier {
           liveThinking = '';
         case 'activity':
           liveText.remove('current');
+          liveSetup = null;
         case 'turn_summary':
           liveText.clear();
           liveThinking = '';
           liveStatus = '';
+          liveSetup = null;
       }
     }
   }

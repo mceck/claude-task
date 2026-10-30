@@ -148,7 +148,8 @@ class _ConversationState extends State<Conversation> {
     final live =
         c.liveThinking.isNotEmpty ||
         c.liveText.isNotEmpty ||
-        c.liveStatus.isNotEmpty;
+        c.liveStatus.isNotEmpty ||
+        c.liveSetup != null;
     return Column(
       children: [
         _Header(
@@ -707,96 +708,133 @@ class _LiveTail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
-    final live =
+    final setup = c.liveSetup;
+    final streaming =
         c.liveThinking.isNotEmpty ||
         c.liveText.isNotEmpty ||
         c.liveStatus.isNotEmpty;
     final agent = c.agents.byId(c.task?.agentId);
     // No size or fade transition: the stored entry replaces this in the same
     // frame, so animating here would show a gap or a flicker.
-    if (!live) return const SizedBox.shrink();
+    if (!streaming && setup == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          UserAvatar(
-            label: agent?.name ?? 'Agent',
-            emoji: agent?.emoji ?? '🤖',
-            imageUrl: agent?.avatarImageUrl,
-            api: controller.api,
-            size: 32,
-            circle: false,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      agent?.name ?? 'Agent',
+          // Preparation output, as on the web: it shows before Claude starts
+          // and the Activity item, or the Turn Summary, clears it.
+          if (setup != null)
+            Padding(
+              padding: EdgeInsets.only(bottom: streaming ? 10 : 0),
+              child: _Collapsible(
+                icon: Icons.terminal_rounded,
+                title: 'Preparing the worktree',
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 240),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      setup['output'] as String? ?? '',
                       style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Pill(label: 'Agent', color: Palette.agent),
-                    const SizedBox(width: 8),
-                    const TypingDots(),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                if (c.liveThinking.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: _Collapsible(
-                      icon: Icons.psychology_outlined,
-                      title: 'Thinking · streaming',
-                      child: SelectableText(
-                        c.liveThinking,
-                        style: const TextStyle(
-                          color: Palette.fgMuted,
-                          fontSize: 13.5,
-                          height: 1.5,
-                        ),
+                        fontFamily: mono,
+                        fontSize: 11.5,
+                        height: 1.5,
+                        color: Palette.fgMuted,
                       ),
                     ),
                   ),
-                for (final MapEntry(:key, value: text) in c.liveText.entries)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: DashedOutline(
-                      color: Palette.agent,
-                      borderRadius: _bubbleRadius(own: false),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                        child: _Clamped(
-                          key: ValueKey(key),
-                          fade: Palette.bg,
-                          expanded: c.liveExpanded.contains(key),
-                          onExpandedChanged: (expanded) => expanded
-                              ? c.liveExpanded.add(key)
-                              : c.liveExpanded.remove(key),
-                          child: Md(
-                            '$text ▍',
-                            selectable: false,
-                            onLink: openLink,
+                ),
+              ),
+            ),
+          if (streaming)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                UserAvatar(
+                  label: agent?.name ?? 'Agent',
+                  emoji: agent?.emoji ?? '🤖',
+                  imageUrl: agent?.avatarImageUrl,
+                  api: controller.api,
+                  size: 32,
+                  circle: false,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            agent?.name ?? 'Agent',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Pill(label: 'Agent', color: Palette.agent),
+                          const SizedBox(width: 8),
+                          const TypingDots(),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      if (c.liveThinking.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: _Collapsible(
+                            icon: Icons.psychology_outlined,
+                            title: 'Thinking · streaming',
+                            child: SelectableText(
+                              c.liveThinking,
+                              style: const TextStyle(
+                                color: Palette.fgMuted,
+                                fontSize: 13.5,
+                                height: 1.5,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
+                      for (final MapEntry(:key, value: text)
+                          in c.liveText.entries)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: DashedOutline(
+                            color: Palette.agent,
+                            borderRadius: _bubbleRadius(own: false),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                14,
+                                10,
+                                14,
+                                10,
+                              ),
+                              child: _Clamped(
+                                key: ValueKey(key),
+                                fade: Palette.bg,
+                                expanded: c.liveExpanded.contains(key),
+                                onExpandedChanged: (expanded) => expanded
+                                    ? c.liveExpanded.add(key)
+                                    : c.liveExpanded.remove(key),
+                                child: Md(
+                                  '$text ▍',
+                                  selectable: false,
+                                  onLink: openLink,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (c.liveStatus.isNotEmpty)
+                        Notice(
+                          message: c.liveStatus,
+                          icon: Icons.hourglass_top_rounded,
+                        ),
+                    ],
                   ),
-                if (c.liveStatus.isNotEmpty)
-                  Notice(
-                    message: c.liveStatus,
-                    icon: Icons.hourglass_top_rounded,
-                  ),
+                ),
               ],
             ),
-          ),
         ],
       ),
     );
