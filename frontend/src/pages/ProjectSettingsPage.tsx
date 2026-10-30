@@ -19,7 +19,8 @@ import { keys, useMe, useProject } from '../api/queries';
 import { TagChip, Loading, StatusDot, useConfirm } from '../components/common';
 import { useTopic } from '../lib/realtime';
 import { NotFoundPage } from './NotFoundPage';
-import { CATEGORY_COLOR, PageHeader } from './ProjectsPage';
+import { PageHeader } from './ProjectsPage';
+import { CATEGORY_COLOR } from '../lib/progress';
 import { ProjectAgentSettings } from '../components/ProjectAgentSettings';
 import { ProjectLogo } from '../components/ProjectLogo';
 

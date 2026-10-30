@@ -1,4 +1,3 @@
-import { ProjectLogo } from './ProjectLogo';
 import { useQueryClient } from '@tanstack/react-query';
 import { BookOpen, GitBranch, Bot, ChevronsUpDown, FolderKanban, KeyRound, LogOut, Monitor, Moon, Sun, Users } from 'lucide-react';
 import { userTopic } from '@claude-task/shared';
@@ -16,13 +15,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { cn } from '@/lib/utils';
 import { ApiError, post } from '../api/client';
 import { useMe, useProjects } from '../api/queries';
 import { clearCommentDrafts } from '../lib/drafts';
 import { realtime, useTopic } from '../lib/realtime';
 import { Loading, UserAvatar } from './common';
 import { Logo } from './Logo';
+import { ProjectNavItem, navItem } from './ProjectNavItem';
 import { VoiceBar } from './VoiceRoom';
 import { voice } from '../lib/voice';
 
@@ -75,14 +74,6 @@ export function Layout() {
   );
 }
 
-const navItem = ({ isActive }: { isActive: boolean }) =>
-  cn(
-    'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors',
-    isActive
-      ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-      : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
-  );
-
 function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
   const projects = useProjects(false);
   return (
@@ -104,10 +95,7 @@ function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
         <>
           <p className="mt-5 mb-1 px-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">Boards</p>
           {projects.data.map((p) => (
-            <NavLink key={p.id} to={`/p/${p.key}`} className={navItem}>
-              <ProjectLogo project={p} className="size-5" compact />
-              <span className="truncate">{p.name}</span>
-            </NavLink>
+            <ProjectNavItem key={p.id} project={p} />
           ))}
         </>
       )}
