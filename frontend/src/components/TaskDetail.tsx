@@ -15,7 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { ApiError, del, errorMessage, patch, post } from '../api/client';
 import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
-import { removeCard, setTask, toCard, upsertCard } from '../lib/cache';
+import { removeCard, removeTask, setTask, toCard, upsertCard } from '../lib/cache';
 import { useTopic } from '../lib/realtime';
 import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
 import { RichMarkdownView } from './Markdown';
@@ -54,7 +54,8 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   useTopic(AGENTS_TOPIC);
 
   if (taskQuery.isPending) return <Loading className="h-full" />;
-  if (!task) {
+  const missing = taskQuery.error instanceof ApiError && taskQuery.error.status === 404;
+  if (!task || missing) {
     return (
       <div className="flex h-full flex-col">
         {onClose && (
@@ -63,7 +64,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
           </div>
         )}
         <p className="p-8 text-center text-sm text-muted-foreground">
-          {taskQuery.error instanceof ApiError && taskQuery.error.status === 404 ? 'This task doesn’t exist (or was deleted).' : errorMessage(taskQuery.error)}
+          {missing ? 'This task doesn’t exist (or was deleted).' : errorMessage(taskQuery.error)}
         </p>
       </div>
     );
@@ -181,6 +182,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     try {
       await del(`/tasks/${task.id}`);
       removeCard(qc, task.projectId, task.id);
+      removeTask(qc, task.id);
       toast.success(`${task.key} deleted`);
       if (onClose) onClose();
       else navigate(`/p/${projectKey}`);

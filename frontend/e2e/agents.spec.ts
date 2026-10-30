@@ -56,6 +56,61 @@ async function assignAndStart(page: Page, agentName: string) {
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
 }
 
+for (const list of ['builds', 'jobs'] as const) test(`loads the complete initial ${list} history when events arrive before its snapshot`, async ({ page }) => {
+  await login(page.request);
+  const agent = await seedAgent(page.request, 'Initial history');
+  const project = await createProject(page.request);
+  const previous = await createTask(page.request, project, 'Previous work');
+  if (list === 'jobs') {
+    await page.request.patch(`/api/v1/tasks/${previous.id}`, { headers, data: { version: 1, agentId: agent.id } });
+    await page.request.post(`/api/v1/tasks/${previous.id}/comments`, { headers, data: { body: 'First Job' } });
+    const start = await jobStart(page.request, agent.id, previous.id);
+    const stream = new Stream(start.sessionId);
+    await replay(page.request, agent.id, start.jobId, [stream.init(), stream.result()], true);
+  }
+  let release!: () => void, captured!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const snapshot = new Promise<void>((resolve) => { captured = resolve; });
+  let held = false, subscribed = false, eventReceived = false;
+  await page.route(`**/api/v1/agents/${agent.id}/${list}`, async (route) => {
+    if (held) return route.fallback();
+    held = true;
+    const response = await route.fetch();
+    captured();
+    await gate;
+    await route.fulfill({ response });
+  });
+  await page.routeWebSocket('**/api/v1/ws', (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === 'subscribed' && message.topics.includes(`agent:${agent.id}`)) subscribed = true;
+      if (message.type === 'event' && (list === 'builds'
+        ? message.event.type === 'build.log'
+        : message.event.type === 'job.updated' && message.event.job.task.id === next.id)) eventReceived = true;
+      ws.send(raw);
+    });
+  });
+  const next = await createTask(page.request, project, 'Next work');
+  try {
+    await page.goto(`/agents/${agent.id}`);
+    if (list === 'builds') await page.getByRole('tab', { name: 'Builds', exact: true }).click();
+    await snapshot;
+    await expect.poll(() => subscribed).toBe(true);
+    if (list === 'builds') await page.request.post(`/api/v1/agents/${agent.id}/rebuild`, { headers });
+    else {
+      await page.request.patch(`/api/v1/tasks/${next.id}`, { headers, data: { version: 1, agentId: agent.id } });
+      await page.request.post(`/api/v1/tasks/${next.id}/comments`, { headers, data: { body: 'Next Job' } });
+    }
+    await expect.poll(() => eventReceived).toBe(true);
+  } finally { release(); }
+  if (list === 'builds') await expect(page.getByRole('combobox', { name: 'Build', exact: true }).getByRole('option')).toHaveCount(2);
+  else {
+    const history = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Recent jobs' }) });
+    for (const task of [previous, next]) await expect(history.getByRole('link', { name: task.key, exact: true })).toBeVisible();
+  }
+});
+
 test('completes assigned skills in the chat with keyboard, click, and Escape', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request);

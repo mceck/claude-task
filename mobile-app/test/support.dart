@@ -273,7 +273,7 @@ class FakeApi implements TaskApi {
   @override
   String? cookie;
   final calls = <String>[];
-  Json user = {...userData}, currentTask = taskData(), pref = preferenceData();
+  Json user = {...userData}, currentTask = taskData(), task2 = taskData(id: 'task-2', title: 'Other task'), pref = preferenceData();
   List<Json> items = [
     commentData('comment-1', 'Hello team'),
     commentData('comment-2', 'An Internal Note', internal: true, position: '2'),
@@ -408,6 +408,24 @@ class FakeApi implements TaskApi {
         'version': (currentTask['version'] as int) + 1,
       };
       return {'task': currentTask};
+    }
+    final other = RegExp(r'^/tasks/task-2(/.*)?$').firstMatch(path);
+    if (other != null) {
+      if (path == '/tasks/task-2' && method == 'GET') return {'task': task2};
+      if (path == '/tasks/task-2' && method == 'PATCH') {
+        task2 = {
+          ...task2,
+          ...body!,
+          'version': (task2['version'] as int) + 1,
+        };
+        return {'task': task2};
+      }
+      return request(
+        method,
+        '/tasks/task-1${other.group(1) ?? ''}',
+        body: body,
+        files: files,
+      );
     }
     if (path == '/tasks/task-1/pull-request/merge' && method == 'POST') {
       currentTask = {

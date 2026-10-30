@@ -55,6 +55,19 @@ async function receivedAudio(page: Page) {
   });
 }
 
+test('a failed room snapshot leaves Join voice available', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Voice with a bad snapshot');
+  await page.route(`**/tasks/${task.id}/voice`, (route) =>
+    route.fulfill({ status: 500, json: { error: { code: 'internal', message: 'Room snapshot failed' } } }),
+  );
+  await page.goto(`/t/${task.key}`);
+  const room = page.getByRole('region', { name: 'Task Voice Room' });
+  await expect(room.getByText('Room unavailable. Try again.')).toBeVisible({ timeout: 10_000 });
+  await expect(room.getByRole('button', { name: 'Join voice' })).toBeEnabled();
+});
+
 test('direct audio works across Users, stays active during navigation and releases on leave', async ({ page, browser }) => {
   await login(page.request);
   const project = await createProject(page.request, 'Voice project');

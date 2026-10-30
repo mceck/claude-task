@@ -157,7 +157,7 @@ class _ConversationState extends State<Conversation> {
           showDetailsAction: widget.showDetailsAction,
         ),
         if (c.wiki == null) TaskVoiceRoom(controller: c, task: t),
-        if (c.assignmentRetryId != null)
+        if (c.assignmentRetryId != null && c.assignmentRetryTaskId == t.id)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
             child: Notice(

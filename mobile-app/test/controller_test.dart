@@ -1,10 +1,141 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:async';
+import 'dart:io';
+
 import 'package:claude_task_mobile/src/api.dart';
 import 'package:claude_task_mobile/src/models.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 import 'support.dart';
 
+/// Holds the next Task GET so a save can land while a refresh is in flight.
+class SlowTaskApi extends FakeApi {
+  bool holdTask = false;
+  final started = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<Json> request(
+    String method,
+    String path, {
+    Json? body,
+    List<DraftFile> files = const [],
+  }) async {
+    if (holdTask && method == 'GET' && path == '/tasks/task-1') {
+      final snapshot = {'task': clone(taskData())};
+      started.complete();
+      await release.future;
+      return snapshot;
+    }
+    return super.request(method, path, body: body, files: files);
+  }
+}
+
 void main() {
+  test('a successful request restores the connection after an HTTP-only failure', () async {
+    final h = Harness();
+    addTearDown(h.dispose);
+    await h.login();
+    h.live.stateController.add(ConnectionState.connected);
+    await h.controller.refresh();
+    expect(h.controller.connection, ConnectionState.connected);
+
+    h.api.offline = true;
+    await expectLater(
+      h.controller.refresh(),
+      throwsA(isA<SocketException>()),
+    );
+    expect(h.controller.connection, ConnectionState.offline);
+
+    h.api.offline = false;
+    await h.controller.refresh();
+    expect(h.controller.connection, ConnectionState.connected);
+  });
+
+  test('signing in as another User clears the previous Task and conversation', () async {
+    final h = Harness();
+    addTearDown(h.dispose);
+    await h.login();
+    await h.openTask();
+    expect(h.controller.task!.id, 'task-1');
+
+    h.api.expire = true;
+    await expectLater(
+      h.controller.refresh(),
+      throwsA(isA<ApiException>()),
+    );
+    expect(h.controller.task, isNull);
+    expect(h.controller.timeline, isEmpty);
+
+    h.api.expire = false;
+    h.api.user = {
+      ...userData,
+      'id': 'user-2',
+      'email': 'mia@example.com',
+      'displayName': 'Mia',
+    };
+    await h.controller.login(
+      'https://tasks.example.com',
+      'mia@example.com',
+      'password',
+    );
+    expect(h.controller.user!.id, 'user-2');
+    expect(h.controller.project, isNull);
+    expect(h.controller.task, isNull);
+    expect(h.controller.timeline, isEmpty);
+  });
+
+  test('retrying an Agent assignment targets the Task that failed', () async {
+    final h = Harness();
+    addTearDown(h.dispose);
+    await h.login();
+    await h.controller.selectProject(h.controller.projects.first);
+    h.api.failAssignment = true;
+    await h.controller.createTask(title: 'New Task', agentId: 'agent-1');
+    expect(h.controller.assignmentRetryTaskId, 'task-1');
+
+    h.api.failAssignment = false;
+    h.controller.task = Task.fromJson(h.api.task2);
+    await h.controller.retryAssignment();
+    expect(h.api.calls, contains('PATCH /tasks/task-1'));
+    expect(h.api.calls, isNot(contains('PATCH /tasks/task-2')));
+    expect(h.controller.task!.id, 'task-2');
+    expect(h.controller.assignmentRetryId, isNull);
+  });
+
+  test('a stale refresh cannot roll back a newer Task', () async {
+    final api = SlowTaskApi();
+    final h = Harness(api: api);
+    addTearDown(h.dispose);
+    await h.login();
+    await h.openTask();
+
+    api.holdTask = true;
+    final refreshing = h.controller.refresh();
+    await api.started.future;
+    await h.controller.updateTask({'title': 'Saved while refreshing'});
+    expect(h.controller.task!.version, 2);
+
+    api.release.complete();
+    await refreshing;
+    expect(h.controller.task!.title, 'Saved while refreshing');
+    expect(h.controller.task!.version, 2);
+  });
+
+  test('a notification tapped offline opens its Task after reconnecting', () async {
+    final h = Harness();
+    addTearDown(h.dispose);
+    await h.login();
+    h.api.offline = true;
+    await h.controller.openNotification('task-1');
+    expect(h.controller.pendingTaskId, 'task-1');
+
+    h.api.offline = false;
+    h.live.stateController.add(ConnectionState.connected);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(h.controller.task?.id, 'task-1');
+    expect(h.controller.pendingTaskId, isNull);
+  });
+
   test('login stores only cookie, installation and User, and expiry requires authentication', () async {
     final h = Harness();
     addTearDown(h.dispose);

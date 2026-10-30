@@ -2,8 +2,9 @@
 // reopening a Task, and how a User's Comment reaches the Agent. Lock order everywhere:
 // project → task → agents (by id) → session → job → queue entries.
 import { commandName, taskKey } from '@claude-task/shared';
-import { and, asc, eq, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
-import type { AfterCommit } from '../context';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { transactWithRetry } from '../context';
+import type { AfterCommit, AppContext } from '../context';
 import type { Executor } from '../db/client';
 import { comments, jobs, projects, sessions, statuses, tasks } from '../db/schema';
 import { conflict } from '../errors';
@@ -124,7 +125,8 @@ async function reassign(tx: Executor, after: AfterCommit, task: TaskRow, previou
           eq(comments.taskId, task.id),
           eq(comments.internal, false),
           isNull(comments.deletedAt),
-          ne(comments.kind, 'system'),
+          // Agent and User Comments, plus System notices (Survey results, Notify agent).
+          or(ne(comments.kind, 'system'), isNotNull(comments.noticeMessage)),
           or(ne(comments.authorType, 'agent'), ne(comments.authorId, task.agentId)),
           session.lastJobAt ? gt(comments.createdAt, session.lastJobAt) : undefined,
         ),
@@ -266,7 +268,19 @@ export async function deliverComment(
   const job = await activeJob(tx, session.id, true);
   // Native commands run at a Job boundary, after the active response has finished.
   const waiting = await getEntry(tx, task.agentId, task.id);
-  if (job && !job.discardOutput && job.state === 'running' && !waiting && !commandName(comment.body) && after.ctx.runners.isConnected(job.agentId)) {
+  // Only a Turn that is actually running can take more input. A Job that was told to
+  // end or cancel keeps running while its stdin is already closed, so writing to it
+  // would lose the Comment; those go through the Queue instead.
+  const canInject =
+    job &&
+    !job.discardOutput &&
+    !job.cancelRequested &&
+    job.state === 'running' &&
+    session.state === 'running' &&
+    !waiting &&
+    !commandName(comment.body) &&
+    after.ctx.runners.isReady(job.agentId);
+  if (canInject) {
     const parts = await renderComments(after.ctx, tx, [comment]);
     await setDelivery('delivered', null, job.id);
     if (comment.noticeTaskVersion !== null) {
@@ -276,9 +290,10 @@ export async function deliverComment(
         .where(eq(sessions.id, session.id));
       publishSession(after, task.id, []);
     }
-    after.effect((ctx) =>
-      ctx.runners.send(job.agentId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch }),
-    );
+    after.effect((ctx) => {
+      if (!ctx.runners.send(job.agentId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch }))
+        void requeueUnsentComment(ctx, comment.id, job.id).catch((err) => ctx.log.error({ err, commentId: comment.id }, 'could not requeue an unsent Comment'));
+    });
     return 'delivered';
   }
 
@@ -293,6 +308,40 @@ export async function deliverComment(
   await attachComments(tx, after, entry.id, [comment.id]);
   after.effect((ctx) => ctx.scheduler.kick(task.agentId!));
   return 'queued';
+}
+
+/** A mid-Turn write whose socket had already closed: put the Comment back in the Queue. */
+async function requeueUnsentComment(ctx: AppContext, commentId: string, jobId: string): Promise<void> {
+  await transactWithRetry(ctx, async (tx, after) => {
+    const [peek] = await tx.select({ taskId: comments.taskId, projectId: tasks.projectId })
+      .from(comments).innerJoin(tasks, eq(tasks.id, comments.taskId)).where(eq(comments.id, commentId));
+    if (!peek) return;
+    await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, peek.projectId)).for('share');
+    const [task] = await tx.select().from(tasks).where(eq(tasks.id, peek.taskId)).for('update');
+    if (!task) return;
+    if (task.agentId) await lockAgents(tx, [task.agentId]);
+    const session = task.agentId ? await lockSession(tx, task.id, task.agentId) : null;
+    const [comment] = await tx.select().from(comments).where(eq(comments.id, commentId)).for('update');
+    if (!comment || comment.deletedAt || comment.deliveryState !== 'delivered' || comment.deliveredInJobId !== jobId) return;
+    const failed = async (reason: string) => {
+      await tx
+        .update(comments)
+        .set({ deliveryState: 'not_delivered', deliveryReason: reason, deliveredInJobId: null, queueEntryId: null })
+        .where(eq(comments.id, commentId));
+      after.effect((c) => c.scheduler.publishComments([commentId]));
+    };
+    if (!task.agentId || !task.currentSessionId) return failed('no agent assigned');
+    if (!session || session.state === 'paused') return failed('no agent assigned');
+    if (session.state === 'closed') return failed('task closed');
+    const entry = await enqueue(tx, after, {
+      agentId: task.agentId,
+      taskId: task.id,
+      sessionId: session.id,
+      kind: session.started ? 'messages' : 'start',
+    });
+    await attachComments(tx, after, entry.id, [commentId]);
+    after.effect((c) => c.scheduler.kick(task.agentId!));
+  });
 }
 
 export async function currentSession(db: Executor, taskId: string): Promise<{ task: TaskRow; session: SessionRow | null }> {

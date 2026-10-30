@@ -1,4 +1,4 @@
-import { createProjectBody, listProjectsQuery, PROJECT_LOGO_MAX_BYTES, PROJECT_LOGO_TYPES, projectTopic, updateProjectBody } from '@claude-task/shared';
+import { createProjectBody, listProjectsQuery, PROJECT_LOGO_MAX_BYTES, PROJECT_LOGO_TYPES, projectTopic, taskTopic, updateProjectBody } from '@claude-task/shared';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -125,6 +125,10 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
       // Tasks reference statuses without cascade, so remove them first.
       await tx.delete(tasks).where(eq(tasks.projectId, project.id));
       await tx.delete(projects).where(eq(projects.id, project.id));
+      for (const task of doomed) {
+        after.emit(projectTopic(project.id), { type: 'task.deleted', projectId: project.id, taskId: task.id });
+        after.emit(taskTopic(task.id), { type: 'task.removed', taskId: task.id });
+      }
       after.effect((ctx) => { for (const task of doomed) ctx.hub.voice.deleteTask(task.id); });
       if (project.logoBlobId) after.run(() => ctx.blobs.delete(project.logoBlobId!));
       for (const b of blobs) after.run(() => ctx.blobs.delete(b.blobId));

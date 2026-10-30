@@ -141,13 +141,21 @@ async function getCommentRow(db: Executor, id: string, lock = false): Promise<Co
   return row;
 }
 
+/** A Wiki's Chat list shows the last activity, unread state and derived title of its Chats. */
+async function emitWikiChanged(db: Executor, after: AfterCommit, taskId: string) {
+  const [project] = await db
+    .select({ id: projects.id, kind: projects.kind })
+    .from(tasks)
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .where(eq(tasks.id, taskId));
+  if (project?.kind === 'wiki') after.emit('wikis', { type: 'wiki.changed', wikiId: project.id });
+}
+
 /** The comment count on the card changes with every comment create/delete. */
 async function emitCardRefresh(db: Executor, after: AfterCommit, taskId: string) {
   const card = await loadCard(db, taskId);
   after.emit(projectTopic(card.projectId), { type: 'task.updated', task: card });
-  // A Wiki's Chat list shows the last activity and unread state of its Chats.
-  const [project] = await db.select({ kind: projects.kind }).from(projects).where(eq(projects.id, card.projectId));
-  if (project?.kind === 'wiki') after.emit('wikis', { type: 'wiki.changed', wikiId: card.projectId });
+  await emitWikiChanged(db, after, taskId);
 }
 
 export async function createUserComment(
@@ -244,6 +252,8 @@ export async function updateComment(
     .where(eq(comments.id, row.id));
   const comment = await loadComment(tx, row.id);
   after.emit(taskTopic(row.taskId), { type: 'comment.updated', comment });
+  // A Wiki Chat is titled by its first User Comment, so an edit can change the Chat list too.
+  await emitWikiChanged(tx, after, row.taskId);
   return comment;
 }
 
@@ -265,7 +275,19 @@ export async function deleteComment(
   if (row.deletedAt) return;
   const own = row.kind === 'user' && row.authorType === 'user' && row.authorId === user.id;
   if (!own && user.role !== 'admin') throw forbidden('You can only delete your own comments');
-  await tx.update(comments).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(comments.id, row.id));
+  const queued = row.deliveryState === 'queued';
+  await tx
+    .update(comments)
+    .set({
+      deletedAt: new Date(),
+      updatedAt: new Date(),
+      // The tombstone is withdrawn from its Entry even when other Comments keep it
+      // alive: otherwise a deleted Comment would show "Queued" forever.
+      ...(queued
+        ? { queueEntryId: null, deliveryState: 'not_delivered' as const, deliveryReason: 'comment deleted', deliveredInJobId: null }
+        : {}),
+    })
+    .where(eq(comments.id, row.id));
   if (row.queueEntryId) await dropIfEmpty(tx, after, row.queueEntryId);
   const removed = await tx.delete(attachments).where(eq(attachments.commentId, row.id)).returning();
   for (const a of removed) after.run(() => removeBlob(a.blobId));

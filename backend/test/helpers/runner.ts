@@ -56,12 +56,20 @@ export class FakeRunner {
       socket.once('error', reject);
     });
     const runner = new FakeRunner(app, agentId, socket);
-    if (opts.hello !== false) await runner.hello(opts.activeJobId ?? null);
+    if (opts.hello !== false) {
+      await runner.hello(opts.activeJobId ?? null);
+    }
     return runner;
   }
 
   async hello(activeJobId: string | null = null): Promise<void> {
     this.send({ type: 'hello', protocolVersion: RUNNER_PROTOCOL_VERSION, runnerVersion: 'test', claudeVersion: '2.1.310', activeJobId });
+    // A ping sent after hello proves the server received the preceding frame. Only
+    // then can draining its message chain wait for hello, rather than an empty chain.
+    const pong = new Promise<void>((resolve) => this.socket.once('pong', () => resolve()));
+    this.socket.ping();
+    await pong;
+    await this.app.server.ctx.runners.drain(this.agentId);
     await this.app.settle();
   }
 

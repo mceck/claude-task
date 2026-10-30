@@ -98,6 +98,16 @@ describe('Agent Containers with stopping disabled', () => {
 describe('Restart and Recreate on an Agent without work', () => {
   const app = useTestApp({ agents: { stopWhenUnused: true } });
 
+  it('applies Force recreate immediately even with no work', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { connect: false });
+    await app.settle();
+    expect(await state(app, agent.id)).toBe('missing');
+    expect((await admin.post(`/agents/${agent.id}/recreate`, { force: true })).status).toBe(200);
+    await app.settle();
+    expect(await state(app, agent.id)).toBe('running');
+  });
+
   it('answers Restart with 409, and applies Recreate when work arrives', async () => {
     const { admin, agent, work } = await setup(app);
     expect((await admin.post(`/agents/${agent.id}/restart`)).status).toBe(409);

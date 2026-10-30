@@ -14,12 +14,12 @@ export async function verifyPassword(passwordHash: string, password: string): Pr
   }
 }
 
-let dummyHash: Promise<string> | undefined;
+/** A valid Argon2id hash of an unknown value, so the first probe needs no hash computation. */
+const DUMMY_HASH = '$argon2id$v=19$m=19456,t=2,p=1$PxOK6poubJJA/S5/spCpEQ$Yo/qamDYCDVDvA646fTB1BZuqnfq4dOK9jbm2RF2zwc';
 
 /** Spends the same time as a real check, so unknown emails aren't distinguishable by timing. */
 export async function burnPasswordCheck(password: string): Promise<void> {
-  dummyHash ??= hashPassword(randomBytes(16).toString('hex'));
-  await verifyPassword(await dummyHash, password);
+  await verifyPassword(DUMMY_HASH, password);
 }
 
 /** Readable temporary passwords, e.g. for new users and resets. */

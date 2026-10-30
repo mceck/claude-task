@@ -24,7 +24,7 @@ afterEach(async () => {
   stop = undefined;
 });
 
-async function harness(overrides: (req: Request) => { status?: number; body: unknown } | undefined = () => undefined) {
+async function harness(overrides: (req: Request) => { status?: number; body: unknown; headers?: Record<string, string> } | undefined = () => undefined) {
   const requests: Request[] = [];
   let n = 0;
   const server = createServer(async (req, res) => {
@@ -43,7 +43,7 @@ async function harness(overrides: (req: Request) => { status?: number; body: unk
       else if (request.path.startsWith('/repos/acme/example/branches/') && !request.path.endsWith('/protection')) result = { body: { name: 'main' } };
       else result = { status: 404, body: { message: 'not found' } };
     }
-    res.writeHead(result.status ?? 200, { 'content-type': 'application/json' });
+    res.writeHead(result.status ?? 200, { 'content-type': 'application/json', ...result.headers });
     res.end(JSON.stringify(result.body));
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -139,6 +139,30 @@ describe('GitHub App provider HTTP contract', () => {
     });
     expect((await provider.getPullRequest(ref, 5)).state).toBe('merged');
   });
+  it('follows a renamed repository through GitHub redirects', async () => {
+    const renamed = { ...repo, owner: { login: 'acme-org' }, name: 'example-renamed' };
+    const { provider } = await harness((r) => {
+      if (r.path.startsWith('/repos/acme/example') && !r.path.startsWith('/repos/acme/example-renamed'))
+        return { status: 301, headers: { location: r.path.replace('/repos/acme/example', '/repositories/42') }, body: {} };
+      if (r.path === '/repositories/42') return { body: renamed };
+      if (r.path === '/repositories/42/installation') return { body: { id: 7 } };
+      if (r.path.startsWith('/repositories/42/branches/')) return { body: { name: 'main' } };
+      if (r.path === '/app/installations/7/access_tokens') return { body: { token: 'token', expires_at: new Date(Date.now() + 3600000).toISOString() } };
+    });
+    expect(await provider.getRepository(ref)).toMatchObject({ providerRepoId: '42', owner: 'acme-org', name: 'example-renamed' });
+    expect(await provider.branchExists(ref, 'main')).toBe(true);
+    const repository = { ...ref, defaultBranch: 'main', private: true, cloneUrl: repo.clone_url, webUrl: repo.html_url };
+    expect(await provider.gitUpstream(repository)).toMatchObject({ username: 'x-access-token', password: 'token' });
+  });
+
+  it('reports a successful merge when the follow-up read fails', async () => {
+    const { provider } = await harness((r) => {
+      if (r.path.endsWith('/pulls/5/merge')) return { body: { merged: true } };
+      if (r.path.endsWith('/pulls/5')) return { status: 500, body: { message: 'boom' } };
+    });
+    expect(await provider.mergePullRequest(ref, 5)).toMatchObject({ provider: 'github', number: 5, state: 'merged' });
+  });
+
   it('merges with a contents-and-PR write token and returns the refreshed PR', async () => {
     const { provider, requests } = await harness((r) => {
       if (r.path.endsWith('/pulls/5/merge')) return { body: { merged: true } };

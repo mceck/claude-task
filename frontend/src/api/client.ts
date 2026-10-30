@@ -14,6 +14,12 @@ export class ApiError extends Error {
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
+/** Called on a 401 from any request, including writes that have no Query mutation. */
+let unauthorizedHandler: (() => void) | null = null;
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
 export async function api<T>(method: Method, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   let payload: BodyInit | undefined;
@@ -27,6 +33,7 @@ export async function api<T>(method: Method, path: string, body?: unknown): Prom
   if (res.status === 204) return undefined as T;
   const data = res.headers.get('content-type')?.includes('application/json') ? await res.json() : null;
   if (!res.ok) {
+    if (res.status === 401 && path !== '/auth/me') unauthorizedHandler?.();
     const err = (data as ApiErrorBody | null)?.error;
     throw new ApiError(res.status, err?.code ?? 'error', err?.message ?? res.statusText, data);
   }

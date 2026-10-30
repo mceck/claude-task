@@ -135,8 +135,8 @@ export async function listChats(db: Executor, userId: string, wiki: Wiki): Promi
     lastActivityAt: Date;
   }>(sql`select t.id, t.agent_id as "agentId",
       coalesce(t.chat_title,
-        (select left(regexp_replace(btrim(c.body), '\\s+', ' ', 'g'), ${TITLE_LENGTH}) from comments c
-          where c.task_id = t.id and c.kind = 'user' and not c.internal and c.deleted_at is null and btrim(c.body) <> ''
+        (select nullif(left(regexp_replace(btrim(c.body), '\\s+', ' ', 'g'), ${TITLE_LENGTH}), '') from comments c
+          where c.task_id = t.id and c.kind = 'user' and c.deleted_at is null
           order by c.created_at, c.id limit 1),
         'Chat') as title,
       (select s.state from sessions s where s.task_id = t.id and s.agent_id = t.agent_id) as "sessionState",
@@ -146,7 +146,8 @@ export async function listChats(db: Executor, userId: string, wiki: Wiki): Promi
     join lateral (select min(created_at) filter (where kind = 'user') as first, max(created_at) as last from comments where task_id = t.id) a on a.first is not null
     where t.project_id = ${wiki.id}::uuid
     order by a.last desc, t.id`);
-  const unread = new Map((await preferences(db, userId, { projectId: wiki.id })).map((p) => [p.taskId, p.unread && !p.muted]));
+  // Mute only silences alerts: the Chat list still shows unread activity.
+  const unread = new Map((await preferences(db, userId, { projectId: wiki.id })).map((p) => [p.taskId, p.unread]));
   return rows.rows.map((r) => ({
     id: r.id,
     wikiId: wiki.id,
@@ -185,6 +186,11 @@ export async function reserveChat(tx: Executor, after: AfterCommit, wiki: Wiki, 
     );
     await updateTask(tx, after, task.id, { version: task.version, agentId: wiki.agentId }, actor);
     chatId = task.id;
+  } else {
+    // An empty Chat takes the Wiki's current Agent; New Chat must hand it out that way.
+    const [task] = await tx.select().from(tasks).where(eq(tasks.id, chatId));
+    if (task && task.agentId !== wiki.agentId)
+      await updateTask(tx, after, task.id, { version: task.version, agentId: wiki.agentId }, actor);
   }
   // Following and muting belong to the Wiki: the Chat starts with the choices made on it.
   await tx.execute(sql`insert into task_preferences(user_id, task_id, following, muted, explicit_follow)

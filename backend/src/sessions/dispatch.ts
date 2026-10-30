@@ -3,7 +3,7 @@ import { gitOwnerTask } from '../git/owner';
 // The dispatcher: turns the first Queue Entry of an idle Agent into a Job (one at a time).
 import { commandName, GIT_PROXY_PATH, MCP_PATH, RUNNER_WS_PATH } from '@claude-task/shared';
 import type { JobStartMessage } from '@claude-task/shared';
-import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
 import { transactWithRetry } from '../context';
 import { comments, jobs, projectEnvVars, projects, queueEntries, sessions, tasks } from '../db/schema';
@@ -31,7 +31,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     const ready =
       agent.enabled &&
       agent.extensionsRevision === agent.configuredExtensionsRevision &&
-      ctx.runners.isConnected(agentId) &&
+      ctx.runners.isReady(agentId) &&
       agent.containerState === 'running' &&
       agent.containerSpec !== null &&
       agent.containerSpec === desiredContainerSpec(agent);
@@ -237,7 +237,12 @@ async function conversation(db: Executor, taskId: string): Promise<CommentRow[]>
     .select()
     .from(comments)
     .where(
-      and(eq(comments.taskId, taskId), eq(comments.internal, false), isNull(comments.deletedAt), or(eq(comments.kind, 'user'), eq(comments.kind, 'agent'))),
+      and(
+        eq(comments.taskId, taskId),
+        eq(comments.internal, false),
+        isNull(comments.deletedAt),
+        or(eq(comments.kind, 'user'), eq(comments.kind, 'agent'), isNotNull(comments.noticeMessage)),
+      ),
     )
     .orderBy(asc(comments.createdAt), asc(comments.id));
 }

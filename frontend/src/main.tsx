@@ -7,7 +7,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ThemeProvider } from '@/lib/theme';
-import { ApiError } from './api/client';
+import { ApiError, setUnauthorizedHandler } from './api/client';
 import { keys } from './api/queries';
 import { ConfirmProvider } from './components/common';
 import { Layout } from './components/Layout';
@@ -40,6 +40,12 @@ const queryClient: QueryClient = new QueryClient({
       refetchOnWindowFocus: false,
     },
   },
+});
+
+// Writes use the API client directly, without a Query mutation: a 401 must still send the
+// app through the Login check.
+setUnauthorizedHandler(() => {
+  void queryClient.invalidateQueries({ queryKey: keys.me });
 });
 
 const router = createBrowserRouter([

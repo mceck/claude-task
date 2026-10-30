@@ -189,6 +189,20 @@ describe('Wikis', () => {
     expect((await admin.get(`/tasks/${wiki.taskId}`)).body.task.chatGeneration).toBe(1);
   });
 
+  it('announces a Chat title change when its first Comment is edited', async () => {
+    const { admin, wiki } = await setup();
+    const first = await comment(admin, wiki.taskId, 'Old title');
+    const ws = await WsTestClient.connect(app.url, admin.cookie);
+    await ws.subscribe('wikis');
+    try {
+      expect((await admin.patch(`/comments/${first.id}`, { body: 'New title' })).status).toBe(200);
+      expect((await ws.next('wiki.changed')).event).toMatchObject({ wikiId: wiki.id });
+      expect((await chats(admin, wiki))[0]!.title).toBe('New title');
+    } finally {
+      ws.close();
+    }
+  });
+
   it('renames a Chat, and keeps the others when one is deleted', async () => {
     const { admin, wiki, runner } = await setup();
     await comment(admin, wiki.taskId, 'First chat question');
@@ -210,6 +224,59 @@ describe('Wikis', () => {
     // The emptied Chat is handed out again, without the old title.
     expect((await newChat(admin, wiki)).id).toBe(chat.id);
     expect(runner.messages('job.cancel').map((m) => m.jobId)).not.toContain(first.jobId);
+  });
+
+  it('hands out an empty Chat on the Wiki current Agent after a switch', async () => {
+    const { admin, wiki } = await setup();
+    const { agent: next } = await createAgent(app, admin, { name: 'Bea Bot' });
+    const empty = await newChat(admin, wiki);
+    expect(empty.agentId).toBe(wiki.agentId);
+    expect((await admin.patch(`/wikis/${wiki.id}`, { agentId: next.id })).status).toBe(200);
+    const again = await newChat(admin, wiki);
+    expect(again).toMatchObject({ id: empty.id, agentId: next.id });
+    await comment(admin, again.id, 'Start here.');
+  });
+
+  it('refuses deleting the Agent that runs a Wiki', async () => {
+    const { admin, wiki } = await setup();
+    const { agent: next } = await createAgent(app, admin, { name: 'Bea Bot' });
+    expect((await admin.patch(`/wikis/${wiki.id}`, { agentId: next.id })).status).toBe(200);
+    const deleted = await admin.delete(`/agents/${next.id}`);
+    expect(deleted.status).toBe(409);
+    expect(deleted.body.error.message).toMatch(/Wiki/);
+    expect((await admin.get(`/wikis/${wiki.id}`)).body.wiki.agentId).toBe(next.id);
+  });
+
+  it('keeps the unread indicator for a muted Wiki', async () => {
+    const { admin, wiki } = await setup();
+    const { client } = await createUser(app, admin);
+    await admin.patch(`/tasks/${wiki.taskId}/preferences`, { muted: true });
+    await comment(client, wiki.taskId, 'Activity while muted');
+    expect((await chats(admin, wiki))[0]).toMatchObject({ unread: true });
+  });
+
+  it('announces Agent Comments on the Wikis topic', async () => {
+    const { admin, wiki, runner } = await setup();
+    await comment(admin, wiki.taskId, 'A question');
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const ws = await WsTestClient.connect(app.url, admin.cookie);
+    await ws.subscribe('wikis');
+    try {
+      const s = new Stream(start.sessionId);
+      await runner.play(start.jobId, [s.init(), s.text('The answer.'), s.result()]);
+      expect((await ws.next('wiki.changed')).event).toMatchObject({ wikiId: wiki.id });
+    } finally {
+      ws.close();
+    }
+    await runner.exit(start.jobId);
+  });
+
+  it('titles a Chat from its first User Comment even when it is an Internal Note', async () => {
+    const { admin, wiki } = await setup();
+    await comment(admin, wiki.taskId, 'Internal planning', true);
+    await comment(admin, wiki.taskId, 'Public follow-up');
+    expect((await chats(admin, wiki))[0]!.title).toBe('Internal planning');
   });
 
   it('keeps a Chat with the Agent that runs it when the Wiki changes Agent', async () => {

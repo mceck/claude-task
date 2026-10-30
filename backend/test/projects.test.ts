@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { projectTopic, taskTopic } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import { createAgent, createProject, createTask, createUser, getSession, statusByName } from './helpers/fixtures';
+import { WsTestClient } from './helpers/ws';
 
 describe('projects', () => {
   const app = useTestApp();
@@ -165,6 +167,22 @@ describe('projects', () => {
       expect((await admin.delete(`/projects/${project.id}`)).status).toBe(400);
     });
 
+    it('announces Task removals when a Project is deleted', async () => {
+      const admin = await app.admin();
+      const { project } = await createProject(admin);
+      const task = await createTask(admin, project.id);
+      const ws = await WsTestClient.connect(app.url, admin.cookie);
+      await ws.subscribe(projectTopic(project.id), taskTopic(task.id));
+      try {
+        await admin.post(`/projects/${project.id}/archive`);
+        expect((await admin.delete(`/projects/${project.id}`)).status).toBe(204);
+        expect((await ws.next('task.deleted')).event).toMatchObject({ projectId: project.id, taskId: task.id });
+        expect((await ws.next('task.removed')).event).toMatchObject({ taskId: task.id });
+      } finally {
+        ws.close();
+      }
+    });
+
     it('deletes an archived project with its tasks, comments and attachments', async () => {
       const admin = await app.admin();
       const { project } = await createProject(admin, { key: 'GONE' });
@@ -202,6 +220,20 @@ describe('statuses', () => {
     const bundle = await createProject(admin);
     const res = await admin.patch(`/statuses/${statusByName(bundle, 'Todo').id}`, { name: 'Ready', color: '#abcdef' });
     expect(res.body.status).toMatchObject({ name: 'Ready', color: '#abcdef', category: 'open' });
+  });
+
+  it('treats an empty edit as a no-op instead of a server error', async () => {
+    const admin = await app.admin();
+    const bundle = await createProject(admin);
+    const todo = statusByName(bundle, 'Todo');
+    const res = await admin.patch(`/statuses/${todo.id}`, {});
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toEqual(todo);
+
+    const tag = (await admin.post(`/projects/${bundle.project.id}/tags`, { name: 'bug', color: '#123456' })).body.tag;
+    const tagRes = await admin.patch(`/tags/${tag.id}`, {});
+    expect(tagRes.status, JSON.stringify(tagRes.body)).toBe(200);
+    expect(tagRes.body.tag).toEqual(tag);
   });
 
   it('answers edits racing a deletion of the same status or tag with 404, never 500', async () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -49,6 +49,8 @@ export class FsBlobStore implements BlobStore {
     if (!ID_PATTERN.test(id)) return null;
     let metadata: StoredBlob['metadata'];
     try {
+      // A metadata sidecar without its data file (an interrupted delete) is not a blob.
+      await stat(this.file(id));
       metadata = JSON.parse(await readFile(this.meta(id), 'utf8'));
     } catch {
       return null;

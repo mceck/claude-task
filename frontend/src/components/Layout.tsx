@@ -24,6 +24,7 @@ import { realtime, useTopic } from '../lib/realtime';
 import { Loading, UserAvatar } from './common';
 import { Logo } from './Logo';
 import { VoiceBar } from './VoiceRoom';
+import { voice } from '../lib/voice';
 
 /** Everything behind login. Forces a pending password change first. */
 export function Layout() {
@@ -122,6 +123,7 @@ function UserMenu({ name, email, id, canChangePassword }: { name: string; email:
   const logout = async () => {
     await post('/auth/logout').catch(() => undefined);
     realtime.stop();
+    voice.reset();
     qc.clear();
     clearCommentDrafts();
     navigate('/login');

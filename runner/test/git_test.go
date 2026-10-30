@@ -44,6 +44,9 @@ func newOrigin(t *testing.T) *origin {
 }
 
 func (o *origin) commit(file, content, message string) {
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(o.seed, file)), 0o755); err != nil {
+		o.t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(o.seed, file), []byte(content), 0o644); err != nil {
 		o.t.Fatal(err)
 	}
@@ -310,7 +313,7 @@ func TestChangingTheRepositoryBehindTheSameProxyURL(t *testing.T) {
 // Exercise the real runner/worktree flow with a local stand-in for the network
 // installer. The project setup must observe the files produced by mise.
 func TestMiseInstallBeforeProjectSetup(t *testing.T) {
-	for _, config := range []string{".tool-versions", "mise.toml"} {
+	for _, config := range []string{".tool-versions", "mise.toml", ".config/mise/conf.d/tools.toml"} {
 		t.Run(config, func(t *testing.T) {
 			o := newOrigin(t)
 			o.commit(config, "node 22\n", "tool configuration")

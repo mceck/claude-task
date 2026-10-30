@@ -168,7 +168,7 @@ export async function lockAgents(db: Executor, ids: string[]): Promise<AgentRow[
 
 /** Publishes the Agent's current state on the Agents topics (loaded after commit). */
 export async function publishAgent(ctx: AppContext, agentId: string): Promise<void> {
-  const [agent] = await loadAgents(ctx.db, (id) => ctx.runners.isConnected(id), [agentId]);
+  const [agent] = await loadAgents(ctx.db, (id) => ctx.runners.isReady(id), [agentId]);
   if (!agent) {
     ctx.hub.publish(AGENTS_TOPIC, { type: 'agent.deleted', agentId });
     ctx.hub.publish(agentTopic(agentId), { type: 'agent.deleted', agentId });

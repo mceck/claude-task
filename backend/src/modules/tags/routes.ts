@@ -43,6 +43,8 @@ export function tagRoutes(app: FastifyInstance, ctx: AppContext): void {
     return transact(ctx, async (tx, after) => {
       const existing = await getTag(tx, id);
       await getBoardProject(tx, existing.projectId);
+      // An empty edit changes nothing; returning it avoids Drizzle's "No values to set" error.
+      if (Object.keys(body).length === 0) return { tag: serializeTag(existing) };
       const [tag] = await tx.update(tags).set(body).where(eq(tags.id, id)).returning();
       if (!tag) throw notFound('Tag');
       await emitTagsChanged(tx, after, existing.projectId);
@@ -54,8 +56,11 @@ export function tagRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     const actor = userActor(currentUser(request));
     await transact(ctx, async (tx, after) => {
+      const peek = await getTag(tx, id);
+      // Task writes take a shared lock on the Project; deleting a Tag takes it exclusively
+      // so the Tag can't be added to another Task between the scan and the delete.
+      await getBoardProject(tx, peek.projectId, { lock: true });
       const existing = await getTag(tx, id);
-      await getBoardProject(tx, existing.projectId);
       await detachTag(tx, after, existing, actor);
       await tx.delete(tags).where(eq(tags.id, id));
       await emitTagsChanged(tx, after, existing.projectId);

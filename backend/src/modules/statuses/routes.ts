@@ -47,6 +47,8 @@ export function statusRoutes(app: FastifyInstance, ctx: AppContext): void {
       // Read it again under the Project lock: a concurrent change or deletion may have won.
       await getBoardProject(tx, (await getStatus(tx, id)).projectId, { lock: true });
       const existing = await getStatus(tx, id);
+      // An empty edit changes nothing; returning it avoids Drizzle's "No values to set" error.
+      if (Object.keys(body).length === 0) return { status: serializeStatus(existing) };
       if (body.category && body.category !== existing.category) {
         const all = await listStatuses(tx, existing.projectId);
         assertEntryAndExit(all.map((s) => (s.id === id ? body.category! : s.category)));

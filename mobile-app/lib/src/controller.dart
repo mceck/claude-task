@@ -40,7 +40,11 @@ class TaskController extends ChangeNotifier {
   bool booting = true, busy = false, sending = false, includeClosed = false;
   bool conversationVisible = false, appVisible = true;
   String? error, pendingTaskId, assignmentRetryId;
+  /// The Task the failed Agent assignment belongs to, so Retry can't touch another one.
+  String? assignmentRetryTaskId;
   ConnectionState connection = ConnectionState.connecting;
+  /// Whether the live socket is up, independent of a one-off HTTP failure.
+  bool _liveConnected = false;
   User? user;
   List<Project> projects = [];
   List<Wiki> wikis = [];
@@ -178,6 +182,7 @@ class TaskController extends ChangeNotifier {
       login['cookie'] as String?,
     );
     await storage.open(login['url'] as String, user!.id);
+    _resetProfileState();
     _hydrateGlobal();
     if (user!.mustChangePassword) return;
     try {
@@ -207,6 +212,44 @@ class TaskController extends ChangeNotifier {
     }
   }
 
+  /// Drops everything that belongs to the previous User or Login before another one is activated.
+  void _resetProfileState() {
+    _timelineEpoch++;
+    _socket?.close();
+    _socket = null;
+    unawaited(_events?.cancel());
+    _events = null;
+    unawaited(_states?.cancel());
+    _states = null;
+    _liveConnected = false;
+    connection = ConnectionState.connecting;
+    voice.disconnected();
+    project = null;
+    task = null;
+    timeline = [];
+    session = null;
+    nextCursor = null;
+    _olderLoaded = false;
+    statuses = [];
+    tags = [];
+    tasks = [];
+    users = [];
+    agents = [];
+    projects = [];
+    wikis = [];
+    wiki = null;
+    wikiSection = false;
+    chats = [];
+    openChat = null;
+    preferences = {};
+    liveText.clear();
+    liveThinking = '';
+    liveStatus = '';
+    conversationVisible = false;
+    assignmentRetryId = null;
+    assignmentRetryTaskId = null;
+  }
+
   void _hydrateGlobal() {
     final cached = storage.read('global') ?? {};
     projects = objects(cached['projects']).map(Project.fromJson).toList();
@@ -227,16 +270,19 @@ class TaskController extends ChangeNotifier {
       if (state != ConnectionState.connected) voice.disconnected();
       final previous = connection;
       connection = state;
+      _liveConnected = state == ConnectionState.connected;
       notifyListeners();
       if (state == ConnectionState.connected &&
           previous != ConnectionState.connected) {
         liveText.clear();
         liveThinking = '';
         unawaited(
-          refresh().catchError((Object e) {
-            _recordError(e);
-            notifyListeners();
-          }),
+          refresh()
+              .then((_) => _openPending())
+              .catchError((Object e) {
+                _recordError(e);
+                notifyListeners();
+              }),
         );
         unawaited(_flushPendingLogout());
       }
@@ -283,6 +329,12 @@ class TaskController extends ChangeNotifier {
         _login!['cookie'] = api!.cookie;
         await storage.writeLogin(_login);
       }
+      // An HTTP timeout marks the connection offline even when the socket stayed up;
+      // a successful request proves the connection is usable again.
+      if (_liveConnected && connection != ConnectionState.connected) {
+        connection = ConnectionState.connected;
+        notifyListeners();
+      }
       return result;
     } on ApiException catch (e) {
       if (e.status == 401) await _expire();
@@ -311,7 +363,7 @@ class TaskController extends ChangeNotifier {
     _profileEpoch++;
     _socket?.close();
     user = null;
-    conversationVisible = false;
+    _resetProfileState();
     api?.cookie = null;
     await storage.writeLogin(null);
     _login = null;
@@ -406,6 +458,9 @@ class TaskController extends ChangeNotifier {
     liveThinking = '';
     pendingTaskId = null;
     assignmentRetryId = null;
+    assignmentRetryTaskId = null;
+    _liveConnected = false;
+    connection = ConnectionState.connecting;
     error = null;
     notifyListeners();
   }
@@ -552,15 +607,23 @@ class TaskController extends ChangeNotifier {
   /// Opens a Chat's conversation, driven by the Task that holds it.
   Future<void> selectChat(WikiChat chat) async {
     final wikiId = wiki?.id;
+    final previous = openChat;
     openChat = chat;
     final cachedTask = storage.read('task:${chat.id}')?['task'];
     if (!online && cachedTask != null) {
       await selectTask(Task.fromJson(cachedTask as Json));
       return;
     }
-    final result = await _request('GET', '/tasks/${chat.id}');
-    if (wiki?.id != wikiId || openChat?.id != chat.id) return;
-    await selectTask(Task.fromJson(result['task'] as Json));
+    try {
+      final result = await _request('GET', '/tasks/${chat.id}');
+      if (wiki?.id != wikiId || openChat?.id != chat.id) return;
+      await selectTask(Task.fromJson(result['task'] as Json));
+    } catch (_) {
+      // A failed selection must not leave the header on a Chat while the body
+      // still shows the previous one (and sends there).
+      if (openChat?.id == chat.id) openChat = previous;
+      rethrow;
+    }
   }
 
   /// New chat: reserves an empty Chat to post the first Comment to.
@@ -752,7 +815,9 @@ class TaskController extends ChangeNotifier {
     liveStatus = '';
     final cached = storage.read('task:${value.id}');
     if (cached != null && cached['task'] != null) {
-      task = Task.fromJson(cached['task'] as Json);
+      final cachedTask = Task.fromJson(cached['task'] as Json);
+      // A list card newer than the offline cache must not be replaced by it.
+      if (cachedTask.version >= value.version) task = cachedTask;
       timeline = objects(cached['items']).map(TimelineEntry.new).toList();
       nextCursor = cached['nextCursor'] as String?;
       session = cached['session'] as Json?;
@@ -783,6 +848,8 @@ class TaskController extends ChangeNotifier {
       return;
     }
     if (fresh.chatGeneration != task!.chatGeneration) _clearConversation();
+    // A refresh started before a save can resolve after it: never roll the Task back.
+    if (fresh.version < task!.version) return;
     task = fresh;
     session = result[2]['session'] as Json?;
     preferences[id] = TaskPreference.fromJson(result[3]['preference'] as Json);
@@ -886,12 +953,14 @@ class TaskController extends ChangeNotifier {
     );
     final created = Task.fromJson(result['task'] as Json);
     assignmentRetryId = null;
+    assignmentRetryTaskId = null;
     await selectTask(created);
     if (agentId != null) {
       try {
         await updateTask({'agentId': agentId});
       } catch (e) {
         assignmentRetryId = agentId;
+        assignmentRetryTaskId = created.id;
         error = 'Task created. Agent assignment failed: ${_message(e)}';
       }
     }
@@ -906,10 +975,23 @@ class TaskController extends ChangeNotifier {
 
   Future<void> retryAssignment() async {
     final id = assignmentRetryId;
-    if (id == null) return;
-    await _fetchTask(task!.id);
-    await updateTask({'agentId': id});
+    final taskId = assignmentRetryTaskId;
+    if (id == null || taskId == null) return;
+    // Target the Task that failed, not whichever Task happens to be open now.
+    final result = await _request('GET', '/tasks/$taskId');
+    final current = Task.fromJson(result['task'] as Json);
+    final patched = await _request(
+      'PATCH',
+      '/tasks/$taskId',
+      body: {'version': current.version, 'agentId': id},
+    );
+    final updated = Task.fromJson(patched['task'] as Json);
+    if (task?.id == taskId) {
+      task = updated;
+      await _cacheTask();
+    }
     assignmentRetryId = null;
+    assignmentRetryTaskId = null;
     notifyListeners();
   }
 
@@ -951,6 +1033,10 @@ class TaskController extends ChangeNotifier {
     );
     if (task?.id == current.id) {
       task = Task.fromJson(result['task'] as Json);
+      if (fields.containsKey('agentId') && assignmentRetryTaskId == current.id) {
+        assignmentRetryId = null;
+        assignmentRetryTaskId = null;
+      }
       await _cacheTask();
       notifyListeners();
     }

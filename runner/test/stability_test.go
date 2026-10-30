@@ -52,9 +52,9 @@ func TestSetupScriptBackgroundProcessDoesNotHangTheJob(t *testing.T) {
 
 func TestCancelStopsTheSetupScript(t *testing.T) {
 	b := newBackend(t)
-	startRunner(t, b)
+	home := startRunner(t, b)
 	rec := filepath.Join(t.TempDir(), "rec.json")
-	for i, setup := range []string{"echo running; sleep 600", "trap '' TERM; echo running; sleep 600"} {
+	for i, setup := range []string{"echo running; sleep 600", "trap '' TERM; echo running; sleep 600", "trap 'exit 0' TERM; echo running; sleep 600"} {
 		id := fmt.Sprintf("j%d", i+1)
 		b.send(jobStart(jobOpts{id: id, worktree: "worktrees/proj/T-" + id, text: "go", setup: setup, env: map[string]string{"FAKE_CLAUDE_RECORD": rec}}))
 		waitUntil(t, 10*time.Second, id+" setup running", func() bool { return strings.Contains(b.setupOutput(id), "running") })
@@ -69,6 +69,44 @@ func TestCancelStopsTheSetupScript(t *testing.T) {
 	}
 	if _, err := os.Stat(rec); err == nil {
 		t.Fatal("claude was spawned after a cancelled setup script")
+	}
+	if _, err := os.Stat(filepath.Join(home, "worktrees/proj/T-j3/.claude-task/setup-pending")); err != nil {
+		t.Fatal("a cancelled Setup Script that exited 0 cleared its setup-pending mark")
+	}
+}
+
+func TestCancelDuringGitPreparationStopsBeforeWorktreeReady(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	runJob(t, b, "j0", "worktrees/proj/T-0", o.spec("task/t-0"), "")
+	repo := filepath.Join(home, "repos/proj.git")
+	hook := filepath.Join(repo, "hooks/post-checkout")
+	os.MkdirAll(filepath.Dir(hook), 0o755)
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b.send(jobStart(jobOpts{id: "j1", worktree: "worktrees/proj/T-1", git: o.spec("task/t-1"), setup: "touch setup-ran", text: "go"}))
+	waitUntil(t, 10*time.Second, "git worktree add", func() bool { return strings.Contains(b.setupOutput("j1"), "git worktree add") })
+	b.send(msg{"type": "job.cancel", "jobId": "j1"})
+	b.waitType("j1", "job.failed")
+	if b.processedIndex("j1", "job.worktree_ready") >= 0 {
+		t.Fatal("a cancelled Job announced its Worktree as ready")
+	}
+	if _, err := os.Stat(filepath.Join(home, "worktrees/proj/T-1/setup-ran")); err == nil {
+		t.Fatal("setup ran after cancellation during git preparation")
+	}
+	// Retrying the same Worktree must perform the setup and set its upstream.
+	runJob(t, b, "j2", "worktrees/proj/T-1", o.spec("task/t-1"), "touch setup-ran")
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	if _, err := os.Stat(filepath.Join(wt, "setup-ran")); err != nil {
+		t.Fatal("retry skipped setup after a cancelled Worktree creation")
+	}
+	if remote := gitIn(t, home, wt, "config", "--get", "branch.task/t-1.remote"); remote != "origin" {
+		t.Fatalf("upstream remote after retry: %q", remote)
+	}
+	if merge := gitIn(t, home, wt, "config", "--get", "branch.task/t-1.merge"); merge != "refs/heads/task/t-1" {
+		t.Fatalf("upstream merge after retry: %q", merge)
 	}
 }
 
@@ -263,6 +301,27 @@ func TestFailedSetupRunsAgainOnRetry(t *testing.T) {
 	}
 }
 
+func TestGitHookBackgroundProcessDoesNotHangWorktreePreparation(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	runJob(t, b, "j0", "worktrees/proj/T-0", o.spec("task/t-0"), "")
+	repo := filepath.Join(home, "repos/proj.git")
+	hook := filepath.Join(repo, "hooks/post-checkout")
+	os.MkdirAll(filepath.Dir(hook), 0o755)
+	pidFile := filepath.Join(home, "hook-bg.pid")
+	script := "#!/bin/sh\nsleep 600 &\necho $! > '" + pidFile + "'\n"
+	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b.send(jobStart(jobOpts{id: "j1", worktree: "worktrees/proj/T-1", git: o.spec("task/t-1"), text: "go"}))
+	b.waitEvent("j1", "result", isResult)
+	pid := readPid(t, pidFile)
+	waitUntil(t, 10*time.Second, "the hook's background process to end", func() bool { return !alive(pid) })
+	b.send(msg{"type": "job.end", "jobId": "j1"})
+	b.waitType("j1", "job.exited")
+}
+
 func TestSetupRunsAfterAFailedPreparationOfANewGitWorktree(t *testing.T) {
 	o := newOrigin(t)
 	b := newBackend(t)
@@ -284,6 +343,13 @@ func TestSetupRunsAfterAFailedPreparationOfANewGitWorktree(t *testing.T) {
 	runJob(t, b, "j2", "worktrees/proj/T-1", o.spec("task/t-1"), "touch setup-ran")
 	if _, err := os.Stat(filepath.Join(home, "worktrees/proj/T-1/setup-ran")); err != nil {
 		t.Fatal("setup didn't run on the retry")
+	}
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	if remote := gitIn(t, home, wt, "config", "--get", "branch.task/t-1.remote"); remote != "origin" {
+		t.Fatalf("upstream remote after retry: %q", remote)
+	}
+	if merge := gitIn(t, home, wt, "config", "--get", "branch.task/t-1.merge"); merge != "refs/heads/task/t-1" {
+		t.Fatalf("upstream merge after retry: %q", merge)
 	}
 }
 

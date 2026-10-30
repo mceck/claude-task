@@ -16,7 +16,7 @@ import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentBuilds, agents, credentials, jobs, queueEntries, sessions } from '../../db/schema';
+import { agentBuilds, agents, credentials, jobs, projects, queueEntries, sessions } from '../../db/schema';
 import { badRequest, conflict, notFound, parse } from '../../errors';
 import { latestRateLimits } from '../credentials/service';
 import { getTaskRow, unassignDeletedAgent } from '../tasks/service';
@@ -54,7 +54,7 @@ async function getQueueEntry(db: Executor, agentId: string, entryId: string) {
 
 export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   const admin = { config: { auth: 'admin' as const } };
-  const connected = (id: string) => ctx.runners.isConnected(id);
+  const connected = (id: string) => ctx.runners.isReady(id);
 
   app.get('/agents', async () => ({ agents: await loadAgents(ctx.db, connected) }));
 
@@ -157,6 +157,11 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
         const refs = await taskRefs(tx, open.map((o) => o.taskId));
         throw conflict(`The agent still has open sessions: ${[...refs.values()].map((t) => t.key).join(', ')}. Unassign it first.`);
       }
+      const [wiki] = await tx
+        .select({ name: projects.name })
+        .from(projects)
+        .where(and(eq(projects.defaultAgentId, id), eq(projects.kind, 'wiki')));
+      if (wiki) throw conflict(`This agent runs the Wiki "${wiki.name}". Assign another agent to it first.`);
       await tx.delete(agents).where(eq(agents.id, id));
     });
     if (avatarBlobId) await ctx.blobs.delete(avatarBlobId);

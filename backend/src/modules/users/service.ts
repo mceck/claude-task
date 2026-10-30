@@ -1,4 +1,5 @@
 import { and, asc, count, eq, sql } from 'drizzle-orm';
+import { deleteUserLogins } from '../../auth/logins';
 import { generateTemporaryPassword, hashPassword } from '../../auth/passwords';
 import type { UserRow } from '../../auth/logins';
 import type { Executor } from '../../db/client';
@@ -44,7 +45,9 @@ export async function createOrPromoteAdmin(
   db: Executor,
   input: { email: string; password?: string; displayName?: string },
 ): Promise<CreateOrPromoteResult> {
-  const existing = await findUserByEmail(db, input.email);
+  const email = input.email.trim();
+  const displayName = input.displayName?.trim() || null;
+  const existing = await findUserByEmail(db, email);
   if (existing) {
     const [user] = await db
       .update(users)
@@ -53,18 +56,20 @@ export async function createOrPromoteAdmin(
         active: true,
         updatedAt: new Date(),
         ...(input.password ? { passwordHash: await hashPassword(input.password), mustChangePassword: false } : {}),
-        ...(input.displayName ? { displayName: input.displayName } : {}),
+        ...(displayName ? { displayName } : {}),
       })
       .where(eq(users.id, existing.id))
       .returning();
+    // Replacing the password through the recovery path ends every existing Login.
+    if (input.password) await deleteUserLogins(db, existing.id);
     return { user: user!, created: false, generatedPassword: null };
   }
   const generatedPassword = input.password ? null : generateTemporaryPassword();
   const [user] = await db
     .insert(users)
     .values({
-      email: input.email.trim(),
-      displayName: input.displayName ?? input.email.split('@')[0]!,
+      email,
+      displayName: displayName ?? email.split('@')[0]!,
       passwordHash: await hashPassword(input.password ?? generatedPassword!),
       role: 'admin',
       mustChangePassword: generatedPassword !== null,

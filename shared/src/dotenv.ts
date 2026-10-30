@@ -30,7 +30,10 @@ export function parseDotenv(content: string): DotenvResult {
       continue;
     }
     const name = match[1]!;
-    let rest = match[2]!;
+    // Re-read the value from the untrimmed line: spaces before a newline can be
+    // inside a multiline quoted value, and trimming the line would erase them.
+    const eq = lines[i]!.indexOf('=');
+    let rest = lines[i]!.slice(eq + 1).replace(/^[ \t]*/, '');
     if (!ENV_VAR_NAME.test(name)) errors.push(`Line ${lineNo}: ${name} is not a valid variable name`);
     const quote = rest[0];
     let value: string;

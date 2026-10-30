@@ -339,6 +339,26 @@ describe('Answering Questions and Surveys', () => {
     expect(results).toMatchObject({ kind: 'system', body: 'Survey closed: every expected respondent answered.', delivery: { state: 'delivered' } });
   });
 
+  it('delivers Survey results to the same Agent when it is assigned again', async () => {
+    const admin = await app.admin();
+    const mia = await createUser(app, admin, { displayName: 'Mia' });
+    const { runner, start, task, client, agent } = await setup(app, { assignees: [mia.user.id] });
+    const surveyId = (await call(client, 'create_survey', { questions: [DB_ITEM] })).json.posted as string;
+    await finishTurn(runner, start);
+
+    await assignAgent(admin, task.id, null);
+    const closed = await mia.client.put(`/comments/${surveyId}/response`, { answers: [{ selected: ['Postgres'], other: null }] });
+    expect(closed.status).toBe(200);
+    const results = (await commentsOf(admin, task.id)).at(-1)!;
+    expect(results.delivery).toMatchObject({ state: 'not_delivered' });
+
+    await assignAgent(admin, task.id, agent.id);
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    const message = texts(next.initialMessage);
+    expect(message).toContain('Survey results');
+    expect(message).toContain('- Postgres: 1 (Mia)');
+  });
+
   it('Send now closes a Survey early and lists who did not answer', async () => {
     const admin = await app.admin();
     const mia = await createUser(app, admin, { displayName: 'Mia' });

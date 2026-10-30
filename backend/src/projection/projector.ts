@@ -185,7 +185,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
 
   function handleAssistant() {
     const content: Json[] = Array.isArray(e.message?.content) ? e.message.content : [];
-    if (content.some((b) => b?.type === 'text' && b.text)) s.hasVisibleOutput = true;
+    if (content.some((b) => b?.type === 'text' && String(b.text ?? '').trim() !== '')) s.hasVisibleOutput = true;
     // Messages the CLI makes up itself (spend limits, API errors) aren't the Agent talking.
     if (e.message?.model === '<synthetic>') {
       const text = content.filter((b) => b?.type === 'text').map((b) => String(b.text)).join('\n').trim();
@@ -466,10 +466,12 @@ function resultText(content: unknown): string {
 
 function outcome(name: string, output: string, isError: boolean, structured: unknown): string | null {
   if (name === 'Bash') {
-    const exit = /exit code[: ]+(\d+)/i.exec(output)?.[1];
-    if (exit) return `exit ${exit}`;
     if ((structured as Json | undefined)?.interrupted) return 'interrupted';
-    return isError ? 'failed' : 'exit 0';
+    // Trust the tool's error flag: successful output can itself contain "exit code N"
+    // (for example a test runner reporting a child process).
+    if (!isError) return 'exit 0';
+    const exit = /exit code[: ]+(\d+)/i.exec(output)?.[1];
+    return exit ? `exit ${exit}` : 'failed';
   }
   return isError ? oneLine(output, 120) || 'failed' : null;
 }

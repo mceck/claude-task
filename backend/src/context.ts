@@ -12,6 +12,7 @@ import type { Db, Tx } from './db/client';
 import type { RealtimeHub } from './realtime/hub';
 import type { RunnerHub } from './runner/hub';
 import type { UploadRequests } from './runner/uploads';
+import type { LoginRevocations } from './auth/revocations';
 
 export interface AppContext {
   config: Config;
@@ -19,6 +20,7 @@ export interface AppContext {
   pushDispatcher: PushDispatcher;
   db: Db;
   hub: RealtimeHub;
+  loginRevocations: LoginRevocations;
   blobs: BlobStore;
   runtime: AgentRuntime;
   /** Git Connections and their providers. */

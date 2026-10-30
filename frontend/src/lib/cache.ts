@@ -1,10 +1,42 @@
 // Applies real-time events to the TanStack Query caches.
 import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
-import type { InfiniteData, QueryClient } from '@tanstack/react-query';
+import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { keys } from '../api/queries';
 
 type BoardKey = ReturnType<typeof keys.board>;
 type Timeline = InfiniteData<TimelinePage, string | null>;
+
+const pendingSnapshots = new WeakSet<Promise<unknown>>();
+const incompleteLists = new WeakSet<Query>();
+
+/** A partial event can update a loaded list; an initial list still needs its full snapshot. */
+function updateCachedList<T>(qc: QueryClient, queryKey: QueryKey, update: (list: T[]) => T[]): void {
+  const filters = { queryKey, exact: true };
+  const query = qc.getQueryCache().find(filters);
+  if (!query) return;
+  const refresh = () => {
+    if (qc.getQueryCache().find(filters) !== query) return;
+    void qc.invalidateQueries(filters, { throwOnError: true }).then(
+      () => incompleteLists.delete(query),
+      () => {}, // A cancelled reconciliation is retried by the event that cancelled it.
+    );
+  };
+  if (query.state.data === undefined) {
+    incompleteLists.add(query);
+    const pending = query.promise;
+    // Let the initial request finish, then reconcile events it may have missed. Coalesce
+    // events on that request so continuous output cannot keep cancelling the first load.
+    if (!pending) refresh();
+    else if (!pendingSnapshots.has(pending)) {
+      pendingSnapshots.add(pending);
+      void pending.then(refresh, refresh);
+    }
+    return;
+  }
+  void qc.cancelQueries(filters, { revert: false });
+  qc.setQueryData<T[]>(queryKey, (list) => list && update(list));
+  if (incompleteLists.has(query)) refresh();
+}
 
 /** Replace even an initial in-flight snapshot: it may predate the event or subscription. */
 function refreshTaskPreferences(qc: QueryClient, projectId?: string): void {
@@ -55,8 +87,7 @@ export function upsertCard(qc: QueryClient, card: TaskCard): void {
   const closed = isClosedStatus(qc, card.projectId, card.statusId);
   for (const [key] of qc.getQueriesData<TaskCard[]>({ queryKey: keys.tasks(card.projectId) })) {
     const { includeClosed } = (key as BoardKey)[2];
-    qc.setQueryData<TaskCard[]>(key, (list) => {
-      if (!list) return list;
+    updateCachedList<TaskCard>(qc, key, (list) => {
       const rest = list.filter((t) => t.id !== card.id);
       return closed && !includeClosed ? rest : [...rest, card];
     });
@@ -65,7 +96,18 @@ export function upsertCard(qc: QueryClient, card: TaskCard): void {
 }
 
 export function removeCard(qc: QueryClient, projectId: string, taskId: string): void {
-  qc.setQueriesData<TaskCard[]>({ queryKey: keys.tasks(projectId) }, (list) => list?.filter((t) => t.id !== taskId));
+  for (const [key] of qc.getQueriesData<TaskCard[]>({ queryKey: keys.tasks(projectId) })) {
+    updateCachedList<TaskCard>(qc, key, (list) => list.filter((t) => t.id !== taskId));
+  }
+}
+
+/** Forget everything cached for one Task, so reopening it cannot show a deleted copy. */
+export function removeTask(qc: QueryClient, taskId: string): void {
+  // Reset notifies mounted views and refetches active queries, which now answer 404.
+  void qc.resetQueries({ queryKey: ['task'], predicate: (q) => (q.state.data as Task | undefined)?.id === taskId });
+  qc.removeQueries({ queryKey: keys.timeline(taskId) });
+  qc.removeQueries({ queryKey: keys.session(taskId) });
+  qc.removeQueries({ queryKey: ['voice', taskId] });
 }
 
 /** Replaces the cached Task unless the cache already has a newer version. */
@@ -134,6 +176,7 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       refreshTaskPreferences(qc, event.task.projectId);
       return upsertCard(qc, event.task);
     case 'task.deleted':
+      removeTask(qc, event.taskId);
       return removeCard(qc, event.projectId, event.taskId);
     case 'statuses.changed':
       updateBundles(qc, event.projectId, (b) => ({ ...b, statuses: event.statuses }));
@@ -159,7 +202,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       refreshTaskPreferences(qc);
       return;
     case 'task.removed':
-      void qc.invalidateQueries({ queryKey: ['task'] });
+      // Invalidation alone would keep the stale data when the refetch answers 404.
+      removeTask(qc, event.taskId);
       return;
     case 'comment.created':
     case 'comment.updated':
@@ -195,8 +239,7 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       qc.setQueryData(keys.queue(event.agentId), event.entries);
       return;
     case 'build.updated':
-      qc.setQueryData<AgentBuild[]>(keys.builds(event.build.agentId), (list) => {
-        if (!list) return list;
+      updateCachedList<AgentBuild>(qc, keys.builds(event.build.agentId), (list) => {
         const existing = list.find((b) => b.id === event.build.id);
         if (existing) return list.map((b) => (b.id === event.build.id ? { ...b, ...event.build } : b));
         return [{ ...event.build, log: '' }, ...list];
@@ -204,13 +247,12 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       if (event.build.status !== 'building') void qc.invalidateQueries({ queryKey: keys.builds(event.build.agentId) });
       return;
     case 'build.log':
-      qc.setQueryData<AgentBuild[]>(keys.builds(event.agentId), (list) =>
-        list?.map((b) => (b.id === event.buildId ? { ...b, log: b.log + event.chunk } : b)),
+      updateCachedList<AgentBuild>(qc, keys.builds(event.agentId), (list) =>
+        list.map((b) => (b.id === event.buildId ? { ...b, log: b.log + event.chunk } : b)),
       );
       return;
     case 'job.updated':
-      qc.setQueryData<Job[]>(keys.jobs(event.job.agentId), (list) => {
-        if (!list) return list;
+      updateCachedList<Job>(qc, keys.jobs(event.job.agentId), (list) => {
         return list.some((j) => j.id === event.job.id) ? list.map((j) => (j.id === event.job.id ? event.job : j)) : [event.job, ...list];
       });
       void qc.invalidateQueries({ queryKey: keys.usage(event.job.agentId) });

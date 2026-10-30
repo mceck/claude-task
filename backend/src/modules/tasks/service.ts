@@ -196,8 +196,11 @@ export async function getTaskRow(db: Executor, idOrKey: string, opts: { lock?: b
   } else {
     const m = TASK_KEY.exec(idOrKey);
     if (!m) throw notFound('Task');
+    // Canonical Task Keys have no leading zeros: KEY-01 is not KEY-1.
+    const number = Number(m[2]);
+    if (String(number) !== m[2]) throw notFound('Task');
     const project = db.select({ id: projects.id }).from(projects).where(eq(projects.key, m[1]!.toUpperCase()));
-    where = and(inArray(tasks.projectId, project), eq(tasks.number, Number(m[2])))!;
+    where = and(inArray(tasks.projectId, project), eq(tasks.number, number))!;
   }
   const query = db.select().from(tasks).where(where);
   const [row] = await (opts.lock ? query.for('update', { of: tasks }) : query);
@@ -222,6 +225,7 @@ export async function createTask(
   projectId: string,
   input: CreateTaskInput,
   actor: Actor,
+  opts: { assignDefaultAgent?: boolean } = {},
 ): Promise<Task> {
   // The row lock taken here also serializes task creation within the project.
   const [numbered] = await tx
@@ -252,7 +256,7 @@ export async function createTask(
     .returning();
   await setTags(tx, task!.id, tagIds);
   await setAssignees(tx, task!.id, assigneeIds);
-  await assignDefaultAgent(tx, after, projectId, task!.id);
+  if (opts.assignDefaultAgent !== false) await assignDefaultAgent(tx, after, projectId, task!.id);
 
   await autoFollow(tx, after, task!.id, [...assigneeIds, ...(actor.type === 'user' && actor.id ? [actor.id] : [])]);
   const created = await loadTask(tx, task!.id);

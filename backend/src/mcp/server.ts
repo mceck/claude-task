@@ -129,7 +129,7 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
     {
       description: "Update your own task's title, description, priority or tags (tag names must exist in the project; the list replaces the current tags).",
       inputSchema: {
-        title: z.string().min(1).max(500).optional(),
+        title: z.string().trim().min(1).max(500).optional(),
         description: z.string().max(100_000).optional(),
         priority: z.enum(PRIORITIES).optional(),
         tags: z.array(z.string()).max(50).optional(),
@@ -152,7 +152,7 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
     {
       description: 'Create a new, unassigned task in your project, e.g. to report an issue outside the scope of your task.',
       inputSchema: {
-        title: z.string().min(1).max(500),
+        title: z.string().trim().min(1).max(500),
         description: z.string().max(100_000).optional(),
         priority: z.enum(PRIORITIES).optional(),
         tags: z.array(z.string()).max(50).optional(),
@@ -359,6 +359,8 @@ async function createProjectTask(ctx: AppContext, scope: JobScope, args: { title
         assigneeIds: [],
       },
       scope.actor,
+      // The tool contract is "new, unassigned": a Project default Agent doesn't apply.
+      { assignDefaultAgent: false },
     ),
   );
   const [project] = await ctx.db.select({ key: projects.key }).from(projects).where(eq(projects.id, scope.projectId));

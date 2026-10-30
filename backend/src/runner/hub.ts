@@ -5,6 +5,8 @@ import type { WebSocket } from 'ws';
 interface Connection {
   agentId: string;
   socket: WebSocket;
+  /** The Runner completed its `hello`; dispatching or writing to it may begin. */
+  ready: boolean;
   /** Messages are processed one at a time, in arrival order. */
   chain: Promise<void>;
 }
@@ -19,6 +21,17 @@ export class RunnerHub {
   isConnected(agentId: string): boolean {
     const conn = this.connections.get(agentId);
     return !!conn && conn.socket.readyState === conn.socket.OPEN;
+  }
+
+  /** Whether the socket is open and its `hello` has been processed. */
+  isReady(agentId: string): boolean {
+    const conn = this.connections.get(agentId);
+    return !!conn && conn.ready && conn.socket.readyState === conn.socket.OPEN;
+  }
+
+  markReady(agentId: string): void {
+    const conn = this.connections.get(agentId);
+    if (conn) conn.ready = true;
   }
 
   connectedAgents(): string[] {
@@ -39,7 +52,7 @@ export class RunnerHub {
   ): void {
     const previous = this.connections.get(agentId);
     if (previous) previous.socket.close(4000, 'replaced by a new connection');
-    const conn: Connection = { agentId, socket, chain: Promise.resolve() };
+    const conn: Connection = { agentId, socket, ready: false, chain: Promise.resolve() };
     this.connections.set(agentId, conn);
 
     const enqueue = (work: () => Promise<void>) => {

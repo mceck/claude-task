@@ -88,6 +88,9 @@ describe('tasks', () => {
       expect((await admin.get('/tasks/api-1')).body.task.id).toBe(task.id);
       expect((await admin.get('/tasks/API-2')).status).toBe(404);
       expect((await admin.get('/tasks/garbage')).status).toBe(404);
+      // Only the canonical key addresses a Task.
+      expect((await admin.get('/tasks/API-01')).status).toBe(404);
+      expect((await admin.get('/tasks/API-0001')).status).toBe(404);
     });
 
     it('lists cards with key, title, priority, tags, assignees and comment count', async () => {
@@ -146,6 +149,8 @@ describe('tasks', () => {
       expect(await titles(`assignee=${alice}`)).toEqual(['Button misaligned', 'Login crashes']);
       expect(await titles('assignee=none')).toEqual(['Write docs']);
       expect(await titles(`assignee=${bob},none`)).toEqual(['Button misaligned', 'Dark mode', 'Write docs']);
+      // Comma-separated values may be written with spaces around the commas.
+      expect(await titles(`assignee=${alice},%20${bob}`)).toEqual(['Button misaligned', 'Dark mode', 'Login crashes']);
     });
 
     it('filters by tag and priority', async () => {
@@ -467,5 +472,19 @@ describe('tags', () => {
     const { project } = await createProject(admin);
     await createTag(admin, project.id, 'bug');
     expect((await admin.post(`/projects/${project.id}/tags`, { name: 'BUG', color: '#000000' })).status).toBe(409);
+  });
+
+  it('serializes concurrent deletions of the same Tag without a no-op revision', async () => {
+    const admin = await app.admin();
+    const { project } = await createProject(admin);
+    const tag = await createTag(admin, project.id, 'bug');
+    const task = await createTask(admin, project.id, { tagIds: [tag.id] });
+    const results = await Promise.all([admin.delete(`/tags/${tag.id}`), admin.delete(`/tags/${tag.id}`)]);
+    expect(results.map((r) => r.status).sort()).toEqual([204, 404]);
+    const after = (await admin.get(`/tasks/${task.id}`)).body.task;
+    expect(after).toMatchObject({ tagIds: [], version: 2 });
+    const revisions = (await admin.get(`/tasks/${task.id}/timeline`)).body.items.filter((i: { type: string }) => i.type === 'revision');
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0].revision.changes).toEqual([{ field: 'tagIds', before: [tag.id], after: [] }]);
   });
 });

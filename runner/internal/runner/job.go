@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -375,7 +376,12 @@ func (j *job) feedStdin() {
 			switch m.Type {
 			case "job.input":
 				j.fetchAttachments(j.worktreeDir(), m.AttachmentsToFetch)
-				if !j.writeStdin(protocol.UserMessage(m.Message)) {
+				// The process may have exited while the download was in flight: an exited
+				// Job must not emit anything after `job.exited`.
+				if j.hasExited() {
+					return
+				}
+				if !j.writeStdin(protocol.UserMessage(m.Message)) && !j.hasExited() {
 					j.emit("job.stderr", map[string]any{"chunk": "[runner] could not deliver a message: claude's stdin is already closed\n"})
 				}
 			case "job.interrupt":
@@ -387,6 +393,15 @@ func (j *job) feedStdin() {
 				j.closeStdin()
 			}
 		}
+	}
+}
+
+func (j *job) hasExited() bool {
+	select {
+	case <-j.exited:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -497,6 +512,25 @@ func (j *job) installTools(worktree string) error {
 			return fmt.Errorf("mise config: %w", err)
 		}
 	}
+	// mise also reads project config fragments from conf.d directories.
+	for _, dir := range []string{".config/mise/conf.d", ".mise/conf.d"} {
+		entries, err := os.ReadDir(filepath.Join(worktree, dir))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("mise config: %w", err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".toml") {
+				configured = true
+				break
+			}
+		}
+		if configured {
+			break
+		}
+	}
 	if !configured {
 		return nil
 	}
@@ -564,7 +598,8 @@ func (j *job) runStep(cmd *exec.Cmd) error {
 	switch {
 	case timedOut.Load():
 		return fmt.Errorf("timed out after %s", j.r.cfg.SetupTimeout)
-	case err != nil && j.isCancelled():
+	case j.isCancelled():
+		// A step trapping SIGTERM can exit 0; cancellation is still not success.
 		return errors.New("cancelled")
 	}
 	return err

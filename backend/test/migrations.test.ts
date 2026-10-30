@@ -1,13 +1,31 @@
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { migrationsFolder, runMigrations } from '../src/db/client';
+import { createDb, migrationsFolder, runMigrations } from '../src/db/client';
 import { useTestApp } from './helpers/app';
 import { assignAgent, createAgent, createProject, createTask, getSession } from './helpers/fixtures';
 
 // Recreate previously applied schemas and ledgers in the disposable test DB.
 describe('migration upgrades', () => {
   const app = useTestApp();
+
+  it('serializes two processes migrating the same empty database', async () => {
+    const name = `ct_mig_${randomBytes(4).toString('hex')}`;
+    const url = new URL(app.server.ctx.config.databaseUrl);
+    url.pathname = `/${name}`;
+    await app.server.ctx.db.$client.query(`create database ${name}`);
+    const first = createDb(url.toString());
+    const second = createDb(url.toString());
+    try {
+      const results = await Promise.allSettled([runMigrations(first.db), runMigrations(second.db)]);
+      expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    } finally {
+      await first.pool.end();
+      await second.pool.end();
+      await app.server.ctx.db.$client.query(`drop database if exists ${name} with (force)`);
+    }
+  });
 
   it('upgrades the originally applied Wiki migration without replaying it or losing existing Claude sessions', async () => {
     const admin = await app.admin();

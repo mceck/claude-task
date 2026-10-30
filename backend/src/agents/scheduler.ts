@@ -1,7 +1,7 @@
 // Background work around Agents: dispatching, image builds, the container reconciler, and
 // publishing scheduling state to browsers. Everything it starts is tracked so tests can settle.
 import { agentTopic, pinAgentBase, projectTopic, taskTopic } from '@claude-task/shared';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
 import type { ContainerInfo } from './runtime';
 import { agentBuilds, agents, jobs, queueEntries, sessions } from '../db/schema';
@@ -167,27 +167,36 @@ export class Scheduler {
     const { db, runtime, hub } = this.ctx;
     const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
     if (!agent) return;
-    const [build] = await db
-      .insert(agentBuilds)
-      .values({ agentId, dockerfile: agent.dockerfile, baseVersion: runtime.baseVersion })
-      .returning();
-    await db.update(agents).set({ imageState: 'building' }).where(eq(agents.id, agentId));
-    const { log: _log, ...summary } = serializeBuild(build!);
+    const build = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(agentBuilds)
+        .values({ agentId, dockerfile: agent.dockerfile, baseVersion: runtime.baseVersion })
+        .returning();
+      await tx.update(agents).set({ imageState: 'building' }).where(eq(agents.id, agentId));
+      return row!;
+    });
+    const { log: _log, ...summary } = serializeBuild(build);
     hub.publish(agentTopic(agentId), { type: 'build.updated', build: summary });
     await this.publishAgent(agentId);
 
     let log = '';
-    let flushed = 0;
+    // The capped log can keep the same length while its content changes; count writes instead.
+    let version = 0;
+    let flushedVersion = -1;
     let timer: NodeJS.Timeout | null = null;
-    const flush = async () => {
+    let flushing: Promise<void> = Promise.resolve();
+    const flush = (): Promise<void> => {
       timer = null;
-      if (flushed === log.length) return;
-      flushed = log.length;
-      await db.update(agentBuilds).set({ log }).where(eq(agentBuilds.id, build!.id));
+      if (flushedVersion === version) return flushing;
+      const snapshot = log;
+      flushedVersion = version;
+      flushing = flushing.then(() => db.update(agentBuilds).set({ log: snapshot }).where(eq(agentBuilds.id, build.id))).then(() => {});
+      return flushing;
     };
     const onLog = (chunk: string) => {
       log = (log + chunk).slice(-BUILD_LOG_CAP);
-      hub.publish(agentTopic(agentId), { type: 'build.log', agentId, buildId: build!.id, chunk });
+      version++;
+      hub.publish(agentTopic(agentId), { type: 'build.log', agentId, buildId: build.id, chunk });
       timer ??= setTimeout(() => void flush().catch(() => {}), BUILD_LOG_FLUSH_MS);
     };
 
@@ -196,7 +205,7 @@ export class Scheduler {
     try {
       await runtime.ensureBaseImage((chunk) => onLog(chunk));
       const result = await runtime.buildAgentImage(
-        { agentId, buildId: build!.id, dockerfile: pinAgentBase(agent.dockerfile, runtime.baseVersion, agent.services) },
+        { agentId, buildId: build.id, dockerfile: pinAgentBase(agent.dockerfile, runtime.baseVersion, agent.services) },
         onLog,
       );
       if (!isAgentUser(result.user)) {
@@ -208,18 +217,27 @@ export class Scheduler {
       onLog(`\nBuild failed: ${error}\n`);
     }
     if (timer) clearTimeout(timer);
+    await flushing.catch(() => {});
 
-    const [finished] = await db
-      .update(agentBuilds)
-      .set({ status: imageTag ? 'succeeded' : 'failed', imageTag, log, finishedAt: new Date() })
-      .where(eq(agentBuilds.id, build!.id))
-      .returning();
-    // A failed build keeps the previous image (and container) in service.
-    await db
-      .update(agents)
-      .set(imageTag ? { imageState: 'built', imageTag, imageBaseVersion: runtime.baseVersion } : { imageState: 'failed' })
-      .where(eq(agents.id, agentId));
-    const { log: _l, ...done } = serializeBuild(finished!);
+    const finished = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(agentBuilds)
+        .set({ status: imageTag ? 'succeeded' : 'failed', imageTag, log, finishedAt: new Date() })
+        .where(eq(agentBuilds.id, build.id))
+        .returning();
+      // A failed build keeps the previous image (and container) in service.
+      await tx
+        .update(agents)
+        .set(imageTag ? { imageState: 'built', imageTag, imageBaseVersion: runtime.baseVersion } : { imageState: 'failed' })
+        .where(eq(agents.id, agentId));
+      return row;
+    });
+    if (!finished) {
+      // The Agent was deleted during the build: clean up the image created meanwhile.
+      if (imageTag) await runtime.removeAgent(agentId).catch(() => {});
+      return;
+    }
+    const { log: _l, ...done } = serializeBuild(finished);
     hub.publish(agentTopic(agentId), { type: 'build.updated', build: done });
     await this.publishAgent(agentId);
     if (imageTag) await this.reconcile(agentId);
@@ -260,7 +278,8 @@ export class Scheduler {
     const desired = desiredContainerSpec(agent);
     let info = await runtime.inspect(agentId);
     const unused = this.ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(db, agentId, this.ctx.config.agents.wikiIdleStopMs));
-    if (desired && unused) {
+    // A forced recreate is immediate: only the "when idle" variant waits for work.
+    if (desired && unused && !agent.forceRecreate) {
       // Recreation and restarts wait for the next wake-up; a missing container is not created.
       if (isUp(info.state)) info = await this.sleep(agentId, info);
     } else if (desired) {
@@ -332,15 +351,19 @@ export class Scheduler {
       throw err;
     }
     await this.publishAgent(agentId);
+    // Work may have arrived while Docker was stopping: wake the container now, not at the next tick.
+    if (await agentNeedsContainer(this.ctx.db, agentId, this.ctx.config.agents.wikiIdleStopMs)) this.kick(agentId);
     return this.ctx.runtime.inspect(agentId);
   }
 
   private async recreate(agent: typeof agents.$inferSelect, desired: string): Promise<void> {
     const { token, hash } = newToken();
     // A new token for every container: the old one stops working with the old container.
+    // `containerSpec` stays null until the container exists, so a crash or a failed create
+    // makes the next reconcile retry instead of believing the old container is current.
     await this.ctx.db
       .update(agents)
-      .set({ runnerTokenHash: hash, containerSpec: desired, forceRecreate: false, configuredExtensionsRevision: -1, updatedAt: new Date() })
+      .set({ runnerTokenHash: hash, containerSpec: null, forceRecreate: false, configuredExtensionsRevision: -1, updatedAt: new Date() })
       .where(eq(agents.id, agent.id));
     this.ctx.runners.disconnect(agent.id, 4002, 'container recreated');
     await this.ctx.runtime.createContainer(agent.id, {
@@ -352,6 +375,13 @@ export class Scheduler {
       cpuLimit: agent.cpuLimit,
       memoryMb: agent.memoryMb,
     });
+    const [current] = await this.ctx.db.select({ id: agents.id }).from(agents).where(eq(agents.id, agent.id));
+    if (!current) {
+      // The Agent was deleted while Docker was creating its container.
+      await this.ctx.runtime.removeAgent(agent.id).catch(() => {});
+      return;
+    }
+    await this.ctx.db.update(agents).set({ containerSpec: desired }).where(eq(agents.id, agent.id));
     await this.publishAgent(agent.id);
   }
 
@@ -424,6 +454,14 @@ export class Scheduler {
       if (!card) continue;
       hub.publish(taskTopic(taskId), { type: 'session.changed', taskId, session: await loadTaskSession(db, taskId) });
       hub.publish(projectTopic(card.projectId), { type: 'task.updated', task: card });
+    }
+    if (taskIds.size > 0) {
+      // A Chat's last activity and unread state live in the Wiki's Chat list; every
+      // Comment, including Agent ones projected from the stream, changes it.
+      const wikiProjects = await db.execute<{ id: string }>(sql`
+        select distinct p.id from projects p join tasks t on t.project_id = p.id
+        where p.kind = 'wiki' and t.id in (${sql.join([...taskIds].map((id) => sql`${id}::uuid`), sql`, `)})`);
+      for (const { id } of wikiProjects.rows) hub.publish('wikis', { type: 'wiki.changed', wikiId: id });
     }
     const agentIds = [...this.pendingAgents];
     this.pendingAgents.clear();

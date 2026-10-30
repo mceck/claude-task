@@ -410,6 +410,7 @@ sequenceDiagram
 ```
 
 - **Session lifecycle** applies Assignment, unassignment, reassignment, closing and reopening inside the same transaction as the Task change that triggers them, and decides each Comment's Delivery.
+- **Unsent mid-Turn input** is returned to the Queue when the Runner socket closes before the backend can write it. Recovery locks Project, Task, Agent and Session before the Comment, rereads the current Assignment and Session state, and acts only on the Delivery belonging to the failed Job. Closing, unassignment and Comment deletion therefore serialize with recovery.
 - **Queue** keeps each Agent's entries with fractional positions. Every change to an Agent's Queue holds that Agent's row lock, so enqueueing, dispatching and manual reordering are serialized per Agent.
 - **Dispatcher** runs one dispatch loop per Agent in the backend process; a new trigger during a run makes it run again. It also builds Messages and the system prompt.
 - **Runner handlers** process the Runner's messages one at a time per connection, each in a transaction that locks Task, Agent, Session and Job in that order, and acknowledge them after commit.

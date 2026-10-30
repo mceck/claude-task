@@ -61,6 +61,62 @@ describe('shutdown during a Build', () => {
   });
 });
 
+describe('shutdown while a Build is still running', () => {
+  const app = useTestApp();
+
+  it('stops containers within the grace period instead of waiting for the Build', async () => {
+    app.server.ctx.config.agents.stopOnShutdown = true;
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { connect: false });
+    let release!: () => void;
+    app.runtime.scriptBuild({ hold: new Promise<void>((resolve) => { release = resolve; }) });
+    expect((await admin.post(`/agents/${agent.id}/rebuild`)).status).toBe(200);
+    const closing = app.server.close();
+    // The Build is still held, but the container must already be stopping.
+    for (let i = 0; i < 100 && (await app.runtime.inspect(agent.id)).state !== 'exited'; i++) await new Promise((r) => setTimeout(r, 10));
+    expect((await app.runtime.inspect(agent.id)).state).toBe('exited');
+    release();
+    await closing;
+  });
+});
+
+for (const trigger of ['rebuild', 'recreate'] as const) describe(`shutdown during container recreation from ${trigger}`, () => {
+  const app = useTestApp();
+
+  it('stops a container whose creation completes after the early shutdown stop', async () => {
+    app.server.ctx.config.agents.stopOnShutdown = true;
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { connect: false });
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    let creating = false, stopped = false;
+    const create = app.runtime.createContainer.bind(app.runtime);
+    app.runtime.createContainer = async (id, spec) => {
+      creating = true;
+      await hold;
+      await create(id, spec);
+    };
+    const stop = app.runtime.stopContainer.bind(app.runtime);
+    app.runtime.stopContainer = async (id) => { await stop(id); stopped = true; };
+    const action = admin.post(`/agents/${agent.id}/${trigger}`, trigger === 'recreate' ? { force: true } : undefined);
+    let closing: Promise<void> | undefined;
+    try {
+      await expect.poll(() => creating).toBe(true);
+      closing = app.server.close();
+      await expect.poll(() => stopped).toBe(true);
+    } finally { release(); }
+    try {
+      expect((await action).status).toBe(200);
+      // The request may have left a keepalive connection open after HTTP close began.
+      // Container stops must finish independently of that connection's idle timeout.
+      await expect.poll(async () => (await app.runtime.inspect(agent.id)).state).toBe('exited');
+    } finally {
+      app.server.app.server.closeAllConnections();
+      await closing;
+    }
+  });
+});
+
 describe('shutdown with a Docker failure', () => {
   const app = useTestApp();
 

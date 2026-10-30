@@ -162,7 +162,14 @@ const csv = <T extends z.ZodType<unknown, string>>(item: T) =>
   z
     .union([z.string(), z.array(z.string())])
     .optional()
-    .transform((v) => (v === undefined ? [] : (Array.isArray(v) ? v : v.split(',')).filter(Boolean)))
+    .transform((v) =>
+      v === undefined
+        ? []
+        : (Array.isArray(v) ? v : [v])
+            .flatMap((value) => value.split(','))
+            .map((value) => value.trim())
+            .filter(Boolean),
+    )
     .pipe(z.array(item));
 
 export const listTasksQuery = z.object({
@@ -188,7 +195,8 @@ export const createCommentBody = z.strictObject({
 export type CreateCommentBody = z.input<typeof createCommentBody>;
 
 export const updateCommentBody = z.strictObject({
-  body: z.string().trim().min(1).max(100_000),
+  // Keep leading and trailing whitespace: it can be significant Markdown (indented code blocks).
+  body: z.string().max(100_000).refine((body) => body.trim() !== '', 'Body is required'),
 });
 export type UpdateCommentBody = z.infer<typeof updateCommentBody>;
 

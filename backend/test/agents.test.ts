@@ -175,6 +175,20 @@ describe('agents', () => {
     expect(await fresh.next('job.start')).toMatchObject({ sessionId: start.sessionId, resumeInterrupted: true });
   });
 
+  it('restarts a Build interrupted before the Agent reached building state', async () => {
+    const admin = await app.admin();
+    const { agent } = await createAgent(app, admin, { connect: false });
+    const before = app.runtime.builds.length;
+    await app.server.ctx.db.execute(sql`insert into agent_builds (agent_id, dockerfile, base_version, status)
+      values (${agent.id}::uuid, 'FROM claude-task/agent-base', 'fake-1', 'building')`);
+    const { resetInterruptedBuilds } = await import('../src/modules/agents/builds');
+    await resetInterruptedBuilds(app.server.ctx.db);
+    await app.server.ctx.scheduler.reconcileAll();
+    await app.settle();
+    expect(app.runtime.builds.length).toBeGreaterThan(before);
+    expect((await admin.get(`/agents/${agent.id}/builds`)).body.builds[0].status).toBe('succeeded');
+  });
+
   it('rebuilds every Agent when the platform version changes', async () => {
     const admin = await app.admin();
     const { agent } = await createAgent(app, admin, { connect: false });

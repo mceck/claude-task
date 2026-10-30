@@ -189,6 +189,10 @@ The **realtime hub** tracks each live connection's User and Login, so it can clo
 
 The **command-line entry point** runs outside the web server, connects to the same database, and reuses the users module.
 
+Password replacement through the command line updates the User and ends their Logins in one transaction. Ending a Login publishes its identifier through PostgreSQL notifications when the transaction commits. Each backend listens on a dedicated database connection and closes the matching realtime connections, including Voice Room membership. New Logins created after the replacement keep working.
+
+If the notification connection drops, the backend closes its realtime connections and answers new WebSocket handshakes with `503` while reconnecting. It retries the database listener every second; after listening resumes, clients reconnect and authenticate their Login again.
+
 ## Data model
 
 - **User**: email (unique case-insensitively), display name, optional avatar image in the Blob store, password hash, role (`admin` or `member`, default `member`), active (default true), must change password (default false), created at, updated at.
@@ -208,6 +212,7 @@ The **command-line entry point** runs outside the web server, connects to the sa
 - **User avatars share the Blob store and raster-image limits used by Agent avatars.** Profile images stay within the Installation's authenticated storage, and versioned URLs refresh changed images without storing pictures on individual Comments. Users control their own image; Admins retain the ability to manage any User's image.
 
 - **Server-side Logins with an opaque cookie token.** Logout, password changes, resets and deactivation must end access at once, including open WebSocket connections. A database row per Login gives that directly; stateless tokens would need a revocation list consulted on every request anyway.
+- **Login revocations use PostgreSQL notifications after commit.** The CLI and the web server share the database, so recovery closes existing realtime connections without a separate authenticated control endpoint. Notifications identify only the ended Logins, preserving Logins created afterwards. Losing the listener ends existing sockets and pauses new handshakes until listening resumes, so a missed notification costs a reconnect rather than continued access.
 - **Sliding expiry written at most once a minute.** A Login in use never expires, while the database sees one write per minute per active Login instead of one per request.
 - **Two roles and no per-Project permissions.** The platform serves one small internal team. Every User sees every Project; the Admin role guards only what can leak secrets, cost money or destroy data: Users, Agents, Credentials, Extensions, Git Connections, project secrets and permanent deletion.
 - **Admins hand out temporary passwords, and Users must replace them.** Onboarding needs no email setup, and the forced change means the Admin never knows a User's real password.

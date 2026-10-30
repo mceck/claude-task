@@ -28,9 +28,11 @@ export function realtimeRoutes(app: FastifyInstance, ctx: AppContext): void {
       preValidation: async (request) => {
         const origin = request.headers.origin;
         if (origin && safeHost(origin) !== request.host) throw forbidden('Cross-origin WebSocket refused');
+        if (!ctx.loginRevocations.ready) throw new HttpError(503, 'unavailable', 'Realtime is reconnecting. Try again shortly.');
       },
     },
     (socket, request) => {
+      if (!ctx.loginRevocations.ready) return socket.close(1013, 'realtime reconnecting');
       const { user, loginId } = request.auth!;
       ctx.hub.add(socket, user.id, loginId);
 

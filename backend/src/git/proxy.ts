@@ -26,6 +26,8 @@ const REQUEST_TYPES: Record<string, string> = {
 const REQUEST_HEADERS = ['content-type', 'accept', 'accept-encoding', 'content-encoding', 'content-length', 'git-protocol', 'user-agent'];
 const RESPONSE_HEADERS = ['content-type', 'cache-control', 'content-encoding', 'expires', 'pragma'];
 const ZERO = /^0+$/;
+/** A full SHA-1 or SHA-256 object id; malformed pkt-lines must never count as a ref update. */
+const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 interface Grant {
   jobId: string;
@@ -72,7 +74,10 @@ export function gitProxyRoutes(app: FastifyInstance, ctx: AppContext): void {
       return deny(reply.header('connection', 'close'), 400, 'Malformed push request');
     }
     const allowed = `refs/heads/${grant.branchName}`;
-    const refused = !grant.branchName || head.commands.some((c) => c.ref !== allowed || ZERO.test(c.newId));
+    const refused =
+      !grant.branchName ||
+      head.commands.length === 0 ||
+      head.commands.some((c) => c.ref !== allowed || !OBJECT_ID.test(c.oldId) || !OBJECT_ID.test(c.newId) || ZERO.test(c.newId));
     if (refused) {
       // Push Policy: the whole push is rejected and upstream is never contacted.
       // Drain the pack (git sends it all before reading the answer); it may already be read.

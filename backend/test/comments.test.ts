@@ -84,6 +84,16 @@ describe('comments', () => {
       expect((await timeline())[0].comment.body).toBe('fixed');
     });
 
+    it('keeps whitespace-significant Markdown and treats the same body as unchanged', async () => {
+      const body = '    indented code\n\ntext';
+      const c = (await member.post(`/tasks/${task.id}/comments`, { body })).body.comment;
+      const same = await member.patch(`/comments/${c.id}`, { body });
+      expect(same.status).toBe(200);
+      expect(same.body.comment.body).toBe(body);
+      expect(same.body.comment.editedAt).toBeNull();
+      expect((await member.patch(`/comments/${c.id}`, { body: '   ' })).status).toBe(400);
+    });
+
     it('forbids editing someone else’s comment, even for admins', async () => {
       const c = (await member.post(`/tasks/${task.id}/comments`, { body: 'mine' })).body.comment;
       expect((await admin.patch(`/comments/${c.id}`, { body: 'hijacked' })).status).toBe(403);

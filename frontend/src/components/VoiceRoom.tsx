@@ -33,7 +33,8 @@ export function VoiceRoomPanel({ task }: { task: Pick<Task, 'id' | 'key'> }) {
     <span className="text-sm font-medium">Voice Room</span>
     <Badge variant="secondary">{snapshot?.participants.length ?? 0}/6</Badge>
     <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{snapshot?.participants.map((p) => `${p.user.displayName}${p.muted ? ' (muted)' : ''}`).join(', ') || (room.isError ? 'Room unavailable. Try again.' : 'Join to talk about this Task')}</span>
-    <Button size="xs" variant={active ? 'secondary' : 'outline'} disabled={state.joining || active || room.isPending || room.isError} onClick={() => void join()}>
+    {/* Joining is a WebSocket command: a failed snapshot must not lock the button. */}
+    <Button size="xs" variant={active ? 'secondary' : 'outline'} disabled={state.joining || active || room.isPending} onClick={() => void join()}>
       <Headphones data-icon="inline-start" />{active ? 'In voice' : state.joining ? 'Joining…' : 'Join voice'}
     </Button>
   </section>;

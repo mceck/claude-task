@@ -1,13 +1,15 @@
 // Logins: a User's authenticated browser sessions, stored server-side.
 // (Not to be confused with a Session, the Agent's conversation on a Task.)
 import { createHash, randomBytes } from 'node:crypto';
-import { and, eq, gt, inArray, ne, sql } from 'drizzle-orm';
+import { and, eq, gt, ne, sql } from 'drizzle-orm';
 import type { FastifyReply } from 'fastify';
 import type { Executor } from '../db/client';
+import type { SQL } from 'drizzle-orm';
 import { logins, users } from '../db/schema';
 
 export const LOGIN_COOKIE = 'ct_login';
 export const LOGIN_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
+export const LOGIN_ENDED_CHANNEL = 'claude_task_login_ended';
 /** Don't write last_seen (or re-send the cookie) on every request. */
 const TOUCH_INTERVAL_MS = 60 * 1000;
 
@@ -64,19 +66,22 @@ export async function resolveLogin(db: Executor, token: string): Promise<LoginIn
 }
 
 export async function deleteLogin(db: Executor, loginId: string): Promise<void> {
-  await db.delete(logins).where(eq(logins.id, loginId));
+  await endLogins(db, eq(logins.id, loginId));
 }
 
 /** Deletes a user's Logins (optionally keeping one) and returns the deleted ids. */
 export async function deleteUserLogins(db: Executor, userId: string, keep?: string): Promise<string[]> {
-  const deleted = await db
-    .delete(logins)
-    .where(keep ? and(eq(logins.userId, userId), ne(logins.id, keep)) : eq(logins.userId, userId))
-    .returning({ id: logins.id });
-  return deleted.map((d) => d.id);
+  return endLogins(db, keep ? and(eq(logins.userId, userId), ne(logins.id, keep))! : eq(logins.userId, userId));
+}
+
+/** Notifications are delivered on commit, including when the CLI ends Logins. */
+async function endLogins(db: Executor, where: SQL): Promise<string[]> {
+  const ended = await db.execute<{ id: string }>(sql`
+    with ended as (delete from ${logins} where ${where} returning id)
+    select id, pg_notify(${LOGIN_ENDED_CHANNEL}, id) from ended`);
+  return ended.rows.map((row) => row.id);
 }
 
 export async function purgeExpiredLogins(db: Executor): Promise<void> {
-  const expired = db.select({ id: logins.id }).from(logins).where(sql`${logins.expiresAt} <= now()`);
-  await db.delete(logins).where(inArray(logins.id, expired));
+  await endLogins(db, sql`${logins.expiresAt} <= now()`);
 }

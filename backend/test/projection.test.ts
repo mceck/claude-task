@@ -97,6 +97,16 @@ describe('stream projection', () => {
       expected: ['activity: Ran `npm test` (error, exit 2) | Ran `ls` (ok, exit 0)', 'summary: success 2 tools'],
     },
     {
+      name: 'a successful Bash call is exit 0 even when its output mentions another exit code',
+      events: [s.toolUse('a', 'Bash', { command: 'run-tests' }), s.toolResult('a', 'child failed: exit code 1'), s.result()],
+      expected: ['activity: Ran `run-tests` (ok, exit 0)', 'summary: success 1 tools'],
+    },
+    {
+      name: 'whitespace-only text does not hide the successful result text',
+      events: [s.text('   '), s.result({ result: 'Done.' })],
+      expected: ['summary: success 0 tools', 'system: Done.'],
+    },
+    {
       name: 'subagent tool calls nest under the call that started them; their text stays out',
       events: [
         s.toolUse('task1', 'Task', { description: 'Find the config', prompt: '…' }),

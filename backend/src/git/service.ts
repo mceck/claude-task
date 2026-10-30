@@ -119,6 +119,8 @@ export async function openPullRequest(
     const peek = await getTaskRow(tx, scope.taskId);
     const p = await getProject(tx, peek.projectId);
     await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, p.id)).for('share');
+    // The Base Branch may have changed while the share lock was waited for.
+    const project = await getProject(tx, p.id);
     const jobTask = await getTaskRow(tx, scope.taskId, { lock: true });
     // A Wiki's Chats share the branch and the pull request of the Wiki's first Task.
     const ownerId = (await gitOwnerTask(tx, jobTask)).id;
@@ -126,18 +128,27 @@ export async function openPullRequest(
     const [job] = await tx
       .select({ id: jobs.id })
       .from(jobs)
-      .where(and(eq(jobs.id, scope.jobId), eq(jobs.agentId, scope.agentId), inArray(jobs.state, ['running', 'finishing'])));
+      .innerJoin(sessions, eq(sessions.id, jobs.sessionId))
+      .where(
+        and(
+          eq(jobs.id, scope.jobId),
+          eq(jobs.agentId, scope.agentId),
+          inArray(jobs.state, ['running', 'finishing']),
+          eq(jobs.cancelRequested, false),
+          eq(sessions.state, 'running'),
+        ),
+      );
     if (!job) throw conflict('The job is no longer active');
-    if (!p.repository || !task.branchName) throw conflict('This task has no repository and task branch yet');
-    const git = await ctx.git.provider(p.repository.connectionId);
-    if (!(await git.branchExists(p.repository, task.branchName))) throw badRequest(`Push the branch \`${task.branchName}\` before opening a pull request.`);
-    const key = taskKey(p.key, task.number);
+    if (!project.repository || !task.branchName) throw conflict('This task has no repository and task branch yet');
+    const git = await ctx.git.provider(project.repository.connectionId);
+    if (!(await git.branchExists(project.repository, task.branchName))) throw badRequest(`Push the branch \`${task.branchName}\` before opening a pull request.`);
+    const key = taskKey(project.key, task.number);
     const taskUrl = `${ctx.config.webUrl ?? 'http://localhost:3000'}/t/${key}`;
     const body = `${input.body.trim()}\n\n---\nTask: [${key}](${taskUrl}) · Agent: ${scope.actor.displayName.replace(/[\r\n]/g, ' ')}`;
     const pr = {
-      ...(await git.upsertPullRequest(p.repository, {
+      ...(await git.upsertPullRequest(project.repository, {
         head: task.branchName,
-        base: p.repository.baseBranch,
+        base: project.repository.baseBranch,
         title: input.title,
         body,
         draft: input.draft ?? false,

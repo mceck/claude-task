@@ -122,6 +122,15 @@ class VoiceController {
   }
   dismissError() { this.update({ error: null }); }
 
+  /** A Login ended: no microphone, room or error may carry into the next session. */
+  reset() {
+    this.pending?.reject(new Error('Voice join cancelled.'));
+    this.pending = undefined;
+    this.epoch++;
+    this.clear();
+    this.update({ error: null, joining: false });
+  }
+
   retry(id: string) {
     const peer = this.peers.get(id);
     if (!peer || !this.state.participantId) return;

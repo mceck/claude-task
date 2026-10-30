@@ -18,6 +18,7 @@ import {
   statusByName,
   timeline,
 } from './helpers/fixtures';
+import { recoverAbandonedJobs } from '../src/runner/handlers';
 import { FakeRunner } from './helpers/runner';
 import { Stream, typicalTurn } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
@@ -309,6 +310,83 @@ describe('Comments reaching the Agent', () => {
     expect(c.delivery).toMatchObject({ state: 'delivered', jobId: start.jobId });
   });
 
+  it('requeues a Comment when the mid-Turn write finds the Runner socket closed', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.play(start.jobId, [new Stream(start.sessionId).init()]);
+
+    const hub = app.server.ctx.runners;
+    const send = hub.send.bind(hub);
+    let refused = false;
+    hub.send = ((agentId: string, message: Parameters<typeof hub.send>[1]) => {
+      if (message.type === 'job.input') {
+        refused = true;
+        return false;
+      }
+      return send(agentId, message);
+    }) as typeof hub.send;
+    try {
+      const lost = await comment(admin, task.id, 'This must not be lost.');
+      expect(refused).toBe(true);
+      for (let i = 0; i < 100; i++) {
+        const stored = comments(await timeline(admin, task.id)).find((c) => c.id === lost.id);
+        if (stored?.delivery?.state === 'queued') break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const stored = comments(await timeline(admin, task.id)).find((c) => c.id === lost.id)!;
+      expect(stored.delivery).toMatchObject({ state: 'queued' });
+      expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toHaveLength(1);
+    } finally {
+      hub.send = send;
+      await runner.exit(start.jobId);
+    }
+  });
+
+  it('serializes an unsent mid-Turn Comment with closing its Task', async () => {
+    const { admin, bundle, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.play(start.jobId, [new Stream(start.sessionId).init()]);
+    const { db, runners } = app.server.ctx;
+    const send = runners.send.bind(runners);
+    runners.send = (id, message) => message.type === 'job.input' ? false : send(id, message);
+    const gate = await db.$client.connect();
+    let moving: ReturnType<typeof admin.post> | undefined;
+    try {
+      // Pause the Queue write at the database boundary while the public move request
+      // arrives. This exercises the real transaction locks and foreign keys.
+      await gate.query('select pg_advisory_lock(93652)');
+      await db.execute(sql`create function hold_queue_insert() returns trigger language plpgsql as $$
+        begin perform pg_advisory_xact_lock(93652); return new; end $$`);
+      await db.execute(sql`create trigger hold_queue_insert before insert on queue_entries
+        for each row execute function hold_queue_insert()`);
+      await comment(admin, task.id, 'Recover this Comment while the Task closes.');
+      await expect.poll(async () => (await db.execute(sql`select 1 from pg_stat_activity
+        where datname = current_database() and wait_event = 'advisory'
+        and query like 'insert into "queue_entries"%'`)).rowCount).toBe(1);
+      moving = admin.post(`/tasks/${task.id}/move`, { statusId: statusByName(bundle, 'Closed').id });
+      await expect.poll(async () => (await db.execute(sql`select 1 from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock' and wait_event <> 'advisory'`)).rowCount).toBe(1);
+      await gate.query('select pg_advisory_unlock(93652)');
+      expect((await moving).status).toBe(200);
+      expect((await getSession(admin, task.id))?.state).toBe('closed');
+      expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toHaveLength(0);
+    } finally {
+      await gate.query('select pg_advisory_unlock_all()');
+      gate.release();
+      runners.send = send;
+      await moving;
+      await db.execute(sql`drop trigger if exists hold_queue_insert on queue_entries`);
+      await db.execute(sql`drop function if exists hold_queue_insert()`);
+      await runner.exit(start.jobId);
+    }
+  });
+
   it('never delivers Internal Notes', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
@@ -447,6 +525,39 @@ describe('Stop, Retry and failures', () => {
     expect(next).toMatchObject({ sessionId: start.sessionId, mode: 'resume' });
   });
 
+  it('marks a Session whose conversation disappeared as pending, not idle', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const first = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Try the next step.');
+    const second = await runner.next('job.start', (m) => m.jobId !== first.jobId);
+    runner.accept(second.jobId);
+    runner.sendJob({ type: 'job.stderr', jobId: second.jobId, chunk: 'No conversation found with session ID: missing\n' });
+    await runner.exit(second.jobId, 0);
+
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'pending', lastJob: { state: 'finished' } });
+    await comment(admin, task.id, 'Start a fresh conversation.');
+    const next = await runner.next('job.start', (m) => m.jobId !== first.jobId && m.jobId !== second.jobId);
+    expect(next).toMatchObject({ mode: 'new' });
+    expect(texts(next.initialMessage)).toContain('Start a fresh conversation.');
+  });
+
+  it('stays quiet when a cancelled Job reports a missing conversation', async () => {
+    const { admin, bundle, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const first = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Start a Turn.');
+    const running = await runner.next('job.start', (m) => m.jobId !== first.jobId);
+    runner.accept(running.jobId);
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    await runner.next('job.cancel', (m) => m.jobId === running.jobId);
+    runner.sendJob({ type: 'job.stderr', jobId: running.jobId, chunk: 'No conversation found with session ID: missing\n' });
+    await runner.exit(running.jobId, 0);
+
+    expect(comments(await timeline(admin, task.id)).filter((c) => c.kind === 'system' && c.body.includes("wasn't found"))).toEqual([]);
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'closed' });
+  });
+
   it('a crashed process leaves a System Comment and the Session idle', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
@@ -510,6 +621,64 @@ describe('Session lifecycle', () => {
     await comment(admin, task.id, 'Reopened: the bug is back.');
     const next = await runner.next('job.start', (m) => m.jobId !== first.jobId);
     expect(next).toMatchObject({ sessionId: first.sessionId, mode: 'resume', worktreePath: first.worktreePath });
+  });
+
+  it('queues a Comment posted after reopening while the cancelled Job is still exiting', async () => {
+    const { admin, bundle, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const first = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Start another turn.');
+    const running = await runner.next('job.start', (m) => m.jobId !== first.jobId);
+    runner.accept(running.jobId);
+    const s = new Stream(running.sessionId);
+    await runner.play(running.jobId, [s.init(), s.text('Working.')]);
+
+    // Closing tells the Job to cancel; the process is still running while its stdin is closed.
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    await runner.next('job.cancel', (m) => m.jobId === running.jobId);
+    await moveToStatus(admin, task.id, statusByName(bundle, 'In Progress').id);
+
+    const afterReopen = await comment(admin, task.id, 'The bug is back.');
+    expect(afterReopen.delivery).toMatchObject({ state: 'queued' });
+    await app.settle();
+    expect(await runner.none('job.input', (m) => (m as { jobId?: string }).jobId === running.jobId)).toBe(true);
+    expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toHaveLength(1);
+
+    await runner.exit(running.jobId, null, 'SIGTERM');
+    const next = await runner.next('job.start', (m) => m.jobId !== first.jobId && m.jobId !== running.jobId);
+    expect(texts(next.initialMessage)).toContain('The bug is back.');
+  });
+
+  it('replays job.end when a finishing Job reconnects', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const first = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Finish this turn.');
+    const running = await runner.next('job.start', (m) => m.jobId !== first.jobId);
+    runner.accept(running.jobId);
+    const s = new Stream(running.sessionId);
+    const seq = runner.sendJob({ type: 'job.event', jobId: running.jobId, line: JSON.stringify(s.result()) });
+    runner.sendJob({ type: 'job.result', jobId: running.jobId, eventSeq: seq });
+    await runner.drain();
+    expect(runner.messages('job.end').some((m) => m.jobId === running.jobId)).toBe(true);
+    await runner.close();
+
+    const back = await FakeRunner.connect(app, agent.id, { activeJobId: running.jobId });
+    expect(await back.next('job.end', (m) => m.jobId === running.jobId)).toMatchObject({ jobId: running.jobId });
+  });
+
+  it('replays job.cancel when the Task was closed while the Runner was away', async () => {
+    const { admin, bundle, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.close();
+
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    const back = await FakeRunner.connect(app, agent.id, { activeJobId: start.jobId });
+    expect(await back.next('job.cancel', (m) => m.jobId === start.jobId)).toMatchObject({ jobId: start.jobId });
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'closed' });
   });
 
   it('closing a Status category closes its Tasks too', async () => {
@@ -593,6 +762,69 @@ describe('Session lifecycle', () => {
     expect(jobs.find((j: { id: string }) => j.id === start.jobId).state).toBe('interrupted');
   });
 
+  it('requeues the Comments when a restarted Job never started streaming', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const first = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Second turn, before the restart.');
+    const second = await runner.next('job.start', (m) => m.jobId !== first.jobId);
+    runner.accept(second.jobId);
+    await runner.drain();
+
+    // The container restarts after `job.accepted` but before any stdout event.
+    await runner.close();
+    const restarted = await FakeRunner.connect(app, agent.id, { activeJobId: null });
+    const next = await restarted.next('job.start', (m) => m.jobId !== second.jobId);
+    expect(next.resumeInterrupted).toBe(false);
+    expect(next.mode).toBe('resume');
+    expect(texts(next.initialMessage)).toContain('Second turn, before the restart.');
+    expect(comments(await timeline(admin, task.id)).filter((c) => c.kind === 'system' && c.body.includes('middle of a turn'))).toEqual([]);
+  });
+
+  it('waits for the Runner hello before dispatching a Job', async () => {
+    const admin = await app.admin();
+    const { project } = await createProject(admin);
+    const { agent } = await createAgent(app, admin, { connect: false });
+    const runner = await FakeRunner.connect(app, agent.id, { hello: false });
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    await app.settle();
+    expect(runner.messages('job.start')).toEqual([]);
+
+    await runner.hello(null);
+    const start = await runner.next('job.start');
+    expect((await admin.get(`/agents/${agent.id}/jobs`)).body.jobs.find((j: { id: string }) => j.id === start.jobId).state).not.toBe('interrupted');
+    await runner.exit(start.jobId);
+  });
+
+  it('does not recover a Job whose Runner reconnected while recovery waited', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+
+    await app.server.ctx.db.execute(sql`update agents set runner_disconnected_at = now() - interval '6 minutes' where id = ${agent.id}::uuid`);
+    const hub = app.server.ctx.runners;
+    const actual = hub.isConnected.bind(hub);
+    let calls = 0;
+    // First check (outside the transaction) sees a stale disconnect; the Runner is back by the second.
+    hub.isConnected = ((id: string) => {
+      calls++;
+      return calls === 1 ? false : actual(id);
+    }) as typeof hub.isConnected;
+    try {
+      await recoverAbandonedJobs(app.server.ctx);
+    } finally {
+      hub.isConnected = actual;
+    }
+    const job = (await admin.get(`/agents/${agent.id}/jobs`)).body.jobs.find((j: { id: string }) => j.id === start.jobId);
+    expect(job.state).toBe('running');
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'running' });
+    await runner.exit(start.jobId);
+  });
+
   it('a Runner reconnecting with its Job keeps it and resends from the last ack', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
@@ -666,6 +898,26 @@ describe('the Queue', () => {
     expect(runner.messages('job.start')).toHaveLength(2);
   });
 
+  it('marks a deleted Comment not delivered while its Entry keeps the other Comments', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const [busy, queued] = await Promise.all(['Busy', 'Queued'].map((title) => createTask(admin, project.id, { title })));
+    await assignAndStart(admin, busy!.id, agent.id);
+    const working = await runner.next('job.start', (m) => texts(m.initialMessage).includes(busy!.key));
+    runner.accept(working.jobId);
+    await runner.drain();
+
+    await assignAgent(admin, queued!.id, agent.id);
+    const first = await comment(admin, queued!.id, 'First, then delete me');
+    await comment(admin, queued!.id, 'Second stays');
+    expect((await getSession(admin, queued!.id))?.queuePosition).not.toBeNull();
+    expect((await admin.delete(`/comments/${first.id}`)).status).toBe(204);
+
+    const deleted = comments(await timeline(admin, queued!.id)).find((c) => c.id === first.id)!;
+    expect(deleted.delivery).toEqual({ state: 'not_delivered', reason: 'comment deleted', jobId: null });
+    const entry = (await admin.get(`/agents/${agent.id}/queue`)).body.entries.find((e: { task: { id: string } }) => e.task.id === queued!.id);
+    expect(entry).toMatchObject({ pendingMessages: 1 });
+  });
+
   it('members reorder entries and remove them; removed Comments become not delivered', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const { client: member } = await createUser(app, admin);
@@ -725,6 +977,19 @@ describe('Notify agent', () => {
     const notice = comments(await timeline(admin, task.id)).find((c) => c.kind === 'system')!;
     expect(notice.body).toBe('Ada Admin notified the agent of task changes.');
     expect(notice.delivery?.state).toBe('delivered');
+  });
+
+  it('does not claim unseen changes for a value that ended where it started', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id, { title: 'Original' });
+    await startAndFinish(admin, runner, task.id, agent.id);
+    const first = (await admin.get(`/tasks/${task.id}`)).body.task;
+    await admin.patch(`/tasks/${task.id}`, { version: first.version, title: 'Changed' });
+    const second = (await admin.get(`/tasks/${task.id}`)).body.task;
+    await admin.patch(`/tasks/${task.id}`, { version: second.version, title: 'Original' });
+
+    expect((await getSession(admin, task.id))!.unseenChanges).toBe(false);
+    expect((await admin.post(`/tasks/${task.id}/session/notify`)).status).toBe(409);
   });
 
   it("ignores the Agent's own edits and status changes", async () => {

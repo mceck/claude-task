@@ -212,7 +212,7 @@ The Agent's Dockerfile is where Admins install the toolchains their Projects nee
 - The first instruction is `FROM claude-task/agent-base`, with any tag or digest, an optional `--platform` flag and an optional stage name. Only `ARG` instructions may precede it. Anything else is answered with `400`: "The Dockerfile must start FROM claude-task/agent-base", "Only ARG instructions may come before the first FROM", or "The first FROM must be claude-task/agent-base (any tag)".
 - The Dockerfile may switch to `root` for installs and has to end as `USER agent`. This is checked on the built image: its final user must be `agent`, `agent:agent`, `1000` or `1000:1000`, otherwise the Build fails with "The image must end with `USER agent`", because `bypassPermissions` refuses to run as root.
 
-When building, the backend rewrites the first `FROM` to the Base Image at the exact current Platform Version, whatever tag the Dockerfile names, and inserts the installation of the selected development services right after it, before the Admin's own instructions.
+When building, the backend rewrites the first `FROM` to the Base Image at the exact current Platform Version, whatever tag the Dockerfile names, and inserts the installation of the selected development services right after the complete instruction, including its stage name. Validation and rewriting both join continuation lines across blank lines and comments, keeping the installation before the Admin's own instructions.
 
 Stdio MCP servers and their runtimes are installed in the Dockerfile too, since their commands run inside the Agent Container.
 
@@ -300,7 +300,7 @@ Recreating a container replaces it with a new one on the same Agent Volume, so r
 
 On a graceful backend shutdown, the Agent Containers of this Installation are stopped when `AGENT_STOP_ON_SHUTDOWN` is enabled. The setting defaults to enabled during local development and disabled when `NODE_ENV=production`; an explicit true or false overrides that default. The supplied local Compose stack enables it and allows 30 seconds for shutdown. Closing a web or native client leaves the backend and its Agents running.
 
-The backend stops scheduling new Jobs, Builds and reconciliations, drains work already started, then stops the containers belonging to the Installation's stored Agents concurrently. Docker gets 10 seconds per container to stop its processes before terminating them. Missing and already stopped containers count as stopped. An error stopping one container is logged, the remaining stops are attempted, and backend cleanup finishes with a failed shutdown result.
+The backend stops scheduling new Jobs, Builds and reconciliations and starts stopping the Installation's containers while already started work drains. This lets containers stop within the Compose grace period even while a Build is running. After the scheduler drains, it stops any containers left running by a creation or restart that finished during shutdown. Container stops and scheduler drain run alongside HTTP shutdown, so an HTTP keepalive timeout leaves container stops free to finish. Stops run concurrently across Agents. Docker gets 10 seconds per container to stop its processes before terminating them. Missing and already stopped containers count as stopped. An error stopping one container is logged, the remaining stops are attempted, and backend cleanup finishes with a failed shutdown result.
 
 Stopping preserves containers, images and Agent Volumes, including repositories, Worktrees, Session transcripts and Development Service data. At the next backend start the reconciler restarts the stopped containers of Agents that have work; running Jobs interrupted by the stop recover through the existing Runner reconnection and Session resume rules. With the setting disabled, containers continue running through backend restarts and their Runners reconnect.
 
@@ -490,7 +490,7 @@ The Docker Compose deployment runs two services: PostgreSQL and the app. The app
 
 In local development the backend runs on the host and Agent Containers reach it through `host.docker.internal`.
 
-When the backend stops, the scheduler stops and Runner connections close; Agent Containers keep running under their restart policy, and Runners reconnect when the backend is back (see [Runner](runner.md)).
+When the backend stops, the scheduler stops and Runner connections close. Agent Containers follow the [backend shutdown setting](#backend-shutdown); containers kept running reconnect their Runners when the backend is back (see [Runner](runner.md)).
 
 ### Configuration settings
 

@@ -70,9 +70,14 @@ export class GitHubProvider implements GitProvider {
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(15000),
-        redirect: 'error',
+        // GitHub redirects API paths of renamed or moved repositories to
+        // `/repositories/<id>`; following them keeps the numeric identity useful.
+        redirect: 'follow',
       });
-    } catch {
+      if (new URL(response.url).origin !== new URL(this.apiUrl).origin)
+        throw new GitProviderError('GitHub answered from another origin', 502);
+    } catch (err) {
+      if (err instanceof GitProviderError) throw err;
       throw new GitProviderError('GitHub could not be reached. Try again later.');
     }
     if (!response.ok) {
@@ -196,8 +201,20 @@ export class GitHubProvider implements GitProvider {
   }
   async mergePullRequest(ref: RepositoryRef, number: number) {
     const auth = await this.auth(ref, { contents: 'write', pull_requests: 'write' });
-    await this.request(`${repoPath(ref)}/pulls/${number}/merge`, auth, 'PUT', {});
-    return serializePR(await this.request<PR>(`${repoPath(ref)}/pulls/${number}`, auth));
+    const merged = await this.request<{ merged?: boolean; message?: string }>(`${repoPath(ref)}/pulls/${number}/merge`, auth, 'PUT', {});
+    if (merged?.merged === false) throw new GitProviderError(merged.message ?? 'GitHub refused to merge the pull request', 409);
+    try {
+      return serializePR(await this.request<PR>(`${repoPath(ref)}/pulls/${number}`, auth));
+    } catch {
+      // The merge succeeded; a failed read must not turn it into a reported failure.
+      return {
+        provider: 'github' as const,
+        number,
+        url: `https://github.com/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.name)}/pull/${number}`,
+        state: 'merged' as const,
+        draft: false,
+      };
+    }
   }
   async getPullRequest(ref: RepositoryRef, number: number) {
     return serializePR(await this.request<PR>(`${repoPath(ref)}/pulls/${number}`, await this.auth(ref, { pull_requests: 'read' })));

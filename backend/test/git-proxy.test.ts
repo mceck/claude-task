@@ -129,6 +129,22 @@ describe('Git Proxy', () => {
     expect(text).toContain(`ng refs/heads/main claude-task: only ${branch} can be pushed`);
   });
 
+  it('refuses a malformed packet that only names the Task Branch, without contacting upstream', async () => {
+    const { project, branch, start } = await running();
+    // The well-formed-upstream server is gone: a forwarded malformed push would be a 502.
+    app.git.upstream = { baseUrl: 'http://127.0.0.1:1', username: 'x', password: 'x' };
+    const res = await fetch(`${app.url}/git/${project.id}.git/git-receive-pack`, {
+      method: 'POST',
+      headers: {
+        authorization: `Basic ${Buffer.from(`claude-task:${start.git!.token}`).toString('base64')}`,
+        'content-type': 'application/x-git-receive-pack-request',
+      },
+      body: `${pkt(`${branch}\n`)}0000`,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(`ng ${branch} claude-task: only ${branch} can be pushed`);
+  });
+
   it('refuses an endless gzip body that never yields commands, without waiting for its end', async () => {
     const { project, start } = await running();
     // A gzip header with FCOMMENT set, then a comment that never ends: gunzip yields nothing.

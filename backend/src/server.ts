@@ -8,6 +8,7 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app';
 import { purgeExpiredLogins } from './auth/logins';
+import { LoginRevocations } from './auth/revocations';
 import { FsBlobStore } from './blobstore';
 import type { BlobStore } from './blobstore';
 import { DockerRuntime } from './agents/docker-runtime';
@@ -36,6 +37,7 @@ export async function createServer(
   overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean; git?: ProviderFactory; push?: PushTransport } = {},
 ): Promise<Server> {
   const { db, pool } = createDb(config.databaseUrl);
+  let loginRevocations: LoginRevocations | undefined;
   try {
     await runMigrations(db);
     const ctx = {
@@ -56,6 +58,8 @@ export async function createServer(
     ctx.gitSync = new GitSync(ctx);
     const app = await buildApp(ctx, { logger: overrides.logger });
     ctx.log = app.log;
+    loginRevocations = ctx.loginRevocations = new LoginRevocations(config.databaseUrl, ctx.hub, app.log);
+    await loginRevocations.start();
     await resetInterruptedBuilds(db);
     if (overrides.startScheduler !== false) {
       ctx.pushDispatcher.start();
@@ -80,31 +84,55 @@ export async function createServer(
           await ctx.pushDispatcher.settle();
           await ctx.push.close?.();
           await ctx.gitSync.settle();
-          await app.close();
-          await ctx.scheduler.settle();
-          try {
-            if (config.agents.stopOnShutdown) {
-              const rows = await db.select({ id: agents.id }).from(agents);
-              const results = await Promise.allSettled(rows.map(async ({ id }) => {
-                await ctx.runtime.stopContainer(id);
-                app.log.info({ agentId: id }, 'stopped Agent Container for backend shutdown');
-              }));
-              const errors: unknown[] = [];
-              for (const [index, result] of results.entries()) {
-                if (result.status === 'rejected') {
-                  app.log.error({ err: result.reason, agentId: rows[index]!.id }, 'failed to stop Agent Container for backend shutdown');
-                  errors.push(result.reason);
-                }
+          // Stop containers while the (possibly long) build drain runs: Compose kills the
+          // process after stop_grace_period, so stopping only after settle defeats the setting.
+          let stopFailure: unknown;
+          const stopContainers = async (onlyRunning = false) => {
+            if (!config.agents.stopOnShutdown) return;
+            const rows = await db.select({ id: agents.id }).from(agents);
+            const results = await Promise.allSettled(rows.map(async ({ id }) => {
+              if (onlyRunning && !['running', 'restarting'].includes((await ctx.runtime.inspect(id)).state)) return;
+              await ctx.runtime.stopContainer(id);
+              app.log.info({ agentId: id }, 'stopped Agent Container for backend shutdown');
+            }));
+            const errors: unknown[] = [];
+            for (const [index, result] of results.entries()) {
+              if (result.status === 'rejected') {
+                app.log.error({ err: result.reason, agentId: rows[index]!.id }, 'failed to stop Agent Container for backend shutdown');
+                errors.push(result.reason);
               }
-              if (errors.length) throw new AggregateError(errors, 'Some Agent Containers could not be stopped');
             }
+            if (errors.length) throw new AggregateError(errors, 'Some Agent Containers could not be stopped');
+          };
+          const stopping = stopContainers().catch((err) => {
+            stopFailure = err;
+          });
+          try {
+            const results = await Promise.allSettled([
+              app.close(),
+              (async () => {
+                await ctx.scheduler.settle();
+                await stopping;
+                // A create/restart can finish after the early stop. Stop it without
+                // waiting for HTTP keepalive connections to finish closing.
+                await stopContainers(true);
+              })(),
+            ]);
+            // Runner close handlers can publish state while the first drain completes.
+            await ctx.scheduler.settle();
+            const failure = results.find((result) => result.status === 'rejected');
+            if (failure?.status === 'rejected') throw failure.reason;
+            if (stopFailure) throw stopFailure;
           } finally {
+            await stopping;
+            await loginRevocations!.close();
             await pool.end();
           }
         })();
       },
     };
   } catch (err) {
+    await loginRevocations?.close();
     await pool.end();
     throw err;
   }

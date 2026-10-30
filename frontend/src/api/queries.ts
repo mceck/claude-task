@@ -65,7 +65,7 @@ export function useMe() {
   return useQuery({
     queryKey: keys.me,
     queryFn: () => get<MeResponse>('/auth/me').then((r) => r.user),
-    retry: false,
+    // The shared retry rule already stops on 401/403 while retrying transient failures.
     staleTime: 60_000,
   });
 }
@@ -100,6 +100,15 @@ export function useBoardTasks(projectId: string | undefined, includeClosed: bool
     queryKey: keys.board(projectId ?? '', includeClosed),
     queryFn: () =>
       get<{ tasks: TaskCard[] }>(`/projects/${projectId}/tasks?includeClosed=${includeClosed}`).then((r) => r.tasks),
+    // A snapshot started before a real-time update cannot replace the newer card.
+    structuralSharing: (old, next) => {
+      if (!old) return next as TaskCard[];
+      const previous = new Map((old as TaskCard[]).map((card) => [card.id, card]));
+      return (next as TaskCard[]).map((card) => {
+        const cached = previous.get(card.id);
+        return cached && cached.version > card.version ? cached : card;
+      });
+    },
     enabled: !!projectId,
   });
 }

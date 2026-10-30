@@ -128,6 +128,21 @@ describe('Task Tools (MCP)', () => {
     expect((await admin.get(`/tasks/${created.id}`)).body.task.createdBy).toEqual({ type: 'agent', id: agent.id, displayName: 'Ada Bot' });
   });
 
+  it('does not apply the Project default Agent to a Task created by the tool', async () => {
+    const { admin, bundle, client, agent } = await setup(app);
+    await admin.patch(`/projects/${bundle.project.id}/agent-settings`, { defaultAgentId: agent.id });
+    const { json } = await call(client, 'create_task', { title: 'Reported by the agent' });
+    const created = (await admin.get(`/projects/${bundle.project.id}/tasks`)).body.tasks.find((t: { key: string }) => t.key === json.created);
+    expect(created).toMatchObject({ agentId: null });
+    expect((await admin.get(`/tasks/${created.id}/session`)).body.session).toBeNull();
+  });
+
+  it('rejects blank titles in both write tools', async () => {
+    const { client } = await setup(app);
+    expect((await call(client, 'update_task', { title: '   ' })).isError).toBe(true);
+    expect((await call(client, 'create_task', { title: '   ' })).isError).toBe(true);
+  });
+
   it('rejects unknown tokens and tokens of finished Jobs', async () => {
     const { runner, start } = await setup(app);
     const bad = { ...start, claudeArgs: { ...start.claudeArgs, mcpConfig: JSON.stringify({ mcpServers: { 'claude-task': { url: 'http://backend.test/api/v1/mcp', headers: { Authorization: 'Bearer wrong' } } } }) } };

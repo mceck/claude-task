@@ -1,5 +1,6 @@
 import { SecretBox } from './secrets';
 import { DEFAULT_VOICE_STUN_URLS } from '@claude-task/shared';
+import { z } from 'zod';
 
 export interface Config {
   voiceStunUrls?: string[];
@@ -73,6 +74,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!databaseUrl) throw new Error('DATABASE_URL is required');
   const adminEmail = env.ADMIN_EMAIL?.trim();
   const adminPassword = env.ADMIN_PASSWORD;
+  if (adminEmail && adminPassword) {
+    // The bootstrapped Admin must be able to pass the login endpoint's own rules.
+    if (!z.email().max(320).safeParse(adminEmail).success)
+      throw new Error('ADMIN_EMAIL must be a valid email address of at most 320 characters');
+    if (adminPassword.length < 8 || adminPassword.length > 200)
+      throw new Error('ADMIN_PASSWORD must be between 8 and 200 characters');
+  }
   const voiceStunUrls = env.VOICE_STUN_URLS === undefined ? DEFAULT_VOICE_STUN_URLS : env.VOICE_STUN_URLS.split(',').map((url) => url.trim()).filter(Boolean);
   if (voiceStunUrls.length > 8 || voiceStunUrls.some((url) => !/^stuns?:[^\s/?#@]+(?::[0-9]+)?$/.test(url))) throw new Error('VOICE_STUN_URLS accepts up to eight stun: or stuns: URLs');
   const turnHost = env.VOICE_TURN_HOST?.trim();

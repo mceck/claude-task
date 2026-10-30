@@ -24,5 +24,14 @@ export function migrationsFolder(): string {
 }
 
 export async function runMigrations(db: Db): Promise<void> {
-  await migrate(db, { migrationsFolder: migrationsFolder() });
+  // Two processes can start together (the backend and `create-admin`, or two replicas).
+  // Hold a session-level advisory lock on one connection while the migrator works.
+  const lock = await db.$client.connect();
+  try {
+    await lock.query('select pg_advisory_lock(hashtext($1))', ['claude-task:migrations']);
+    await migrate(db, { migrationsFolder: migrationsFolder() });
+  } finally {
+    await lock.query('select pg_advisory_unlock(hashtext($1))', ['claude-task:migrations']).catch(() => {});
+    lock.release();
+  }
 }

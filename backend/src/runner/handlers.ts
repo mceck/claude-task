@@ -29,7 +29,7 @@ export async function handleRunnerMessage(ctx: AppContext, agentId: string, msg:
 }
 
 async function handleHello(ctx: AppContext, agentId: string, msg: Extract<RunnerToBackend, { type: 'hello' }>): Promise<void> {
-  const { keep, pendingRemovals } = await transactWithRetry(ctx, async (tx, after) => {
+  const { keep, pendingRemovals, keepSession } = await transactWithRetry(ctx, async (tx, after) => {
     await getAgentRow(tx, agentId, { lock: true });
     await tx
       .update(agents)
@@ -55,13 +55,26 @@ async function handleHello(ctx: AppContext, agentId: string, msg: Extract<Runner
       .select({ id: sessions.id })
       .from(sessions)
       .where(and(eq(sessions.agentId, agentId), eq(sessions.worktreeRemovalPending, true)));
-    after.effect((c) => c.scheduler.publishAgent(agentId));
-    return { keep, pendingRemovals };
+    const keepSession = keep
+      ? (await tx.select({ state: sessions.state }).from(sessions).where(eq(sessions.id, keep.sessionId)))[0] ?? null
+      : null;
+    return { keep, pendingRemovals, keepSession };
   });
 
+  // The `hello` is the handshake: dispatch and mid-Turn writes wait for it.
+  ctx.runners.markReady(agentId);
+  await ctx.scheduler.publishAgent(agentId);
   if (msg.activeJobId && keep) {
     ctx.runners.send(agentId, { type: 'ack', jobId: keep.id, seq: keep.lastSeq });
-    if (keep.discardOutput) ctx.runners.send(agentId, { type: 'job.cancel', jobId: keep.id });
+    // After-commit messages are fire-and-forget: replay the control intent that the
+    // disconnected socket could have missed.
+    if (keep.discardOutput || keep.cancelRequested) {
+      ctx.runners.send(agentId, { type: 'job.cancel', jobId: keep.id });
+    } else {
+      const paused = keepSession?.state === 'paused';
+      if (paused) ctx.runners.send(agentId, { type: 'job.interrupt', jobId: keep.id });
+      if (paused || keep.state === 'finishing') ctx.runners.send(agentId, { type: 'job.end', jobId: keep.id });
+    }
   } else if (msg.activeJobId) {
     // A Job we've already settled: drop its backlog and stop whatever is left of it.
     ctx.runners.send(agentId, { type: 'ack', jobId: msg.activeJobId, seq: Number.MAX_SAFE_INTEGER });
@@ -210,16 +223,25 @@ async function processJobMessage(
           .update(sessions)
           .set({ state: restingState(session) })
           .where(eq(sessions.id, session.id));
-      if (missing) {
+      if (!job.cancelRequested && missing) {
         // The transcript is gone (e.g. the Agent Volume was reset): the next Job starts over with the Task's history.
-        await tx.update(sessions).set({ started: false }).where(eq(sessions.id, session.id));
+        // State and `started` must agree: a Session without a conversation is `pending`, not `idle`.
+        await tx
+          .update(sessions)
+          .set({
+            started: false,
+            // A reopened Session may be idle while its cancelled Job exits; without a
+            // transcript it must wait for the next Comment to start over.
+            ...(session.state === 'closed' || session.state === 'paused' ? {} : { state: 'pending' as const }),
+          })
+          .where(eq(sessions.id, session.id));
         await systemComment(
           tx,
           after,
           job.taskId,
           "The agent's previous conversation for this task wasn't found, so its next run starts a new conversation with the task's history.",
         );
-      } else if (exists) {
+      } else if (!job.cancelRequested && exists) {
         await tx
           .update(sessions)
           .set({ started: true, state: session.state === 'running' ? 'idle' : session.state })
@@ -306,7 +328,10 @@ export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow):
       .update(sessions)
       .set({ state: restingState(session) })
       .where(eq(sessions.id, session.id));
-    if (job.lastSeq > 0 && session.started && job.state !== 'finishing') {
+    // `lastSeq` also counts handshake messages (`job.accepted`): only stored stream
+    // output proves the Turn actually started. Otherwise the Job had not run yet and
+    // its Comments must go back to the Queue instead of being retired as delivered.
+    if (job.projection !== null && session.started && job.state !== 'finishing') {
       await enqueue(tx, after, { agentId: job.agentId, taskId: job.taskId, sessionId: session.id, kind: 'resume_interrupted', front: true });
       await systemComment(tx, after, job.taskId, "The agent's container restarted in the middle of a turn. Resuming where it left off.");
     } else if (job.state !== 'finishing') {
@@ -381,7 +406,9 @@ export async function recoverAbandonedJobs(ctx: AppContext): Promise<void> {
     if (ctx.runners.isConnected(job.agentId)) continue;
     await transactWithRetry(ctx, async (tx, after) => {
       await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, job.taskId)).for('key share');
-      await getAgentRow(tx, job.agentId, { lock: true });
+      const agent = await getAgentRow(tx, job.agentId, { lock: true });
+      // A Runner that reconnected while this transaction waited must keep its Job.
+      if (!agent.runnerDisconnectedAt || agent.runnerDisconnectedAt >= cutoff || ctx.runners.isConnected(job.agentId)) return;
       const [current] = await tx.select().from(jobs).where(eq(jobs.id, job.id)).for('update');
       if (current && (ACTIVE_JOB_STATES as readonly string[]).includes(current.state)) await recoverJob(tx, after, current);
     });

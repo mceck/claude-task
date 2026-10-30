@@ -65,6 +65,8 @@ class WikiApi extends FakeApi {
     Json? body,
     List<DraftFile> files = const [],
   }) async {
+    // Let the base fake apply its offline/expired switches before the Wiki routes.
+    if (offline) return super.request(method, path, body: body, files: files);
     if (path == '/wikis' && method == 'GET') {
       return {
         'wikis': empty ? <Json>[] : [wiki],
@@ -161,6 +163,25 @@ void main() {
     expect(h.controller.task!.id, 'task-2');
     expect(h.live.topics, contains('task:task-2'));
     expect(h.controller.wiki!.repositoryName, 'acme/wiki');
+  });
+
+  test('a failed Chat selection keeps the previous Chat selected', () async {
+    final api = WikiApi();
+    final h = Harness(api: api);
+    addTearDown(h.dispose);
+    await h.login();
+    await h.controller.selectWiki(h.controller.wikis.single);
+    await h.controller.selectChat(h.controller.chats.first);
+    expect(h.controller.openChat!.id, 'task-1');
+
+    api.offline = true;
+    h.controller.connection = api_.ConnectionState.offline;
+    await expectLater(
+      h.controller.selectChat(h.controller.chats.last),
+      throwsA(anything),
+    );
+    expect(h.controller.openChat!.id, 'task-1');
+    expect(h.controller.task!.id, 'task-1');
   });
 
   test('New chat reserves an empty Chat and opens it', () async {

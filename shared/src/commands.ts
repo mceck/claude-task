@@ -50,10 +50,11 @@ const DESCRIPTIONS: Record<string, string> = {
 };
 /** The runtime reports every interactive built-in and bundled skill too; only curated ones, plugin (`a:b`) and MCP prompts are offered. */
 function offered(name: string): boolean {
-  return name in DESCRIPTIONS || name.includes(':') || name.startsWith('mcp__');
+  return Object.hasOwn(DESCRIPTIONS, name) || name.includes(':') || name.startsWith('mcp__');
 }
 export function commandName(body: string): string | null {
-  const match = /^\/([a-zA-Z0-9][a-zA-Z0-9_:-]{0,127})(?:\s|$)/.exec(body);
+  // Skills may start with `_` or `-`; only their directory name is restricted.
+  const match = /^\/([a-zA-Z0-9_-][a-zA-Z0-9_:-]{0,127})(?:\s|$)/.exec(body);
   return match && !UNAVAILABLE.has(match[1]!) ? match[1]! : null;
 }
 /** An absent runtime list uses only the documented basic noninteractive commands. */

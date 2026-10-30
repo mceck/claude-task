@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"claude-task/runner/internal/protocol"
@@ -51,13 +53,24 @@ func (j *job) prepareWorktree() (string, bool, error) {
 	}
 	out := j.setupWriter()
 	defer out.Flush()
-	created, err := prepareGitWorktree(out, repo, wt, g)
+	created, err := prepareGitWorktree(out, repo, wt, g, j.isCancelled)
 	j.remoteBranchMissing = !refExists(repo, "refs/remotes/origin/"+g.TaskBranch)
 	return wt, created, err
 }
 
-func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) (bool, error) {
-	git := func(dir string, args ...string) error { return runGit(out, dir, args...) }
+func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec, cancelled func() bool) (bool, error) {
+	check := func() error {
+		if cancelled() {
+			return errCancelled
+		}
+		return nil
+	}
+	git := func(dir string, args ...string) error {
+		if err := check(); err != nil {
+			return err
+		}
+		return runGit(out, dir, args...)
+	}
 
 	// A Project may change repository only with every Session closed. Discard the old
 	// bare clone rather than reusing its local branch tips with a different repository.
@@ -92,13 +105,16 @@ func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) (bo
 	// 2. An existing Worktree is the Agent's working state: leave it alone.
 	created := false
 	if !validWorktree(wt) {
-		if err := createWorktree(out, repo, wt, g); err != nil {
+		if err := createWorktree(out, repo, wt, g, cancelled); err != nil {
 			return false, err
 		}
 		created = true
 	}
 
 	// 4. Commit identity, 5. attachments stay out of git.
+	if err := check(); err != nil {
+		return false, err
+	}
 	if err := git(wt, "config", "user.name", g.CommitName); err != nil {
 		return false, err
 	}
@@ -129,8 +145,13 @@ func staleClone(repo string, g *protocol.GitSpec) bool {
 	return ok && old != g.CloneURL
 }
 
-func createWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) error {
-	git := func(dir string, args ...string) error { return runGit(out, dir, args...) }
+func createWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec, cancelled func() bool) error {
+	git := func(dir string, args ...string) error {
+		if cancelled() {
+			return errCancelled
+		}
+		return runGit(out, dir, args...)
+	}
 	if err := git(repo, "worktree", "prune"); err != nil {
 		return err
 	}
@@ -147,18 +168,31 @@ func createWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec) error {
 	if remote {
 		base = "origin/" + b
 	}
-	// An absent worktree is recreated from the remote, including when a stale local branch remains.
-	if err := git(repo, "worktree", "add", "--no-track", "-B", b, wt, base); err != nil {
+	fail := func(err error) error {
+		// A Worktree whose preparation stopped halfway must be recreated on the retry,
+		// not mistaken for one that is already initialized.
+		os.RemoveAll(wt)
+		runGit(out, repo, "worktree", "prune")
 		return err
 	}
+	// An absent worktree is recreated from the remote, including when a stale local branch remains.
+	if err := git(repo, "worktree", "add", "--no-track", "-B", b, wt, base); err != nil {
+		return fail(err)
+	}
+	if cancelled() {
+		return fail(errCancelled)
+	}
 	if err := markSetupPending(wt); err != nil {
-		return err
+		return fail(err)
 	}
 	// 3. Upstream = origin/<task branch>, set by config so it works before the remote branch exists.
 	if err := git(repo, "config", "branch."+b+".remote", "origin"); err != nil {
-		return err
+		return fail(err)
 	}
-	return git(repo, "config", "branch."+b+".merge", "refs/heads/"+b)
+	if err := git(repo, "config", "branch."+b+".merge", "refs/heads/"+b); err != nil {
+		return fail(err)
+	}
+	return nil
 }
 
 func markSetupPending(wt string) error {
@@ -217,9 +251,19 @@ func runGit(out io.Writer, dir string, args ...string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = gitEnv()
+	// Hooks can leave a background process holding the output pipes after git itself
+	// exits. WaitDelay closes them, and the process group kill removes the hook's child.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = 5 * time.Second
 	fmt.Fprintf(out, "$ git %s\n", strings.Join(args, " "))
 	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if cmd.Process != nil {
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	// ErrWaitDelay means git itself succeeded but a hook child held the output pipe;
+	// the process-group kill above removed it, so this is not a failed command.
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 	return nil

@@ -64,7 +64,7 @@ An Internal Note never reaches the Agent. Editing an already delivered Comment a
 | Provider rate limit | Check the Agent's usage and Credential information. Agents sharing a Credential share limits; wait for access to recover. |
 | Repository cannot be listed or reached | An Admin should verify Git Connection access and expiry. Check the selected Repository and Base Branch. |
 | Setup Script fails | Review the Job's setup output, correct the Project's Setup Script or Agent environment, then Retry. |
-| Pull request merged but Task still open | Move the Task to the intended Status yourself. Pull request state and Task Status are independent. |
+| Pull request merged on the code host but Task still in the same Status | Only the in-app **Merge** action advances the Task. Move the Task to the intended Status yourself. |
 | Agent disconnected or backend restarted | Allow recovery to complete and look for a recovery notice before posting duplicate work. |
 
 ## Native app and Wiki issues

@@ -22,7 +22,8 @@ function instructions(dockerfile: string): string[] {
   let pending = '';
   for (const raw of dockerfile.split(/\r?\n/)) {
     const line = raw.trim();
-    if (pending === '' && (line === '' || line.startsWith('#'))) continue;
+    // Docker removes blank and comment lines before joining continuations.
+    if (line === '' || line.startsWith('#')) continue;
     if (line.endsWith('\\')) {
       pending += `${line.slice(0, -1)} `;
       continue;
@@ -54,7 +55,12 @@ export function pinAgentBase(dockerfile: string, tag: string, services?: AgentSe
   const start = lines.findIndex((line) => /^\s*FROM\s/i.test(line));
   if (start < 0) return dockerfile;
   let end = start;
-  while (lines[end]!.trimEnd().endsWith('\\') && end < lines.length - 1) end++;
+  let continued = lines[start]!.trimEnd().endsWith('\\');
+  while (continued && end < lines.length - 1) {
+    const line = lines[++end]!.trim();
+    if (line === '' || line.startsWith('#')) continue;
+    continued = line.endsWith('\\');
+  }
   let from = lines.slice(start, end + 1).join('\n').replace(/claude-task\/agent-base[^\s\\]*/, `${BASE_IMAGE}:${tag}`);
   if (services !== undefined) {
     const selected = AGENT_SERVICES.filter((service) => services.includes(service)).join(' ');

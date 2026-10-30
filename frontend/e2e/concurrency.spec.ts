@@ -31,6 +31,75 @@ async function holdResponse(page: Page, url: string, method: string, { beforeSer
   return { release, sent, done };
 }
 
+test('a late Board snapshot does not roll back a newer card event', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Old title', 'Todo');
+  await page.goto(`/p/${project.key}`);
+  await expect(column(page, 'Todo').getByText('Old title')).toBeVisible();
+
+  const snapshot = await holdResponse(page, `**/api/v1/projects/${project.id}/tasks*`, 'GET');
+  // A new Status makes the Board refetch its cards; the response is held.
+  await page.request.post(`/api/v1/projects/${project.id}/statuses`, {
+    headers,
+    data: { name: 'QA', color: '#123456', category: 'review' },
+  });
+  await snapshot.sent;
+  // This event updates the cached card while the older snapshot is still in flight.
+  await page.request.patch(`/api/v1/tasks/${task.id}`, { headers, data: { version: 1, title: 'New title' } });
+  await expect(column(page, 'Todo').getByText('New title')).toBeVisible();
+
+  snapshot.release();
+  await snapshot.done;
+  await expect(column(page, 'Todo').getByText('New title')).toBeVisible();
+  await expect(column(page, 'Todo').getByText('Old title')).toHaveCount(0);
+});
+
+for (const change of ['update', 'delete'] as const) test(`a Task ${change} during the initial Board snapshot preserves the complete list`, async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const changing = await createTask(page.request, project, 'Changing task', 'Todo');
+  await createTask(page.request, project, 'Other task', 'Todo');
+  let subscribed = false;
+  let eventReceived = false;
+  await page.routeWebSocket('**/api/v1/ws', (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === 'subscribed' && message.topics.includes(`project:${project.id}`)) subscribed = true;
+      if (message.type === 'event' && message.event.type === (change === 'update' ? 'task.updated' : 'task.deleted')) eventReceived = true;
+      ws.send(raw);
+    });
+  });
+  const snapshot = await holdResponse(page, `**/api/v1/projects/${project.id}/tasks*`, 'GET');
+  try {
+    await page.goto(`/p/${project.key}`);
+    await snapshot.sent;
+    await expect.poll(() => subscribed).toBe(true);
+    const response = change === 'update'
+      ? await page.request.patch(`/api/v1/tasks/${changing.id}`, { headers, data: { version: 1, title: 'Updated task' } })
+      : await page.request.delete(`/api/v1/tasks/${changing.id}`, { headers });
+    expect(response.status()).toBe(change === 'update' ? 200 : 204);
+    await expect.poll(() => eventReceived).toBe(true);
+  } finally { snapshot.release(); }
+  await snapshot.done;
+  await expect(column(page, 'Todo').getByText('Other task', { exact: true })).toBeVisible();
+  if (change === 'update') await expect(column(page, 'Todo').getByText('Updated task', { exact: true })).toBeVisible();
+  await expect(column(page, 'Todo').getByText('Changing task', { exact: true })).toHaveCount(0);
+});
+
+for (const view of ['Board dialog', 'standalone'] as const) test(`deleting a Task closes its ${view} view instead of leaving a stale editor`, async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Delete me', 'Todo');
+  await page.goto(view === 'standalone' ? `/t/${task.key}` : `/p/${project.key}?task=${task.key}`);
+  await expect(page.getByRole('textbox', { name: 'Title', exact: true })).toHaveValue('Delete me');
+
+  expect((await page.request.delete(`/api/v1/tasks/${task.id}`, { headers })).status()).toBe(204);
+  await expect(page.getByText('This task doesn’t exist (or was deleted).')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Title', exact: true })).toHaveCount(0);
+});
+
 test('an edit to a comment older than the loaded timeline shows up only where it belongs, once', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request);

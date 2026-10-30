@@ -12,12 +12,24 @@ export const NOTIFIABLE_FIELDS = ['title', 'description', 'priority', 'tagIds'] 
 
 const notifiable = sql.raw(NOTIFIABLE_FIELDS.map((f) => `'${f}'`).join(', '));
 
-/** Whether Users edited the Task after the Agent last read it. */
+/**
+ * Whether Users left a notifiable field different from where the Agent last saw it.
+ * A value edited and then restored is not an unseen change, matching the change list
+ * that Notify agent would send.
+ */
 export function unseenChangesSql(taskId: unknown, lastSeen: unknown) {
   return sql<boolean>`exists (
-    select 1 from task_revisions r
-    where r.task_id = ${taskId} and r.version > ${lastSeen} and r.actor_type = 'user'
-      and exists (select 1 from jsonb_array_elements(r.changes) c where c->>'field' in (${notifiable})))`;
+    select 1 from (
+      select c->>'field' as field,
+        (array_agg(c->'before' order by r.version))[1] as before,
+        (array_agg(c->'after' order by r.version desc))[1] as after
+      from task_revisions r
+      cross join lateral jsonb_array_elements(r.changes) c
+      where r.task_id = ${taskId} and r.version > ${lastSeen} and r.actor_type = 'user'
+        and c->>'field' in (${notifiable})
+      group by 1
+    ) net
+    where net.before is distinct from net.after)`;
 }
 
 export async function loadTaskSession(db: Executor, taskId: string): Promise<TaskSession | null> {
