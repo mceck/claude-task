@@ -265,6 +265,17 @@ describe('Scheduled runs and the Task Tools', () => {
     expect(names).toContain('open_pull_request');
   });
 
+  it('tells the Agent it works unattended, and what it can do on every board or in git', async () => {
+    const global = await started({ readOnly: true });
+    const prompt = global.start.claudeArgs.appendSystemPrompt;
+    expect(prompt).toContain('scheduled run and you work unattended');
+    expect(prompt).toContain('assign_task_to_me');
+    expect(prompt).toContain('read-only for git');
+    expect(prompt).not.toContain('`ask_question`');
+    expect(global.start.git).toBeNull();
+    expect(global.start.claudeArgs.disallowedTools).toContain('AskUserQuestion');
+  });
+
   it('lets the scheduler, not the Agent, move and edit the Task of a run', async () => {
     const { client } = await started();
     expect((await call(client, 'set_status', { status_name: 'Succeeded' })).isError).toBe(true);

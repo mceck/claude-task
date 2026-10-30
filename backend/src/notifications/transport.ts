@@ -8,9 +8,18 @@ import type { NotificationKind } from '@claude-task/shared';
 export interface PushMessage {
   token: string;
   eventId: string;
-  taskId: string;
+  /** Null for a Schedule event that reports no Task. */
+  taskId: string | null;
   kind: NotificationKind;
 }
+const ALERT_TEXT: Record<NotificationKind, string> = {
+  'turn.completed': 'A Task you follow has an update.',
+  'turn.failed': 'A Task you follow has an update.',
+  'session.intervention': 'A Task you follow has an update.',
+  'comment.mentioned': 'You were mentioned in a Comment.',
+  'schedule.run_failed': 'A scheduled run failed.',
+  'schedule.blocked': 'A schedule keeps being skipped.',
+};
 export class PushTransportError extends Error {
   constructor(readonly retryable: boolean) { super('Push transport failed'); }
 }
@@ -33,16 +42,16 @@ export class FirebasePushTransport implements PushTransport {
   async send(message: PushMessage): Promise<'sent' | 'invalid'> {
     if (!this.app) throw new Error('Phone push is not configured');
     // Collapse per Task, so a burst of events on one Task shows a single alert.
-    const taskKey = createHash('sha256').update(message.taskId).digest('hex');
+    const taskKey = createHash('sha256').update(message.taskId ?? message.eventId).digest('hex');
     try {
       await getMessaging(this.app).send({
         token: message.token,
         // No title, body, Project name or generated prose from a Task on the lock screen.
-        notification: { title: 'Claude Task', body: message.kind === 'comment.mentioned' ? 'You were mentioned in a Comment.' : 'A Task you follow has an update.' },
-        data: { taskId: message.taskId, eventId: message.eventId, kind: message.kind },
+        notification: { title: 'Claude Task', body: ALERT_TEXT[message.kind] },
+        data: { taskId: message.taskId ?? '', eventId: message.eventId, kind: message.kind },
         android: { priority: 'high', collapseKey: taskKey, notification: { tag: taskKey } },
         apns: { headers: { 'apns-collapse-id': taskKey, 'apns-push-type': 'alert', 'apns-priority': '10' },
-          payload: { aps: { sound: 'default', 'thread-id': message.taskId } } },
+          payload: { aps: { sound: 'default', 'thread-id': message.taskId ?? message.eventId } } },
       });
       return 'sent';
     } catch (err) {
