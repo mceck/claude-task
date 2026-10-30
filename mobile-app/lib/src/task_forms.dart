@@ -643,6 +643,10 @@ class TaskDetails extends StatelessWidget {
             ],
           ),
         ),
+        if (c.attachments.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          section(4, _TaskAttachments(controller: c)),
+        ],
         const SizedBox(height: 26),
         Row(
           children: [
@@ -682,6 +686,84 @@ class TaskDetails extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Every file of the Task, from its description and its Comments (newest
+/// first): a compact list under the description, like the web app's.
+class _TaskAttachments extends StatelessWidget {
+  final TaskController controller;
+  const _TaskAttachments({required this.controller});
+
+  static const _imageTypes = {
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+    'image/avif',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final files = controller.attachments;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SectionLabel('Attachments (${files.length})'),
+        for (final file in files)
+          AppTile(
+            leading: IconBadge(
+              _imageTypes.contains(file['contentType'])
+                  ? Icons.image_outlined
+                  : Icons.insert_drive_file_outlined,
+              color: Palette.primarySoft,
+              size: 30,
+            ),
+            title: '${file['filename']}',
+            subtitle: _subtitle(context, file),
+            subtitleLines: 1,
+            trailing: const Icon(
+              Icons.download_rounded,
+              size: 17,
+              color: Palette.fgMuted,
+            ),
+            onTap: () => perform(context, () async {
+              final downloaded = await controller.downloadAttachment(file);
+              await OpenFilex.open(downloaded.path);
+            }),
+          ),
+      ],
+    );
+  }
+
+  static String _subtitle(BuildContext context, Json file) => [
+    if (file['size'] is num) _bytes(file['size'] as num),
+    _source(file),
+    _when(context, file['createdAt'] as String?),
+  ].where((part) => part.isNotEmpty).join(' · ');
+
+  /// Who posted the file: the Comment's author, or the description it is linked from.
+  static String _source(Json file) {
+    final author = file['author'];
+    return author is Map ? 'by ${author['displayName']}' : 'Description';
+  }
+
+  static String _when(BuildContext context, String? iso) {
+    final date = DateTime.tryParse(iso ?? '');
+    if (date == null) return '';
+    final local = date.toLocal();
+    final diff = DateTime.now().difference(local);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return MaterialLocalizations.of(context).formatMediumDate(local);
+  }
+
+  static String _bytes(num n) => n < 1024
+      ? '${n.toInt()} B'
+      : n < 1024 * 1024
+      ? '${(n / 1024).toStringAsFixed(1)} KB'
+      : '${(n / 1024 / 1024).toStringAsFixed(1)} MB';
 }
 
 /// Changes one multi-value field of the open Task from a picker, saving it

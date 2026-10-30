@@ -21,6 +21,7 @@ import type {
   ProjectSummary,
   Skill,
   Task,
+  TaskAttachment,
   TaskCard,
   TaskPreference,
   TimelinePage,
@@ -45,6 +46,8 @@ export const keys = {
   /** The asking User's private state for every Task of a Project. */
   taskPreferences: (projectId: string) => ['task-preferences', projectId] as const,
   timeline: (taskId: string) => ['timeline', taskId] as const,
+  /** Every file of a Task: its description's and its Comments'. */
+  attachments: (taskId: string) => ['task-attachments', taskId] as const,
   session: (taskId: string) => ['session', taskId] as const,
   /** The Task's active Runs; the transcripts live in the backend's memory only. */
   runs: (taskId: string) => ['runs', taskId] as const,
@@ -143,6 +146,15 @@ export function useTimeline(taskId: string | undefined) {
       get<TimelinePage>(`/tasks/${taskId}/timeline?limit=50${pageParam ? `&before=${pageParam}` : ''}`),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
+    enabled: !!taskId,
+  });
+}
+
+export function useTaskAttachments(taskId: string | undefined) {
+  return useQuery({
+    queryKey: keys.attachments(taskId ?? ''),
+    queryFn: () =>
+      get<{ attachments: TaskAttachment[] }>(`/tasks/${taskId}/attachments`).then((r) => r.attachments),
     enabled: !!taskId,
   });
 }

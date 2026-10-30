@@ -151,6 +151,14 @@ export interface Attachment {
   url: string;
 }
 
+/** One file of a Task, from its description or from any of its Comments. */
+export interface TaskAttachment extends Attachment {
+  /** When the file was uploaded. */
+  createdAt: string;
+  /** The author of the Comment it belongs to; null for a file of the description. */
+  author: Actor | null;
+}
+
 export interface Comment {
   id: string;
   taskId: string;

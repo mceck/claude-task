@@ -6,7 +6,7 @@ import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { badRequest, HttpError, notFound, parse } from '../../errors';
 import { getTaskRow } from '../tasks/service';
-import { createTaskAttachments, createUserComment, pruneTaskAttachments, deleteComment, getAttachment, updateComment } from './service';
+import { createTaskAttachments, createUserComment, loadTaskAttachments, pruneTaskAttachments, deleteComment, getAttachment, updateComment } from './service';
 import type { NewAttachment } from './service';
 import { idOrKey } from '../../ids';
 
@@ -57,6 +57,13 @@ export function commentRoutes(app: FastifyInstance, ctx: AppContext): void {
       await Promise.all(files.map((f) => ctx.blobs.delete(f.blobId)));
       throw err;
     }
+  });
+
+  /** Every file of the Task, from its description and its Comments, for the Task's attachment list. */
+  app.get('/tasks/:taskId/attachments', async (request) => {
+    const { taskId } = parse(taskParams, request.params);
+    const task = await getTaskRow(ctx.db, taskId);
+    return { attachments: await loadTaskAttachments(ctx.db, task.id) };
   });
 
   app.patch('/comments/:id', async (request) => {
