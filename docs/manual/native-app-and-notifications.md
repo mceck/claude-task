@@ -72,6 +72,8 @@ Write in the composer and send. On a hardware keyboard, Enter sends, Shift+Enter
 
 Answer an Agent's Questions and Surveys directly in the Conversation; this needs a connection. See [Agent questions and files](agent-questions-and-files.md).
 
+While the Agent works, the bar above the composer lists its active Runs: tap one to read the subagent's text and tool calls in a bottom sheet. See [Follow the Agent's Runs](agent-sessions-and-queues.md#follow-the-agents-runs).
+
 Use **Attach local files** to stage files. They stay with your Draft until you send. Download received Attachments to open them with the device's viewer; downloaded images also have previews.
 
 Scroll to the latest entry to mark the Conversation read while online and in the foreground. A bold Task row with a dot means it has unread entries. Read state is shared with your other devices and the web app. While reading older entries, use **Jump to latest** to return to the bottom.

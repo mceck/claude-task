@@ -56,6 +56,14 @@ An Internal Note never reaches the Agent. Editing an already delivered Comment a
 - **The Agent says the Task has no assignees for a Survey.** Assign the people who should answer, then ask again.
 - **The Agent couldn't post a file.** It names the files it couldn't read, or says its environment didn't upload them in time. Ask it to check the path or try again.
 
+## Runs
+
+| Message or symptom | What to do |
+| --- | --- |
+| **This Run's transcript is no longer in memory** | The Agent's Job ended or the transcript reached its size limit. Its Timeline row keeps its status and error. Ask the Agent to repeat the work if you need the details. |
+| A Run shows its tool calls but no text | The Agent's Claude Code version does not forward subagent text. The tool calls and the Timeline row are still complete. |
+| A Background Command shows no output | Its output stays inside the Agent's container. The Run reports how the command ended; ask the Agent to read the command's log if you need more. |
+
 ## Credential, Git and setup failures
 
 | Problem | Next action |

@@ -85,13 +85,21 @@ If the Agent is disabled, offline, building, awaiting container recreation or ap
 
 On the Agent page, **Recent jobs** lists recent work and its state, Turn count and cost. Click **Details** to read **Job details**, including setup output, process diagnostics and the Claude version. Use **Builds** to inspect image build output and **Usage** to review token and cost totals.
 
-The Task Timeline shows the human-facing result, files the Agent posts, its Questions and Surveys, expandable Thinking and Activity, the Runs it delegated, and Turn Summaries. Agent errors appear as System Comments. After a restart or lost connection, interrupted work can resume automatically; look for its recovery notice before sending duplicate instructions.
+The Task Timeline shows the human-facing result, files the Agent posts, its Questions and Surveys, expandable Thinking and Activity, a row for each Run it started, and Turn Summaries. Agent errors appear as System Comments. After a restart or lost connection, interrupted work can resume automatically; look for its recovery notice before sending duplicate instructions.
 
 ## Follow the Agent's Runs
 
-When the Agent delegates work to a subagent or leaves a command running in the background, a bar above the composer lists those Runs while they are going, with what each is doing, how long it has run and how many tools it used. Click one to read it live: the subagent's text and the tools it calls, without its Thinking. The bar also shows a Run that failed, and keeps it until you dismiss it, so you can read the error. The Timeline keeps a row for each Run with how it ended, and clicking the row opens the same view while the Run is still in memory. The transcript lives only while the Agent's Job does: after the Agent stops, the Timeline row remains.
+When the Agent hands work to a subagent or leaves a command running in the background, the bar above the composer lists those **Runs** while they are going. Each entry shows what the Run is doing, how long it has gone and how many tools it has called, with a spinner until it ends. The bar takes no space when there is nothing to show, and Wiki Chats show the same bar. The native app puts the same bar above the composer and opens a Run in a bottom sheet.
 
-Background commands keep their output inside the Agent's container; their row reports only how they ended. To watch a server or a long check, read the command's log in the container.
+![A Task with a Subagent Run and a Background Command in the bar above the composer](images/agent-sessions-and-queues/runs-bar.png)
+
+Click a Run to read it live: the subagent's text as it writes it, and the tools it calls, each one expanding to its input and output. Its Thinking stays out. The view follows the newest message while you stay at the bottom, and stops when you scroll up. Open **Prompt** to read what the Agent asked the subagent. When the Agent reports them, the Run's token count and cost appear under its title, and a tool call that started a nested Run offers **Open**, which switches the view to that Run.
+
+![The Run view with a subagent's text and tool calls](images/agent-sessions-and-queues/run-dialog.png)
+
+A Run that ends leaves the bar on its own. A failed Run stays, outlined in red, until you dismiss it with the **Dismiss** button on its entry, so that you can read its error. The Timeline keeps a row for every Run with how it ended, its duration and its tool count, and clicking a row opens the same view while the Run is still in memory.
+
+The transcript lives in memory for the length of the Agent's Job, and in your page for the length of the session: after a reload the bar shows only the Runs that are still going, and a Run that ended keeps its Timeline row alone. A Background Command keeps its output inside the Agent's container, so its entry reports how it ended and nothing more. To watch a server or a long check, read the command's log in the container.
 
 ## Related
 

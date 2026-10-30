@@ -18,7 +18,7 @@ Every active User can work on every Project and Wiki. Admins also configure acce
 1. [Getting started](getting-started.md): sign in and create your first useful Task.
 2. [Projects and boards](projects-and-boards.md): organize Tasks, Statuses and Tags.
 3. [Tasks and conversations](tasks-and-conversations.md): describe work, assign people, comment and attach files.
-4. [Agent sessions and queues](agent-sessions-and-queues.md): start, steer, stop and retry Agent work.
+4. [Agent sessions and queues](agent-sessions-and-queues.md): start, steer, stop and retry Agent work, and follow the Runs it delegates.
 5. [Agent questions and files](agent-questions-and-files.md): see files from the Agent, answer its Questions and run Surveys.
 6. [Wikis](wikis.md): ask questions and maintain shared knowledge.
 7. [Git repositories and pull requests](git-repositories.md): connect repositories and review changes.

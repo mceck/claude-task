@@ -37,6 +37,9 @@ These are the terms you will meet while using Claude Task.
 | Turn | A cycle of Agent work ending when it hands control back. |
 | Queue | An Agent's ordered list of waiting work. |
 | Held | Waiting work whose start failed and needs Retry or a new Comment. |
+| Run | A piece of work the Agent hands off while its Turn continues: a Subagent Run or a Background Command, listed in the bar above the composer. |
+| Subagent Run | A Run in which a subagent works on part of the Agent's task. Read its text and tool calls live from the bar. |
+| Background Command | A Run in which a command keeps going after the Agent has moved on; its entry reports how it ended. |
 | Credential | Named Claude authentication used by one or more Agents. |
 | Extension | A shared Skill, MCP Server or Plugin assigned to Agents. |
 | Development Service | A local database or tool available inside an Agent Container. |
