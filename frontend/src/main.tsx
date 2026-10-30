@@ -80,7 +80,7 @@ createRoot(document.getElementById('root')!).render(
         <TooltipProvider delayDuration={300}>
           <ConfirmProvider>
             <RouterProvider router={router} />
-            <Toaster position="bottom-right" />
+            <Toaster position="top-right" />
           </ConfirmProvider>
         </TooltipProvider>
       </QueryClientProvider>

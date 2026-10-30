@@ -12,6 +12,18 @@ Click a card on a Board. Use **Open full page** to open it as a page, or use **T
 
 The Conversation occupies the main panel by default, with Task details beside it. Use **Focus details** or **Focus activity** to choose the main panel. **Hide details**, **Show details**, **Hide activity** and **Show activity** control the other panel. This layout preference is remembered in your browser.
 
+## Keep conversations at hand
+
+Use **Minimize chat** in a Task's header, or in a Wiki Chat's header, to keep the conversation at the bottom of the window while you work elsewhere. The conversation leaves its page: a Task opened over the Board closes its dialog, a Task page returns to its Board, and a Wiki Chat returns to the Wikis list.
+
+![Minimized chats at the bottom of a Board](images/tasks-and-conversations/chat-dock.png)
+
+The newest conversation sits by the bottom-right corner. Click its bar to open or collapse it: the three most recent open, and older ones stay as title bars. **Open full page** takes a conversation back to its page and out of the Dock; **Close** removes it. A bar shows the Agent's avatar and state, the title, the Task Key or the Wiki's name, and a dot when there is something unread.
+
+An open conversation works like the page: Comments, the Active Runs bar, the Agent's live text and the composer, with Drafts and the read position shared. A collapsed one takes no room and marks nothing as read. The Dock stays above the composer of the page you are on, so you can still write there.
+
+The Dock remembers up to six conversations in your browser, survives reloads, and is cleared when you sign in or out. On windows narrower than 768 pixels it is hidden and **Minimize chat** is not offered.
+
 ## Describe and assign the work
 
 1. Edit the title at the top. Press Enter or click outside to save; Escape restores the previous title.

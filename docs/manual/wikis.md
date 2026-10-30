@@ -49,6 +49,8 @@ The list on the left shows the Wiki's Chats, the most recently active first. Eac
 
 All the Chats of a Wiki work in the same Repository, on the same Task Branch and the same pull request. A Chat you open later sees the files as they are now, which may have changed since you last wrote in it.
 
+Use **Minimize chat** in a Chat's header to keep it at the bottom of the window while you read another Chat: the Chat leaves the page and returns to the Wikis list, and the Dock keeps it at hand. Opening it from the Dock brings it back to its page. See [Keep conversations at hand](tasks-and-conversations.md#keep-conversations-at-hand).
+
 If the Agent's earlier conversation for a Chat is no longer available (for example after the Agent was rebuilt), the Chat says so and your next Comment starts a new conversation from the Chat's earlier Comments.
 
 ## Delete a Chat

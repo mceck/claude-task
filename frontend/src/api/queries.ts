@@ -237,9 +237,17 @@ export function useGitConnections(enabled: boolean) {
 export function useWikis() {
   return useQuery({ queryKey: keys.wikis, queryFn: () => get<{ wikis: Wiki[] }>('/wikis').then((r) => r.wikis) });
 }
-export function useWiki(id: string) {
-  return useQuery({ queryKey: keys.wiki(id), queryFn: () => get<{ wiki: Wiki }>(`/wikis/${id}`).then((r) => r.wiki) });
+export function useWiki(id: string | undefined) {
+  return useQuery({
+    queryKey: keys.wiki(id ?? ''),
+    queryFn: () => get<{ wiki: Wiki }>(`/wikis/${id}`).then((r) => r.wiki),
+    enabled: !!id,
+  });
 }
-export function useWikiChats(id: string) {
-  return useQuery({ queryKey: keys.wikiChats(id), queryFn: () => get<{ chats: WikiChat[] }>(`/wikis/${id}/chats`).then((r) => r.chats) });
+export function useWikiChats(id: string | undefined) {
+  return useQuery({
+    queryKey: keys.wikiChats(id ?? ''),
+    queryFn: () => get<{ chats: WikiChat[] }>(`/wikis/${id}/chats`).then((r) => r.chats),
+    enabled: !!id,
+  });
 }

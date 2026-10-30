@@ -1,6 +1,6 @@
 # Claude Task manual
 
-**Last updated:** 28 October 2026.
+**Last updated:** 30 October 2026.
 
 Claude Task is your team's shared board for planning work and working with Claude Code Agents. Organize Tasks, discuss them with colleagues, ask Agents to make changes, and maintain shared Wikis backed by Git repositories.
 

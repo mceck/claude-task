@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { errorMessage, post } from '../api/client';
 import { keys } from '../api/queries';
+import { clearDock } from '../lib/dock';
 import { clearCommentDrafts } from '../lib/drafts';
 import { ErrorText } from '../components/common';
 import { Logo } from '../components/Logo';
@@ -48,6 +49,7 @@ export function LoginPage() {
       const { user } = await post<MeResponse>('/auth/login', { email, password });
       qc.clear();
       clearCommentDrafts();
+      clearDock();
       qc.setQueryData(keys.me, user);
       const next = params.get('next');
       navigate(user.mustChangePassword ? '/change-password' : next?.startsWith('/') ? next : '/', { replace: true });

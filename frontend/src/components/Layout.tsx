@@ -19,8 +19,10 @@ import {
 import { cn } from '@/lib/utils';
 import { ApiError, post } from '../api/client';
 import { useMe, useProjects } from '../api/queries';
+import { clearDock } from '../lib/dock';
 import { clearCommentDrafts } from '../lib/drafts';
 import { realtime, useTopic } from '../lib/realtime';
+import { ChatDock } from './ChatDock';
 import { Loading, UserAvatar } from './common';
 import { Logo } from './Logo';
 import { VoiceBar } from './VoiceRoom';
@@ -68,7 +70,10 @@ export function Layout() {
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="min-h-0 min-w-0 flex-1 overflow-auto"><Outlet /></main>
+        <div className="relative flex min-h-0 min-w-0 flex-1">
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto"><Outlet /></main>
+          {ready && location.pathname !== '/change-password' && <ChatDock />}
+        </div>
         {ready && <VoiceBar />}
       </div>
     </div>
@@ -126,6 +131,7 @@ function UserMenu({ name, email, id, canChangePassword }: { name: string; email:
     voice.reset();
     qc.clear();
     clearCommentDrafts();
+    clearDock();
     navigate('/login');
   };
 

@@ -1,7 +1,7 @@
 import { AGENTS_TOPIC, taskTopic } from '@claude-task/shared';
 import type { Wiki, WikiChat } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, BookOpen, Loader2, MoreHorizontal, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, Loader2, MoreHorizontal, PanelBottomClose, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { del, errorMessage, patch, post } from '../api/client';
 import { Combobox } from '../components/Combobox';
 import { keys, useAgents, useRepositoryGroups, useTask, useTaskSession, useUsers, useWiki, useWikiChats, useWikis } from '../api/queries';
@@ -19,6 +20,7 @@ import { TaskActivity } from '../components/TaskActivity';
 import { SessionChip } from '../components/agents';
 import { useTopic } from '../lib/realtime';
 import { applyEvent } from '../lib/cache';
+import { minimizeInDock, removeFromDock, useDockAvailable } from '../lib/dock';
 import { applyLiveEvent } from '../lib/live';
 
 export function WikisPage() {
@@ -102,6 +104,7 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
   // The empty Chat reserved by New chat: it is listed only once it has a Comment.
   const [reserved, setReserved] = useState<WikiChat | null>(null);
   const reserving = useRef(false);
+  const dockable = useDockAvailable();
   const list = chats.data;
   const chat =
     (chatId && (list?.find((c) => c.id === chatId) ?? (reserved?.id === chatId ? reserved : undefined))) || list?.[0] || reserved || undefined;
@@ -110,6 +113,10 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
   const users = useUsers();
   useTopic(chat ? taskTopic(chat.id) : null);
   useTopic(AGENTS_TOPIC);
+  // The open Chat is not also in the Dock: opening it from there (or from anywhere) moves it back to the page.
+  useEffect(() => {
+    if (chat) removeFromDock(chat.id);
+  }, [chat?.id]);
   // A Wiki without Chats opens an empty composer, which needs a Task to post to.
   useEffect(() => {
     if (!list || chat || reserving.current) return;
@@ -270,6 +277,30 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
                   Retry
                 </Button>
               )}
+              {dockable && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Minimize chat"
+                      disabled={!task.data}
+                      onClick={() => {
+                        // The Dock keeps the conversation generation, so a later Delete Chat closes its panel.
+                        minimizeInDock({
+                          taskId: chat.id,
+                          wikiId: wiki.id,
+                          generation: task.data?.chatGeneration ?? 0,
+                        });
+                        navigate('/wikis');
+                      }}
+                    >
+                      <PanelBottomClose />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Minimize chat</TooltipContent>
+                </Tooltip>
+              )}
             </div>
           )}
           {!chat || task.isPending ? (
@@ -286,6 +317,7 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
               session={session.data}
               hideChanges
               readOnly={readOnly}
+              reserveDockSpace
             />
           )}
         </div>
