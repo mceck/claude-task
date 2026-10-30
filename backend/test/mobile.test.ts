@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { PushTransportError } from '../src/notifications/transport';
 import type { PushMessage, PushTransport } from '../src/notifications/transport';
 import { useTestApp } from './helpers/app';
-import { assignAgent, assignAndStart, comment, createAgent, createProject, createTask, createUser } from './helpers/fixtures';
+import { assignAgent, assignAndStart, comment, createAgent, createProject, createTask, createUser, moveToStatus, statusByName } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
 
@@ -114,6 +114,24 @@ describe('Task preferences and read positions', () => {
     // Reading on another User's Login leaves this User's count unchanged.
     expect((await admin.get(`/tasks/${task.id}/preferences`)).body.preference.unreadComments).toBe(3);
   });
+  it('reports a closed Task as read and stops counting its unread Comments', async () => {
+    const { admin, project, task, member } = await setup();
+    const pref = async () => (await member.client.get(`/tasks/${task.id}/preferences`)).body.preference;
+    await comment(admin, task.id, 'First');
+    await comment(admin, task.id, 'Second');
+    expect(await pref()).toMatchObject({ unread: true, unreadComments: 2 });
+
+    const bundle = (await admin.get(`/projects/${project.id}`)).body;
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    // Closing settles the conversation: the read position is untouched, but nothing is unread.
+    expect(await pref()).toMatchObject({ unread: false, unreadComments: 0, readPosition: '0' });
+    const [row] = (await member.client.get(`/projects/${project.id}/task-preferences`)).body.preferences;
+    expect(row).toMatchObject({ unread: false, unreadComments: 0 });
+
+    // Reopening restores the unread state computed from the same read position.
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Todo').id);
+    expect(await pref()).toMatchObject({ unread: true, unreadComments: 2, readPosition: '0' });
+  });
   it('counts Agent and System Comments while Revisions and Agent Items only affect unread state', async () => {
     const { admin, task, member } = await setup();
     const { agent, runner } = await createAgent(app, admin);
@@ -175,6 +193,23 @@ describe('durable phone notifications', () => {
     expect(push.messages[0]).toMatchObject({ taskId: task.id, kind: 'turn.completed' });
     await app.server.ctx.pushDispatcher.dispatch();
     expect(push.messages).toHaveLength(1);
+  });
+  it('never alerts for a Task in a closed Status, for Agent outcomes or mentions', async () => {
+    const { admin, project, task, member } = await setup();
+    await register(admin);
+    await register(member.client);
+    const { agent, runner } = await createAgent(app, admin);
+    await assignAndStart(admin, task.id, agent.id);
+    app.server.ctx.pushDispatcher.stop();
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.result()]);
+    await app.settle();
+
+    const bundle = (await admin.get(`/projects/${project.id}`)).body;
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    await admin.post(`/tasks/${task.id}/comments`, { body: `[@User](/users/${member.user.id})` });
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages).toEqual([]);
   });
   it('rechecks mute/unfollow/deactivation and expired Logins before dispatch', async () => {
     const { admin, task, member } = await setup();

@@ -65,9 +65,11 @@ export class PushDispatcher {
                 else p.following and not p.muted end) and u.active and not u.must_change_password
               and (e.kind <> 'comment.mentioned' or exists (select 1 from comments c
                 where c.id::text = substring(e.id from 9) and c.deleted_at is null))
+              and st.category <> 'closed'
               and l.expires_at > now() and v.user_id = d.user_id and v.token_hash = d.token_hash
               and e.created_at > now() - interval '24 hours') as valid
             from push_deliveries d join notification_events e on e.id = d.event_id
+            join tasks t on t.id = e.task_id join statuses st on st.id = t.status_id
             join push_devices v on v.id = d.device_id join users u on u.id = d.user_id
             join logins l on l.id = v.login_id
             left join task_preferences p on p.task_id = e.task_id and p.user_id = d.user_id

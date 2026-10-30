@@ -11,11 +11,15 @@ export async function preferences(db: Executor, userId: string, filter: { taskId
     unreadComments: number;
   }>(sql`select t.id as "taskId", coalesce(p.following, false) as following,
     coalesce(p.muted, false) as muted, coalesce(p.read_position, 0)::text as "readPosition",
-    coalesce(a.latest, 0)::text as "latestPosition", coalesce(a.latest, 0) > coalesce(p.read_position, 0) as unread,
-    (select count(*)::int from task_activity u join comments c on c.id = u.item_id
-      where u.task_id = t.id and c.task_id = t.id
-        and u.position > coalesce(p.read_position, 0) and c.deleted_at is null) as "unreadComments"
-    from tasks t left join task_preferences p on p.task_id = t.id and p.user_id = ${userId}::uuid
+    coalesce(a.latest, 0)::text as "latestPosition",
+    -- A Task in a closed Status has no unread state: closing it settles the conversation.
+    (s.category <> 'closed' and coalesce(a.latest, 0) > coalesce(p.read_position, 0)) as unread,
+    (case when s.category = 'closed' then 0 else
+      (select count(*)::int from task_activity u join comments c on c.id = u.item_id
+        where u.task_id = t.id and c.task_id = t.id
+          and u.position > coalesce(p.read_position, 0) and c.deleted_at is null) end) as "unreadComments"
+    from tasks t join statuses s on s.id = t.status_id
+    left join task_preferences p on p.task_id = t.id and p.user_id = ${userId}::uuid
     left join lateral (select max(position) as latest from task_activity where task_id = t.id) a on true
     where ${filter.taskId ? sql`t.id = ${filter.taskId}::uuid` : sql`t.project_id = ${filter.projectId}::uuid`}`);
   return result.rows;
