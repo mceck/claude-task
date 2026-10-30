@@ -114,6 +114,7 @@ func (j *job) run() {
 		}
 	}
 	j.fetchAttachments(worktree, m.AttachmentsToFetch)
+	j.emit("job.project_skills", map[string]any{"files": projectSkills(worktree)})
 	if err := j.spawn(worktree); err != nil {
 		j.fail("spawn", err)
 		return

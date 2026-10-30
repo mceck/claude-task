@@ -543,6 +543,8 @@ export const jobs = pgTable(
     claudeVersion: text('claude_version'),
     mcpServers: jsonb('mcp_servers').$type<unknown[]>(),
     slashCommands: jsonb('slash_commands').$type<string[]>(),
+    /** The Worktree's own user-invocable skills and commands, read before `claude` started. */
+    projectSkills: jsonb('project_skills').$type<{ name: string; description: string }[]>(),
     setupOutput: text('setup_output').notNull().default(''),
     stderr: text('stderr').notNull().default(''),
     exitCode: integer('exit_code'),

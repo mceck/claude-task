@@ -85,7 +85,7 @@ New output stays in view while you are at the bottom. Scroll up to read older ac
 
 When **Notify agent** appears after you change the title, description, priority or Tags, click it to send the changes the Agent has not seen. It is available for an existing idle or running Session. Editing a field by itself does not deliver those changes to the Agent.
 
-Type `/` to see the Agent's available commands and Skills. Use arrow keys and Enter or Tab to choose a suggestion, then finish and post the Comment. Native commands at the start of a Comment wait until the current Turn ends.
+Type `/` to see the Agent's available commands and Skills, including the ones the repository carries in its `.claude/skills` and `.claude/commands` folders. Repository Skills appear once the Agent has started working in the Task. Use arrow keys and Enter or Tab to choose a suggestion, then finish and post the Comment. Native commands at the start of a Comment wait until the current Turn ends.
 
 ## Review code changes
 

@@ -12,6 +12,7 @@ import type { JobRow } from '../modules/agents/service';
 import { applyProjection } from '../projection/apply';
 import { endJob, initialProjection, project } from '../projection/projector';
 import type { ProjectionState } from '../projection/projector';
+import { projectSkills } from '../sessions/project-skills';
 import { attachComments, enqueue } from '../sessions/queue';
 
 /** Setup output and stderr are kept up to this size (the tail). */
@@ -135,6 +136,11 @@ async function processJobMessage(
     case 'job.worktree_ready':
       if (msg.created && msg.remoteBranchMissing && session.started)
         await systemComment(tx, after, job.taskId, 'The previous remote task branch was not found. The worktree was recreated from the base branch.');
+      return;
+
+    case 'job.project_skills':
+      await tx.update(jobs).set({ projectSkills: projectSkills(msg.files) }).where(eq(jobs.id, job.id));
+      after.effect((ctx) => ctx.scheduler.publishTask(job.taskId));
       return;
 
     case 'job.accepted':

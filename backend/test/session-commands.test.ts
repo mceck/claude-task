@@ -21,6 +21,41 @@ describe('native commands in managed conversations', () => {
     expect(commands.every((c: { kind: string }) => c.kind === 'claude')).toBe(true);
   });
 
+  it("offers the Worktree's own skills and commands that the session loaded", async () => {
+    const admin = await app.admin();
+    const { agent, runner } = await createAgent(app, admin);
+    const { project } = await createProject(admin);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    runner.sendJob({
+      type: 'job.project_skills',
+      jobId: start.jobId,
+      files: [
+        { name: 'deploy', head: '---\ndescription: Deploy the service\n---\n# Deploy\n' },
+        { name: 'release', head: '# Release\n\nCut a release.\n' },
+        { name: 'deploy', head: '---\ndescription: The command of the same name\n---\n' },
+        { name: 'internal', head: '---\ndescription: Background knowledge\nuser-invocable: false\n---\n' },
+        { name: 'broken', head: '---\ndescription: [unclosed\n---\n' },
+        { name: 'unloaded', head: '---\ndescription: Not loaded by this CLI\n---\n' },
+        { name: 'clear', head: '---\ndescription: Replaces the conversation\n---\n' },
+      ],
+    });
+    await runner.drain();
+    // Before the session reports what it loaded, every project skill is offered.
+    const before = (await admin.get(`/tasks/${task.id}/session`)).body.session.commands;
+    expect(before.filter((c: { kind: string }) => c.kind === 'skill').map((c: { name: string }) => c.name)).toEqual(['deploy', 'release', 'unloaded']);
+
+    await runner.play(start.jobId, [{ ...new Stream().init(), slash_commands: ['compact', 'deploy', 'release', 'internal', 'clear'] }]);
+    const commands = (await admin.get(`/tasks/${task.id}/session`)).body.session.commands;
+    expect(commands).toEqual([
+      { name: 'deploy', description: 'Deploy the service', kind: 'skill' },
+      { name: 'release', description: 'Release', kind: 'skill' },
+      { name: 'compact', description: expect.any(String), kind: 'claude' },
+    ]);
+  });
+
   it('keeps commands and later comments in order, sends raw commands and renders local output exactly once', async () => {
     const admin = await app.admin();
     const { agent, runner } = await createAgent(app, admin);

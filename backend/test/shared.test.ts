@@ -31,6 +31,17 @@ describe('shared utilities', () => {
     expect(commands.filter((c) => c.kind === 'skill').map((c) => c.name).sort()).toEqual(['-check', '_lint']);
   });
 
+  it("gives a project skill's name to the Agent's skill of the same name", () => {
+    const commands = chatCommands(null, [{ name: 'deploy', description: 'Agent deploy' }], [
+      { name: 'deploy', description: 'Project deploy' },
+      { name: 'compact', description: 'Project compact' },
+    ]);
+    expect(commands.filter((c) => c.kind === 'skill')).toEqual([
+      { name: 'compact', description: 'Project compact', kind: 'skill' },
+      { name: 'deploy', description: 'Agent deploy', kind: 'skill' },
+    ]);
+  });
+
   it('preserves spaces at the end of a line inside a multiline quoted value', () => {
     expect(parseDotenv('FOO="a  \nb"')).toEqual({ ok: true, entries: [{ name: 'FOO', value: 'a  \nb' }] });
   });

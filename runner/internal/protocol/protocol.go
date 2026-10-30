@@ -81,6 +81,12 @@ type Hello struct {
 	ActiveJobID     *string `json:"activeJobId"`
 }
 
+// ProjectSkillFile is one skill or command of the Worktree in a job.project_skills.
+type ProjectSkillFile struct {
+	Name string `json:"name"`
+	Head string `json:"head"`
+}
+
 func UserMessage(content json.RawMessage) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"type":    "user",

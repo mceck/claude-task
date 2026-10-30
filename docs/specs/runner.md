@@ -72,6 +72,7 @@ Runner to backend:
 | `job.accepted` | Job id; seq | The Runner took the Job and starts preparing it. |
 | `job.worktree_ready` | Job id; seq; created; remote branch missing | The git Worktree is ready (sent only for Jobs with a git spec). |
 | `job.setup_output` | Job id; seq; chunk | Output of the git steps, the tool install and the Setup Script. |
+| `job.project_skills` | Job id; seq; files (name and beginning of each) | The Worktree's Project Skills, read right before `claude` starts (see [Project Skills](#project-skills)). |
 | `job.event` | Job id; seq; line | One raw stdout line of `claude`. |
 | `job.result` | Job id; seq; event seq | The `job.event` with that seq was a `result` line: a Turn ended. |
 | `job.stderr` | Job id; seq; chunk | `claude`'s stderr, plus the Runner's own notes about the Job. |
@@ -92,6 +93,7 @@ sequenceDiagram
   R->>R: git steps, tool install, Setup Script
   R->>B: job.setup_output ...
   R->>B: job.worktree_ready
+  R->>B: job.project_skills
   R->>C: spawn in the Worktree, write initial Message
   C-->>R: stdout lines
   R->>B: job.event (seq n)
@@ -157,6 +159,8 @@ The tool install and the Setup Script each:
 - end with their whole process group killed, so the Job ends even when they left a background process behind.
 
 **Attachments.** Before starting `claude`, the Runner downloads the `job.start` attachments into the Worktree. Each download uses the Runner token as bearer, has 5 minutes, writes to a temporary file and renames it into place. The backend serves only attachments of the Task of an active Job of this Agent, from non-internal, non-deleted Comments or from the Task description. A failed download is reported on stderr as a Runner note and the Job continues. Attachments of a `job.input` are downloaded the same way right before that Message is written.
+
+**Project Skills.** After the attachments, the Runner reads the Worktree's Project Skills and sends them in one `job.project_skills`, for every Job that gets this far, with or without a Repository, and with an empty list when there are none. It reads the files `claude` loads from the project: `.claude/skills/<name>/SKILL.md` first, then `.claude/commands/<name>.md`, each in name order. Symlinks are followed, as `claude` follows them, but only while they resolve inside the Worktree. Of each regular file it sends the name (the skill's directory or the command's file name without `.md`) and the first 8 KiB, cut on a character boundary, which is enough for the frontmatter and the first paragraph. It sends at most 200 files and skips unreadable ones silently. Parsing is the backend's job (see [Agent sessions](agent-sessions.md)), so the Runner needs no YAML parser and both ends parse skills the same way.
 
 ### Running claude
 
@@ -339,6 +343,7 @@ On the Agent Volume it relies on:
 - **Worktree work runs one at a time, in arrival order.** A removal and a new Job for the same Task can arrive back to back; ordering them, and making a removal wait for the Jobs on its Worktree, keeps a reopened Task from losing a freshly created Worktree.
 - **Files go up on request, over HTTP.** The backend asks with a small `job.upload` message and the Runner streams the files in a multipart POST, the mirror of attachment downloads. Large bytes stay off the WebSocket, whose messages are capped and resent after reconnects, and the request needs no seq because a lost one simply times out the tool call that asked for it.
 - **A Job arriving during a cancel waits for it.** The backend dispatches the next Queue Entry as soon as it cancels a Job, so the Runner lets the new Job wait out the cancel escalation rather than refusing it.
+- **Project Skills are read from the Worktree right before `claude` starts.** The Setup Script, or the Agent itself in an earlier Job, may add skills, and the Worktree can differ from the Base Branch, so reading the repository through the Git Provider would show a different set from the one `claude` loads. `system/init` lists command names, but with no descriptions and no way to tell a Project Skill from a bundled one. The Runner sends the files' beginnings rather than parsed fields because the backend already parses `SKILL.md` frontmatter for the catalog.
 - **The Runner probes the `claude` it will start, not the one on the Base Image.** A repository's mise configuration can override the pinned CLI in its Worktree, and `--forward-subagent-text` exists only from 2.1.211. Asking that executable for its version before each Job that wants the flag costs one short process per Job and keeps an older or unusual CLI from failing the Job on an unknown argument; caching the answer per Agent was rejected because a repository change can swap the CLI between Jobs without touching the Agent.
 
 ## Related specs

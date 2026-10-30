@@ -126,6 +126,13 @@ export type BackendToRunner =
 
 // Runner → Backend
 
+/** A skill (`.claude/skills/<name>/SKILL.md`) or a command (`.claude/commands/<name>.md`) of the Worktree. */
+export interface ProjectSkillFile {
+  name: string;
+  /** The beginning of the file, enough for its frontmatter and first paragraph. */
+  head: string;
+}
+
 /**
  * Every Job-scoped message carries `seq`: one counter per Job, starting at 1, shared by all
  * message types, so the backend processes them exactly once and in order. Unacked messages
@@ -133,6 +140,8 @@ export type BackendToRunner =
  */
 export type RunnerJobMessage =
   | { type: 'job.worktree_ready'; jobId: string; seq: number; created: boolean; remoteBranchMissing: boolean }
+  /** The Worktree's own skills and commands, read right before `claude` starts. */
+  | { type: 'job.project_skills'; jobId: string; seq: number; files: ProjectSkillFile[] }
   | { type: 'job.accepted'; jobId: string; seq: number }
   /** Worktree preparation and Setup Script output. */
   | { type: 'job.setup_output'; jobId: string; seq: number; chunk: string }
