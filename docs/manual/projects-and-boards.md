@@ -14,6 +14,17 @@ Use a Project to group related Tasks, then use its Board to track their progress
 
 The Project Key is permanent. A Project with Key `WEB` has Task Keys such as `WEB-1` and `WEB-2`. Deleted Task numbers are not reused.
 
+## See Project activity at a glance
+
+Every Project in the sidebar's **Boards** list shows what is happening without opening it:
+
+- A thin bar under the name splits the Project's Tasks: grey for open work (Backlog, Todo and In Progress), violet for review and green for Done. Closed Tasks are left out.
+- The number beside the bar counts open Tasks over the total in the bar, for example `7/23`.
+- A green dot means at least one Agent is running on that Project right now.
+- An orange message with a number means Tasks with entries you have not read. Tasks you muted and closed Tasks do not count.
+
+Hover a bar or the number for the exact count of each state. The cards on the **Projects** page show the same bar with the total Task count, the done percentage and a dot for each state.
+
 ## Read the Board
 
 Each column represents a Status. A new Project starts with this workflow:
