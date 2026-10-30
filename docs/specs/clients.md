@@ -226,6 +226,8 @@ Project Setup Scripts and Agent Instructions, and the non-Docker fields of an ex
 
 The web app uses a dark theme by default, with Light and System as alternatives in the User menu. The choice is stored per browser and applied before the first paint, so the first paint already uses it; when storage is unavailable the choice lasts for the open page. The UI kit and colour tokens are shared across pages.
 
+Dots showing an Agent's or a Session's state — on the Board cards, in the Agents list and on the Agent page, and in the Session chips of a Task or Wiki Chat — share one palette: green filled for a running Session, green hollow for an idle Agent, blue filled for a starting Session and for a Build in progress, amber filled for a paused Session, red filled for a failed Build, red hollow for a disabled Agent, and grey hollow for an offline Agent or a closed Session. Running and building dots pulse.
+
 #### Consistency under concurrent and out-of-order updates
 
 The web app keeps server data in a query cache that HTTP responses and events both write into. These rules keep it correct when requests, responses and events cross:
