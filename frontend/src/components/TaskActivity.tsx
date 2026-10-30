@@ -1,5 +1,5 @@
 import type { Tag, Status, Task, TaskSession, User } from '@claude-task/shared';
-import { useCallback, useEffect, useRef } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { put } from '../api/client';
 import { useTimeline } from '../api/queries';
@@ -19,15 +19,35 @@ interface Props {
   hideChanges: boolean;
   /** Replaces the composer with this reason when the conversation cannot be written in. */
   readOnly?: string;
+  /** The composer is bottom chrome of the page: the Chat Dock keeps its panels above it. */
+  reserveDockSpace?: boolean;
 }
 
+/** Set inside the Chat Dock, so a Dock panel's composer does not push the Dock around. */
+export const InDockContext = createContext(false);
+
 /** The Task's conversation: the Timeline, following new output while at the bottom, with the composer docked below. */
-export function TaskActivity({ task, statuses, tags, users, session, notice, hideChanges, readOnly }: Props) {
+export function TaskActivity({ task, statuses, tags, users, session, notice, hideChanges, readOnly, reserveDockSpace }: Props) {
   const draft = useCommentDraft(task.id);
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLDivElement>(null);
+  const inDock = useContext(InDockContext);
   const following = useRef(true);
   const markRead = useReadPosition(task.id, following);
+  // The Dock sits at the bottom of the page, where this composer is: publishing its height keeps the two apart.
+  useEffect(() => {
+    const el = composer.current;
+    if (!el || inDock || !reserveDockSpace) return;
+    const publish = () => document.documentElement.style.setProperty('--chat-composer-height', `${el.offsetHeight}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty('--chat-composer-height');
+    };
+  }, [inDock, reserveDockSpace]);
   useEffect(() => {
     const scroll = viewport.current!;
     const observer = new ResizeObserver(() => {
@@ -61,7 +81,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
           </StopFollowing.Provider>
         </div>
       </div>
-      <div className="shrink-0 border-t bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+      <div ref={composer} className="shrink-0 border-t bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
         <div className="mx-auto max-h-[45dvh] max-w-3xl space-y-3 overflow-y-auto">
           <ActiveRuns taskId={task.id} />
           {notice}

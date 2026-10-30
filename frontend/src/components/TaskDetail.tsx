@@ -3,7 +3,7 @@ import { BranchLink, PullRequestBadge, capitalize, withProvider } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { CircleCheck, Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { CircleCheck, Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelBottomClose, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { ApiError, del, errorMessage, patch, post } from '../api/client';
 import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
 import { removeCard, removeTask, setTask, toCard, upsertCard } from '../lib/cache';
+import { minimizeInDock, removeFromDock, useDockAvailable } from '../lib/dock';
 import { useTopic } from '../lib/realtime';
 import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
 import { RichMarkdownView } from './Markdown';
@@ -47,11 +48,16 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const layout = useTaskLayout();
   const [hideChanges, setHideChanges] = useState(true);
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
+  const dockable = useDockAvailable();
   const saves = useRef({ queue: Promise.resolve<unknown>(undefined), version: -1, count: 0, owners: new Map<string, number>() });
   // Values of saves still queued or in flight, shown over the Task meanwhile.
   const [pending, setPending] = useState<Fields>({});
   useTopic(task ? taskTopic(task.id) : null);
   useTopic(AGENTS_TOPIC);
+  // Shown on a page or in the Board dialog, the conversation is no longer minimized: it can't be in both places.
+  useEffect(() => {
+    if (task) removeFromDock(task.id);
+  }, [task?.id]);
 
   if (taskQuery.isPending) return <Loading className="h-full" />;
   const missing = taskQuery.error instanceof ApiError && taskQuery.error.status === 404;
@@ -213,6 +219,14 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     toast.success('Link copied');
   };
 
+  // Minimizing hands the conversation to the Dock and leaves the Task: the Board dialog closes, the Task page
+  // goes back to its Board. A conversation is either in the Dock or on a page, never both.
+  const minimize = () => {
+    minimizeInDock({ taskId: task.id });
+    if (onClose) onClose();
+    else navigate(`/p/${projectKey}`);
+  };
+
   const asideName = layout.focus === 'activity' ? 'details' : 'activity';
 
   return (
@@ -335,13 +349,31 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {dockable && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Minimize chat" onClick={minimize}>
+                  <PanelBottomClose />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Minimize chat</TooltipContent>
+            </Tooltip>
+          )}
           {onClose && <CloseButton onClose={onClose} />}
         </div>
       </div>
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <Panel id={`${task.key}-activity`} main={layout.focus === 'activity'} open={layout.sidebarOpen} wide>
-          <TaskActivity task={task} statuses={statuses} tags={tags} users={people} session={session.data} hideChanges={hideChanges} />
+          <TaskActivity
+            task={task}
+            statuses={statuses}
+            tags={tags}
+            users={people}
+            session={session.data}
+            hideChanges={hideChanges}
+            reserveDockSpace={layout.focus === 'activity' || layout.sidebarOpen}
+          />
         </Panel>
         <Panel id={`${task.key}-details`} main={layout.focus === 'details'} open={layout.sidebarOpen} className={cn(layout.focus === 'details' && 'order-first')}>
           <section aria-label="Task details" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
