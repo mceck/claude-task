@@ -20,7 +20,7 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities';
 import { useQueryClient } from '@tanstack/react-query';
 import { generateKeyBetween } from 'fractional-indexing';
-import { Flag, MessageSquare, Plus, Search, Settings, Tag as TagIcon, UserRound, X } from 'lucide-react';
+import { CircleCheck, Flag, MessageSquare, Plus, Search, Settings, Tag as TagIcon, UserRound, X } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
@@ -31,11 +31,12 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Label as FieldLabel } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
 import { keys, useAgents, useBoardTasks, useProject, useTaskPreferences, useUsers } from '../api/queries';
 import { AgentAvatar } from '../components/agents';
-import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, UserAvatar } from '../components/common';
+import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, useConfirm, UserAvatar } from '../components/common';
 import { MultiPick } from '../components/MultiPick';
 import { TaskDetail } from '../components/TaskDetail';
 import { compareCards, toCard, upsertCard } from '../lib/cache';
@@ -112,6 +113,7 @@ export function BoardPage() {
           <Board
             projectId={project!.id}
             columns={columns}
+            statuses={statuses}
             cards={tasks.data ?? []}
             preferences={preferenceByTask}
             filter={filter}
@@ -144,6 +146,8 @@ export function BoardPage() {
 interface BoardProps {
   projectId: string;
   columns: Status[];
+  /** Every Status, including the closed ones hidden from the board: cards still need the one to close into. */
+  statuses: Status[];
   cards: TaskCard[];
   preferences: Map<string, TaskPreference>;
   filter: BoardFilter;
@@ -155,13 +159,17 @@ interface BoardProps {
 
 type Columns = Record<string, string[]>;
 
-function Board({ projectId, columns, cards, preferences, filter, tags, users, selectedKey, onOpen }: BoardProps) {
+function Board({ projectId, columns, statuses, cards, preferences, filter, tags, users, selectedKey, onOpen }: BoardProps) {
   const qc = useQueryClient();
   const [drag, setDrag] = useState<{ activeId: string; columns: Columns } | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+
+  // Closing moves the Task to the first closed-category Status, which ends its Session.
+  const closedStatus = statuses.find((s) => s.category === 'closed');
+  const closedIds = useMemo(() => new Set(statuses.filter((s) => s.category === 'closed').map((s) => s.id)), [statuses]);
 
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const visible: Columns = useMemo(() => {
@@ -280,6 +288,7 @@ function Board({ projectId, columns, cards, preferences, filter, tags, users, se
                       tags={tags}
                       users={users}
                       selected={card.key === selectedKey}
+                      closedStatus={closedIds.has(card.statusId) ? undefined : closedStatus}
                       onOpen={onOpen}
                     />
                   ) : null;
@@ -374,6 +383,8 @@ interface CardProps {
   preference?: TaskPreference;
   tags: Tag[];
   users: User[];
+  /** Given only when the Task can be closed from here: there is a closed Status and the Task isn't in one. */
+  closedStatus?: Status;
   onOpen?: (key: string) => void;
   dragging?: boolean;
   selected?: boolean;
@@ -394,8 +405,10 @@ function SortableCard(props: CardProps) {
   );
 }
 
-function Card({ card, preference, tags, users, onOpen, dragging, selected }: CardProps) {
+function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, selected }: CardProps) {
   const agents = useAgents();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
   const agent = agents.data?.find((a) => a.id === card.agentId);
   const cardTags = card.tagIds.map((id) => tags.find((l) => l.id === id)).filter((l): l is Tag => !!l);
   const assignees = card.assigneeIds.map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u);
@@ -404,6 +417,27 @@ function Card({ card, preference, tags, users, onOpen, dragging, selected }: Car
   const commentsLabel = unreadComments > 0
     ? `${unreadComments} unread ${unreadComments === 1 ? 'comment' : 'comments'}`
     : `${card.commentCount} comments`;
+
+  const close = async () => {
+    if (!closedStatus) return;
+    const working = card.session && (card.session.state === 'running' || card.session.queuePosition !== null);
+    if (working) {
+      const ok = await confirm({
+        title: `Close ${card.key}?`,
+        description: `The agent is working on it: closing stops its work and ends the session. The task moves to “${closedStatus.name}”.`,
+        confirmLabel: 'Close task',
+      });
+      if (!ok) return;
+    }
+    try {
+      const { task } = await post<{ task: Task }>(`/tasks/${card.id}/move`, { statusId: closedStatus.id });
+      upsertCard(qc, toCard(task));
+    } catch (err) {
+      void qc.invalidateQueries({ queryKey: keys.tasks(card.projectId) });
+      toast.error(`Couldn’t close ${card.key}`, { description: errorMessage(err) });
+    }
+  };
+
   return (
     <article
       aria-label={card.key}
@@ -417,6 +451,26 @@ function Card({ card, preference, tags, users, onOpen, dragging, selected }: Car
       <div className="mb-1.5 flex items-center gap-1.5">
         <PriorityIcon priority={card.priority} />
         <span className="font-mono text-[11px] text-muted-foreground">{card.key}</span>
+        {closedStatus && !dragging && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Close task"
+                className="text-muted-foreground hover:bg-emerald-500/10 hover:text-emerald-500 dark:hover:bg-emerald-500/10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void close();
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <CircleCheck />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Move to “{closedStatus.name}” and end the agent session</TooltipContent>
+          </Tooltip>
+        )}
         {agent && <span aria-label={`Agent ${agent.name}: ${card.session?.queuePosition ? `queued #${card.session.queuePosition}` : card.session?.state ?? 'assigned'}`} className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
           <AgentAvatar agent={agent} size="xs" state={card.session?.state} />
           {card.session?.queuePosition ? `#${card.session.queuePosition}` : null}

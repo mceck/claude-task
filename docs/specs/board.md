@@ -208,6 +208,8 @@ The web Board of a Project shows:
 
 A card shows the priority icon, the Task Key, the assigned Agent's avatar with its Session state and Queue position (`#2`), up to three assignee avatars, the pull request badge, the title, the Tags, and the Comment count.
 
+A card also carries the same **Close** action as the Task view (accessible name "Close task"), next to the Task Key: it moves the Task to the first `closed`-category Status in Status order, which ends its Session. It appears while the Task is in a Status of another Category, and a tooltip names the target Status. While the Agent is working on the Task (Session running or queued) it asks for confirmation first, since closing cancels that work; otherwise it closes at once. Clicking it does not open the Task and does not start a drag.
+
 Cards are dragged with the mouse (after moving 5 pixels) or the keyboard. Crossing into another column places the card among that column's cards at the pointer; dropping it sends a move with the card's new neighbour. The Board updates immediately; if the move fails, only that card goes back, a "Couldn't move API-42" message explains why, and the Board reloads from the server.
 
 Clicking a card opens the Task in a large dialog over the Board, with the Task Key in the URL, so it can be shared and reopened. Every Task also has its own full page at `/t/<Task Key>`, and a "Copy link" action. Escape closes the dialog, except while a field inside it is being edited.
