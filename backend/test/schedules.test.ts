@@ -1,10 +1,12 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { sql } from 'drizzle-orm';
-import type { Comment, Schedule, ScheduleRun, Task } from '@claude-task/shared';
-import { describe, expect, it } from 'vitest';
+import type { Comment, JobStartMessage, Schedule, ScheduleRun, Task } from '@claude-task/shared';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import type { TestApp } from './helpers/app';
 import type { ApiClient } from './helpers/client';
-import { createAgent, createUser, getSession, timeline } from './helpers/fixtures';
+import { createAgent, createProject, createTag, createTask, createUser, getSession, statusByName, timeline } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 
 const MINUTE = 60_000;
@@ -94,8 +96,7 @@ describe('Schedules', () => {
     const [first] = (await timeline(admin, task.id)).filter((i) => i.type === 'comment').map((i) => (i as { comment: Comment }).comment);
     expect(first).toMatchObject({ kind: 'user', body: 'Review the open pull requests.', author: { type: 'system' } });
 
-    const start = await runner.next('job.start');
-    expect(start.taskId ?? task.id).toBe(task.id);
+    await runner.next('job.start');
     const after = (await admin.get(`/schedules/${schedule.id}`)).body.schedule as Schedule;
     expect(new Date(after.nextRunAt!).getTime()).toBeGreaterThan(afterDue(schedule).getTime());
     expect(after.lastRun?.state).toBe('running');
@@ -213,5 +214,122 @@ describe('Schedules', () => {
     expect((await admin.patch(`/tasks/${task.id}`, { version: task.version, title: 'Mine' })).status).toBe(403);
     expect((await admin.delete(`/tasks/${task.id}`)).status).toBe(403);
     expect((await admin.post(`/tasks/${task.id}/move`, { statusId: task.statusId })).status).toBe(403);
+  });
+});
+
+let appUrl = '';
+async function mcpClient(start: JobStartMessage): Promise<Client> {
+  const server = JSON.parse(start.claudeArgs.mcpConfig).mcpServers['claude-task'];
+  const url = new URL(server.url.replace('http://backend.test', appUrl));
+  const client = new Client({ name: 'test', version: '1' });
+  await client.connect(new StreamableHTTPClientTransport(url, { requestInit: { headers: server.headers } }));
+  return client;
+}
+
+async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
+  const res = (await client.callTool({ name, arguments: args })) as { content: { text: string }[]; isError?: boolean };
+  const text = res.content[0]!.text;
+  return { isError: res.isError ?? false, text, json: res.isError ? null : JSON.parse(text) };
+}
+
+const GLOBAL_TOOLS = ['assign_task_to_me', 'create_task_in_project', 'list_projects', 'set_task_status', 'start_task', 'update_task_by_key'];
+
+describe('Scheduled runs and the Task Tools', () => {
+  const app = useTestApp();
+  beforeAll(() => {
+    appUrl = app.url;
+  });
+
+  async function started(body: Record<string, unknown> = {}) {
+    const ctx = await setup(app, body);
+    const run = (await ctx.admin.post(`/schedules/${ctx.schedule.id}/run`)).body.run as ScheduleRun;
+    const start = await ctx.runner.next('job.start');
+    ctx.runner.accept(start.jobId);
+    await ctx.runner.drain();
+    return { ...ctx, run, start, client: await mcpClient(start) };
+  }
+
+  it('gives a global Schedule the global tools and no way to ask people', async () => {
+    const { client } = await started();
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining([...GLOBAL_TOOLS, 'get_task', 'list_tasks', 'send_files']));
+    expect(names).not.toContain('ask_question');
+    expect(names).not.toContain('create_survey');
+  });
+
+  it('gives a tied Schedule its own Project tools only, and no way to ask people', async () => {
+    const { client } = await started({ repository: { connectionId: 'env-github', providerRepoId: '1' } });
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    for (const global of GLOBAL_TOOLS) expect(names).not.toContain(global);
+    expect(names).not.toContain('ask_question');
+    expect(names).toContain('open_pull_request');
+  });
+
+  it('lets the scheduler, not the Agent, move and edit the Task of a run', async () => {
+    const { client } = await started();
+    expect((await call(client, 'set_status', { status_name: 'Succeeded' })).isError).toBe(true);
+    expect((await call(client, 'update_task', { title: 'Mine' })).isError).toBe(true);
+    expect((await call(client, 'create_task', { title: 'Mine' })).isError).toBe(true);
+  });
+
+  it('lets a global Agent read every board, edit Tasks, create Tasks, and assign itself and start them', async () => {
+    const admin = await app.admin();
+    const payments = await createProject(admin, { name: 'Payments', key: 'PAY' });
+    const web = await createProject(admin, { name: 'Web', key: 'WEB' });
+    await createTag(admin, web.project.id, 'bug');
+    const idle = await createTask(admin, payments.project.id, { title: 'Refund flow' });
+    const bug = await createTask(admin, web.project.id, { title: 'Broken footer' });
+    const { runner, agent, start, client } = await started();
+
+    const projects = await call(client, 'list_projects');
+    expect(projects.json.projects.map((p: { key: string }) => p.key)).toEqual(['PAY', 'WEB']);
+    expect((await call(client, 'list_tasks', { project: 'WEB' })).json.tasks.map((t: { key: string }) => t.key)).toEqual([bug.key]);
+    expect((await call(client, 'list_tasks', { project: 'NOPE' })).isError).toBe(true);
+    const read = await call(client, 'get_task', { key: bug.key });
+    expect(read.json.task).toMatchObject({ key: bug.key, title: 'Broken footer', yours: false });
+    expect(read.json.tags).toEqual(['bug']);
+
+    expect((await call(client, 'update_task_by_key', { key: bug.key, priority: 'high', tags: ['bug'] })).isError).toBe(false);
+    expect(((await admin.get(`/tasks/${bug.id}`)).body.task as Task).priority).toBe('high');
+    const revisions = (await admin.get(`/tasks/${bug.id}/timeline?limit=50`)).body.items;
+    expect(JSON.stringify(revisions)).toContain(agent.name);
+
+    const doing = statusByName(web, 'In Progress');
+    expect((await call(client, 'set_task_status', { key: bug.key, status_name: 'In Progress' })).isError).toBe(false);
+    expect(((await admin.get(`/tasks/${bug.id}`)).body.task as Task).statusId).toBe(doing.id);
+    expect((await call(client, 'set_task_status', { key: bug.key, status_name: 'Closed' })).isError).toBe(true);
+
+    const created = await call(client, 'create_task_in_project', { project: 'PAY', title: 'Follow-up' });
+    expect(created.json.created).toMatch(/^PAY-/);
+    expect((await call(client, 'create_task_in_project', { project: 'ZZZ', title: 'x' })).isError).toBe(true);
+
+    expect((await call(client, 'start_task', { key: idle.key, prompt: 'Go' })).isError).toBe(true);
+    expect((await call(client, 'assign_task_to_me', { key: idle.key })).isError).toBe(false);
+    expect(await getSession(admin, idle.id)).toMatchObject({ state: 'pending' });
+    expect(((await admin.get(`/tasks/${idle.id}`)).body.task as Task).agentId).toBe(agent.id);
+    expect((await call(client, 'start_task', { key: idle.key, prompt: 'Implement refunds.' })).isError).toBe(false);
+
+    // The started Task runs as an ordinary Task in the same Agent's Queue, after the run's own Job.
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.text('Started PAY work.'), s.result()]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    await runner.exit(start.jobId);
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(next.jobId).not.toBe(start.jobId);
+    expect(JSON.stringify(next.initialMessage)).toContain('Implement refunds.');
+  });
+
+  it('refuses a global Agent a Task that another Agent works on, and Tasks of Wikis and Schedules', async () => {
+    const admin = await app.admin();
+    const board = await createProject(admin, { name: 'Payments', key: 'PAY' });
+    const { agent: other } = await createAgent(app, admin, { name: 'Other Bot' });
+    const task = await createTask(admin, board.project.id, { title: 'Taken' });
+    await admin.patch(`/tasks/${task.id}`, { version: task.version, agentId: other.id });
+    const { client, run } = await started();
+    const taken = await call(client, 'assign_task_to_me', { key: task.key });
+    expect(taken.isError).toBe(true);
+    expect(taken.text).toContain('Other Bot');
+    const own = (await admin.get(`/tasks/${run.taskId}`)).body.task as Task;
+    expect((await call(client, 'update_task_by_key', { key: own.key, title: 'x' })).isError).toBe(true);
   });
 });

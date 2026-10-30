@@ -52,6 +52,34 @@ describe('Git Proxy', () => {
   /** git as the Agent would run it, failing loudly with its stderr. */
   const run = (cwd: string, ...args: string[]) => gitAsync(cwd, '-c', 'user.name=Agent', '-c', 'user.email=agent@example.com', ...args);
 
+  it('fetches but never pushes for the Jobs of a read-only Schedule', async () => {
+    const admin = await app.admin();
+    const { agent, runner } = await createAgent(app, admin);
+    const created = await admin.post('/schedules', {
+      name: 'Read only review',
+      agentId: agent.id,
+      cron: '0 3 * * *',
+      prompt: 'Look at the code.',
+      readOnly: true,
+      repository: { connectionId: 'env-github', providerRepoId: '1' },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect((await admin.post(`/schedules/${created.body.schedule.id}/run`)).status).toBe(201);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.play(start.jobId, [new Stream(start.sessionId).init()]);
+    const url = `${app.url}/git/${created.body.schedule.projectId}.git`.replace('http://', `http://claude-task:${start.git!.token}@`);
+    const repo = path.join(work, 'repo');
+    expect((await run(work, 'clone', '-q', url, repo)).ok).toBe(true);
+    const branch = start.git!.taskBranch;
+    await run(repo, 'checkout', '-q', '-b', branch);
+    await run(repo, 'commit', '-q', '--allow-empty', '-m', 'work');
+    const pushed = await run(repo, 'push', 'origin', branch);
+    expect(pushed.ok).toBe(false);
+    expect(pushed.output).toContain('claude-task: this schedule is read-only');
+    expect(upstream.rev('acme', 'example', `refs/heads/${branch}`)).toBeFalsy();
+  });
+
   it('dispatches the proxy URL with the Job token, never a provider credential', async () => {
     const { project, start } = await running();
     expect(start.git).toMatchObject({ cloneUrl: `http://backend.test/git/${project.id}.git`, repositoryId: 'env-github/1' });
