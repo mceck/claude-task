@@ -1,3 +1,4 @@
+import { ScheduleRunPage, SchedulePage, SchedulesPage } from './pages/SchedulesPage';
 import { WikisPage, WikiPage } from './pages/WikisPage';
 import { GitConnectionsPage } from './pages/GitConnectionsPage';
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -62,6 +63,9 @@ const router = createBrowserRouter([
       { path: '/wikis', element: <WikisPage /> },
       { path: '/wikis/:wikiId', element: <WikiPage /> },
       { path: '/wikis/:wikiId/chats/:chatId', element: <WikiPage /> },
+      { path: '/schedules', element: <SchedulesPage /> },
+      { path: '/schedules/:scheduleId', element: <SchedulePage /> },
+      { path: '/schedules/:scheduleId/runs/:taskKey', element: <ScheduleRunPage /> },
       { path: '/agents', element: <AgentsPage /> },
       { path: '/agents/:agentId', element: <AgentPage /> },
       { path: '/admin/credentials', element: <CredentialsPage /> },

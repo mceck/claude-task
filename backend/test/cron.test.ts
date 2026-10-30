@@ -1,4 +1,4 @@
-import { nextCronRun, parseCron } from '@claude-task/shared';
+import { describeCron, nextCronRun, parseCron } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 
 const next = (expr: string, tz: string, after: string) => nextCronRun(expr, tz, new Date(after))?.toISOString();
@@ -56,5 +56,21 @@ describe('cron expressions', () => {
     for (const bad of ['', '* * * *', '* * * * * *', '60 * * * *', '* 24 * * *', '* * 0 * *', '* * * 13 *', '* * * * 8', '*/0 * * * *', '5-1 * * * *', 'a * * * *', '0 0 31 2 *'])
       expect(parseCron(bad), bad).toBeNull();
     expect(nextCronRun('0 9 * * *', 'Mars/Olympus', new Date())).toBeNull();
+  });
+});
+
+describe('describing cron expressions', () => {
+  it.each([
+    ['*/15 * * * *', 'Every 15 minutes'],
+    ['0 * * * *', 'Every hour'],
+    ['30 * * * *', 'Every hour at minute 30'],
+    ['0 9 * * *', 'Every day at 09:00'],
+    ['30 6 * * 1-5', 'Monday to Friday at 06:30'],
+    ['0 8 * * 1,3', 'Every Monday, Wednesday at 08:00'],
+    ['0 3 1 * *', 'Day 1 of every month at 03:00'],
+    ['0 9,17 * * *', '0 9,17 * * *'],
+    ['nonsense', 'nonsense'],
+  ])('reads %s as %s', (expression, words) => {
+    expect(describeCron(expression)).toBe(words);
   });
 });

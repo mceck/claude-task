@@ -174,3 +174,30 @@ export function isTimeZone(timeZone: string): boolean {
     return false;
   }
 }
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** A short reading of the common shapes of expression; anything else is shown as the expression itself. */
+export function describeCron(expression: string): string {
+  const spec = parseCron(expression);
+  const fields = expression.trim().split(/\s+/);
+  if (!spec) return expression;
+  const [minute, hour, dom, month, dow] = fields as [string, string, string, string, string];
+  const everyDay = dom === '*' && month === '*';
+  const step = /^\*\/(\d+)$/.exec(minute);
+  if (step && hour === '*' && everyDay && dow === '*') return `Every ${step[1]} minutes`;
+  if (minute === '*' && hour === '*' && everyDay && dow === '*') return 'Every minute';
+  const single = /^\d+$/.test(minute) && /^\d+$/.test(hour);
+  if (/^\d+$/.test(minute) && hour === '*' && everyDay && dow === '*') return minute === '0' ? 'Every hour' : `Every hour at minute ${minute}`;
+  if (!single) return expression;
+  const time = `${pad(Number(hour))}:${pad(Number(minute))}`;
+  if (everyDay && dow === '*') return `Every day at ${time}`;
+  if (everyDay && !spec.domRestricted) {
+    const days = [...spec.daysOfWeek].sort((a, b) => a - b);
+    if (days.join() === '1,2,3,4,5') return `Monday to Friday at ${time}`;
+    return `Every ${days.map((d) => WEEKDAYS[d]).join(', ')} at ${time}`;
+  }
+  if (month === '*' && dow === '*' && /^\d+$/.test(dom)) return `Day ${dom} of every month at ${time}`;
+  return expression;
+}

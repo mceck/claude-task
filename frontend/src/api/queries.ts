@@ -1,4 +1,6 @@
 import type {
+  Schedule,
+  ScheduleRun,
   Wiki,
   WikiChat,
   Agent,
@@ -31,6 +33,9 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { get } from './client';
 
 export const keys = {
+  schedules: ['schedules'] as const,
+  schedule: (id: string) => ['schedules', id] as const,
+  scheduleRuns: (id: string) => ['schedules', id, 'runs'] as const,
   wikis: ['wikis'] as const,
   wiki: (id: string) => ['wiki', id] as const,
   /** Under the wiki key, so a wiki change refetches it too. */
@@ -244,6 +249,24 @@ export function useRepositorySettings(projectId: string) {
 }
 export function useGitConnections(enabled: boolean) {
   return useQuery({ queryKey: ['git-connections'], queryFn: () => get<{ connections: GitConnection[] }>('/git/connections').then((r) => r.connections), enabled });
+}
+
+export function useSchedules() {
+  return useQuery({ queryKey: keys.schedules, queryFn: () => get<{ schedules: Schedule[] }>('/schedules').then((r) => r.schedules) });
+}
+export function useSchedule(id: string | undefined) {
+  return useQuery({
+    queryKey: keys.schedule(id ?? ''),
+    queryFn: () => get<{ schedule: Schedule }>(`/schedules/${id}`).then((r) => r.schedule),
+    enabled: !!id,
+  });
+}
+export function useScheduleRuns(id: string | undefined) {
+  return useQuery({
+    queryKey: keys.scheduleRuns(id ?? ''),
+    queryFn: () => get<{ runs: ScheduleRun[] }>(`/schedules/${id}/runs`).then((r) => r.runs),
+    enabled: !!id,
+  });
 }
 
 export function useWikis() {
