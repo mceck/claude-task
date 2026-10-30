@@ -1,4 +1,4 @@
-import { importEnvBody, parseDotenv, putEnvVarBody, updateAgentSettingsBody, ENV_VAR_NAME } from '@claude-task/shared';
+import { importEnvBody, parseDotenv, putEnvVarBody, updateAgentSettingsBody, ENV_VAR_NAME, ENV_VALUE_MAX, RESERVED_ENV_NAME } from '@claude-task/shared';
 import type { ProjectAgentSettings, ProjectEnvVar } from '@claude-task/shared';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -15,9 +15,9 @@ const projectParams = z.object({ projectId: idOrKey });
 const envParams = z.object({ projectId: idOrKey, name: z.string().regex(ENV_VAR_NAME) });
 
 /** Names the platform sets itself; a Project can't override them. */
-const RESERVED = /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|CLAUDE_CODE_RESUME_INTERRUPTED_TURN|CLAUDE_TASK_.*|HOME|PATH|USER)$/;
+const RESERVED = RESERVED_ENV_NAME;
 const MAX_IMPORT = 500;
-const MAX_VALUE = 100_000;
+const MAX_VALUE = ENV_VALUE_MAX;
 
 function serializeEnvVar(r: typeof projectEnvVars.$inferSelect): ProjectEnvVar {
   return { id: r.id, name: r.name, secret: r.secret, value: r.secret ? null : r.value, last4: r.secret ? r.last4 : null };

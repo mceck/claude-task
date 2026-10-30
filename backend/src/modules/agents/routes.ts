@@ -191,6 +191,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
             description: source.description,
             dockerfile: source.dockerfile,
             services: source.services,
+            env: source.env,
             credentialId: source.credentialId,
             model: source.model,
             effort: source.effort,

@@ -574,7 +574,7 @@ class _SettingsHub extends StatelessWidget {
                   color: Palette.warning,
                 ),
                 title: 'Credentials',
-                subtitle: 'Claude tokens and API keys used by Agents',
+                subtitle: 'Claude tokens, auth tokens and API keys used by Agents',
                 onTap: () => open(_CredentialsSettings(controller: c)),
               ),
               AppTile(
@@ -1128,6 +1128,17 @@ class _AgentsSettings extends StatelessWidget {
             initial: (a?['systemPrompt'] as String?) ?? '',
             lines: 5,
           ),
+          _Text(
+            'env',
+            'Environment variables',
+            initial: formatAgentEnv(
+              (a?['env'] as Json?) ?? const <String, dynamic>{},
+            ),
+            lines: 5,
+            hint:
+                'One NAME=value per line. Applied to every Job; wins over '
+                'Project variables. Stored in plain text.',
+          ),
           _Toggle('enabled', 'Enabled', a?['enabled'] != false),
           for (final (key, label, entries) in [
             ('skillIds', 'Skills', skills),
@@ -1151,6 +1162,7 @@ class _AgentsSettings extends StatelessWidget {
           'effort': (v['effort'] as String).isEmpty ? null : v['effort'],
           'permissionMode': v['permissionMode'],
           'systemPrompt': v['systemPrompt'],
+          'env': parseAgentEnvText(v['env'] as String),
           'enabled': v['enabled'],
           for (final key in ['skillIds', 'mcpServerIds', 'pluginIds'])
             if (previous == null ||
@@ -1474,6 +1486,7 @@ class _CredentialsSettings extends StatelessWidget {
     const kinds = [
       ('claude_oauth_token', 'Claude token'),
       ('anthropic_api_key', 'API key'),
+      ('anthropic_auth_token', 'Auth token'),
     ];
     String kindLabel(String? k) =>
         kinds.where((e) => e.$1 == k).firstOrNull?.$2 ?? '$k';

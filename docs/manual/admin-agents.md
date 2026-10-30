@@ -10,7 +10,7 @@ An Agent handles one Job at a time. Add another Agent when you need work to run 
 
 1. Open **Credentials** and click **New credential**.
 2. Enter **Name** so your team can identify it.
-3. Choose **Kind**: **Claude OAuth token (claude setup-token)** or **Anthropic API key**.
+3. Choose **Kind**: **Claude OAuth token (claude setup-token)**, **Anthropic API key** or **Anthropic auth token**. Use the auth token for Anthropic-compatible gateways that expect a bearer token, such as OpenRouter; set the endpoint with the Agent's `ANTHROPIC_BASE_URL` environment variable.
 4. Enter **Secret** and click **Save credential**.
 
 The saved secret cannot be read back. You see its kind, a last-four-character hint for secrets at least 12 characters long, the Agents using it and any observed rate limit. Agents sharing a Credential share its provider limits.
@@ -36,6 +36,7 @@ Creation starts an image Build. Open **Builds** to follow the log. Once its cont
 | **Effort** | Default, `low`, `medium`, `high`, `xhigh` or `max`. |
 | **Permission mode** | Claude Code's execution mode: `bypassPermissions`, `auto`, `acceptEdits` or `dontAsk`. Default is `bypassPermissions`. |
 | **System prompt** | The Agent's instructions, added to the platform and Project instructions. |
+| **Environment variables** | One `NAME=value` per line, applied to every Job and winning over the Project's variables, e.g. `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL` or `ENABLE_TOOL_SEARCH`. Plain text; keep secrets in a Credential or a Project secret. |
 | **CPU limit** | Fractional CPU allowance, up to 256; empty means no limit. |
 | **Memory (MB)** | Memory allowance from 256 to 1,048,576 MB; empty means no limit. |
 | **Enabled** | Allows new Jobs to start. Turning it off lets the current Job finish and keeps queued work. |
@@ -66,7 +67,7 @@ In the web app, open the Agent's **Configuration** tab. General settings and Ext
 
 | Change | When it applies |
 | --- | --- |
-| Credential, model, effort, permission mode or System prompt | Next Job. |
+| Credential, model, effort, permission mode, System prompt or Environment variables | Next Job. |
 | Skills, MCP servers or Plugins | Before the next Job, after synchronization succeeds. |
 | Dockerfile or Services | Starts a Build; switches containers when the current Job finishes. |
 | CPU or memory limit | Recreates the container when idle, without a Build. |
@@ -78,7 +79,7 @@ A failed Build leaves the previous successful container available. Fix the Docke
 
 On a phone, tap the app icon in **Projects** or **Wiki** and choose **Agents** from the drawer. On desktop, open **Settings** → **Agents**.
 
-Admins can choose **New agent** or open an existing Agent. Fill in its name, emoji, color, description, Credential, model, effort, permission mode, System prompt and Enabled choice. Select any **Skills**, **MCP Servers** and **Plugins** it needs from the shared catalog. Choose **Create agent** or **Save agent** to apply the form.
+Admins can choose **New agent** or open an existing Agent. Fill in its name, emoji, color, description, Credential, model, effort, permission mode, System prompt, Environment variables and Enabled choice. Select any **Skills**, **MCP Servers** and **Plugins** it needs from the shared catalog. Choose **Create agent** or **Save agent** to apply the form.
 
 New Agents use the default Dockerfile. Use the web app to configure Dockerfiles, Development Services and resource limits, or inspect Builds and container logs. The native form also offers **Duplicate**, **Delete agent** and **Manage shared Extensions**. Save your edits before opening the shared catalog.
 

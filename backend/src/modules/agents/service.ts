@@ -115,6 +115,7 @@ export async function loadAgents(db: Executor, isConnected: (agentId: string) =>
       description: a.description,
       dockerfile: a.dockerfile,
       services: a.services,
+      env: a.env,
       credentialId: a.credentialId,
       credentialName,
       model: a.model,

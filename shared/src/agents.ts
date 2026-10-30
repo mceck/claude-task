@@ -19,8 +19,14 @@ export const AGENT_SERVICE_INFO: Record<AgentService, { name: string; descriptio
   chrome: { name: 'Chrome', description: 'Chromium, started on demand · `chromium` on PATH · used by the Playwright MCP server' },
 };
 
-export const CREDENTIAL_KINDS = ['claude_oauth_token', 'anthropic_api_key'] as const;
+export const CREDENTIAL_KINDS = ['claude_oauth_token', 'anthropic_api_key', 'anthropic_auth_token'] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
+
+export const CREDENTIAL_KIND_LABELS: Record<CredentialKind, string> = {
+  claude_oauth_token: 'Claude OAuth token',
+  anthropic_api_key: 'Anthropic API key',
+  anthropic_auth_token: 'Anthropic auth token',
+};
 
 /** The secret itself is write-only: only its last 4 characters come back. */
 export interface Credential {
@@ -71,6 +77,8 @@ export interface Agent extends AgentRef {
   extensionsError: string | null;
   description: string;
   dockerfile: string;
+  /** Plain name/value pairs merged into every Job of this Agent; they win over the Project's. */
+  env: Record<string, string>;
   credentialId: string;
   credentialName: string;
   model: string | null;

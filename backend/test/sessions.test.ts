@@ -9,6 +9,7 @@ import {
   assignAgent, assignAndStart,
   comment,
   createAgent,
+  createCredential,
   createTag,
   createProject,
   createTask,
@@ -42,6 +43,17 @@ async function startAndFinish(client: ApiClient, runner: FakeRunner, taskId: str
 describe('assignment and the first Job', () => {
   const app = useTestApp();
 
+  it('passes an Anthropic auth token as ANTHROPIC_AUTH_TOKEN', async () => {
+    const admin = await app.admin();
+    const credential = await createCredential(admin, { kind: 'anthropic_auth_token', secret: 'sk-or-v1-secret-1234' });
+    const { project } = await createProject(admin);
+    const { agent, runner } = await createAgent(app, admin, { credentialId: credential.id });
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    expect(start.env).toEqual({ ANTHROPIC_AUTH_TOKEN: 'sk-or-v1-secret-1234' });
+  });
+
   it("doesn't start the Agent on assignment, only on the first User Comment", async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id, { title: 'Wait for me' });
@@ -61,7 +73,19 @@ describe('assignment and the first Job', () => {
     await admin.patch(`/projects/${project.id}/agent-settings`, { setupScript: 'npm ci', agentInstructions: 'Use pnpm.' });
     await admin.put(`/projects/${project.id}/env/API_URL`, { value: 'https://staging.example.com' });
     await admin.put(`/projects/${project.id}/env/STRIPE_KEY`, { value: 'sk_test_supersecret', secret: true });
-    await admin.patch(`/agents/${agent.id}`, { model: 'opus', effort: 'high', permissionMode: 'acceptEdits', systemPrompt: 'Always write tests.' });
+    await admin.put(`/projects/${project.id}/env/ANTHROPIC_MODEL`, { value: 'project-model' });
+    await admin.put(`/projects/${project.id}/env/ENABLE_TOOL_SEARCH`, { value: 'true' });
+    await admin.patch(`/agents/${agent.id}`, {
+      model: 'opus',
+      effort: 'high',
+      permissionMode: 'acceptEdits',
+      systemPrompt: 'Always write tests.',
+      env: {
+        ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+        ANTHROPIC_MODEL: 'agent-model',
+        ENABLE_TOOL_SEARCH: 'false',
+      },
+    });
     const tag = await createTag(admin, project.id, 'backend');
     const task = await createTask(admin, project.id, { title: 'Fix login redirect', description: 'After login we land on /.', priority: 'high', tagIds: [tag.id] });
     await comment(admin, task.id, 'It happens on Safari only.');
@@ -83,6 +107,10 @@ describe('assignment and the first Job', () => {
       CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-secret-value-1234',
       API_URL: 'https://staging.example.com',
       STRIPE_KEY: 'sk_test_supersecret',
+      ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+      // The Agent's environment is more specific than the Project's.
+      ANTHROPIC_MODEL: 'agent-model',
+      ENABLE_TOOL_SEARCH: 'false',
     });
     expect(start.claudeArgs.appendSystemPrompt).toContain('You are Ada Bot');
     expect(start.claudeArgs.appendSystemPrompt).toContain(task.key);

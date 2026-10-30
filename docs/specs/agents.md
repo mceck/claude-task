@@ -5,7 +5,8 @@ Agents are the platform's Claude Code workers. This area covers an **Agent** as 
 ## Concepts
 
 - An **Agent** is global: it is assignable to any Task in any Project, and to a Wiki. Admins configure it; every User sees it. Each Agent runs in exactly one Agent Container and works on one Job at a time.
-- A **Credential** is a named Claude secret, either a Claude OAuth token (from `claude setup-token`) or an Anthropic API key. Every Agent uses exactly one Credential; one Credential can serve many Agents, which then share its rate limits.
+- A **Credential** is a named Claude secret: a Claude OAuth token (from `claude setup-token`), an Anthropic API key, or an Anthropic auth token for an `ANTHROPIC_AUTH_TOKEN` gateway such as OpenRouter. Every Agent uses exactly one Credential; one Credential can serve many Agents, which then share its rate limits.
+- The **Agent environment** is the set of plain environment variables an Agent applies to every one of its Jobs, e.g. `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL` or `ENABLE_TOOL_SEARCH`. It is more specific than the Project's environment variables, and it is sent inside each Job's payload, never as container environment.
 - The **Base Image** (`claude-task/agent-base`) is the platform-provided image every Agent's environment builds on. It carries the default `claude` CLI, the Runner, the git credential helper, mise, the development-service scripts and the non-root `agent` user.
 - The **Platform Version** is the Base Image's version. It combines the default Claude Code version with a fingerprint of the Base Image recipe, its scripts and the Runner sources, so any change to one of them produces a new version.
 - An **Agent Image** is built from the Agent's own Dockerfile on top of the Base Image at the current Platform Version. A **Build** is one attempt to produce it, with its log and outcome.
@@ -48,6 +49,7 @@ An Admin creates an Agent from the Agents page. The fields and their rules:
 | Description | up to 2,000 characters | empty |
 | Credential | an existing Credential | required |
 | Model | 1 to 100 characters, passed to `claude` as is | empty, meaning Claude's default |
+| Environment | up to 100 plain name/value pairs; names follow the shell-variable rule and the platform's own names are rejected (see [Project environment variables](#project-environment-variables)); values up to 100,000 characters | empty |
 | Effort | `low`, `medium`, `high`, `xhigh` or `max` | empty, meaning Claude's default |
 | Permission mode | `bypassPermissions`, `auto`, `acceptEdits` or `dontAsk` | `bypassPermissions` |
 | System prompt | up to 50,000 characters, appended after the platform and Project sections of the Job's system prompt | empty |
@@ -75,7 +77,7 @@ Docker configuration groups the Dockerfile, Development Services and CPU and mem
 | Dockerfile (when its text differs) or services (when the selection differs) | A new Build starts; on success the container is recreated once the Agent is idle |
 | CPU or memory limit | The container is recreated once the Agent is idle, with no Build |
 | Skills, MCP servers or Plugins selection | An Extension synchronization runs before the Agent's next Job |
-| Credential, model, effort, permission mode, system prompt, name | Applies from the next Job, since these travel with each Job |
+| Credential, model, effort, permission mode, system prompt, environment, name | Applies from the next Job, since these travel with each Job |
 | Enabled | Switching it off stops new Jobs; switching it on lets the Agent dispatch again right away |
 | Description, avatar | Display only |
 
@@ -89,7 +91,7 @@ An Admin uploads, replaces or removes the avatar image from the web Configuratio
 
 ### Duplicating an Agent
 
-An Admin duplicates an Agent to add throughput with the same environment. The copy takes every setting of the source: avatar (with its own copy of the image), description, Dockerfile, services, Credential, model, effort, permission mode, system prompt, limits, enabled flag and Extensions selection. Its name is the one given, or the first free one of "‹name› (copy)", "‹name› (copy 2)", and so on, shortened to fit 100 characters. The copy gets its own Build, container and empty Agent Volume; Sessions, Queue and history stay with the source.
+An Admin duplicates an Agent to add throughput with the same environment. The copy takes every setting of the source: avatar (with its own copy of the image), description, Dockerfile, services, environment, Credential, model, effort, permission mode, system prompt, limits, enabled flag and Extensions selection. Its name is the one given, or the first free one of "‹name› (copy)", "‹name› (copy 2)", and so on, shortened to fit 100 characters. The copy gets its own Build, container and empty Agent Volume; Sessions, Queue and history stay with the source.
 
 ### Disabling an Agent
 
@@ -144,12 +146,12 @@ Changes to an Agent, its Builds, its Queue and its Jobs reach open clients in re
 
 Admins manage Credentials on the Credentials page.
 
-- **Create**: a name (1 to 100 characters, unique ignoring case), a kind (Claude OAuth token or Anthropic API key) and the secret (8 to 10,000 characters, trimmed).
+- **Create**: a name (1 to 100 characters, unique ignoring case), a kind (Claude OAuth token, Anthropic API key or Anthropic auth token) and the secret (8 to 10,000 characters, trimmed).
 - **Read**: every response carries the name, kind, the last four characters of the secret, the Agents using it, and the latest rate-limit status observed on any of those Agents. The last four characters are shown only for secrets of 12 characters or more; shorter secrets show an empty hint, since four characters would reveal most of them.
 - **Edit and rotate**: the name and the secret can change; the kind is fixed at creation. Rotating keeps the Credential's identity, so every Agent using it picks up the new secret on its next Job without any reconfiguration or rebuild.
 - **Delete**: allowed while no Agent uses it. A Credential in use is answered with `409` naming its Agents, and the delete button is disabled with a hint to change those Agents' Credential first.
 
-The platform stores the secret as given and checks it on first use: an authentication or billing error in a Job becomes a System Comment naming the Credential (see [Agent sessions](agent-sessions.md)). Each Job receives the secret as the environment variable `claude` reads for its kind: `CLAUDE_CODE_OAUTH_TOKEN` for an OAuth token, `ANTHROPIC_API_KEY` for an API key.
+The platform stores the secret as given and checks it on first use: an authentication or billing error in a Job becomes a System Comment naming the Credential (see [Agent sessions](agent-sessions.md)). Each Job receives the secret as the environment variable `claude` reads for its kind: `CLAUDE_CODE_OAUTH_TOKEN` for an OAuth token, `ANTHROPIC_API_KEY` for an API key and `ANTHROPIC_AUTH_TOKEN` for an auth token. The auth-token kind is for Anthropic-compatible gateways that read the token from the `Authorization: Bearer` header, such as OpenRouter; the endpoint is set with the Agent's `ANTHROPIC_BASE_URL` environment variable.
 
 Rate-limit events from the stream are recorded per Credential and Agent; the Credentials page and the Agent's Usage tab show the most recent one.
 
@@ -161,12 +163,12 @@ Credentials, secret Project environment variables, secret MCP header and environ
 
 Secrets are write-only in the API: after saving, responses carry only their last four characters. They are decrypted only while the backend builds a Job's start payload, which goes only to the Runner of the Agent that owns the Job, and they are kept out of logs.
 
-The Agent Container's own environment holds only what the Runner needs to connect (the backend URL and the Runner token). Credentials, Project environment variables and MCP secrets travel inside each Job's payload. As a result:
+The Agent Container's own environment holds only what the Runner needs to connect (the backend URL and the Runner token). Credentials, Project environment variables, the Agent's environment and MCP secrets travel inside each Job's payload. As a result:
 
 - a rotated Credential or edited variable applies from the next Job, with no rebuild or recreation;
 - a Project's variables reach only Jobs on that Project's Tasks, even though one Agent works across many Projects.
 
-The Job's environment is the Project's variables, then the Credential's variable, then the resume flag the platform sets for interrupted Turns, each later one taking precedence.
+The Job's environment is the Project's variables, then the Agent's environment, then the Credential's variable, then the resume flag the platform sets for interrupted Turns, each later one taking precedence. Agent environment values are stored and returned as plain text, like plain Project variables; they are not a place for secrets.
 
 ### Project environment variables
 
@@ -176,7 +178,7 @@ The Setup Script and Agent Instructions save automatically after 600 ms without 
 
 - A name matches a shell variable name of up to 128 characters (a letter or underscore, then letters, digits or underscores) and is unique within the Project.
 - A value holds up to 100,000 characters. Saving a variable sets both its value and its secret flag.
-- Names the platform sets itself are answered with `400`: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`, anything starting with `CLAUDE_TASK_`, `HOME`, `PATH` and `USER`.
+- Names the platform sets itself are answered with `400`: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`, anything starting with `CLAUDE_TASK_`, `HOME`, `PATH` and `USER`. The same names are rejected in an Agent's environment.
 - Plain values are shown to every User. Secret values are shown as their last four characters (empty for values under 12 characters).
 
 **Importing a `.env` file.** An Admin pastes or picks a file of up to 500,000 characters and sees a live preview of the names it defines and which existing ones it overwrites. The parser accepts `NAME=value` lines with an optional `export ` prefix, `#` comments (including a trailing ` # comment` on unquoted values), and single, double or backtick quotes; quoted values can span lines, and double quotes expand `\n`, `\r`, `\t`, `\"` and `\\`. Variable references are kept literally. A name defined twice keeps its last value.

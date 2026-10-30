@@ -34,6 +34,23 @@ API_URL=https://last.example.com
     expect(preview.errors[2], 'Line 4: unterminated " quote');
   });
 
+  test('Agent env text round-trips and refuses platform names', () {
+    final env = {
+      'ANTHROPIC_BASE_URL': 'https://openrouter.ai/api',
+      'ANTHROPIC_MODEL': 'openrouter/model',
+      'MULTI_LINE': 'first\nsecond',
+      'QUOTED': 'say "hi"',
+      'CONTROLS': 'back\bform\f',
+    };
+    expect(parseAgentEnvText(formatAgentEnv(env)), env);
+    expect(parseAgentEnvText('  \n'), isEmpty);
+    expect(
+      () => parseAgentEnvText('ANTHROPIC_AUTH_TOKEN=secret'),
+      throwsFormatException,
+    );
+    expect(() => parseAgentEnvText('BAD-NAME=x'), throwsFormatException);
+  });
+
   test('dotenv preview validates reserved names and import limits', () {
     for (final content in [
       '# no entries',

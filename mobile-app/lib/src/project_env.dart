@@ -8,7 +8,7 @@ class ProjectEnvPreview {
 
 final _envName = RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$');
 final _reservedEnv = RegExp(
-  r'^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|CLAUDE_CODE_RESUME_INTERRUPTED_TURN|CLAUDE_TASK_.*|HOME|PATH|USER)$',
+  r'^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_RESUME_INTERRUPTED_TURN|CLAUDE_TASK_.*|HOME|PATH|USER)$',
 );
 
 String? validateProjectEnvName(String name) {
@@ -19,7 +19,7 @@ String? validateProjectEnvName(String name) {
   return null;
 }
 
-ProjectEnvPreview previewProjectEnv(String content) {
+ProjectEnvPreview previewProjectEnv(String content, {int maxVariables = 500}) {
   final entries = <String, String>{};
   final errors = <String>[];
   if (content.length > 500000) {
@@ -86,10 +86,41 @@ ProjectEnvPreview previewProjectEnv(String content) {
     }
   }
   if (entries.isEmpty && errors.isEmpty) errors.add('No variables found.');
-  if (entries.length > 500) {
-    errors.add('Import at most 500 variables at a time.');
+  if (entries.length > maxVariables) {
+    errors.add('Use at most $maxVariables variables at a time.');
   }
   return ProjectEnvPreview(entries, errors);
+}
+
+String _quoteAgentEnv(String value) {
+  final escaped = value
+      .replaceAll('\\', '\\\\')
+      .replaceAll('"', '\\"')
+      .replaceAll('\n', '\\n')
+      .replaceAll('\r', '\\r')
+      .replaceAll('\t', '\\t');
+  return '"$escaped"';
+}
+
+/// Agent environment variables, in the same `NAME=value` syntax as a `.env` file.
+String formatAgentEnv(Map<String, dynamic> env) {
+  final entries = [
+    for (final entry in env.entries)
+      if (entry.value is String) entry.key,
+  ]..sort();
+  return [
+    for (final name in entries) '$name=${_quoteAgentEnv(env[name] as String)}',
+  ].join('\n');
+}
+
+/// Parses the Agent form's text field; throws a readable error for invalid or reserved names.
+Map<String, String> parseAgentEnvText(String text) {
+  if (text.trim().isEmpty) return {};
+  final preview = previewProjectEnv(text, maxVariables: 100);
+  if (preview.errors.isNotEmpty) {
+    throw FormatException(preview.errors.join('\n'));
+  }
+  return preview.entries;
 }
 
 int _closingQuote(String body, String quote) {

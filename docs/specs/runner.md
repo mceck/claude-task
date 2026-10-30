@@ -62,7 +62,7 @@ Backend to Runner:
 | `ack` | Job id; seq | Everything up to and including that seq is processed. |
 | `ping` | | Answered with `pong`. |
 
-The git spec holds the Git Proxy clone URL (without credentials), the Job token as the proxy password, the Repository's stable identity, the Base Branch, the Task Branch, a hint on whether the Task Branch exists remotely, the bare clone path and the commit identity (name and email). The Claude arguments are the model, the effort, the permission mode, the text appended to the system prompt, the tools to disallow and the MCP configuration (a JSON string carrying the Task Tools server with the Job token, plus the Agent's MCP Extensions). The environment is the merged map of the Project's env vars and secrets, the Credential's variable and, for a resumed interrupted Turn, the resume flag. Paths are relative to the Agent's home. The values themselves are chosen by the backend (see [Agent sessions](agent-sessions.md), [Agents](agents.md) and [Git integration](git-integration.md)).
+The git spec holds the Git Proxy clone URL (without credentials), the Job token as the proxy password, the Repository's stable identity, the Base Branch, the Task Branch, a hint on whether the Task Branch exists remotely, the bare clone path and the commit identity (name and email). The Claude arguments are the model, the effort, the permission mode, the text appended to the system prompt, the tools to disallow and the MCP configuration (a JSON string carrying the Task Tools server with the Job token, plus the Agent's MCP Extensions). The environment is the merged map of the Project's env vars and secrets, the Agent's environment, the Credential's variable and, for a resumed interrupted Turn, the resume flag. Paths are relative to the Agent's home. The values themselves are chosen by the backend (see [Agent sessions](agent-sessions.md), [Agents](agents.md) and [Git integration](git-integration.md)).
 
 Runner to backend:
 
@@ -168,7 +168,7 @@ The Runner starts `claude` (the path is configurable, so tests can use a fake) i
 
 The Runner leaves `--bare` out, so the repository's CLAUDE.md, `.claude/` settings, skills and `.mcp.json` load as in a normal session.
 
-The environment is the Runner's own environment (already without the Runner token and the backend URL) plus the Job's environment: Project env vars and secrets, the Credential's variable (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) and `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` for a resumed interrupted Turn. These secrets exist only in the environment of that Job's processes.
+The environment is the Runner's own environment (already without the Runner token and the backend URL) plus the Job's environment: Project env vars and secrets, the Agent's environment, the Credential's variable (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`) and `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` for a resumed interrupted Turn. These secrets exist only in the environment of that Job's processes.
 
 `claude` runs in its own process group, so signals reach the tools it started. Once it is running, the Runner writes the initial Message to stdin as one stream-json user message (nothing when the initial Message is empty), then the queued control messages in order. A spawn error fails the Job at stage `spawn`. The CLI's own refusals (for example a session id already in use for mode `new`, or a missing transcript for mode `resume`) come back as stderr plus a non-zero `job.exited`; the backend reads them (see [Agent sessions](agent-sessions.md)).
 

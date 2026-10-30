@@ -1,3 +1,4 @@
+import { CREDENTIAL_KIND_LABELS } from '@claude-task/shared';
 import type { Credential, CredentialKind } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
@@ -59,7 +60,7 @@ export function CredentialsPage() {
                 <div className="flex-1">
                   <h2 className="font-medium">{c.name}</h2>
                   <p className="text-xs text-muted-foreground">
-                    {c.kind === 'claude_oauth_token' ? 'Claude OAuth token' : 'Anthropic API key'} · <span className="font-mono">…{c.last4}</span>
+                    {CREDENTIAL_KIND_LABELS[c.kind]} · <span className="font-mono">…{c.last4}</span>
                   </p>
                 </div>
                 <Button variant="outline" size="sm" onClick={() => setEditing(c)}>
@@ -151,6 +152,7 @@ function CredentialForm({ credential, onSaved }: { credential?: Credential; onSa
         >
           <option value="claude_oauth_token">Claude OAuth token (claude setup-token)</option>
           <option value="anthropic_api_key">Anthropic API key</option>
+          <option value="anthropic_auth_token">Anthropic auth token (ANTHROPIC_AUTH_TOKEN, e.g. a gateway)</option>
         </select>
       </Field>
       <Field label={credential ? 'New secret' : 'Secret'} hint={credential ? 'Leave empty to keep the current secret.' : undefined}>

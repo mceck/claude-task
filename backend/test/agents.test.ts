@@ -98,6 +98,53 @@ describe('agents', () => {
     expect((await admin.get(`/agents/${agent.id}`)).body.agent.services).toEqual(['postgres', 'redis']);
   });
 
+  it('stores Agent environment variables, validates their names and reserves the platform ones', async () => {
+    const admin = await app.admin();
+    const credential = await createCredential(admin);
+    const env = {
+      ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+      ANTHROPIC_MODEL: 'openrouter/model',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'openrouter/opus',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'openrouter/sonnet',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'openrouter/haiku',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'openrouter/subagent',
+      ENABLE_TOOL_SEARCH: 'false',
+    };
+    const created = await admin.post('/agents', { name: 'Env agent', credentialId: credential.id, dockerfile: DEFAULT_AGENT_DOCKERFILE, env });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.agent.env).toEqual(env);
+
+    const patched = await admin.patch(`/agents/${created.body.agent.id}`, { env: { ANTHROPIC_MODEL: 'other/model' } });
+    expect(patched.status).toBe(200);
+    expect(patched.body.agent.env).toEqual({ ANTHROPIC_MODEL: 'other/model' });
+
+    for (const invalid of [
+      { 'BAD-NAME': 'x' },
+      { '1BAD': 'x' },
+      { ANTHROPIC_API_KEY: 'x' },
+      { ANTHROPIC_AUTH_TOKEN: 'x' },
+      { CLAUDE_CODE_OAUTH_TOKEN: 'x' },
+      { CLAUDE_CODE_RESUME_INTERRUPTED_TURN: '1' },
+      { CLAUDE_TASK_RUNNER_TOKEN: 'x' },
+      { HOME: '/tmp' },
+      { LONG: 'x'.repeat(100_001) },
+      Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`KEY_${i}`, 'value'])),
+    ]) {
+      const res = await admin.patch(`/agents/${created.body.agent.id}`, { env: invalid });
+      expect(res.status, JSON.stringify(invalid).slice(0, 80)).toBe(400);
+    }
+    expect((await admin.get(`/agents/${created.body.agent.id}`)).body.agent.env).toEqual({ ANTHROPIC_MODEL: 'other/model' });
+
+    const rejected = await admin.post('/agents', {
+      name: 'Invalid env agent',
+      credentialId: credential.id,
+      dockerfile: DEFAULT_AGENT_DOCKERFILE,
+      env: { 'BAD-NAME': 'x' },
+    });
+    expect(rejected.status).toBe(400);
+    expect(JSON.stringify(rejected.body.error.details)).toContain('environment variable name');
+  });
+
   it('rejects Dockerfiles not based on the Base Image', async () => {
     const admin = await app.admin();
     const credential = await createCredential(admin);
@@ -210,10 +257,20 @@ describe('agents', () => {
 
   it('duplicates an Agent with the same environment', async () => {
     const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { body: { model: 'opus', systemPrompt: 'Be terse.', services: ['mysql', 'rustfs'] }, connect: false });
+    const { agent } = await createAgent(app, admin, {
+      body: { model: 'opus', systemPrompt: 'Be terse.', services: ['mysql', 'rustfs'], env: { ANTHROPIC_MODEL: 'openrouter/model' } },
+      connect: false,
+    });
     const res = await admin.post(`/agents/${agent.id}/duplicate`, {});
     expect(res.status).toBe(201);
-    expect(res.body.agent).toMatchObject({ name: `${agent.name} (copy)`, model: 'opus', systemPrompt: 'Be terse.', dockerfile: agent.dockerfile, services: ['mysql', 'rustfs'] });
+    expect(res.body.agent).toMatchObject({
+      name: `${agent.name} (copy)`,
+      model: 'opus',
+      systemPrompt: 'Be terse.',
+      dockerfile: agent.dockerfile,
+      services: ['mysql', 'rustfs'],
+      env: { ANTHROPIC_MODEL: 'openrouter/model' },
+    });
     await app.settle();
     expect(app.runtime.containers.has(res.body.agent.id)).toBe(true);
   });
@@ -346,6 +403,7 @@ describe('project settings for Agents', () => {
     expect((await member.put(`/projects/${project.id}/env/X`, { value: '1' })).status).toBe(403);
     expect((await member.delete(`/projects/${project.id}/env/NODE_ENV`)).status).toBe(403);
     expect((await admin.put(`/projects/${project.id}/env/ANTHROPIC_API_KEY`, { value: 'x' })).status).toBe(400);
+    expect((await admin.put(`/projects/${project.id}/env/ANTHROPIC_AUTH_TOKEN`, { value: 'x' })).status).toBe(400);
     expect((await admin.delete(`/projects/${project.id}/env/NODE_ENV`)).status).toBe(200);
   });
 

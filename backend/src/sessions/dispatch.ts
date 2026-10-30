@@ -126,7 +126,8 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
     }
 
     const credential = await credentialEnv(tx, ctx.config.secrets, agent.credentialId);
-    const env: Record<string, string> = { ...(await projectEnv(ctx, tx, project!.id)), ...credential.env };
+    // The Agent's own environment is more specific than the Project's; the Credential's variable is reserved.
+    const env: Record<string, string> = { ...(await projectEnv(ctx, tx, project!.id)), ...agent.env, ...credential.env };
     const resumeInterrupted = entry.kind === 'resume_interrupted' && !fresh;
     if (resumeInterrupted) env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = '1';
 

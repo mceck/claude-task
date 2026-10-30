@@ -236,6 +236,27 @@ export type UpdateCredentialBody = z.infer<typeof updateCredentialBody>;
 
 // Agents (admin, except reads and queue management)
 
+export const ENV_VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+export const ENV_VALUE_MAX = 100_000;
+export const AGENT_ENV_MAX = 100;
+
+/** Names the platform sets itself; Project and Agent env vars can't override them. */
+export const RESERVED_ENV_NAME = /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_RESUME_INTERRUPTED_TURN|CLAUDE_TASK_.*|HOME|PATH|USER)$/;
+
+const agentEnv = z.record(z.string(), z.string().max(ENV_VALUE_MAX)).superRefine((env, ctx) => {
+  const names = Object.keys(env);
+  if (names.length > AGENT_ENV_MAX) {
+    ctx.addIssue({ code: 'custom', message: `At most ${AGENT_ENV_MAX} variables` });
+  }
+  for (const name of names) {
+    if (!ENV_VAR_NAME.test(name)) {
+      ctx.addIssue({ code: 'custom', message: `${name} is not a valid environment variable name`, path: [name] });
+    } else if (RESERVED_ENV_NAME.test(name)) {
+      ctx.addIssue({ code: 'custom', message: `${name} is set by the platform`, path: [name] });
+    }
+  }
+});
+
 const agentFields = {
   services: z.array(z.enum(AGENT_SERVICES)).max(AGENT_SERVICES.length)
     .refine((v) => new Set(v).size === v.length, 'Duplicate service')
@@ -248,6 +269,8 @@ const agentFields = {
   avatarColor: color,
   description: z.string().max(2000),
   dockerfile: z.string().min(1).max(100_000),
+  /** Plain values, applied to every Job of this Agent; they win over the Project's. */
+  env: agentEnv,
   credentialId: id,
   model: z.string().trim().min(1).max(100).nullable(),
   effort: z.enum(EFFORT_LEVELS).nullable(),
@@ -268,6 +291,7 @@ export const createAgentBody = z.strictObject({
   avatarEmoji: agentFields.avatarEmoji.default('🤖'),
   avatarColor: agentFields.avatarColor.default('#6366f1'),
   description: agentFields.description.default(''),
+  env: agentFields.env.default({}),
   model: agentFields.model.default(null),
   effort: agentFields.effort.default(null),
   permissionMode: agentFields.permissionMode.default('bypassPermissions'),
@@ -288,6 +312,7 @@ export const updateAgentBody = z.strictObject({
   avatarColor: agentFields.avatarColor.optional(),
   description: agentFields.description.optional(),
   dockerfile: agentFields.dockerfile.optional(),
+  env: agentFields.env.optional(),
   credentialId: agentFields.credentialId.optional(),
   model: agentFields.model.optional(),
   effort: agentFields.effort.optional(),
@@ -326,8 +351,6 @@ export const updateAgentSettingsBody = z.strictObject({
   defaultAgentId: id.nullable().optional(),
 });
 export type UpdateAgentSettingsBody = z.infer<typeof updateAgentSettingsBody>;
-
-export const ENV_VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 
 export const putEnvVarBody = z.strictObject({
   name: z.string().regex(ENV_VAR_NAME, 'must be a valid environment variable name'),

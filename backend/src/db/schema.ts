@@ -346,6 +346,8 @@ export const agents = pgTable(
     description: text('description').notNull().default(''),
     dockerfile: text('dockerfile').notNull(),
     services: jsonb('services').$type<AgentService[]>().notNull().default(['postgres', 'redis']),
+    /** Plain name/value pairs merged into every Job of this Agent (docs/specs/agents.md). */
+    env: jsonb('env').$type<Record<string, string>>().notNull().default({}),
     credentialId: uuid('credential_id')
       .notNull()
       .references(() => credentials.id, { onDelete: 'restrict' }),

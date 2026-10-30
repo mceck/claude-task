@@ -216,8 +216,12 @@ An Agent's own instructions, added to every Session it runs.
 _Avoid_: system prompt (that's the whole composed prompt)
 
 **Credential**:
-A named Claude secret that an Agent authenticates with. Its rate limits are shared by every Agent using it.
+A named Claude secret that an Agent authenticates with, sent as a Claude OAuth token, an Anthropic API key or an Anthropic auth token. Its rate limits are shared by every Agent using it.
 _Avoid_: account, token, API key
+
+**Agent Environment**:
+Plain name/value variables an Agent applies to every Job, more specific than the Project's environment variables.
+_Avoid_: container env, secrets
 
 **Agent Container**:
 The one long-lived container in which an Agent works.

@@ -1,4 +1,16 @@
-import { AGENT_SERVICES, AGENT_SERVICE_INFO, DEFAULT_AGENT_SERVICES, checkAgentDockerfile, EFFORT_LEVELS, PERMISSION_MODES, updateAgentBody } from '@claude-task/shared';
+import {
+  AGENT_ENV_MAX,
+  AGENT_SERVICES,
+  AGENT_SERVICE_INFO,
+  DEFAULT_AGENT_SERVICES,
+  ENV_VALUE_MAX,
+  EFFORT_LEVELS,
+  PERMISSION_MODES,
+  RESERVED_ENV_NAME,
+  checkAgentDockerfile,
+  parseDotenv,
+  updateAgentBody,
+} from '@claude-task/shared';
 import type { Agent, AgentService, CreateAgentBody, EffortLevel, PermissionMode, UpdateAgentBody } from '@claude-task/shared';
 import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
@@ -32,6 +44,39 @@ export async function applyAvatarChange(agentId: string, change: AvatarChange): 
 
 const AVATAR_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp';
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Quotes with exactly the escapes the shared dotenv parser understands. */
+function quoteEnvValue(value: string): string {
+  return `"${value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\t', '\\t')}"`;
+}
+
+/** Round-trips through the `.env` syntax without losing quotes, spaces or newlines. */
+function envToText(env: Record<string, string>): string {
+  return Object.entries(env)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, value]) => `${name}=${quoteEnvValue(value)}`)
+    .join('\n');
+}
+
+function textToEnv(text: string): { env: Record<string, string>; errors: string[] } {
+  if (!text.trim()) return { env: {}, errors: [] };
+  const parsed = parseDotenv(text);
+  if (!parsed.ok) return { env: {}, errors: parsed.errors };
+  const errors: string[] = [];
+  if (parsed.entries.length > AGENT_ENV_MAX) errors.push(`At most ${AGENT_ENV_MAX} variables.`);
+  const env: Record<string, string> = {};
+  for (const { name, value } of parsed.entries) {
+    if (RESERVED_ENV_NAME.test(name)) errors.push(`${name} is set by the platform.`);
+    else if (value.length > ENV_VALUE_MAX) errors.push(`${name} exceeds ${ENV_VALUE_MAX} characters.`);
+    else env[name] = value;
+  }
+  return { env, errors };
+}
 
 export function LogView({ children, label = 'Log' }: { children: string; label?: string }) {
   return (
@@ -99,6 +144,9 @@ export function AgentForm({ agent, onSave, onUpdate }: {
   const [dockerfile, setDockerfile] = useState(agent?.dockerfile ?? 'FROM claude-task/agent-base\nUSER agent\n');
   const [services, setServices] = useState<AgentService[]>(agent?.services ?? DEFAULT_AGENT_SERVICES);
   const [credentialId, setCredentialId] = useState(agent?.credentialId ?? '');
+  const [envText, setEnvText] = useState(envToText(agent?.env ?? {}));
+  const [env, setEnv] = useState<Record<string, string>>(agent?.env ?? {});
+  const [envErrors, setEnvErrors] = useState<string[]>([]);
   const [model, setModel] = useState(agent?.model ?? '');
   const [effort, setEffort] = useState<EffortLevel | ''>(agent?.effort ?? '');
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(agent?.permissionMode ?? 'bypassPermissions');
@@ -111,9 +159,16 @@ export function AgentForm({ agent, onSave, onUpdate }: {
   const [preview, setPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const changeEnv = (text: string) => {
+    setEnvText(text);
+    const parsed = textToEnv(text);
+    setEnvErrors(parsed.errors);
+    // Keep the last valid map while the text is incomplete; invalid text is never saved.
+    if (!parsed.errors.length) setEnv(parsed.env);
+  };
   const autosave = useAutosave({
     skillIds, mcpServerIds, pluginIds, name, avatarEmoji: emoji, avatarColor: color,
-    description, credentialId, model: model.trim() || null, effort: effort || null,
+    description, env, credentialId, model: model.trim() || null, effort: effort || null,
     permissionMode, systemPrompt, enabled,
   }, async (changes) => {
     const checked = updateAgentBody.safeParse(changes);
@@ -130,6 +185,7 @@ export function AgentForm({ agent, onSave, onUpdate }: {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (agent) return;
+    if (envErrors.length) return setError(envErrors.join(' '));
     const check = checkAgentDockerfile(dockerfile);
     if (!check.ok) return setError(check.error);
     setSaving(true);
@@ -145,6 +201,7 @@ export function AgentForm({ agent, onSave, onUpdate }: {
         description,
         dockerfile,
         services,
+        env,
         credentialId,
         model: model.trim() || null,
         effort: effort || null,
@@ -294,6 +351,24 @@ export function AgentForm({ agent, onSave, onUpdate }: {
       <Field label="System prompt">
         <Textarea aria-label="System prompt" rows={5} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} maxLength={50000} />
       </Field>
+      <Field
+        label="Environment variables"
+        hint="One NAME=value per line, e.g. ANTHROPIC_BASE_URL, ANTHROPIC_MODEL or ENABLE_TOOL_SEARCH. They apply to every Job and win over the Project's. Values are stored in plain text: keep secrets in a Credential or a Project secret."
+      >
+        <Textarea
+          aria-label="Environment variables"
+          rows={5}
+          className="font-mono text-xs"
+          value={envText}
+          onChange={(e) => changeEnv(e.target.value)}
+          placeholder={'ANTHROPIC_BASE_URL="https://openrouter.ai/api"\nANTHROPIC_MODEL="openrouter/model"'}
+        />
+      </Field>
+      {envErrors.length > 0 && (
+        <p role="alert" className="text-sm text-destructive">
+          {envErrors.join(' ')} Invalid variables are not saved.
+        </p>
+      )}
       <AgentSkillSelector selectedIds={skillIds} onChange={setSkillIds} />
       <fieldset className="space-y-2 rounded-lg border p-3">
         <legend className="px-1 text-sm font-medium">MCP servers</legend>

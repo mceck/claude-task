@@ -98,11 +98,17 @@ export async function deleteCredential(db: Executor, id: string): Promise<void> 
   await db.delete(credentials).where(eq(credentials.id, id));
 }
 
+/** The environment variable `claude` reads the secret from, per Credential kind. */
+export const CREDENTIAL_ENV: Record<CredentialRow['kind'], string> = {
+  claude_oauth_token: 'CLAUDE_CODE_OAUTH_TOKEN',
+  anthropic_api_key: 'ANTHROPIC_API_KEY',
+  anthropic_auth_token: 'ANTHROPIC_AUTH_TOKEN',
+};
+
 /** The decrypted secret as the Job environment variable `claude` reads. */
 export async function credentialEnv(db: Executor, box: SecretBox, id: string): Promise<{ name: string; env: Record<string, string> }> {
   const [row] = await db.select().from(credentials).where(eq(credentials.id, id));
   if (!row) throw notFound('Credential');
   const secret = box.decrypt(row.secretCiphertext);
-  const variable = row.kind === 'claude_oauth_token' ? 'CLAUDE_CODE_OAUTH_TOKEN' : 'ANTHROPIC_API_KEY';
-  return { name: row.name, env: { [variable]: secret } };
+  return { name: row.name, env: { [CREDENTIAL_ENV[row.kind]]: secret } };
 }
