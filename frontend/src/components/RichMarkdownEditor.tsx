@@ -55,6 +55,7 @@ import {
 } from 'lexical';
 import type { LexicalCommand, LexicalEditor, TextNode } from 'lexical';
 import '@mdxeditor/editor/style.css';
+import { useQueryClient } from '@tanstack/react-query';
 import { ImagePlus, Paperclip } from 'lucide-react';
 import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { Ref, RefObject } from 'react';
@@ -65,6 +66,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { api, errorMessage } from '../api/client';
+import { keys } from '../api/queries';
 import { MarkdownEditor, RichMarkdownView } from './Markdown';
 
 const CODE_LANGUAGES = { '': 'Plain text', ts: 'TypeScript', js: 'JavaScript', json: 'JSON', bash: 'Shell', sql: 'SQL', css: 'CSS', html: 'HTML', py: 'Python', go: 'Go' };
@@ -117,11 +119,14 @@ function AttachFileButton({ taskId }: { taskId: string }) {
   const insert = usePublisher(insertMarkdown$);
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const qc = useQueryClient();
   const attach = async (files: File[]) => {
     if (files.length === 0) return;
     setBusy(true);
     try {
       const uploaded = await uploadFiles(taskId, files);
+      // The Task's attachment list shows description files as soon as they exist, before the edit is saved.
+      void qc.invalidateQueries({ queryKey: keys.attachments(taskId) });
       insert(uploaded.map((a) => `${IMAGE_TYPES.includes(a.contentType) ? '!' : ''}[${escapeText(a.filename)}](${a.url})`).join('\n\n'));
     } catch (err) {
       toast.error('Couldn’t attach the file', { description: errorMessage(err) });
@@ -191,6 +196,7 @@ function InsertImageButton({ taskId }: { taskId: string }) {
   const [dragging, setDragging] = useState(false);
   const [url, setUrl] = useState('');
   const [alt, setAlt] = useState('');
+  const qc = useQueryClient();
   const show = (next: boolean) => {
     setOpen(next);
     if (next) {
@@ -204,6 +210,7 @@ function InsertImageButton({ taskId }: { taskId: string }) {
     setBusy(true);
     try {
       const [attachment] = await uploadFiles(taskId, [file]);
+      void qc.invalidateQueries({ queryKey: keys.attachments(taskId) });
       insertImage({ src: attachment!.url, altText: alt.trim() || attachment!.filename });
       setOpen(false);
     } catch (err) {

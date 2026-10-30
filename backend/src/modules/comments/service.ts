@@ -2,8 +2,8 @@ import { notifyMentions } from '../../notifications/mentions';
 import { ensureChatAgent } from '../wikis/service';
 import { autoFollow } from '../../notifications/preferences';
 import { API_PREFIX, projectTopic, taskTopic } from '@claude-task/shared';
-import type { Actor, Attachment, Comment, Question, QuestionItem, QuestionKind, Survey, TimelineItem, TimelinePage } from '@claude-task/shared';
-import { and, asc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
+import type { Actor, Attachment, Comment, Question, QuestionItem, QuestionKind, Survey, TaskAttachment, TimelineItem, TimelinePage } from '@claude-task/shared';
+import { and, asc, desc, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
 import { agentItems, attachments, comments, projects, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
@@ -126,6 +126,33 @@ export async function loadCommentsById(db: Executor, ids: string[]): Promise<Map
       return [r.id, serializeComment(r, resolve({ type: r.authorType, id: r.authorId }), files.filter((f) => f.commentId === r.id), structured)];
     }),
   );
+}
+
+/** Every file of a Task, newest first: those of its description and those of its Comments. */
+export async function loadTaskAttachments(db: Executor, taskId: string): Promise<TaskAttachment[]> {
+  const rows = await db
+    .select({
+      file: attachments,
+      commentId: comments.id,
+      authorType: comments.authorType,
+      authorId: comments.authorId,
+      deletedAt: comments.deletedAt,
+    })
+    .from(attachments)
+    .leftJoin(comments, eq(comments.id, attachments.commentId))
+    .where(or(eq(attachments.taskId, taskId), eq(comments.taskId, taskId)))
+    .orderBy(desc(attachments.createdAt), desc(attachments.id));
+  // Deleting a Comment removes its files, but never show a file left behind by one.
+  const live = rows.filter((r) => r.deletedAt === null);
+  const resolve = await actorResolver(
+    db,
+    live.filter((r) => r.authorType !== null).map((r) => ({ type: r.authorType!, id: r.authorId })),
+  );
+  return live.map((r) => ({
+    ...serializeAttachment(r.file),
+    createdAt: r.file.createdAt.toISOString(),
+    author: r.authorType ? resolve({ type: r.authorType, id: r.authorId }) : null,
+  }));
 }
 
 export async function loadComment(db: Executor, id: string): Promise<Comment> {

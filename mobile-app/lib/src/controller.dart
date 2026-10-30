@@ -65,6 +65,10 @@ class TaskController extends ChangeNotifier {
   Map<String, TaskPreference> preferences = {};
   Project? project;
   Task? task;
+
+  /// Every file of the open Task, from its description and its Comments
+  /// (newest first), as the Task details list shows them.
+  List<Json> attachments = [];
   Json? session;
   List<TimelineEntry> timeline = [];
   String? nextCursor;
@@ -779,6 +783,7 @@ class TaskController extends ChangeNotifier {
 
   void _clearConversation() {
     timeline = [];
+    attachments = [];
     nextCursor = null;
     _olderLoaded = false;
     session = null;
@@ -990,6 +995,7 @@ class TaskController extends ChangeNotifier {
   Future<void> selectTask(Task value) async {
     task = value;
     timeline = [];
+    attachments = [];
     session = null;
     nextCursor = null;
     _olderLoaded = false;
@@ -1004,6 +1010,7 @@ class TaskController extends ChangeNotifier {
       // A list card newer than the offline cache must not be replaced by it.
       if (cachedTask.version >= value.version) task = cachedTask;
       timeline = objects(cached['items']).map(TimelineEntry.new).toList();
+      attachments = objects(cached['attachments']);
       nextCursor = cached['nextCursor'] as String?;
       session = cached['session'] as Json?;
     }
@@ -1025,6 +1032,7 @@ class TaskController extends ChangeNotifier {
       _request('GET', '/tasks/$id/session'),
       _request('GET', '/tasks/$id/preferences'),
       _request('GET', '/tasks/$id/runs'),
+      _request('GET', '/tasks/$id/attachments'),
     ]);
     if (task?.id != id || epoch != _timelineEpoch) return;
     final fresh = Task.fromJson(result[0]['task'] as Json);
@@ -1040,6 +1048,7 @@ class TaskController extends ChangeNotifier {
     session = result[2]['session'] as Json?;
     preferences[id] = TaskPreference.fromJson(result[3]['preference'] as Json);
     _setActiveRuns(objects(result[4]['runs']));
+    attachments = objects(result[5]['attachments']);
     _mergeTimeline(objects(result[1]['items']));
     if (!_olderLoaded) nextCursor = result[1]['nextCursor'] as String?;
     await _cacheTask();
@@ -1089,6 +1098,7 @@ class TaskController extends ChangeNotifier {
         'pullRequest': t.pullRequest,
       },
       'items': timeline.map((e) => e.json).toList(),
+      'attachments': attachments,
       'nextCursor': nextCursor,
       'session': session,
     });

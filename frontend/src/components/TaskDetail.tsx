@@ -29,6 +29,7 @@ const TAG_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#0ea5e9', '#a85
 const nextTagColor = (existing: number) => TAG_COLORS[existing % TAG_COLORS.length]!;
 import { MultiPick } from './MultiPick';
 import { TaskActivity } from './TaskActivity';
+import { TaskAttachments } from './TaskAttachments';
 import { AgentAvatar, SessionChip } from './agents';
 
 type Fields = Omit<UpdateTaskBody, 'version'>;
@@ -496,6 +497,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                 )}
               </section>}
               <Description taskId={task.id} description={shown.description} onSave={(description) => save({ description })} overlayContainer={overlay} />
+              <TaskAttachments taskId={task.id} />
             </div>
           </section>
         </Panel>

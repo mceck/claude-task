@@ -1,5 +1,6 @@
 import { ATTACHMENT_MAX_BYTES } from '@claude-task/shared';
 import type { Task } from '@claude-task/shared';
+import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ApiClient } from './helpers/client';
 import { useTestApp } from './helpers/app';
@@ -178,6 +179,32 @@ describe('comments', () => {
       const res = await upload(member, task.id, 'many', files);
       expect(res.status).toBe(413);
       expect(await timeline()).toEqual([]);
+    });
+
+    it('lists every file of the task, newest first, with its author or the description', async () => {
+      const form = new FormData();
+      form.append('files', new Blob(['spec'], { type: 'text/plain' }), 'spec.txt');
+      const description = await member.request('POST', `/tasks/${task.id}/attachments`, { form });
+      expect(description.status).toBe(201);
+      // The description file is older than the Comment's one.
+      await app.server.ctx.db.execute(sql`update attachments set created_at = now() - interval '2 days' where id = ${description.body.attachments[0].id}::uuid`);
+      const comment = (await upload(admin, task.id, 'see the shot', [{ name: 'shot.png', type: 'image/png', data: PNG }])).body.comment;
+
+      const res = await member.get(`/tasks/${task.id}/attachments`);
+      expect(res.status).toBe(200);
+      expect(res.body.attachments.map((a: { filename: string; author: { displayName: string } | null }) => [a.filename, a.author?.displayName ?? null])).toEqual([
+        ['shot.png', 'Ada Admin'],
+        ['spec.txt', null],
+      ]);
+      expect(res.body.attachments[0]).toMatchObject({ commentId: comment.id, contentType: 'image/png', size: PNG.length });
+      expect(res.body.attachments[1]).toMatchObject({ commentId: null, contentType: 'text/plain', size: 4 });
+
+      await admin.delete(`/comments/${comment.id}`);
+      expect((await member.get(`/tasks/${task.id}/attachments`)).body.attachments.map((a: { filename: string }) => a.filename)).toEqual(['spec.txt']);
+    });
+
+    it('answers 404 for the attachments of a missing task', async () => {
+      expect((await member.get('/tasks/00000000-0000-4000-8000-000000000000/attachments')).status).toBe(404);
     });
 
     it('stops serving attachments of a deleted comment', async () => {

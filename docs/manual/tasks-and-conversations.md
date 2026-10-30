@@ -39,6 +39,8 @@ The Tag picker can create and apply a new Tag while you type. Tags belong to the
 
 If **Someone else changed this task** appears, the Task has refreshed and your conflicting change was not saved. Review the new value before editing again. A conflicting description draft stays available, with options to save it over the other edit or **discard your changes**.
 
+Under the description, **Attachments** lists every file of the Task, newest first: files uploaded from the description editor and files attached to any Comment, by people or by the Agent. Each row shows an image thumbnail where available, the file name, its size, who uploaded it (or **Description**) and when. Click an image to open it in a new tab, or another file to download it. The list appears with the first upload, in the web app and in the native app's Task details.
+
 ## Send a Comment
 
 1. Write in the Comment editor below the Conversation.

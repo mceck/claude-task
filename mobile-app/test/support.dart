@@ -82,6 +82,26 @@ Json commentData(
   },
 };
 
+/// One file of a Task, as the attachments route returns it: a Comment's
+/// (with its author) or the description's (no author).
+Json taskAttachmentData(
+  String id, {
+  String filename = 'notes.txt',
+  String contentType = 'text/plain',
+  int size = 12,
+  Json? author,
+  String? createdAt,
+}) => {
+  'id': id,
+  'commentId': author == null ? null : 'comment-1',
+  'filename': filename,
+  'contentType': contentType,
+  'size': size,
+  'url': '/api/v1/attachments/$id',
+  'createdAt': createdAt ?? at('1'),
+  'author': author,
+};
+
 const mia = <String, dynamic>{
   'id': 'user-2',
   'displayName': 'Mia',
@@ -353,6 +373,9 @@ class FakeApi implements TaskApi {
   int createCount = 0, sendCount = 0, readCount = 0;
   final createdTags = <Json>[];
 
+  /// Every file of the open Task, as the attachments route returns them.
+  List<Json> attachments = [];
+
   /// The Runs the bar lists, and the transcript of each the API still holds.
   List<Json> runs = [];
   final runTranscripts = <String, Json>{};
@@ -516,6 +539,9 @@ class FakeApi implements TaskApi {
             ? 'older-cursor'
             : null,
       };
+    }
+    if (path == '/tasks/task-1/attachments') {
+      return {'attachments': attachments};
     }
     if (path == '/tasks/task-1/runs') return {'runs': runs};
     final run = RegExp(r'^/tasks/task-1/runs/([^/]+)$').firstMatch(path);
