@@ -557,9 +557,11 @@ const categoryColors = {
   'done': Color(0xff10b981),
 };
 
-/// Progress counts active Tasks as open.
+/// Progress counts backlog and active Tasks as open.
 int progressCount(Project p, String category) => category == 'open'
-    ? (p.taskCounts['open'] ?? 0) + (p.taskCounts['active'] ?? 0)
+    ? (p.taskCounts['backlog'] ?? 0) +
+          (p.taskCounts['open'] ?? 0) +
+          (p.taskCounts['active'] ?? 0)
     : (p.taskCounts[category] ?? 0);
 
 class ProjectList extends StatelessWidget {

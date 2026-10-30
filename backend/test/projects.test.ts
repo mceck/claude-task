@@ -14,7 +14,7 @@ describe('projects', () => {
     expect(res.status).toBe(201);
     expect(res.body.project).toMatchObject({ key: 'API', name: 'Public API', description: 'The REST API', archivedAt: null });
     expect(res.body.statuses.map((s: { name: string; category: string }) => [s.name, s.category])).toEqual([
-      ['Backlog', 'open'],
+      ['Backlog', 'backlog'],
       ['Todo', 'open'],
       ['In Progress', 'active'],
       ['Ready for Review', 'review'],
@@ -145,13 +145,15 @@ describe('projects', () => {
 
     const { projects } = (await admin.get('/projects')).body;
     expect(projects.find((p: { key: string }) => p.key === 'CNT').taskCounts).toEqual({
-      open: 2,
+      backlog: 1,
+      open: 1,
       active: 1,
       review: 0,
       done: 0,
       closed: 1,
     });
     expect(projects.find((p: { key: string }) => p.key === 'EMPTY').taskCounts).toEqual({
+      backlog: 0,
       open: 0,
       active: 0,
       review: 0,

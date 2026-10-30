@@ -54,7 +54,7 @@ A named step in a Project's workflow. Each Status belongs to one Category.
 _Avoid_: column (that's how a Status looks on the Board), state
 
 **Category**:
-The fixed meaning of a Status, independent of its name: open, active, review, done or closed. Only `closed` has an effect on Agents: it ends the Session.
+The fixed meaning of a Status, independent of its name: backlog, open, active, review, done or closed. `closed` ends the Session; `backlog` holds Tasks without an Agent (assigning one moves the Task to the first open Status, and leaving Backlog assigns the default Agent).
 _Avoid_: status type
 
 **Task**:

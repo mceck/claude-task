@@ -50,7 +50,7 @@ describe('Task Tools (MCP)', () => {
     await comment(admin, task.id, 'Visible to the agent');
     await comment(admin, task.id, 'Not for the agent', true);
     const { json } = await call(client, 'get_task');
-    expect(json.task).toMatchObject({ key: task.key, title: 'Fix login', description: '- [ ] repro', status: 'Backlog', yours: true });
+    expect(json.task).toMatchObject({ key: task.key, title: 'Fix login', description: '- [ ] repro', status: 'Todo', yours: true });
     expect(json.statuses).toContainEqual({ name: 'Closed', category: 'closed' });
     expect(json.tags).toEqual(['bug']);
     expect(json.comments.map((c: { body: string }) => c.body)).toEqual(['Please get started.', 'Visible to the agent']);
@@ -124,7 +124,7 @@ describe('Task Tools (MCP)', () => {
     const { json } = await call(client, 'create_task', { title: 'Flaky test in CI', tags: ['bug'] });
     const tasks = (await admin.get(`/projects/${bundle.project.id}/tasks`)).body.tasks;
     const created = tasks.find((t: { key: string }) => t.key === json.created);
-    expect(created).toMatchObject({ title: 'Flaky test in CI', assigneeIds: [], agentId: null, statusId: statusByName(bundle, 'Backlog').id });
+    expect(created).toMatchObject({ title: 'Flaky test in CI', assigneeIds: [], agentId: null, statusId: statusByName(bundle, 'Todo').id });
     expect((await admin.get(`/tasks/${created.id}`)).body.task.createdBy).toEqual({ type: 'agent', id: agent.id, displayName: 'Ada Bot' });
   });
 

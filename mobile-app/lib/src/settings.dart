@@ -64,7 +64,7 @@ const _swatches = [
   '#a855f7',
   '#64748b',
 ];
-const _categories = ['open', 'active', 'closed'];
+const _categories = ['backlog', 'open', 'active', 'closed'];
 const _efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
 const _permissionModes = [
   'bypassPermissions',

@@ -7,7 +7,7 @@ The board is where the team organizes work. It covers **Projects** (each with it
 - A **Project** is a body of work with its own Board, Statuses and Tags. It has a **Project Key**, a name, a description, an optional link to a code **Repository** (see [Git integration](git-integration.md)), Agent-related settings, and an archived flag.
 - The **Project Key** is a short uppercase code of 2 to 6 letters (`API`, `WEB`), unique across the installation and fixed at creation. It prefixes the Project's Task Keys.
 - A Project has a **kind**. Ordinary Projects have kind `project`. Each Wiki is stored as a Project of kind `wiki` with one backing Task; these Projects are kept out of the Projects list, absent from the Project API and managed only through the Wiki (see [Wikis](wikis.md)).
-- A **Status** is a named step of a Project's workflow, with a color and a position. Each Status belongs to one **Category**: `open`, `active`, `review`, `done` or `closed`. The Category gives the Status its fixed meaning whatever its name. Only `closed` changes how Agents behave: a Task entering a `closed`-category Status ends its Agent's Session (see [Agent Sessions](agent-sessions.md)).
+- A **Status** is a named step of a Project's workflow, with a color and a position. Each Status belongs to one **Category**: `backlog`, `open`, `active`, `review`, `done` or `closed`. The Category gives the Status its fixed meaning whatever its name. Only `closed` changes how Agents behave, and `backlog` changes how Agents are assigned (see [Updating Tasks](#updating-tasks)): a Task entering a `closed`-category Status ends its Agent's Session (see [Agent Sessions](agent-sessions.md)).
 - A **Tag** is a colored, Project-scoped label. A Task can carry several.
 - A **Task** is a unit of work in a Project: title, Markdown description, Status, priority, Tags, User assignees, at most one assigned Agent, and its position within its Status. It is identified by its **Task Key**, the Project Key followed by a sequential number (`API-42`).
 - **Priority** is one of `urgent`, `high`, `normal`, `low` or `none` (the default).
@@ -34,7 +34,7 @@ erDiagram
 
 | Status | Category | Color |
 | --- | --- | --- |
-| Backlog | open | `#94a3b8` |
+| Backlog | backlog | `#94a3b8` |
 | Todo | open | `#64748b` |
 | In Progress | active | `#3b82f6` |
 | Ready for Review | review | `#a855f7` |
@@ -92,8 +92,8 @@ Any User creates a Task in a Project, from the "Add task" box at the bottom of a
 
 - **Title**: 1 to 500 characters after trimming. Required.
 - **Description**: Markdown, up to 100,000 characters, empty by default.
-- **Status**: any Status of the Project; by default the first `open` Status in order.
-- **Agent**: the Project's **default Agent** (set in its "Agents" settings) when it is enabled, otherwise none. Assigning it creates the usual `pending` Session; nothing starts until the first User Comment. A disabled or deleted default Agent leaves new Tasks without an Agent (deleting an Agent clears the setting).
+- **Status**: any Status of the Project; by default the first `open` Status in order (Todo in the default set, never a `backlog` one).
+- **Agent**: the Project's **default Agent** (set in its "Agents" settings) when it is enabled, otherwise none; a Task created in a `backlog`-category Status has no Agent. Assigning it creates the usual `pending` Session; nothing starts until the first User Comment. A disabled or deleted default Agent leaves new Tasks without an Agent (deleting an Agent clears the setting).
 - **Priority**: `none` by default.
 - **Tags**: up to 50, all from the same Project.
 - **Assignees**: up to 50 existing Users.
@@ -144,6 +144,7 @@ flowchart TD
 - An update that changes nothing records no Revision and keeps the version.
 - Changing the Status through an update puts the Task at the end of the new column.
 - Changing the Status or the Agent triggers the Session rules: assigning, reassigning or unassigning an Agent, closing and reopening (see [Agent Sessions](agent-sessions.md)). Status itself never starts an Agent; only entering or leaving a `closed`-category Status matters.
+- **Backlog holds Tasks without an Agent.** Assigning an Agent to a Task in a `backlog`-category Status, through an update without a Status, also moves it to the first `open` Status (the clients ask for confirmation first and send both together). A Task leaving `backlog` for a non-`backlog` Status, through an update or a move, gets the Project's default Agent when it has none and that Agent is enabled; the Agent change is part of the same Revision. A Task already in Backlog with an Agent keeps it. Projects created before the `backlog` Category existed keep their Backlog Status as `open` until its Category is changed in settings.
 - Newly added assignees start following the Task.
 
 After a successful update the card is published as `task.updated` on the Project's topic, the full Task as `task.changed` on the Task's topic, and the Revision as `revision.created`.

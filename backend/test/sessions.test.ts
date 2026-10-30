@@ -711,13 +711,12 @@ describe('Session lifecycle', () => {
 
   it('closing a Status category closes its Tasks too', async () => {
     const { admin, bundle, project, agent, runner } = await setup(app);
-    const task = await createTask(admin, project.id);
+    const status = statusByName(bundle, 'In Progress').id;
+    const task = await createTask(admin, project.id, { statusId: status });
     await startAndFinish(admin, runner, task.id, agent.id);
-    const status = (await admin.get(`/tasks/${task.id}`)).body.task.statusId;
     expect((await admin.patch(`/statuses/${status}`, { category: 'closed' })).status).toBe(200);
     await app.settle();
     expect((await getSession(admin, task.id))!.state).toBe('closed');
-    void bundle;
   });
 
   it('unassigning interrupts, pauses, and reassigning another Agent starts fresh with the history', async () => {

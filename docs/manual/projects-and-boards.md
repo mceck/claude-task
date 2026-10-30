@@ -20,7 +20,7 @@ Each column represents a Status. A new Project starts with this workflow:
 
 | Status | Category | Meaning |
 | --- | --- | --- |
-| Backlog | open | Work to consider. |
+| Backlog | backlog | Work to consider, without an Agent. |
 | Todo | open | Work ready to start. |
 | In Progress | active | Work underway. |
 | Ready for Review | review | Work ready for review. |
