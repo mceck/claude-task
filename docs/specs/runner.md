@@ -52,7 +52,7 @@ Backend to Runner:
 
 | Message | Fields | Effect |
 | --- | --- | --- |
-| `job.start` | Job id; session id; mode (`new` or `resume`); resume-interrupted flag; Worktree path; git spec or none; Setup Script; environment; Claude arguments; initial Message; attachments to fetch | Prepares the Worktree and starts `claude` (see below). |
+| `job.start` | Job id; session id; mode (`new` or `resume`); resume-interrupted flag; Worktree path; git spec or none; Setup Script; environment; Claude arguments, the forward-subagent-text switch among them; initial Message; attachments to fetch | Prepares the Worktree and starts `claude` (see below). |
 | `job.input` | Job id; Message (stream-json content blocks); attachments to fetch | Downloads the attachments, then writes the Message to `claude`'s stdin. |
 | `job.interrupt` | Job id | Stops the current Turn; the process stays alive. |
 | `job.end` | Job id | Closes stdin: `claude` works through what was already written, then exits. |
@@ -164,9 +164,12 @@ The Runner starts `claude` (the path is configurable, so tests can use a fake) i
 
 - `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`;
 - `--session-id <session id>` for mode `new`, `--resume <session id>` for mode `resume`;
-- `--model` and `--effort` when set, `--permission-mode` when set, `--append-system-prompt` when non-empty, `--mcp-config` when non-empty, and `--disallowedTools <name>` for each tool to disallow.
+- `--model` and `--effort` when set, `--permission-mode` when set, `--append-system-prompt` when non-empty, `--mcp-config` when non-empty, and `--disallowedTools <name>` for each tool to disallow;
+- `--forward-subagent-text` when the Job asks to forward subagent text and the `claude` that starts understands the flag.
 
 The Runner leaves `--bare` out, so the repository's CLAUDE.md, `.claude/` settings, skills and `.mcp.json` load as in a normal session.
+
+**Forwarding subagent text.** Before starting `claude` for a Job that asks for it, the Runner asks the same executable it is about to start, in the Worktree and through mise's shims, for `--version` (10 seconds at most). The flag goes on the command line when that version parses as 2.1.211 or later. A probe that fails, times out or answers something unparseable leaves the flag out, and the Job starts as usual: only the subagent's text is missing from its transcript (see [Agent sessions](agent-sessions.md)). The answer is kept for the rest of the Job.
 
 The environment is the Runner's own environment (already without the Runner token and the backend URL) plus the Job's environment: Project env vars and secrets, the Agent's environment, the Credential's variable (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`) and `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` for a resumed interrupted Turn. These secrets exist only in the environment of that Job's processes.
 
@@ -306,6 +309,7 @@ On the Agent Volume it relies on:
 | Output drain after exit | 2 s of silence, 1 min at most |
 | Runner shutdown | SIGTERM, SIGKILL after 5 s |
 | `claude --version` | 10 s |
+| `claude --version` before a Job that forwards subagent text | 10 s, once per Job |
 | Credential helper | connect 3 s, exchange 40 s; request up to 4 KiB, answer up to 20 000 bytes |
 | Backend reconnect timeout before recovery | 5 min |
 | Setup output and stderr kept by the backend | last 64 KiB each per Job |
@@ -335,6 +339,7 @@ On the Agent Volume it relies on:
 - **Worktree work runs one at a time, in arrival order.** A removal and a new Job for the same Task can arrive back to back; ordering them, and making a removal wait for the Jobs on its Worktree, keeps a reopened Task from losing a freshly created Worktree.
 - **Files go up on request, over HTTP.** The backend asks with a small `job.upload` message and the Runner streams the files in a multipart POST, the mirror of attachment downloads. Large bytes stay off the WebSocket, whose messages are capped and resent after reconnects, and the request needs no seq because a lost one simply times out the tool call that asked for it.
 - **A Job arriving during a cancel waits for it.** The backend dispatches the next Queue Entry as soon as it cancels a Job, so the Runner lets the new Job wait out the cancel escalation rather than refusing it.
+- **The Runner probes the `claude` it will start, not the one on the Base Image.** A repository's mise configuration can override the pinned CLI in its Worktree, and `--forward-subagent-text` exists only from 2.1.211. Asking that executable for its version before each Job that wants the flag costs one short process per Job and keeps an older or unusual CLI from failing the Job on an unknown argument; caching the answer per Agent was rejected because a repository change can swap the CLI between Jobs without touching the Agent.
 
 ## Related specs
 

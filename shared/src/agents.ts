@@ -223,8 +223,85 @@ export interface ActivityEntry {
   input: unknown;
   /** Truncated to 20 KB for display; the full output stays in the raw stream. */
   output: string | null;
-  /** Subagent tool calls started by this one. */
-  children: ActivityEntry[];
+}
+
+// Runs: Subagent Runs and Background Commands (docs/specs/agent-sessions.md#runs)
+
+export const RUN_TYPES = ['subagent', 'command'] as const;
+export type RunType = (typeof RUN_TYPES)[number];
+
+export const RUN_STATUSES = ['running', 'ok', 'error', 'interrupted'] as const;
+export type RunStatus = (typeof RUN_STATUSES)[number];
+
+export interface RunInfo {
+  runType: RunType;
+  /** The call that started a Subagent Run; null for a Background Command. */
+  toolUseId: string | null;
+  description: string;
+  subagentType: string | null;
+  /** 1 when the Agent started it, one more for each level of delegation. */
+  depth: number;
+  status: RunStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  toolCalls: number;
+  /** Short result line, e.g. a Background Command's final summary. */
+  outcome: string | null;
+  /** Why a Subagent Run failed, cut at 2 KB. */
+  error: string | null;
+}
+
+/** A Run as the API and the live events carry it (also the Agent Item id). */
+export type RunSummary = RunInfo & { id: string };
+
+/** One message of a Run's live transcript, numbered per Run so a snapshot merges with live events. */
+export interface RunTextMessage {
+  type: 'text';
+  n: number;
+  text: string;
+}
+
+export interface RunToolMessage {
+  type: 'tool';
+  n: number;
+  toolUseId: string;
+  name: string;
+  summary: string;
+  status: 'pending' | 'ok' | 'error' | 'interrupted';
+  outcome: string | null;
+  input: unknown;
+  output: string | null;
+  /** The nested Subagent Run this call started, when it did. */
+  childRunId: string | null;
+}
+
+export type RunMessage = RunTextMessage | RunToolMessage;
+
+/** A transcript message before the backend numbers it. */
+export type RunMessageDraft =
+  | { type: 'text'; text: string }
+  | {
+      type: 'tool';
+      toolUseId: string;
+      name: string;
+      summary: string;
+      status: 'pending' | 'ok' | 'error' | 'interrupted';
+      outcome: string | null;
+      input: unknown;
+      output: string | null;
+      childRunId: string | null;
+    };
+
+/** What the clients show when they open a Run. */
+export interface RunTranscript {
+  id: string;
+  run: RunInfo;
+  prompt: string | null;
+  usage: Usage | null;
+  messages: RunMessage[];
+  /** The number the next message will carry. */
+  nextIndex: number;
+  truncated: boolean;
 }
 
 export interface TurnSummary {
@@ -240,6 +317,7 @@ export interface TurnSummary {
 export type AgentItemPayload =
   | { kind: 'thinking'; text: string }
   | { kind: 'activity'; entries: ActivityEntry[] }
+  | { kind: 'run'; run: RunInfo }
   | { kind: 'turn_summary'; summary: TurnSummary }
   | { kind: 'notice'; text: string };
 export type AgentItemKind = AgentItemPayload['kind'];

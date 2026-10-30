@@ -9,6 +9,7 @@
 //	                         taken into the same Turn ("Also noted: …")
 //	FAKE_CLAUDE_IGNORE_TERM  "1" ignores SIGTERM
 //	FAKE_CLAUDE_EXIT         exit right away with this code, after writing FAKE_CLAUDE_STDERR
+//	FAKE_CLAUDE_VERSION      what `--version` answers (default 9.9.9); "fail" exits 1
 //
 // Message text keywords: "CRASH" kills the process with SIGKILL, "HANG" runs the tool until
 // interrupted, "STUCK" stops responding to anything, "SPAWN" leaves a background process in its
@@ -50,7 +51,14 @@ type record struct {
 func main() {
 	args := os.Args[1:]
 	if len(args) == 1 && args[0] == "--version" {
-		fmt.Println("9.9.9 (Claude Code)")
+		switch v := os.Getenv("FAKE_CLAUDE_VERSION"); v {
+		case "fail":
+			os.Exit(1)
+		case "":
+			fmt.Println("9.9.9 (Claude Code)")
+		default:
+			fmt.Println(v + " (Claude Code)")
+		}
 		return
 	}
 	if len(args) == 1 && args[0] == "--background" {

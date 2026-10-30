@@ -11,6 +11,7 @@ import type { Config } from './config';
 import type { Db, Tx } from './db/client';
 import type { RealtimeHub } from './realtime/hub';
 import type { RunnerHub } from './runner/hub';
+import type { RunRegistry } from './sessions/runs';
 import type { UploadRequests } from './runner/uploads';
 import type { LoginRevocations } from './auth/revocations';
 
@@ -28,6 +29,8 @@ export interface AppContext {
   gitSync: GitSync;
   /** Connected Runners, one per Agent. */
   runners: RunnerHub;
+  /** Live transcripts of the running Jobs' Runs; memory only. */
+  runs: RunRegistry;
   /** Files Agents post, waiting for their Runner's upload. */
   uploads: UploadRequests;
   /** Dispatcher, builds and the container reconciler. */

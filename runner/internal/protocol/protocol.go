@@ -28,6 +28,9 @@ type ClaudeArgs struct {
 	MCPConfig          string  `json:"mcpConfig"`
 	// DisallowedTools are passed as one `--disallowedTools <name>` each.
 	DisallowedTools []string `json:"disallowedTools"`
+	// ForwardSubagentText asks for `--forward-subagent-text`, which the Runner adds only when the
+	// `claude` it is about to start has it (dependency: a repository can override the version).
+	ForwardSubagentText bool `json:"forwardSubagentText"`
 }
 
 type Attachment struct {

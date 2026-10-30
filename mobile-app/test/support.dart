@@ -169,6 +169,71 @@ Json preferenceData({
   'latestPosition': '2',
 };
 
+Json runData({
+  String id = 'run-1',
+  String description = 'Explore the repo',
+  String runType = 'subagent',
+  String? subagentType = 'Explore',
+  String status = 'running',
+  int toolCalls = 0,
+  String? error,
+  String? outcome,
+  String startedAt = '2026-10-26T10:00:00.000Z',
+  String? finishedAt,
+  String? toolUseId = 'task1',
+}) => {
+  'id': id,
+  'runType': runType,
+  'toolUseId': toolUseId,
+  'description': description,
+  'subagentType': subagentType,
+  'depth': 1,
+  'status': status,
+  'startedAt': startedAt,
+  'finishedAt': finishedAt,
+  'toolCalls': toolCalls,
+  'outcome': outcome,
+  'error': error,
+};
+
+Json runText(int n, String text) => {'type': 'text', 'n': n, 'text': text};
+Json runTool(
+  int n,
+  String name,
+  String summary, {
+  String status = 'pending',
+  String? output,
+  String? outcome,
+  String? childRunId,
+}) => {
+  'type': 'tool',
+  'n': n,
+  'toolUseId': 'tool-$n',
+  'name': name,
+  'summary': summary,
+  'status': status,
+  'outcome': outcome,
+  'input': {'file_path': 'src/a.ts'},
+  'output': output,
+  'childRunId': childRunId,
+};
+
+Json transcriptData(
+  Json run, {
+  String? prompt = 'Look around',
+  List<Json> messages = const [],
+  bool truncated = false,
+  Json? usage,
+}) => {
+  'id': run['id'],
+  'run': {...run}..remove('id'),
+  'prompt': prompt,
+  'usage': usage,
+  'messages': messages,
+  'nextIndex': messages.length,
+  'truncated': truncated,
+};
+
 class MemoryStorage implements ProfileStorage {
   Json? login, pending;
   final profiles = <String, Map<String, Json>>{};
@@ -287,6 +352,10 @@ class FakeApi implements TaskApi {
   Json? session;
   int createCount = 0, sendCount = 0, readCount = 0;
   final createdTags = <Json>[];
+
+  /// The Runs the bar lists, and the transcript of each the API still holds.
+  List<Json> runs = [];
+  final runTranscripts = <String, Json>{};
 
   /// Answers the Question and Survey routes (`/comments/:id/answer`,
   /// `/response`, `/close`); it may throw an [ApiException].
@@ -447,6 +516,15 @@ class FakeApi implements TaskApi {
             ? 'older-cursor'
             : null,
       };
+    }
+    if (path == '/tasks/task-1/runs') return {'runs': runs};
+    final run = RegExp(r'^/tasks/task-1/runs/([^/]+)$').firstMatch(path);
+    if (run != null) {
+      final transcript = runTranscripts[run.group(1)];
+      if (transcript == null) {
+        throw const ApiException(404, 'not_found', 'Run not found');
+      }
+      return transcript;
     }
     if (path == '/tasks/task-1/session') return {'session': session};
     if (path.startsWith('/tasks/task-1/session/') && method == 'POST') {

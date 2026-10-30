@@ -113,6 +113,7 @@ async function handleJobMessage(ctx: AppContext, agentId: string, msg: RunnerJob
         after.effect((c) => {
           c.scheduler.publishJob(job.id);
           c.scheduler.jobEnded(agentId);
+          c.runs.endJob(job.id);
         });
       }
     } else await processJobMessage(tx, after, job, session!, agent, msg);
@@ -345,16 +346,20 @@ export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow):
   });
 }
 
-/** The Job is over: its tool calls still waiting for a result never get one. */
+/** The Job is over: its tool calls still waiting for a result never get one, and its Runs' transcripts go with it. */
 async function settleProjection(tx: Executor, after: AfterCommit, job: JobRow): Promise<void> {
-  if (!job.projection) return;
-  const result = endJob(job.projection as unknown as ProjectionState);
-  if (result.mutations.length === 0) return;
-  await applyProjection(tx, after, job, '', result.mutations, result.broadcasts);
-  await tx
-    .update(jobs)
-    .set({ projection: result.state as unknown as Record<string, unknown> })
-    .where(eq(jobs.id, job.id));
+  if (job.projection) {
+    const result = endJob(job.projection as unknown as ProjectionState);
+    if (result.mutations.length > 0) {
+      await applyProjection(tx, after, job, '', result.mutations, result.broadcasts);
+      await tx
+        .update(jobs)
+        .set({ projection: result.state as unknown as Record<string, unknown> })
+        .where(eq(jobs.id, job.id));
+    }
+  }
+  // After the Run settlements above, so their events still reach the browser.
+  after.effect((ctx) => ctx.runs.endJob(job.id));
 }
 
 /** Puts a Job's Messages back in a Queue Entry at the front (they become `queued` again). */

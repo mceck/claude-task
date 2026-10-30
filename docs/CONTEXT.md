@@ -161,7 +161,7 @@ _Avoid_: poll, vote
 A User who was an Assignee of the Task when a Survey was created, and whose answer the Survey waits for.
 
 **Agent Item**:
-An entry of the Agent's work on the Timeline that isn't a Comment: Thinking, Activity, a Turn Summary or a notice.
+An entry of the Agent's work on the Timeline that isn't a Comment: Thinking, Activity, a Run, a Turn Summary or a notice.
 
 **Thinking**:
 The Agent's reasoning shown on the Timeline next to its Agent Comment, collapsed by default.
@@ -175,6 +175,22 @@ The Timeline entry closing a Turn, with its duration, effort and outcome.
 
 **Live Turn Preview**:
 The streamed text, Thinking and status of a running Turn, shown until the stored entries replace it.
+
+**Run**:
+A Subagent Run or a Background Command.
+_Avoid_: task, job
+
+**Subagent Run**:
+Work an Agent delegates to a Subagent during a Turn; its transcript is shown live only, while the Timeline keeps just how it ended.
+_Avoid_: task, subtask, child agent, delegation
+
+**Background Command**:
+A shell command an Agent leaves running in the background during a Turn; its output stays in the container, and the Timeline keeps just how it ended.
+_Avoid_: background task, background job
+
+**Active Run**:
+A Subagent Run or Background Command that hasn't finished yet.
+_Avoid_: running task, agent task
 
 **System Comment**:
 A Comment written by the platform itself, e.g. errors, resumes, notifications.
@@ -299,14 +315,14 @@ _Avoid_: dispatch, scheduling
 
 **Session**:
 The single continuous Claude Code conversation between a Task and one Agent, or for a Wiki between one Chat and its Agent. It lasts until the Task is closed (or the Chat deleted) and resumes when the Task is reopened.
-_Avoid_: conversation, thread, run
+_Avoid_: conversation, thread
 
 **Claude Session Identity**:
 The id a Session's Claude Code conversation runs under. It starts equal to the Session and changes only when a Chat restarts from its history.
 
 **Job**:
 One execution of an Agent on a Session, from start to exit. An Agent runs at most one Job at a time.
-_Avoid_: run, execution, process
+_Avoid_: execution, process
 
 **Job Token**:
 The per-Job secret an Agent uses for Task Tools and the Git Proxy, valid only while its Job is active.

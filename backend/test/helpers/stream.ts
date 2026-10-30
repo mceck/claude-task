@@ -64,10 +64,11 @@ export class Stream {
     return this.assistant({ type: 'tool_use', id, name, input }, parent);
   }
 
-  toolResult(id: string, content: string, opts: { isError?: boolean; parent?: string | null } = {}): StreamEvent {
+  toolResult(id: string, content: string, opts: { isError?: boolean; parent?: string | null; rejected?: boolean } = {}): StreamEvent {
     return {
       type: 'user',
       message: { role: 'user', content: [{ tool_use_id: id, type: 'tool_result', content, is_error: opts.isError ?? false }] },
+      ...(opts.rejected ? { tool_use_result: 'The user rejected this tool use.' } : {}),
       parent_tool_use_id: opts.parent ?? null,
       session_id: this.sessionId,
       uuid: uuid(),
@@ -112,6 +113,44 @@ export class Stream {
 
   compact(preTokens = 150_000): StreamEvent {
     return { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: preTokens }, session_id: this.sessionId, uuid: uuid() };
+  }
+
+  /** The CLI announcing a subagent or background command it started. */
+  taskStarted(opts: {
+    taskId: string;
+    toolUseId?: string | null;
+    description?: string;
+    subagentType?: string;
+    taskType?: 'local_agent' | 'local_bash';
+    backgrounded?: boolean;
+  }): StreamEvent {
+    return {
+      type: 'system',
+      subtype: 'task_started',
+      task_id: opts.taskId,
+      tool_use_id: opts.toolUseId ?? null,
+      description: opts.description ?? 'Do the thing',
+      subagent_type: opts.subagentType ?? 'general-purpose',
+      task_type: opts.taskType ?? 'local_agent',
+      is_backgrounded: opts.backgrounded ?? false,
+      session_id: this.sessionId,
+      uuid: uuid(),
+    };
+  }
+
+  /** A backgrounded subagent or command reporting how it ended, later in the stream. */
+  taskNotification(opts: { taskId: string; status?: string; summary?: string; usage?: Record<string, number> }): StreamEvent {
+    return {
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: opts.taskId,
+      status: opts.status ?? 'completed',
+      output_file: `/tmp/${opts.taskId}.out`,
+      summary: opts.summary ?? 'All done',
+      usage: opts.usage ?? { total_tokens: 120, tool_uses: 3, duration_ms: 4200 },
+      session_id: this.sessionId,
+      uuid: uuid(),
+    };
   }
 }
 

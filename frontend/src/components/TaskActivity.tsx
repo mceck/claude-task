@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { put } from '../api/client';
 import { useTimeline } from '../api/queries';
+import { ActiveRuns } from './ActiveRuns';
 import { Composer, useCommentDraft } from './Composer';
 import { StopFollowing, Timeline } from './Timeline';
 
@@ -62,6 +63,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
       </div>
       <div className="shrink-0 border-t bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
         <div className="mx-auto max-h-[45dvh] max-w-3xl space-y-3 overflow-y-auto">
+          <ActiveRuns taskId={task.id} />
           {notice}
           {readOnly ? (
             <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">{readOnly}</p>

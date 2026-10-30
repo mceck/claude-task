@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { ActivityEntry } from '@claude-task/shared';
+import type { ActivityEntry, RunInfo } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { endJob, initialProjection, project, projectionId } from '../src/projection/projector';
 import type { Broadcast, Mutation, ProjectionState } from '../src/projection/projector';
@@ -35,9 +35,11 @@ function timeline(mutations: Mutation[]) {
           ? `thinking: ${p.text}`
           : p.kind === 'activity'
             ? `activity: ${p.entries.map(entryText).join(' | ')}`
-            : p.kind === 'turn_summary'
-              ? `summary: ${p.summary.subtype} ${p.summary.toolCalls} tools`
-              : `notice: ${p.text}`,
+            : p.kind === 'run'
+              ? runText(p.run)
+              : p.kind === 'turn_summary'
+                ? `summary: ${p.summary.subtype} ${p.summary.toolCalls} tools`
+                : `notice: ${p.text}`,
       );
     }
     if (m.op === 'system_comment') items.set(`system-${items.size}`, `system: ${m.body.split('\n')[0]}`);
@@ -46,8 +48,12 @@ function timeline(mutations: Mutation[]) {
 }
 
 function entryText(e: ActivityEntry): string {
-  const children = e.children.length ? ` [${e.children.map(entryText).join(', ')}]` : '';
-  return `${e.summary} (${e.status}${e.outcome ? `, ${e.outcome}` : ''})${children}`;
+  return `${e.summary} (${e.status}${e.outcome ? `, ${e.outcome}` : ''})`;
+}
+
+function runText(run: RunInfo): string {
+  const error = run.error ? `, ${run.error}` : '';
+  return `run: ${run.description} (${run.runType}, ${run.status}, ${run.toolCalls} tools${error})`;
 }
 
 describe('stream projection', () => {
@@ -107,7 +113,7 @@ describe('stream projection', () => {
       expected: ['summary: success 0 tools', 'system: Done.'],
     },
     {
-      name: 'subagent tool calls nest under the call that started them; their text stays out',
+      name: 'a subagent is a Run: one item that keeps its outcome, its text out of the Timeline',
       events: [
         s.toolUse('task1', 'Task', { description: 'Find the config', prompt: '…' }),
         s.text('Subagent musing', 'task1'),
@@ -117,11 +123,64 @@ describe('stream projection', () => {
         s.text('Found it.'),
         s.result(),
       ],
-      expected: [
-        'activity: Started a subagent: Find the config (ok) [Listed `**/*.toml` (ok)]',
-        'agent: Found it.',
-        'summary: success 2 tools',
+      expected: ['run: Find the config (subagent, ok, 1 tools)', 'agent: Found it.', 'summary: success 2 tools'],
+    },
+    {
+      name: 'a Run that failed keeps why, cut to 2 KB',
+      events: [
+        s.toolUse('task1', 'Agent', { description: 'Fix the build', subagent_type: 'general-purpose' }),
+        s.toolResult('task1', `boom\n${'x'.repeat(4096)}`, { isError: true }),
+        s.result(),
       ],
+      expected: [`run: Fix the build (subagent, error, 0 tools, boom\n${'x'.repeat(2043)})`, 'summary: success 1 tools'],
+    },
+    {
+      name: 'nested delegations are Runs of their own, one level deeper',
+      events: [
+        s.toolUse('task1', 'Task', { description: 'Outer' }),
+        s.toolUse('task2', 'Task', { description: 'Inner' }, 'task1'),
+        s.toolResult('task2', 'inner done', { parent: 'task1' }),
+        s.toolResult('task1', 'outer done'),
+        s.result(),
+      ],
+      expected: ['run: Outer (subagent, ok, 1 tools)', 'run: Inner (subagent, ok, 0 tools)', 'summary: success 2 tools'],
+    },
+    {
+      name: 'a background command is a Run that its notification ends',
+      events: [
+        s.taskStarted({ taskId: 'bash1', taskType: 'local_bash', description: 'Serve the app', backgrounded: true }),
+        s.taskNotification({ taskId: 'bash1', summary: 'Server stopped' }),
+        s.text('Serving.'),
+        s.result(),
+      ],
+      expected: ['run: Serve the app (command, ok, 0 tools)', 'agent: Serving.', 'summary: success 0 tools'],
+    },
+    {
+      name: 'a foreground command is not a Run',
+      events: [s.taskStarted({ taskId: 'bash1', taskType: 'local_bash', description: 'npm test' }), s.text('Ran it.'), s.result()],
+      expected: ['agent: Ran it.', 'summary: success 0 tools'],
+    },
+    {
+      name: 'a backgrounded subagent hands back at once and ends on its notification',
+      events: [
+        s.toolUse('task1', 'Task', { description: 'Long job' }),
+        s.taskStarted({ taskId: 'agent1', toolUseId: 'task1', description: 'Long job', backgrounded: true }),
+        s.toolResult('task1', 'started in the background'),
+        s.text('It is running.'),
+        s.taskNotification({ taskId: 'agent1', status: 'failed', summary: 'It broke' }),
+        s.result(),
+      ],
+      expected: ['run: Long job (subagent, error, 0 tools, It broke)', 'agent: It is running.', 'summary: success 1 tools'],
+    },
+    {
+      name: 'a backgrounded subagent stopped by the Agent is interrupted, not failed',
+      events: [
+        s.toolUse('task1', 'Task', { description: 'Long job' }),
+        s.taskStarted({ taskId: 'agent1', toolUseId: 'task1', description: 'Long job', backgrounded: true }),
+        s.toolResult('task1', 'rejected by user', { isError: true, rejected: true }),
+        s.result(),
+      ],
+      expected: ['run: Long job (subagent, interrupted, 0 tools)', 'summary: success 1 tools'],
     },
     {
       name: 'MCP tools name their server; Task Tools read as such',
@@ -218,11 +277,57 @@ describe('stream projection', () => {
     expect(timeline(mutations)[0]).toBe('activity: Ran `make` (ok, exit 0) | Ran `make test` (error, exit 1)');
   });
 
-  it('settles tool calls left without a result when the Job ends', () => {
+  it('settles tool calls and Runs left running when the Job ends', () => {
     const { state } = replay([s.toolUse('a', 'Bash', { command: 'sleep 999' }), s.toolUse('b', 'Task', { description: 'dig' }), s.toolUse('c', 'Read', {}, 'b')]);
     const ended = endJob(state);
-    expect(timeline(ended.mutations)).toEqual(['activity: Ran `sleep 999` (interrupted, interrupted) | Started a subagent: dig (interrupted, interrupted) [Read `a file` (interrupted, interrupted)]']);
+    expect(timeline(ended.mutations)).toEqual(['activity: Ran `sleep 999` (interrupted, interrupted)', 'run: dig (subagent, interrupted, 1 tools)']);
     expect(endJob(ended.state).mutations).toEqual([]);
+  });
+
+  it('keeps a Run its own text and tool calls out of the Timeline and the stored state', () => {
+    const { mutations, state } = replay([
+      s.toolUse('task1', 'Task', { description: 'Explore', prompt: 'Look around' }),
+      s.text('Subagent words', 'task1'),
+      s.toolUse('sub1', 'Read', { file_path: 'a.ts' }, 'task1'),
+      s.toolResult('sub1', 'contents', { parent: 'task1' }),
+      s.toolResult('task1', 'done'),
+    ]);
+    const messages = mutations.filter((m) => m.op === 'run.message').map((m) => (m as Extract<Mutation, { op: 'run.message' }>).message);
+    expect(messages.map((m) => (m.type === 'text' ? `text: ${m.text}` : `tool: ${m.name} ${m.status}`))).toEqual(['text: Subagent words', 'tool: Read pending']);
+    const created = mutations.find((m) => m.op === 'run.create') as Extract<Mutation, { op: 'run.create' }>;
+    expect(created.prompt).toBe('Look around');
+    expect(state.runs[created.id]!.run.status).toBe('ok');
+  });
+
+  it('settles a nested delegation on its hand-back, without keeping its report', () => {
+    const { mutations } = replay([
+      s.toolUse('task1', 'Task', { description: 'Outer' }),
+      s.toolUse('task2', 'Task', { description: 'Inner' }, 'task1'),
+      s.toolResult('task2', 'Found the entry point', { parent: 'task1' }),
+      s.toolResult('task1', 'outer done'),
+    ]);
+    const results = mutations.flatMap((m) => (m.op === 'run.tool_result' ? [{ id: m.toolUseId, status: m.status, output: m.output }] : []));
+    expect(results).toEqual([{ id: 'task2', status: 'ok', output: null }]);
+  });
+
+  it('a background command has no tool call, and its notification carries the summary', () => {
+    const { mutations, state } = replay([
+      s.taskStarted({ taskId: 'bash1', taskType: 'local_bash', description: 'npm ci', backgrounded: true }),
+      s.taskNotification({ taskId: 'bash1', summary: 'npm ci completed (exit 0)' }),
+    ]);
+    const created = mutations.find((m) => m.op === 'run.create') as Extract<Mutation, { op: 'run.create' }>;
+    expect(created.run).toMatchObject({ runType: 'command', toolUseId: null, subagentType: null, depth: 1 });
+    expect(state.runs[created.id]!.run).toMatchObject({ status: 'ok', outcome: 'npm ci completed (exit 0)', error: null });
+    const end = mutations.find((m) => m.op === 'run.end') as Extract<Mutation, { op: 'run.end' }>;
+    expect(end.usage).toBeNull();
+  });
+
+  it('a stopped background command is an error, so it stays for the reader', () => {
+    const { state } = replay([
+      s.taskStarted({ taskId: 'bash1', taskType: 'local_bash', description: 'npm ci', backgrounded: true }),
+      s.taskNotification({ taskId: 'bash1', status: 'stopped', summary: 'npm ci stopped' }),
+    ]);
+    expect(Object.values(state.runs)[0]!.run).toMatchObject({ status: 'error', error: 'npm ci stopped' });
   });
 
   it('leaves the state alone for deltas, so nothing needs to be stored', () => {
@@ -235,6 +340,15 @@ describe('stream projection', () => {
     const { mutations } = replay([s.toolUse('a', 'Write', { file_path: 'big.txt', content: big }), s.toolResult('a', 'ok'), s.result()]);
     const sizes = mutations.filter((m) => m.op === 'item.create' || m.op === 'item.update').map((m) => JSON.stringify(m).length);
     for (const size of sizes) expect(size).toBeLessThan(64 * 1024);
+  });
+
+  it("stores nothing of a Run's transcript, so the projection keeps its size", () => {
+    const size = (events: StreamEvent[]) => JSON.stringify(replay(events).state).length;
+    const head = s.toolUse('task1', 'Task', { description: 'dig' });
+    const tail = [s.toolResult('task1', 'done'), s.result()];
+    const quiet = size([head, ...tail]);
+    const chatty = size([head, ...Array.from({ length: 100 }, () => s.text('x'.repeat(2000), 'task1')), ...tail]);
+    expect(chatty).toBeLessThan(quiet + 1024);
   });
 
   it('ignores lines it does not know', () => {
@@ -283,6 +397,18 @@ describe('recorded streams (real CLI spike)', () => {
   it('queued messages drained after stdin closes are one Turn each', () => {
     const { mutations } = replay(load('stdin-close-queued'));
     expect(timeline(mutations)).toEqual(['agent: ONE', 'summary: success 0 tools', 'agent: TWO', 'summary: success 0 tools', 'agent: THREE', 'summary: success 0 tools']);
+  });
+
+  it('a recorded Background Command becomes a Run settled by its notification', () => {
+    const { mutations, state } = replay(load('partial-messages'));
+    const created = mutations.flatMap((m) => (m.op === 'run.create' ? [m.run] : []));
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ runType: 'command', toolUseId: null, status: 'running' });
+    const run = Object.values(state.runs)[0]!.run;
+    expect(run).toMatchObject({ status: 'ok', error: null });
+    expect(run.outcome).toMatch(/completed \(exit code 0\)$/);
+    // The CLI's notification carries no token breakdown, so no usage is recorded.
+    expect(mutations.find((m) => m.op === 'run.end')).toMatchObject({ usage: null });
   });
 
   it.each(['partial-messages', 'mcp-http-tool', 'resume-interrupted-turn'])('%s projects without throwing and ends with a summary', (name) => {

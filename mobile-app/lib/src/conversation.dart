@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
@@ -314,6 +315,7 @@ class _ConversationState extends State<Conversation> {
             ],
           ),
         ),
+        _ActiveRunsBar(controller: c),
         if (c.chatReadOnlyReason != null)
           Padding(
             padding: const EdgeInsets.all(12),
@@ -924,6 +926,11 @@ class TimelineTile extends StatelessWidget {
             ),
           ),
         );
+      }
+      if (kind == 'run') {
+        final run = Map<String, dynamic>.from(payload['run'] as Map)
+          ..['id'] = e.id;
+        return _RunTrace(controller: controller, run: run);
       }
       if (kind == 'turn_summary') {
         final summary = payload['summary'] as Map;
@@ -1930,7 +1937,6 @@ class _ActivityState extends State<_Activity> {
       'error' => (Icons.close_rounded, Palette.danger),
       _ => (Icons.more_horiz_rounded, Palette.warning),
     };
-    final children = objects(item['children']);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2002,17 +2008,804 @@ class _ActivityState extends State<_Activity> {
               ),
             ),
           ),
-        if (_open && children.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 22),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [for (final child in children) _Activity(item: child)],
-            ),
-          ),
       ],
     );
   }
+}
+
+/// A Run's trace on the Timeline: where it went and how it ended. What it did
+/// lives in its sheet, because its transcript only exists while the Job runs.
+class _RunTrace extends StatelessWidget {
+  final TaskController controller;
+  final Json run;
+  const _RunTrace({required this.controller, required this.run});
+  @override
+  Widget build(BuildContext context) {
+    final status = '${run['status']}', error = run['error'] as String?;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Pressable(
+        key: Key('run:${run['id']}'),
+        onTap: () => _openRunSheet(context, controller, run),
+        pressedScale: 1,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 32, child: Center(child: _runLeading(run, 15))),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '${run['description']}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w500,
+                            color: Palette.fg,
+                          ),
+                        ),
+                        TextSpan(
+                          text:
+                              ' · ${_runStatusLabel(status)} · ${_runDuration(run, DateTime.now())} · ${_runCalls(run)}',
+                        ),
+                      ],
+                    ),
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.4,
+                      color: Palette.fgSubtle,
+                    ),
+                  ),
+                  if (error != null && error.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        error,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          height: 1.35,
+                          color: Palette.danger,
+                        ),
+                      ),
+                    )
+                  else if (run['outcome'] is String &&
+                      (run['outcome'] as String).isNotEmpty)
+                    // A Background Command reports how it ended.
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        run['outcome'] as String,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          height: 1.35,
+                          color: Palette.fgSubtle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The Agent's Active Runs above the composer: what it is running now, then
+/// the failures the reader hasn't closed.
+class _ActiveRunsBar extends StatefulWidget {
+  final TaskController controller;
+  const _ActiveRunsBar({required this.controller});
+  @override
+  State<_ActiveRunsBar> createState() => _ActiveRunsBarState();
+}
+
+class _ActiveRunsBarState extends State<_ActiveRunsBar> {
+  Timer? _clock;
+  bool _ticking = false;
+  @override
+  void dispose() {
+    _clock?.cancel();
+    super.dispose();
+  }
+
+  /// A 1 s clock while something runs, so elapsed times grow by themselves.
+  void _syncClock(bool active) {
+    if (active == _ticking) return;
+    _ticking = active;
+    _clock?.cancel();
+    _clock = active
+        ? Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}))
+        : null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final runs = widget.controller.runBar;
+    _syncClock(runs.any((run) => run['status'] == 'running'));
+    if (runs.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final run in runs)
+            _RunChip(
+              key: Key('run-chip:${run['id']}'),
+              controller: widget.controller,
+              run: run,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RunChip extends StatelessWidget {
+  final TaskController controller;
+  final Json run;
+  const _RunChip({super.key, required this.controller, required this.run});
+  @override
+  Widget build(BuildContext context) {
+    final failed = run['status'] == 'error';
+    return Container(
+      decoration: BoxDecoration(
+        color: Palette.raised,
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(
+          color: failed
+              ? Palette.danger.withValues(alpha: .45)
+              : Palette.border,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(4, 1, 3, 1),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Pressable(
+            onTap: () => _openRunSheet(context, controller, run),
+            borderRadius: BorderRadius.circular(99),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_runTypeIcon(run), size: 13, color: Palette.fgSubtle),
+                const SizedBox(width: 5),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 170),
+                  child: Text(
+                    '${run['description']}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Palette.fg),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                _RunStatusIcon('${run['status']}'),
+                const SizedBox(width: 5),
+                Text(
+                  _runDuration(run, DateTime.now()),
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    color: Palette.fgSubtle,
+                  ),
+                ),
+                if ((run['toolCalls'] as num? ?? 0) > 0) ...[
+                  const SizedBox(width: 5),
+                  Text(
+                    run['toolCalls'] == 1
+                        ? '1 call'
+                        : '${run['toolCalls']} calls',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      color: Palette.fgSubtle,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (failed)
+            Pressable(
+              key: Key('dismiss-run:${run['id']}'),
+              onTap: () => controller.dismissRun('${run['id']}'),
+              semanticLabel: 'Dismiss ${run['description']}',
+              borderRadius: BorderRadius.circular(99),
+              padding: const EdgeInsets.all(3),
+              child: const Icon(
+                Icons.close_rounded,
+                size: 13,
+                color: Palette.fgSubtle,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Opens the sheet of a Run, from its bar chip or its Timeline trace.
+Future<void> _openRunSheet(
+  BuildContext context,
+  TaskController controller,
+  Json run,
+) async {
+  final id = '${run['id']}';
+  controller.openRun(id);
+  await showAppSheet<void>(
+    context,
+    maxWidth: 620,
+    builder: (_) => _RunSheet(controller: controller, runId: id, trace: run),
+  );
+  controller.closeRun();
+}
+
+/// What a Run did, live: its prompt, its statistics and its transcript.
+class _RunSheet extends StatefulWidget {
+  final TaskController controller;
+  final String runId;
+
+  /// The trace the reader tapped, which still names the Run once the Job ended.
+  final Json trace;
+  const _RunSheet({
+    required this.controller,
+    required this.runId,
+    required this.trace,
+  });
+  @override
+  State<_RunSheet> createState() => _RunSheetState();
+}
+
+class _RunSheetState extends State<_RunSheet> {
+  final _scroll = ScrollController();
+
+  /// The Runs opened here, nested ones included: the last one fills the sheet.
+  final _path = <String>[];
+  final _traces = <String, Json>{};
+  bool _following = true, _ticking = false;
+  Timer? _clock;
+  int _shown = -1;
+
+  String get _id => _path.isEmpty ? widget.runId : _path.last;
+
+  @override
+  void initState() {
+    super.initState();
+    _path.add(widget.runId);
+    _traces[widget.runId] = widget.trace;
+    _scroll.addListener(() {
+      if (!_scroll.hasClients) return;
+      final p = _scroll.position;
+      _following = p.maxScrollExtent - p.pixels < 48;
+    });
+  }
+
+  @override
+  void dispose() {
+    _clock?.cancel();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _syncClock(bool active) {
+    if (active == _ticking) return;
+    _ticking = active;
+    _clock?.cancel();
+    _clock = active
+        ? Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}))
+        : null;
+  }
+
+  /// Follows the newest message while the reader stays at the bottom.
+  void _follow(int messages) {
+    if (messages == _shown) return;
+    _shown = messages;
+    if (!_following) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scroll.hasClients) {
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      }
+    });
+  }
+
+  /// A nested Subagent Run opens in place; the chevron goes back to its parent.
+  void _open(String id) {
+    widget.controller.openRun(id);
+    setState(() {
+      _path.add(id);
+      _shown = -1;
+      _following = true;
+    });
+  }
+
+  void _back() {
+    setState(() {
+      if (_path.length > 1) _path.removeLast();
+      _shown = -1;
+      _following = true;
+    });
+  }
+
+  Json _run(TaskController c) {
+    final transcript = c.runTranscripts[_id];
+    return {
+      ...?_traces[_id],
+      ...?c.runs[_id],
+      if (transcript != null && transcript['run'] is Map)
+        ...Map<String, dynamic>.from(transcript['run'] as Map),
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.controller,
+    builder: (context, _) {
+      final c = widget.controller;
+      final transcript = c.runTranscripts[_id];
+      final run = _run(c);
+      final messages = objects(transcript?['messages']);
+      final prompt = transcript?['prompt'] as String?;
+      final error = run['error'] as String?;
+      // A Background Command reports how it ended: its outcome is the only trace of it.
+      final outcome = error == null || error.isEmpty
+          ? run['outcome'] as String?
+          : null;
+      _syncClock(run['status'] == 'running');
+      _follow(messages.length);
+      return SheetScaffold(
+        scroll: false,
+        title: '${run['description'] ?? 'Run'}',
+        subtitle: run.isEmpty
+            ? 'Loading…'
+            : _runSummary(run, transcript?['usage']),
+        headerActions: [
+          if (_path.length > 1)
+            IconAction(
+              icon: Icons.arrow_upward_rounded,
+              tooltip: 'Back to the parent Run',
+              size: 34,
+              onPressed: _back,
+            ),
+        ],
+        body: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 4, 22, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (error != null && error.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Palette.danger.withValues(alpha: .08),
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                    border: Border.all(
+                      color: Palette.danger.withValues(alpha: .3),
+                    ),
+                  ),
+                  child: SelectableText(
+                    error,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: Palette.danger,
+                    ),
+                  ),
+                ),
+              if (outcome != null && outcome.isNotEmpty)
+                Padding(
+                  key: const Key('run-outcome'),
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    outcome,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: Palette.fgMuted,
+                    ),
+                  ),
+                ),
+              if (prompt != null && prompt.isNotEmpty) ...[
+                _Collapsible(
+                  icon: Icons.notes_rounded,
+                  title: 'Prompt',
+                  child: SelectableText(
+                    prompt,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.45,
+                      color: Palette.fgMuted,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(context).height * .55,
+                  ),
+                  child: transcript == null
+                      ? _RunNotice(
+                          message: c.goneRuns.contains(_id)
+                              ? 'This Run’s transcript is no longer in memory.'
+                              : 'Loading…',
+                        )
+                      : messages.isEmpty
+                      ? const _RunNotice(message: 'Nothing yet.')
+                      : ListView.builder(
+                          key: const Key('run-transcript'),
+                          controller: _scroll,
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          itemCount:
+                              messages.length +
+                              (transcript['truncated'] == true ? 1 : 0),
+                          itemBuilder: (context, i) {
+                            if (i == messages.length) {
+                              return const Padding(
+                                padding: EdgeInsets.only(top: 8),
+                                child: Text(
+                                  'The transcript reached its size limit, so older messages were dropped.',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    height: 1.4,
+                                    fontStyle: FontStyle.italic,
+                                    color: Palette.fgSubtle,
+                                  ),
+                                ),
+                              );
+                            }
+                            return _RunMessageView(
+                              key: ValueKey('run-message:${messages[i]['n']}'),
+                              controller: c,
+                              message: messages[i],
+                              onOpenRun: _open,
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _RunNotice extends StatelessWidget {
+  final String message;
+  const _RunNotice({required this.message});
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 10),
+    child: Text(
+      message,
+      style: const TextStyle(fontSize: 12.5, color: Palette.fgSubtle),
+    ),
+  );
+}
+
+/// One message of a Run's transcript: its own text, or a tool call it can expand.
+class _RunMessageView extends StatefulWidget {
+  final TaskController controller;
+  final Json message;
+  final void Function(String id) onOpenRun;
+  const _RunMessageView({
+    super.key,
+    required this.controller,
+    required this.message,
+    required this.onOpenRun,
+  });
+  @override
+  State<_RunMessageView> createState() => _RunMessageViewState();
+}
+
+class _RunMessageViewState extends State<_RunMessageView> {
+  bool _open = false;
+  @override
+  Widget build(BuildContext context) {
+    final m = widget.message;
+    if (m['type'] == 'text') {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Md('${m['text'] ?? ''}', size: 13.5, onLink: openLink),
+      );
+    }
+    final status = '${m['status']}';
+    final outcome = m['outcome'] as String?;
+    final output = m['output'] as String?;
+    final childRunId = m['childRunId'] is String
+        ? m['childRunId'] as String
+        : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Pressable(
+          onTap: () => setState(() => _open = !_open),
+          pressedScale: 1,
+          borderRadius: BorderRadius.circular(Radii.sm),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                _toolIcon('${m['name']}'),
+                size: 14,
+                color: Palette.fgSubtle,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(children: _codeSpans('${m['summary']}')),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    height: 1.4,
+                    color: Palette.fgMuted,
+                  ),
+                ),
+              ),
+              if (outcome != null && outcome.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Text(
+                  outcome,
+                  style: TextStyle(
+                    fontFamily: mono,
+                    fontSize: 10.5,
+                    color: status == 'error'
+                        ? Palette.danger
+                        : Palette.fgSubtle,
+                  ),
+                ),
+              ],
+              const SizedBox(width: 6),
+              _RunStatusIcon(status),
+            ],
+          ),
+        ),
+        if (childRunId != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Pressable(
+              key: Key('open-run:$childRunId'),
+              onTap: () => widget.onOpenRun(childRunId),
+              borderRadius: BorderRadius.circular(Radii.sm),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.hub_rounded, size: 11, color: Palette.fgSubtle),
+                  SizedBox(width: 4),
+                  Text(
+                    'Open its Run',
+                    style: TextStyle(fontSize: 11, color: Palette.fgSubtle),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (_open) ...[
+          _CodeBlock(title: 'Input', text: _pretty(m['input'])),
+          if (output != null)
+            _CodeBlock(
+              title: 'Output',
+              text: output.isEmpty ? '(empty)' : output,
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _CodeBlock extends StatelessWidget {
+  final String title, text;
+  const _CodeBlock({required this.title, required this.text});
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.fromLTRB(26, 4, 0, 8),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Palette.sidebar,
+      borderRadius: BorderRadius.circular(Radii.sm),
+      border: Border.all(color: Palette.border),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 10.5,
+            letterSpacing: .4,
+            fontWeight: FontWeight.w600,
+            color: Palette.fgSubtle,
+          ),
+        ),
+        const SizedBox(height: 4),
+        SelectableText(
+          text,
+          maxLines: 14,
+          style: const TextStyle(
+            fontFamily: mono,
+            fontSize: 11.5,
+            height: 1.5,
+            color: Palette.fgMuted,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+String _pretty(Object? value) {
+  if (value == null) return '';
+  try {
+    return const JsonEncoder.withIndent('  ').convert(value);
+  } catch (_) {
+    return '$value';
+  }
+}
+
+/// How long a Run took, or has been going.
+String _runDuration(Json run, DateTime now) {
+  final start = DateTime.tryParse('${run['startedAt']}');
+  if (start == null) return '';
+  final end = DateTime.tryParse('${run['finishedAt']}') ?? now;
+  final s = end.difference(start).inSeconds;
+  if (s < 60) return '${s}s';
+  final m = s ~/ 60;
+  return m < 60 ? '${m}m ${s % 60}s' : '${m ~/ 60}h ${m % 60}m';
+}
+
+String _runStatusLabel(String status) => switch (status) {
+  'running' => 'running',
+  'ok' => 'finished',
+  'interrupted' => 'interrupted',
+  _ => 'failed',
+};
+
+String _runCalls(Json run) {
+  final calls = run['toolCalls'] as num? ?? 0;
+  return calls == 1 ? '1 tool call' : '${calls.toInt()} tool calls';
+}
+
+/// Type, state, elapsed time and what it did, then its tokens when known.
+String _runSummary(Json run, Object? usage) {
+  final parts = [
+    run['runType'] == 'command'
+        ? 'Background command'
+        : '${run['subagentType'] ?? 'Subagent'}',
+    _runStatusLabel('${run['status']}'),
+    _runDuration(run, DateTime.now()),
+    _runCalls(run),
+  ];
+  if (usage is Map) {
+    final tokens =
+        (usage['inputTokens'] as num? ?? 0) +
+        (usage['outputTokens'] as num? ?? 0) +
+        (usage['cacheReadTokens'] as num? ?? 0) +
+        (usage['cacheCreationTokens'] as num? ?? 0);
+    parts.add(_tokens(tokens));
+    parts.add(_cost(usage['costUsd']));
+  }
+  return parts.where((part) => part.isNotEmpty).join(' · ');
+}
+
+String _tokens(num n) {
+  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M tokens';
+  if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}k tokens';
+  return '${n.toInt()} tokens';
+}
+
+String _cost(Object? usd) {
+  if (usd is! num) return '';
+  return usd < 0.01
+      ? '\$${usd.toStringAsFixed(4)}'
+      : '\$${usd.toStringAsFixed(2)}';
+}
+
+IconData _runTypeIcon(Json run) =>
+    run['runType'] == 'command' ? Icons.terminal_rounded : Icons.hub_rounded;
+
+/// What leads a Run's trace: a spinner while it runs, its type once it ended.
+Widget _runLeading(Json run, double size) {
+  final status = '${run['status']}';
+  if (status == 'running') {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: const CircularProgressIndicator(
+        strokeWidth: 1.6,
+        color: Palette.fgMuted,
+      ),
+    );
+  }
+  return Icon(
+    _runTypeIcon(run),
+    size: size,
+    color: status == 'ok'
+        ? Palette.success
+        : status == 'error'
+        ? Palette.danger
+        : Palette.fgSubtle,
+  );
+}
+
+class _RunStatusIcon extends StatelessWidget {
+  static const size = 13.0;
+  final String status;
+  const _RunStatusIcon(this.status);
+  @override
+  Widget build(BuildContext context) => switch (status) {
+    'running' || 'pending' => SizedBox(
+      width: size,
+      height: size,
+      child: const CircularProgressIndicator(
+        strokeWidth: 1.5,
+        color: Palette.fgMuted,
+      ),
+    ),
+    'ok' => Icon(
+      Icons.check_circle_rounded,
+      size: size,
+      color: Palette.success,
+    ),
+    'interrupted' => Icon(
+      Icons.remove_circle_outline_rounded,
+      size: size,
+      color: Palette.fgSubtle,
+    ),
+    _ => Icon(Icons.cancel_rounded, size: size, color: Palette.danger),
+  };
+}
+
+IconData _toolIcon(String name) {
+  if (name == 'Bash') return Icons.terminal_rounded;
+  if (name == 'Read') return Icons.description_outlined;
+  if (name == 'Edit' || name == 'MultiEdit' || name == 'Write') {
+    return Icons.edit_note_rounded;
+  }
+  if (name == 'Grep' || name == 'Glob') return Icons.search_rounded;
+  if (name == 'WebFetch' || name == 'WebSearch') return Icons.language_rounded;
+  if (name == 'Task' || name == 'Agent') return Icons.hub_rounded;
+  if (name.startsWith('mcp__')) return Icons.extension_rounded;
+  return Icons.build_rounded;
+}
+
+/// Summaries mark inline code with backticks, like the web's Summary.
+List<TextSpan> _codeSpans(String text) {
+  final parts = text.split('`');
+  return [
+    for (var i = 0; i < parts.length; i++)
+      if (parts[i].isNotEmpty)
+        TextSpan(
+          text: parts[i],
+          style: i.isOdd
+              ? const TextStyle(
+                  fontFamily: mono,
+                  fontSize: 11.5,
+                  color: Palette.fg,
+                )
+              : null,
+        ),
+  ];
 }
 
 class AttachmentTile extends StatefulWidget {

@@ -1,7 +1,7 @@
 import { createTaskBody, listTasksQuery, moveTaskBody, timelineQuery, updateTaskBody } from '@claude-task/shared';
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
-import { tasks } from '../../db/schema';
+import { and, eq, inArray } from 'drizzle-orm';
+import { jobs, tasks } from '../../db/schema';
 import { z } from 'zod';
 import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
@@ -9,12 +9,14 @@ import type { AppContext } from '../../context';
 import { notFound, parse } from '../../errors';
 import { loadTimeline } from '../comments/service';
 import { assertBoardTask, getBoardProject } from '../projects/service';
+import { ACTIVE_JOB_STATES } from '../agents/service';
 import { createTask, deleteTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from './service';
 import { mergePullRequest } from '../../git/service';
 import { idOrKey } from '../../ids';
 
 const projectParams = z.object({ projectId: idOrKey });
 const params = z.object({ id: idOrKey });
+const runParams = z.object({ runId: z.string().uuid() });
 
 export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/projects/:projectId/tasks', async (request) => {
@@ -98,5 +100,27 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
       if (!row) throw notFound('Task');
       return { ...(await loadTimeline(tx, row.id, q)), chatGeneration: row.chatGeneration };
     });
+  });
+
+  // Runs: the live transcripts of the Task's Subagent Runs and Background Commands (docs/specs/agent-sessions.md#runs).
+  app.get('/tasks/:id/runs', async (request) => {
+    const { id } = parse(params, request.params);
+    const row = await getTaskRow(ctx.db, id);
+    const [job] = await ctx.db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.taskId, row.id), inArray(jobs.state, [...ACTIVE_JOB_STATES])))
+      .limit(1);
+    return { runs: job ? ctx.runs.active(job.id) : [] };
+  });
+
+  app.get('/tasks/:id/runs/:runId', async (request) => {
+    const { id } = parse(params, request.params);
+    const { runId } = parse(runParams, request.params);
+    const row = await getTaskRow(ctx.db, id);
+    const transcript = ctx.runs.transcript(runId);
+    // A Run lives only in memory and only for its Job: once gone, the Timeline keeps its trace.
+    if (!transcript || ctx.runs.taskOf(runId) !== row.id) throw notFound('Run');
+    return transcript;
   });
 }

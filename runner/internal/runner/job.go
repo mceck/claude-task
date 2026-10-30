@@ -129,7 +129,7 @@ func (j *job) env() []string {
 	return env
 }
 
-func (j *job) args() []string {
+func (j *job) args(forwardSubagentText bool) []string {
 	m := j.start
 	a := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	if m.Mode == "resume" {
@@ -156,6 +156,9 @@ func (j *job) args() []string {
 	for _, tool := range c.DisallowedTools {
 		a = append(a, "--disallowedTools", tool)
 	}
+	if forwardSubagentText {
+		a = append(a, "--forward-subagent-text")
+	}
 	return a
 }
 
@@ -172,7 +175,7 @@ func (j *job) spawn(worktree string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(j.r.cfg.ClaudePath, j.args()...)
+	cmd := exec.Command(j.r.cfg.ClaudePath, j.args(j.start.ClaudeArgs.ForwardSubagentText && supportsForwardSubagentText(j.r.cfg.ClaudePath, worktree, j.env(), j.cancelled))...)
 	cmd.Dir = worktree
 	cmd.Env = j.env()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stderrW

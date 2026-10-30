@@ -46,6 +46,9 @@ export const keys = {
   taskPreferences: (projectId: string) => ['task-preferences', projectId] as const,
   timeline: (taskId: string) => ['timeline', taskId] as const,
   session: (taskId: string) => ['session', taskId] as const,
+  /** The Task's active Runs; the transcripts live in the backend's memory only. */
+  runs: (taskId: string) => ['runs', taskId] as const,
+  run: (taskId: string, runId: string) => ['runs', taskId, runId] as const,
   agents: ['agents'] as const,
   agent: (id: string) => ['agent', id] as const,
   builds: (agentId: string) => ['builds', agentId] as const,

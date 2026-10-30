@@ -1,48 +1,7 @@
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import { Stream } from '../../backend/test/helpers/stream';
-import { createProject, createTask, login } from './helpers';
-
-const headers = { 'x-claude-task': '1' };
-
-async function seedAgent(request: APIRequestContext, name = 'Test agent') {
-  name = `${name} ${Date.now()}`;
-  const res = await request.post('/api/v1/credentials', {
-    headers,
-    data: { name: `Key ${Date.now()}`, kind: 'anthropic_api_key', secret: 'test-secret-1234' },
-  });
-  expect(res.status()).toBe(201);
-  const { credential } = await res.json();
-  const result = await request.post('/api/v1/agents', {
-    headers,
-    data: { name, credentialId: credential.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
-  });
-  expect(result.status()).toBe(201);
-  const { agent } = await result.json();
-  await expect.poll(async () => (await (await request.get(`/api/v1/agents/${agent.id}`)).json()).agent.state).toBe('idle');
-  return agent as { id: string; name: string };
-}
-
-async function messages(request: APIRequestContext, agentId: string): Promise<Record<string, unknown>[]> {
-  return (await (await request.get(`/api/v1/__test/runners/${agentId}`)).json()).received;
-}
-
-async function jobStart(request: APIRequestContext, agentId: string, taskId: string) {
-  let start: Record<string, unknown> | undefined;
-  await expect
-    .poll(async () => {
-      const { jobs } = await (await request.get(`/api/v1/agents/${agentId}/jobs`)).json();
-      const job = jobs.find((j: { task: { id: string } }) => j.task.id === taskId);
-      start = (await messages(request, agentId)).find((m) => m.type === 'job.start' && m.jobId === job?.id);
-      return !!start;
-    })
-    .toBe(true);
-  return start! as { jobId: string; sessionId: string };
-}
-
-async function replay(request: APIRequestContext, agentId: string, jobId: string, events: Record<string, unknown>[], exit = false) {
-  expect((await request.post(`/api/v1/__test/runners/${agentId}`, { headers, data: { jobId, events, exit } })).ok()).toBe(true);
-}
+import { HEADERS as headers, createProject, createTask, login, replay, runnerMessages as messages, seedAgent, waitForStart as jobStart } from './helpers';
 
 async function assign(page: Page, agentName: string) {
   await page.getByRole('combobox', { name: 'Assign agent' }).click();

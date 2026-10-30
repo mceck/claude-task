@@ -2,7 +2,7 @@
 // carrying the new projection; on reconnect clients refetch instead of replaying.
 import type { UserEvent } from './mobile';
 import type { VoiceCommand, VoiceServerMessage, VoiceRoom } from './voice';
-import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, TaskSession } from './agents';
+import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, RunMessage, RunSummary, TaskSession } from './agents';
 import type { AgentItem, Comment, Tag, Project, Revision, Status, Task, TaskCard } from './domain';
 
 export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | `agent:${string}` | `user:${string}`;
@@ -39,6 +39,10 @@ export type TaskEvent =
   | { type: 'live.delta'; taskId: string; delta: LiveDelta }
   /** Transient status of the running Turn (API retries); null clears it. */
   | { type: 'live.status'; taskId: string; status: { kind: 'retrying'; attempt: number; maxRetries: number; error: string | null } | null }
+  /** A Run started or ended; its transcript stays in the backend's memory. */
+  | { type: 'run.updated'; taskId: string; run: RunSummary }
+  /** One message of a Run's live transcript, numbered per Run. */
+  | { type: 'run.message'; taskId: string; runId: string; message: RunMessage }
   | { type: 'job.setup_output'; taskId: string; jobId: string; chunk: string };
 
 /** Events on `agents` (the Agents list) and `agent:<id>` (an Agent's detail view). */

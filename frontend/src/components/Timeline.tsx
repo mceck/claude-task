@@ -65,7 +65,7 @@ export function Timeline({ taskId, hideChanges, ...rest }: { taskId: string; hid
         item.type === 'comment' ? (
           <CommentItem key={item.id} comment={item.comment} taskId={taskId} agents={lookups.agents} />
         ) : item.type === 'agent' ? (
-          <AgentItemView key={item.id} item={item.item as AgentItem} />
+          <AgentItemView key={item.id} item={item.item as AgentItem} taskId={taskId} />
         ) : (
           <RevisionItem key={item.id} revision={item.revision} count={count} {...lookups} />
         ),

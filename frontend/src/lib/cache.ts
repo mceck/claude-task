@@ -107,6 +107,7 @@ export function removeTask(qc: QueryClient, taskId: string): void {
   void qc.resetQueries({ queryKey: ['task'], predicate: (q) => (q.state.data as Task | undefined)?.id === taskId });
   qc.removeQueries({ queryKey: keys.timeline(taskId) });
   qc.removeQueries({ queryKey: keys.session(taskId) });
+  qc.removeQueries({ queryKey: keys.runs(taskId) });
   qc.removeQueries({ queryKey: ['voice', taskId] });
 }
 
@@ -296,5 +297,6 @@ export function refreshTopic(qc: QueryClient, topic: Topic): void {
     void qc.invalidateQueries({ queryKey: ['task'], predicate: (q) => (q.state.data as Task | undefined)?.id === id });
     void qc.invalidateQueries({ queryKey: keys.timeline(id) });
     void qc.invalidateQueries({ queryKey: keys.session(id) });
+    void qc.invalidateQueries({ queryKey: keys.runs(id) });
   }
 }

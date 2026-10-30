@@ -1,34 +1,11 @@
 import type { APIRequestContext } from '@playwright/test';
 import { expect, test } from '@playwright/test';
-import { createProject, createTask, loggedInContext } from './helpers';
+import { HEADERS as headers, createProject, createTask, loggedInContext, seedAgent, startJob } from './helpers';
 
-const headers = { 'x-claude-task': '1' };
-
-async function seedAgent(request: APIRequestContext) {
-  const name = `Question agent ${Date.now()}`;
-  const { credential } = await (await request.post('/api/v1/credentials', { headers, data: { name: `Key ${Date.now()}`, kind: 'anthropic_api_key', secret: 'test-secret-1234' } })).json();
-  const res = await request.post('/api/v1/agents', { headers, data: { name, credentialId: credential.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' } });
-  expect(res.status()).toBe(201);
-  const { agent } = await res.json();
-  await expect.poll(async () => (await (await request.get(`/api/v1/agents/${agent.id}`)).json()).agent.state).toBe('idle');
-  return agent as { id: string; name: string };
-}
-
-/** Assigns the Agent, starts it with a Comment, and returns the Job's Task Tools bearer token. */
+/** Starts the Agent and returns the Job's Task Tools bearer token. */
 async function startAgent(request: APIRequestContext, taskId: string, agentId: string): Promise<string> {
-  const { task } = await (await request.get(`/api/v1/tasks/${taskId}`)).json();
-  expect((await request.patch(`/api/v1/tasks/${taskId}`, { headers, data: { version: task.version, agentId } })).ok()).toBe(true);
-  expect((await request.post(`/api/v1/tasks/${taskId}/comments`, { headers, data: { body: 'Please get started.' } })).ok()).toBe(true);
-  let token = '';
-  await expect
-    .poll(async () => {
-      const { received } = await (await request.get(`/api/v1/__test/runners/${agentId}`)).json();
-      const start = received.find((m: { type: string }) => m.type === 'job.start');
-      token = start ? JSON.parse(start.claudeArgs.mcpConfig).mcpServers['claude-task'].headers.Authorization : '';
-      return token;
-    })
-    .not.toBe('');
-  return token;
+  const { start } = await startJob(request, agentId, taskId);
+  return JSON.parse((start.claudeArgs as { mcpConfig: string }).mcpConfig).mcpServers['claude-task'].headers.Authorization;
 }
 
 /** Calls a Task Tool the way `claude` does: JSON-RPC over Streamable HTTP with the Job token. */

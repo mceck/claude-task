@@ -7,6 +7,7 @@ import { useEffect } from 'react';
 import { keys } from '../api/queries';
 import { applyEvent, refreshTopic } from './cache';
 import { applyLiveEvent, clearLiveTurns } from './live';
+import { applyRunEvent, clearRuns } from './runs';
 
 const LOGIN_ENDED = 4001;
 
@@ -29,6 +30,7 @@ class Realtime {
   stop(): void {
     for (const listener of this.disconnectListeners) listener();
     clearLiveTurns();
+    clearRuns();
     this.qc = null;
     clearTimeout(this.timer);
     this.socket?.close();
@@ -83,6 +85,7 @@ class Realtime {
       if (msg.type === 'event') {
         applyEvent(this.qc, msg.event);
         applyLiveEvent(msg.event);
+        applyRunEvent(msg.event);
       }
       // Events start flowing only now: refetch what may have changed between the query and the subscription.
       else if (msg.type === 'subscribed') for (const topic of msg.topics) refreshTopic(this.qc, topic);
@@ -92,6 +95,7 @@ class Realtime {
       this.socket = null;
       for (const listener of this.disconnectListeners) listener();
       clearLiveTurns();
+      clearRuns();
       // Logged out elsewhere, deactivated, or (when the handshake itself is refused) expired:
       // re-check the Login, so the app goes to /login instead of reconnecting forever.
       void this.qc.invalidateQueries({ queryKey: keys.me });

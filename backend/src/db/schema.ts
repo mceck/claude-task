@@ -50,7 +50,7 @@ export const sessionStateEnum = pgEnum('session_state', SESSION_STATES);
 export const queueEntryKindEnum = pgEnum('queue_entry_kind', QUEUE_ENTRY_KINDS);
 export const jobStateEnum = pgEnum('job_state', JOB_STATES);
 export const deliveryStateEnum = pgEnum('delivery_state', DELIVERY_STATES);
-export const agentItemKindEnum = pgEnum('agent_item_kind', ['thinking', 'activity', 'turn_summary', 'notice']);
+export const agentItemKindEnum = pgEnum('agent_item_kind', ['thinking', 'activity', 'run', 'turn_summary', 'notice']);
 
 /** Fractional-index keys compare by byte, so they need the C collation. */
 const orderKey = customType<{ data: string }>({ dataType: () => 'text COLLATE "C"' });

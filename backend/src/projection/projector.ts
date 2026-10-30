@@ -2,7 +2,15 @@
 // (state, event) to (state, mutations, broadcasts), so it can be tested over recorded streams
 // and replayed when the display rules change. Applying the mutations is someone else's job.
 import { createHash } from 'node:crypto';
-import type { ActivityEntry, AgentItemPayload, LiveDelta, TurnSummary, Usage } from '@claude-task/shared';
+import type { ActivityEntry, AgentItemPayload, LiveDelta, RunInfo, RunMessageDraft, TurnSummary, Usage } from '@claude-task/shared';
+
+/** A Run while it is open: its item payload plus what the projection needs to route its output. */
+export interface RunState {
+  id: string;
+  run: RunInfo;
+  /** A `system/task_started` said the CLI runs it in the background: its hand-back is not its end. */
+  backgrounded: boolean;
+}
 
 export interface ProjectionState {
   /** Turns finished in this Job. */
@@ -16,10 +24,18 @@ export interface ProjectionState {
   thinking: { id: string; text: string } | null;
   /** The open Activity item, which new tool calls join. */
   activity: string | null;
-  /** Where each tool call lives: its Activity item and the index path inside it. */
-  tools: Record<string, { itemId: string; path: number[] }>;
+  /** Where each tool call lives: its Activity item and the index of its entry. */
+  tools: Record<string, { itemId: string; index: number }>;
   /** Entries of every Activity item of the Turn, which tool results still update. */
   groups: Record<string, ActivityEntry[]>;
+  /** Runs of this Job, by Run id (their Agent Item id). */
+  runs: Record<string, RunState>;
+  /** The call that started each Subagent Run, so its output and its hand-back find it. */
+  runByTool: Record<string, string>;
+  /** A CLI task id (backgrounded Runs) and the Run it belongs to. */
+  runByCliTask: Record<string, string>;
+  /** Tool calls inside a Run's transcript, with the Run that holds them. */
+  runTools: Record<string, { runId: string; name: string }>;
   retrying: boolean;
   /** Credential errors are reported once per Job. */
   credentialReported: boolean;
@@ -48,6 +64,11 @@ export type Mutation =
   | { op: 'comment.update'; id: string; body: string }
   | { op: 'item.create'; id: string; payload: AgentItemPayload }
   | { op: 'item.update'; id: string; payload: AgentItemPayload }
+  /** A Run starts; its transcript lives in the backend's memory, not in Agent Items. */
+  | { op: 'run.create'; id: string; run: RunInfo; prompt: string | null }
+  | { op: 'run.message'; runId: string; message: RunMessageDraft }
+  | { op: 'run.tool_result'; runId: string; toolUseId: string; status: 'ok' | 'error' | 'interrupted'; outcome: string | null; output: string | null }
+  | { op: 'run.end'; runId: string; run: RunInfo; usage: Usage | null }
   | { op: 'system_comment'; body: string }
   | { op: 'turn'; turn: TurnRecord }
   | { op: 'rate_limit'; info: Record<string, unknown> }
@@ -79,6 +100,10 @@ export function initialProjection(): ProjectionState {
     activity: null,
     tools: {},
     groups: {},
+    runs: {},
+    runByTool: {},
+    runByCliTask: {},
+    runTools: {},
     retrying: false,
     credentialReported: false,
     nextId: 0,
@@ -97,6 +122,11 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
   // Deltas only stream to browsers: the state stays as it is (and needn't be stored again).
   if ((event as Json | null)?.type === 'stream_event') return { state: prev, mutations: [], broadcasts: deltaBroadcasts(prev, event as Json) };
   const s: ProjectionState = structuredClone(prev);
+  // A state stored by an older build can lack the Run fields; keep the Job readable across a deploy.
+  s.runs ??= {};
+  s.runByTool ??= {};
+  s.runByCliTask ??= {};
+  s.runTools ??= {};
   const mutations: Mutation[] = [];
   const broadcasts: Broadcast[] = [];
   const out = { state: s, mutations, broadcasts };
@@ -128,7 +158,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     case 'assistant':
       startTurn();
       clearRetry();
-      if (e.parent_tool_use_id) handleSubagent(e.parent_tool_use_id as string);
+      if (e.parent_tool_use_id) handleRunMessage(e.parent_tool_use_id as string);
       else handleAssistant();
       break;
     case 'user':
@@ -180,7 +210,59 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
         payload: { kind: 'notice', text: `Context compacted${typeof tokens === 'number' ? ` (${tokens.toLocaleString('en-US')} tokens before)` : ''}` },
       });
       closeText();
+    } else if (e.subtype === 'task_started') {
+      handleCliTaskStarted();
+    } else if (e.subtype === 'task_notification') {
+      handleCliTaskNotification();
     }
+  }
+
+  function handleCliTaskStarted() {
+    const cliTaskId = typeof e.task_id === 'string' ? e.task_id : null;
+    if (e.task_type === 'local_bash') {
+      // A command the CLI keeps running after the Turn: a Run of its own, settled by its notification.
+      if (e.is_backgrounded !== true) return;
+      const id = newId();
+      const run: RunInfo = {
+        runType: 'command',
+        // A command has no tool call of its own on the Timeline.
+        toolUseId: null,
+        description: oneLine(e.description ?? 'Background command', 120),
+        subagentType: null,
+        depth: 1,
+        status: 'running',
+        startedAt: ctx.receivedAt,
+        finishedAt: null,
+        toolCalls: 0,
+        outcome: null,
+        error: null,
+      };
+      s.runs[id] = { id, run, backgrounded: true };
+      if (cliTaskId) s.runByCliTask[cliTaskId] = id;
+      mutations.push({ op: 'run.create', id, run, prompt: null });
+      mutations.push({ op: 'item.create', id, payload: { kind: 'run', run } });
+      return;
+    }
+    if (e.task_type !== 'local_agent') return;
+    const toolUseId = typeof e.tool_use_id === 'string' ? e.tool_use_id : null;
+    const runId = toolUseId === null ? undefined : s.runByTool[toolUseId];
+    const state = runId === undefined ? undefined : s.runs[runId];
+    if (!state) return;
+    if (cliTaskId) s.runByCliTask[cliTaskId] = state.id;
+    // A backgrounded subagent hands back at once; only its notification ends it.
+    if (e.is_backgrounded === true) state.backgrounded = true;
+  }
+
+  function handleCliTaskNotification() {
+    const cliTaskId = typeof e.task_id === 'string' ? e.task_id : null;
+    const runId = cliTaskId === null ? undefined : s.runByCliTask[cliTaskId];
+    if (!runId) return;
+    const summary = typeof e.summary === 'string' && e.summary.trim() ? e.summary.trim() : null;
+    const status = e.status === 'completed' ? 'ok' : 'error';
+    const state = s.runs[runId];
+    if (state) state.run.outcome = summary === null ? state.run.outcome : oneLine(summary, 120);
+    // The CLI's task usage counts total tokens only, which the transcript's token breakdown cannot hold.
+    settleRun(runId, status, status === 'error' ? clip(summary ?? 'failed', 2 * 1024) : null, null);
   }
 
   function handleAssistant() {
@@ -222,52 +304,141 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       } else if (block?.type === 'tool_use') {
         closeText();
         s.toolCalls++;
+        if (isRunTool(block.name)) {
+          startRun(block, 1);
+          continue;
+        }
         const entry = toolEntry(block);
         const open = s.activity ? s.groups[s.activity] : undefined;
         if (s.activity && open) {
           open.push(entry);
-          s.tools[entry.toolUseId] = { itemId: s.activity, path: [open.length - 1] };
+          s.tools[entry.toolUseId] = { itemId: s.activity, index: open.length - 1 };
           updateGroup(s.activity);
         } else {
           s.activity = newId();
           s.groups[s.activity] = [entry];
-          s.tools[entry.toolUseId] = { itemId: s.activity, path: [0] };
+          s.tools[entry.toolUseId] = { itemId: s.activity, index: 0 };
           mutations.push({ op: 'item.create', id: s.activity, payload: { kind: 'activity', entries: [entry] } });
         }
       }
     }
   }
 
-  /** Subagent output: only its tool calls show, nested under the call that started it. */
-  function handleSubagent(parentId: string) {
-    const parent = s.tools[parentId];
-    if (!parent) return;
+  /** A Subagent Run's own output: its text and its tool calls, without its Thinking. */
+  function handleRunMessage(parentId: string) {
+    const runId = s.runByTool[parentId];
+    const state = runId === undefined ? undefined : s.runs[runId];
+    if (!runId || !state) return;
     const content: Json[] = Array.isArray(e.message?.content) ? e.message.content : [];
     for (const block of content) {
-      if (block?.type !== 'tool_use') continue;
-      const host = entryAt(parent.itemId, parent.path);
-      if (!host) continue;
-      s.toolCalls++;
-      const entry = toolEntry(block);
-      host.children.push(entry);
-      s.tools[entry.toolUseId] = { itemId: parent.itemId, path: [...parent.path, host.children.length - 1] };
-      updateGroup(parent.itemId);
+      if (block?.type === 'text') {
+        const text = String(block.text ?? '');
+        if (text.trim() === '') continue;
+        mutations.push({ op: 'run.message', runId, message: { type: 'text', text } });
+      } else if (block?.type === 'tool_use') {
+        s.toolCalls++;
+        state.run.toolCalls++;
+        const toolUseId = String(block.id ?? '');
+        const name = String(block.name ?? 'tool');
+        const child = isRunTool(name) ? startRun(block, state.run.depth + 1) : null;
+        // A nested delegation is a tool call of this transcript too: its result settles its row.
+        s.runTools[toolUseId] = { runId, name };
+        mutations.push({
+          op: 'run.message',
+          runId,
+          message: {
+            type: 'tool',
+            toolUseId,
+            name,
+            summary: summarizeTool(name, block.input ?? {}),
+            status: 'pending',
+            outcome: null,
+            input: capStrings(block.input ?? null),
+            output: null,
+            childRunId: child,
+          },
+        });
+        mutations.push(runItemUpdate(state));
+      }
     }
+  }
+
+  /** A tool call named `Agent` (formerly `Task`) delegates to a subagent: it opens a Run, not an Activity entry. */
+  function startRun(block: Json, depth: number): string {
+    const id = newId();
+    const input = (block.input ?? {}) as Json;
+    const run: RunInfo = {
+      runType: 'subagent',
+      toolUseId: String(block.id ?? '') || null,
+      description: oneLine(input.description ?? input.subagent_type ?? 'Subagent', 120),
+      subagentType: typeof input.subagent_type === 'string' ? input.subagent_type : null,
+      depth,
+      status: 'running',
+      startedAt: ctx.receivedAt,
+      finishedAt: null,
+      toolCalls: 0,
+      outcome: null,
+      error: null,
+    };
+    const prompt = typeof input.prompt === 'string' ? input.prompt : null;
+    s.runs[id] = { id, run, backgrounded: false };
+    if (run.toolUseId) s.runByTool[run.toolUseId] = id;
+    mutations.push({ op: 'run.create', id, run, prompt });
+    mutations.push({ op: 'item.create', id, payload: { kind: 'run', run } });
+    return id;
+  }
+
+  /** A Run ends: the Timeline item and the live registry both learn how. */
+  function settleRun(runId: string, status: RunInfo['status'], error: string | null, runUsage: Usage | null) {
+    const state = s.runs[runId];
+    if (!state || state.run.status !== 'running') return;
+    state.run.status = status;
+    state.run.finishedAt = ctx.receivedAt;
+    state.run.error = error;
+    mutations.push(runItemUpdate(state));
+    mutations.push({ op: 'run.end', runId, run: { ...state.run }, usage: runUsage });
   }
 
   function handleToolResults() {
     const content: Json[] = Array.isArray(e.message?.content) ? e.message.content : [];
     for (const block of content) {
       if (block?.type !== 'tool_result') continue;
-      const where = s.tools[block.tool_use_id];
-      if (!where) continue;
-      const entry = entryAt(where.itemId, where.path);
-      if (!entry) continue;
+      const toolUseId = String(block.tool_use_id ?? '');
       const output = resultText(block.content);
       const isError = block.is_error === true;
-      entry.output = output.length > OUTPUT_DISPLAY_LIMIT ? `${output.slice(0, OUTPUT_DISPLAY_LIMIT)}\n… (truncated)` : output;
       // A Stop rejects the running tool call: interrupted, not failed.
-      if (isError && typeof e.tool_use_result === 'string' && /rejected/i.test(e.tool_use_result)) {
+      const interrupted = isError && typeof e.tool_use_result === 'string' && /rejected/i.test(e.tool_use_result);
+
+      // The hand-back of a Run's own call is not kept: it settles the Run.
+      const runId = s.runByTool[toolUseId];
+      const run = runId === undefined ? undefined : s.runs[runId];
+      if (runId && run) {
+        const status = interrupted ? 'interrupted' : isError ? 'error' : 'ok';
+        // A backgrounded subagent hands back at once and reports later, on its task notification.
+        if (!run.backgrounded || interrupted) {
+          settleRun(runId, status, isError && !interrupted ? clip(output, 2 * 1024) : null, null);
+        }
+      }
+      const inRun = s.runTools[toolUseId];
+      if (inRun) {
+        mutations.push({
+          op: 'run.tool_result',
+          runId: inRun.runId,
+          toolUseId,
+          status: interrupted ? 'interrupted' : isError ? 'error' : 'ok',
+          outcome: interrupted ? 'interrupted' : outcome(inRun.name, output, isError, e.tool_use_result),
+          // A delegation's hand-back is a report, not tool output: its Run keeps what matters.
+          output: isRunTool(inRun.name) ? null : output,
+        });
+      }
+      if (runId) continue;
+
+      const where = s.tools[toolUseId];
+      if (!where) continue;
+      const entry = entryAt(where.itemId, where.index);
+      if (!entry) continue;
+      entry.output = output.length > OUTPUT_DISPLAY_LIMIT ? `${output.slice(0, OUTPUT_DISPLAY_LIMIT)}\n… (truncated)` : output;
+      if (interrupted) {
         entry.status = 'interrupted';
         entry.outcome = 'interrupted';
       } else {
@@ -343,24 +514,32 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     });
   }
 
-  function entryAt(itemId: string, path: number[]): ActivityEntry | null {
-    let list = s.groups[itemId];
-    let entry: ActivityEntry | undefined;
-    for (const i of path) {
-      entry = list?.[i];
-      list = entry?.children;
-    }
-    return entry ?? null;
+  function entryAt(itemId: string, index: number): ActivityEntry | null {
+    return s.groups[itemId]?.[index] ?? null;
   }
 }
 
 /**
- * The Job is over (its process exited or is gone): tool calls still waiting will never get a
- * result. Pure, like `project`, and a no-op once settled.
+ * The Job is over (its process exited or is gone): tool calls and Runs still waiting will never
+ * get a result. Pure, like `project`, and a no-op once settled.
  */
 export function endJob(prev: ProjectionState): ProjectionResult {
+  const at = new Date().toISOString();
   const s: ProjectionState = structuredClone(prev);
-  return { state: s, mutations: settleGroups(s), broadcasts: [] };
+  const mutations = settleGroups(s);
+  for (const state of Object.values(s.runs ?? {})) {
+    if (state.run.status !== 'running') continue;
+    state.run.status = 'interrupted';
+    state.run.finishedAt = at;
+    mutations.push(runItemUpdate(state));
+    mutations.push({ op: 'run.end', runId: state.id, run: { ...state.run }, usage: null });
+  }
+  return { state: s, mutations, broadcasts: [] };
+}
+
+/** The item mutation that keeps a Run's Timeline row in step with its state. */
+function runItemUpdate(state: RunState): Mutation {
+  return { op: 'item.update', id: state.id, payload: { kind: 'run', run: { ...state.run } } };
 }
 
 /** Marks every pending call of the Turn's Activity groups interrupted; one update per changed group. */
@@ -373,7 +552,6 @@ function settleGroups(s: ProjectionState): Mutation[] {
         entry.outcome ??= 'interrupted';
         changed = true;
       }
-      if (settle(entry.children)) changed = true;
     }
     return changed;
   };
@@ -402,7 +580,6 @@ function toolEntry(block: Json): ActivityEntry {
     outcome: null,
     input: capStrings(block.input ?? null),
     output: null,
-    children: [],
   };
 }
 
@@ -415,6 +592,9 @@ function capStrings(value: unknown): unknown {
 }
 
 const code = (s: string) => `\`${s.replace(/`/g, "'")}\``;
+const clip = (text: string, max: number) => (text.length > max ? text.slice(0, max) : text);
+/** The CLI's subagent tool: `Agent`, and `Task` before it was renamed. */
+const isRunTool = (name: unknown) => name === 'Agent' || name === 'Task';
 const oneLine = (s: unknown, max = 80) => {
   const line = String(s ?? '').split('\n')[0]!.trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;

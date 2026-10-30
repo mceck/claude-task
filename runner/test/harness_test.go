@@ -423,6 +423,7 @@ type jobOpts struct {
 	env                                map[string]string
 	git                                msg
 	attachments                        []msg
+	forwardSubagentText                bool
 }
 
 func jobStart(o jobOpts) msg {
@@ -454,7 +455,7 @@ func jobStart(o jobOpts) msg {
 		"claudeArgs": msg{
 			"model": o.model, "effort": o.effort, "permissionMode": "bypassPermissions",
 			"appendSystemPrompt": o.systemPrompt, "mcpConfig": `{"mcpServers":{}}`,
-			"disallowedTools": []string{"AskUserQuestion"},
+			"disallowedTools": []string{"AskUserQuestion"}, "forwardSubagentText": o.forwardSubagentText,
 		},
 		"initialMessage": initial, "attachmentsToFetch": attachments,
 	}

@@ -205,6 +205,8 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
         }),
         // Nobody can answer Claude Code's own question dialog in a headless Job: Agents use ask_question.
         disallowedTools: ['AskUserQuestion'],
+        // The Run transcripts show what a subagent writes; the Runner adds the flag where the CLI has it.
+        forwardSubagentText: true,
       },
       initialMessage: message.blocks,
       attachmentsToFetch: message.fetch,

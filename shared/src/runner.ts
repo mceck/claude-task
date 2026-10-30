@@ -62,6 +62,12 @@ export interface ClaudeArgs {
   mcpConfig: string;
   /** `--disallowedTools <name>`, one per tool. */
   disallowedTools: string[];
+  /**
+   * The Run transcript needs the subagent's text, which the CLI only forwards with
+   * `--forward-subagent-text` (from its 2.1.211). The Runner adds the flag when the `claude`
+   * it is about to spawn supports it.
+   */
+  forwardSubagentText: boolean;
 }
 
 /** One requested path in an upload's manifest, in request order; `error` when it failed. */

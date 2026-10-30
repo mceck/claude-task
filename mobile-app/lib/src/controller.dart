@@ -40,9 +40,11 @@ class TaskController extends ChangeNotifier {
   bool booting = true, busy = false, sending = false, includeClosed = false;
   bool conversationVisible = false, appVisible = true;
   String? error, pendingTaskId, assignmentRetryId;
+
   /// The Task the failed Agent assignment belongs to, so Retry can't touch another one.
   String? assignmentRetryTaskId;
   ConnectionState connection = ConnectionState.connecting;
+
   /// Whether the live socket is up, independent of a one-off HTTP failure.
   bool _liveConnected = false;
   User? user;
@@ -72,6 +74,20 @@ class TaskController extends ChangeNotifier {
   /// Comments that replaced them, which open expanded too (as on the web).
   final Set<String> liveExpanded = {}, expandedComments = {};
   String liveThinking = '', liveStatus = '';
+
+  /// The Task's Runs: what the bar lists and the live transcript of each
+  /// (docs/specs/clients.md#runs). The backend keeps transcripts in memory for
+  /// as long as the Job runs, so the phone never caches them.
+  final Map<String, Json> runs = {};
+  final Map<String, Json> runTranscripts = {};
+  final Map<String, List<Json>> _runBuffered = {};
+  final Set<String> _runWanted = {},
+      _runRefreshed = {},
+      dismissedRuns = {},
+      goneRuns = {};
+
+  /// The Run whose sheet is open, from the bar or from its Timeline row.
+  String? openRunId;
   bool _olderLoaded = false;
   int _profileEpoch = 0;
   bool get online => connection == ConnectionState.connected;
@@ -79,6 +95,26 @@ class TaskController extends ChangeNotifier {
       ? const Draft()
       : Draft.fromJson(storage.read('draft:${task!.id}') ?? {});
   TaskPreference? get preference => task == null ? null : preferences[task!.id];
+
+  /// What the bar lists, in the backend's order: what runs now, then the
+  /// failures the reader hasn't closed.
+  List<Json> get runBar {
+    final listed = runs.values
+        .where(
+          (r) =>
+              r['status'] == 'running' ||
+              (r['status'] == 'error' && !dismissedRuns.contains(r['id'])),
+        )
+        .toList();
+    return listed..sort((a, b) {
+      int rank(Json run) => run['status'] == 'running' ? 0 : 1;
+      final byRank = rank(a) - rank(b);
+      return byRank != 0
+          ? byRank
+          : '${a['startedAt']}'.compareTo('${b['startedAt']}');
+    });
+  }
+
   TaskController({
     required this.storage,
     required this.push,
@@ -271,6 +307,9 @@ class TaskController extends ChangeNotifier {
       final previous = connection;
       connection = state;
       _liveConnected = state == ConnectionState.connected;
+      // Runs live in the backend: after a lost connection the next snapshot is
+      // the truth, and its finished ones have left.
+      if (state != ConnectionState.connected) _clearRuns();
       notifyListeners();
       if (state == ConnectionState.connected &&
           previous != ConnectionState.connected) {
@@ -457,6 +496,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     pendingTaskId = null;
+    _clearRuns();
     assignmentRetryId = null;
     assignmentRetryTaskId = null;
     _liveConnected = false;
@@ -737,6 +777,140 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    _clearRuns();
+  }
+
+  /// Forgets the Task's Runs: another Task is open, or the connection went.
+  void _clearRuns() {
+    runs.clear();
+    runTranscripts.clear();
+    _runBuffered.clear();
+    _runWanted.clear();
+    _runRefreshed.clear();
+    dismissedRuns.clear();
+    goneRuns.clear();
+    openRunId = null;
+  }
+
+  /// Seeds the bar with the Task's active Runs, when it opens or on a refresh.
+  void _setActiveRuns(List<Json> listed) {
+    final ids = {for (final run in listed) run['id']};
+    // Runs the endpoint no longer lists are gone from the backend; the finished
+    // ones the reader has seen keep their Timeline row's sheet working.
+    for (final run in runs.values.toList()) {
+      if (!ids.contains(run['id']) && run['status'] == 'running') {
+        runs.remove(run['id']);
+      }
+    }
+    for (final run in listed) {
+      _upsertRun(run);
+    }
+  }
+
+  void _upsertRun(Json run) {
+    final id = run['id'] as String?;
+    if (id == null) return;
+    runs[id] = runs.containsKey(id) ? {...runs[id]!, ...run} : {...run};
+  }
+
+  void openRun(String id) {
+    openRunId = id;
+    _runWanted.add(id);
+    notifyListeners();
+    unawaited(_fetchRunTranscript(id));
+  }
+
+  void closeRun() {
+    openRunId = null;
+    notifyListeners();
+  }
+
+  /// A failure the reader closed leaves the bar, as on the web.
+  void dismissRun(String id) {
+    dismissedRuns.add(id);
+    notifyListeners();
+  }
+
+  Future<void> _fetchRunTranscript(String id) async {
+    final taskId = task?.id;
+    if (taskId == null) return;
+    try {
+      final result = await _request('GET', '/tasks/$taskId/runs/$id');
+      if (task?.id != taskId) return;
+      var transcript = result;
+      for (final message in _runBuffered.remove(id) ?? const <Json>[]) {
+        transcript = _mergeRunMessage(transcript, message);
+      }
+      runTranscripts[id] = transcript;
+      final run = transcript['run'];
+      if (run is Map) _upsertRun({...Map<String, dynamic>.from(run), 'id': id});
+    } on ApiException catch (e) {
+      if (task?.id != taskId) return;
+      if (e.status == 404) {
+        goneRuns.add(id);
+      } else {
+        _recordError(e);
+      }
+    } catch (e) {
+      _recordError(e);
+    }
+    notifyListeners();
+  }
+
+  /// Numbers make merging exact: a tool result replaces its message, a new one
+  /// appends.
+  Json _mergeRunMessage(Json transcript, Json message) {
+    final n = message['n'] as int? ?? -1;
+    final messages = objects(transcript['messages']);
+    if (n < 0) return transcript;
+    if (n < messages.length) {
+      return {
+        ...transcript,
+        'messages': [for (final m in messages) m['n'] == n ? message : m],
+      };
+    }
+    if (n > messages.length) return transcript;
+    return {
+      ...transcript,
+      'messages': [...messages, message],
+      'nextIndex': messages.length + 1,
+    };
+  }
+
+  /// A Run starting, moving on or ending, or one message of its transcript.
+  void _applyRunEvent(Json event) {
+    if (event['taskId'] != task?.id) return;
+    if (event['type'] == 'run.updated') {
+      final run = event['run'];
+      if (run is! Map) return;
+      final typed = Map<String, dynamic>.from(run);
+      _upsertRun(typed);
+      // The last messages can land after the Run's final status: its transcript
+      // is fetched once more while the reader has it open.
+      final id = typed['id'];
+      if (id == openRunId &&
+          typed['status'] != 'running' &&
+          _runRefreshed.add(id as String)) {
+        unawaited(_fetchRunTranscript(id));
+      }
+    } else {
+      final id = event['runId'] as String?;
+      final message = event['message'];
+      if (id == null || message is! Map) return;
+      final typed = Map<String, dynamic>.from(message);
+      final transcript = runTranscripts[id];
+      if (transcript != null) {
+        runTranscripts[id] = _mergeRunMessage(transcript, typed);
+      } else if (_runWanted.contains(id)) {
+        // The snapshot isn't here yet: hold the message so it isn't lost when
+        // it lands.
+        final held = _runBuffered.putIfAbsent(id, () => [])..add(typed);
+        if (held.length > 2000) held.removeRange(0, held.length - 2000);
+      } else {
+        return;
+      }
+    }
+    notifyListeners();
   }
 
   Future<void> deleteWiki() async {
@@ -813,6 +987,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    _clearRuns();
     final cached = storage.read('task:${value.id}');
     if (cached != null && cached['task'] != null) {
       final cachedTask = Task.fromJson(cached['task'] as Json);
@@ -839,6 +1014,7 @@ class TaskController extends ChangeNotifier {
       _request('GET', '/tasks/$id/timeline'),
       _request('GET', '/tasks/$id/session'),
       _request('GET', '/tasks/$id/preferences'),
+      _request('GET', '/tasks/$id/runs'),
     ]);
     if (task?.id != id || epoch != _timelineEpoch) return;
     final fresh = Task.fromJson(result[0]['task'] as Json);
@@ -853,6 +1029,7 @@ class TaskController extends ChangeNotifier {
     task = fresh;
     session = result[2]['session'] as Json?;
     preferences[id] = TaskPreference.fromJson(result[3]['preference'] as Json);
+    _setActiveRuns(objects(result[4]['runs']));
     _mergeTimeline(objects(result[1]['items']));
     if (!_olderLoaded) nextCursor = result[1]['nextCursor'] as String?;
     await _cacheTask();
@@ -1372,6 +1549,10 @@ class TaskController extends ChangeNotifier {
     if (type == 'live.status' && event['taskId'] == task?.id) {
       liveStatus = event['status'] == null ? '' : 'Agent retrying request';
       notifyListeners();
+      return;
+    }
+    if (type.startsWith('run.') && event['taskId'] == task?.id) {
+      _applyRunEvent(event);
       return;
     }
     if (type == 'timeline.reset') {

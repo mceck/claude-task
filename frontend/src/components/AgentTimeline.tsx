@@ -1,6 +1,6 @@
 // The Agent's work on the Timeline: Thinking, Activity groups, Turn Summaries, notices, and the
 // live preview of the running Turn.
-import type { ActivityEntry, AgentItem, TurnSummary } from '@claude-task/shared';
+import type { ActivityEntry, AgentItem, RunStatus, RunSummary, TurnSummary } from '@claude-task/shared';
 import {
   Brain,
   ChevronRight,
@@ -26,12 +26,13 @@ import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useTaskSession } from '../api/queries';
 import { setLiveExpanded, useLiveTurn } from '../lib/live';
+import { openRun } from '../lib/runs';
 import { AgentAvatar, formatCost, formatDuration, formatTokens } from './agents';
 import { Time } from './common';
 import { Markdown } from './Markdown';
 import { CollapsibleBody } from './Timeline';
 
-function toolIcon(name: string): LucideIcon {
+export function toolIcon(name: string): LucideIcon {
   if (name === 'Bash') return Terminal;
   if (['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(name)) return FilePen;
   if (name === 'Read') return FileText;
@@ -45,7 +46,7 @@ function toolIcon(name: string): LucideIcon {
 }
 
 /** Inline code in summaries is written with backticks. */
-function Summary({ text }: { text: string }) {
+export function Summary({ text }: { text: string }) {
   const parts = text.split(/(`[^`]*`)/);
   return (
     <>
@@ -70,10 +71,11 @@ function Rail({ icon: Icon, className }: { icon: LucideIcon; className?: string 
   );
 }
 
-export function AgentItemView({ item }: { item: AgentItem }) {
+export function AgentItemView({ item, taskId }: { item: AgentItem; taskId: string }) {
   const p = item.payload;
   if (p.kind === 'thinking') return <ThinkingView text={p.text} />;
   if (p.kind === 'activity') return <ActivityView entries={p.entries} />;
+  if (p.kind === 'run') return <RunItemView run={{ ...p.run, id: item.id }} taskId={taskId} />;
   if (p.kind === 'turn_summary') return <TurnSummaryView summary={p.summary} at={item.createdAt} />;
   return (
     <li className="relative flex items-center gap-3 pl-1.5 text-xs text-muted-foreground">
@@ -81,6 +83,58 @@ export function AgentItemView({ item }: { item: AgentItem }) {
       {p.text} · <Time iso={item.createdAt} />
     </li>
   );
+}
+
+/** A Run's trace on the Timeline: nothing more than where it went, which the dialog explains in full. */
+function RunItemView({ run, taskId }: { run: RunSummary; taskId: string }) {
+  const Icon = run.runType === 'command' ? Terminal : Users;
+  const calls = run.toolCalls === 1 ? '1 tool call' : `${run.toolCalls} tool calls`;
+  return (
+    <li aria-label="Run" className="relative flex items-start gap-3 pl-1.5 text-xs">
+      <Rail
+        icon={run.status === 'running' ? Loader2 : Icon}
+        className={cn(
+          run.status === 'running' && '[&_svg]:animate-spin',
+          run.status === 'error' && 'border-red-500/50 text-red-400',
+          run.status === 'ok' && 'text-emerald-500',
+        )}
+      />
+      <button
+        type="button"
+        onClick={() => openRun(taskId, run.id, run)}
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 rounded-md pt-0.5 text-left text-muted-foreground hover:text-foreground"
+      >
+        <span className="min-w-0 truncate font-medium text-foreground/80">{run.description}</span>
+        <span>· {statusLabel(run.status)}</span>
+        <span>· {formatDuration(elapsed(run, Date.now()))}</span>
+        <span>· {calls}</span>
+        {run.error && <span className="min-w-0 basis-full truncate text-red-400">{run.error}</span>}
+        {!run.error && run.outcome && <span className="min-w-0 basis-full truncate opacity-80">{run.outcome}</span>}
+      </button>
+    </li>
+  );
+}
+
+/** How long a Run took, or has been going. */
+export function elapsed(run: RunSummary, now: number): number {
+  const start = Date.parse(run.startedAt);
+  const end = run.finishedAt ? Date.parse(run.finishedAt) : now;
+  return Math.max(end - start, 0);
+}
+
+export function statusLabel(status: RunStatus): string {
+  if (status === 'running') return 'running';
+  if (status === 'ok') return 'finished';
+  if (status === 'interrupted') return 'interrupted';
+  return 'failed';
+}
+
+/** A Run's or a tool call's status, as an icon. */
+export function StatusIcon({ status, className }: { status: RunStatus | 'pending'; className?: string }) {
+  if (status === 'running' || status === 'pending') return <Loader2 aria-label="running" className={cn('animate-spin', className)} />;
+  if (status === 'ok') return <CircleCheck aria-label="finished" className={cn('text-emerald-500/80', className)} />;
+  if (status === 'interrupted') return <CircleSlash aria-label="interrupted" className={cn('opacity-70', className)} />;
+  return <CircleX aria-label="failed" className={cn('text-red-400', className)} />;
 }
 
 function ThinkingView({ text }: { text: string }) {
@@ -105,10 +159,7 @@ function ThinkingView({ text }: { text: string }) {
 
 function countEntries(entries: ActivityEntry[]): { total: number; errors: number } {
   return entries.reduce(
-    (acc, e) => {
-      const nested = countEntries(e.children);
-      return { total: acc.total + 1 + nested.total, errors: acc.errors + (e.status === 'error' ? 1 : 0) + nested.errors };
-    },
+    (acc, e) => ({ total: acc.total + 1, errors: acc.errors + (e.status === 'error' ? 1 : 0) }),
     { total: 0, errors: 0 },
   );
 }
@@ -188,18 +239,11 @@ function EntryView({ entry }: { entry: ActivityEntry }) {
           {entry.output !== null && <Block title="Output">{entry.output || '(empty)'}</Block>}
         </div>
       )}
-      {entry.children.length > 0 && (
-        <ul aria-label="Subagent activity" className="ml-4 border-l pl-2">
-          {entry.children.map((c) => (
-            <EntryView key={c.toolUseId} entry={c} />
-          ))}
-        </ul>
-      )}
     </li>
   );
 }
 
-function Block({ title, children }: { title: string; children: string }) {
+export function Block({ title, children }: { title: string; children: string }) {
   return (
     <div>
       <p className="mb-1 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">{title}</p>

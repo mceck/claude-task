@@ -16,6 +16,7 @@ import { FakeRuntime } from './agents/fake-runtime';
 import type { AgentRuntime } from './agents/runtime';
 import { Scheduler } from './agents/scheduler';
 import { RunnerHub } from './runner/hub';
+import { RunRegistry } from './sessions/runs';
 import { UploadRequests } from './runner/uploads';
 import type { Config } from './config';
 import type { AppContext } from './context';
@@ -51,6 +52,7 @@ export async function createServer(
         overrides.runtime ??
         (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents)),
       runners: new RunnerHub(() => ctx.log),
+      runs: new RunRegistry(),
     } as AppContext;
     ctx.uploads = new UploadRequests(ctx.runners, config.agents.backendUrl, config.agents.uploadTimeoutMs);
     ctx.pushDispatcher = new PushDispatcher(ctx);

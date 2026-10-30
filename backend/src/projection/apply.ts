@@ -83,6 +83,32 @@ export async function applyProjection(
         if (row) after.emit(topic, { type: 'agent_item.updated', item: serializeAgentItem(row) });
         break;
       }
+      case 'run.create':
+        // The transcript lives in memory, so its registry is updated and announced from one
+        // effect: the clients never see a Run event the registry can't answer for.
+        after.effect((ctx) => {
+          const run = ctx.runs.create(job.id, job.taskId, m.id, m.run, m.prompt);
+          ctx.hub.publish(topic, { type: 'run.updated', taskId: job.taskId, run });
+        });
+        break;
+      case 'run.message':
+        after.effect((ctx) => {
+          const message = ctx.runs.message(m.runId, m.message);
+          if (message) ctx.hub.publish(topic, { type: 'run.message', taskId: job.taskId, runId: m.runId, message });
+        });
+        break;
+      case 'run.tool_result':
+        after.effect((ctx) => {
+          const message = ctx.runs.toolResult(m.runId, m.toolUseId, m.status, m.outcome, m.output);
+          if (message) ctx.hub.publish(topic, { type: 'run.message', taskId: job.taskId, runId: m.runId, message });
+        });
+        break;
+      case 'run.end':
+        after.effect((ctx) => {
+          const run = ctx.runs.end(m.runId, m.run, m.usage);
+          if (run) ctx.hub.publish(topic, { type: 'run.updated', taskId: job.taskId, run });
+        });
+        break;
       case 'turn':
         await tx
           .insert(turns)

@@ -85,7 +85,13 @@ If the Agent is disabled, offline, building, awaiting container recreation or ap
 
 On the Agent page, **Recent jobs** lists recent work and its state, Turn count and cost. Click **Details** to read **Job details**, including setup output, process diagnostics and the Claude version. Use **Builds** to inspect image build output and **Usage** to review token and cost totals.
 
-The Task Timeline shows the human-facing result, files the Agent posts, its Questions and Surveys, expandable Thinking and Activity, and Turn Summaries. Agent errors appear as System Comments. After a restart or lost connection, interrupted work can resume automatically; look for its recovery notice before sending duplicate instructions.
+The Task Timeline shows the human-facing result, files the Agent posts, its Questions and Surveys, expandable Thinking and Activity, the Runs it delegated, and Turn Summaries. Agent errors appear as System Comments. After a restart or lost connection, interrupted work can resume automatically; look for its recovery notice before sending duplicate instructions.
+
+## Follow the Agent's Runs
+
+When the Agent delegates work to a subagent or leaves a command running in the background, a bar above the composer lists those Runs while they are going, with what each is doing, how long it has run and how many tools it used. Click one to read it live: the subagent's text and the tools it calls, without its Thinking. The bar also shows a Run that failed, and keeps it until you dismiss it, so you can read the error. The Timeline keeps a row for each Run with how it ended, and clicking the row opens the same view while the Run is still in memory. The transcript lives only while the Agent's Job does: after the Agent stops, the Timeline row remains.
+
+Background commands keep their output inside the Agent's container; their row reports only how they ended. To watch a server or a long check, read the command's log in the container.
 
 ## Related
 
