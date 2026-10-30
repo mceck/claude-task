@@ -41,10 +41,10 @@ export async function getProject(db: Executor, idOrKey: string, opts: { lock?: b
   return row;
 }
 
-/** A Project as the Project, Status, Tag and Repository routes see it: Wiki Projects are reached through the Wiki API only. */
+/** A Project as the Project, Status, Tag and Repository routes see it: Wiki and Schedule Projects are reached through their own APIs only. */
 export async function getBoardProject(db: Executor, idOrKey: string, opts: { lock?: boolean } = {}): Promise<ProjectRow> {
   const row = await getProject(db, idOrKey, opts);
-  if (row.kind === 'wiki') throw notFound('Project');
+  if (row.kind !== 'project') throw notFound('Project');
   return row;
 }
 
@@ -52,6 +52,7 @@ export async function getBoardProject(db: Executor, idOrKey: string, opts: { loc
 export async function assertBoardTask(db: Executor, projectId: string): Promise<void> {
   const project = await getProject(db, projectId);
   if (project.kind === 'wiki') throw forbidden('This Task belongs to a Wiki: change it from the Wiki', 'wiki_task');
+  if (project.kind === 'schedule') throw forbidden('This Task is a scheduled run: the scheduler manages it', 'schedule_task');
 }
 
 export async function createProject(

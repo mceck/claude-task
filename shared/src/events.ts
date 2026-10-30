@@ -5,7 +5,7 @@ import type { VoiceCommand, VoiceServerMessage, VoiceRoom } from './voice';
 import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, RunMessage, RunSummary, TaskSession } from './agents';
 import type { AgentItem, Comment, Tag, Project, Revision, Status, Task, TaskCard } from './domain';
 
-export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | `agent:${string}` | `user:${string}`;
+export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | 'schedules' | `agent:${string}` | `user:${string}`;
 
 export const projectTopic = (projectId: string): Topic => `project:${projectId}`;
 export const taskTopic = (taskId: string): Topic => `task:${taskId}`;
@@ -54,7 +54,7 @@ export type AgentEvent =
   | { type: 'build.log'; agentId: string; buildId: string; chunk: string }
   | { type: 'job.updated'; job: Job };
 
-export type RealtimeEvent = { type: 'voice.room'; room: VoiceRoom } | { type: 'wiki.changed'; wikiId: string } | BoardEvent | TaskEvent | AgentEvent | UserEvent;
+export type RealtimeEvent = { type: 'voice.room'; room: VoiceRoom } | { type: 'wiki.changed'; wikiId: string } | { type: 'schedule.changed'; scheduleId: string } | BoardEvent | TaskEvent | AgentEvent | UserEvent;
 
 export type ClientMessage =
   | VoiceCommand

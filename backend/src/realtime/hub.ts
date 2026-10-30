@@ -3,7 +3,7 @@ import type { WebSocket } from 'ws';
 import { VoiceRooms } from './voice';
 
 const MAX_BACKLOG_BYTES = 16 * 1024 * 1024;
-const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents|wikis)$/;
+const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents|wikis|schedules)$/;
 
 export function isTopic(value: unknown): value is Topic {
   return typeof value === 'string' && TOPIC_PATTERN.test(value);

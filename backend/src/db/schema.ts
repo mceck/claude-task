@@ -695,7 +695,9 @@ export const pushDevices = pgTable('push_devices', {
 
 export const notificationEvents = pgTable('notification_events', {
   id: text('id').primaryKey(),
-  taskId: uuid('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  /** Null for a Schedule event that reports no Task (a blocked Schedule). */
+  taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
+  scheduleId: uuid('schedule_id').references((): AnyPgColumn => schedules.id, { onDelete: 'cascade' }),
   kind: text('kind').notNull(),
   createdAt: createdAt(),
 });
@@ -709,3 +711,49 @@ export const pushDeliveries = pgTable('push_deliveries', {
   nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, (t) => [primaryKey({ columns: [t.eventId, t.userId, t.deviceId] }), index('push_deliveries_pending_idx').on(t.nextAttemptAt)]);
+
+export const schedules = pgTable(
+  'schedules',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** The Schedule Project: its Tasks are the Scheduled Runs, and it carries the Repository. */
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    agentId: uuid('agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'set null' }),
+    cron: text('cron').notNull(),
+    timeZone: text('time_zone').notNull().default('UTC'),
+    prompt: text('prompt').notNull(),
+    readOnly: boolean('read_only').notNull().default(false),
+    enabled: boolean('enabled').notNull().default(true),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+    consecutiveSkips: integer('consecutive_skips').notNull().default(0),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('schedules_project_unique').on(t.projectId),
+    uniqueIndex('schedules_name_unique').on(sql`lower(${t.name})`),
+    index('schedules_next_run_idx').on(t.nextRunAt),
+  ],
+);
+
+export const scheduleRuns = pgTable(
+  'schedule_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    scheduleId: uuid('schedule_id')
+      .notNull()
+      .references(() => schedules.id, { onDelete: 'cascade' }),
+    dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    state: text('state', { enum: ['started', 'skipped'] }).notNull(),
+    manual: boolean('manual').notNull().default(false),
+    /** Null for a skipped run. */
+    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
+    skipReason: text('skip_reason'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('schedule_runs_schedule_idx').on(t.scheduleId, t.createdAt), uniqueIndex('schedule_runs_task_unique').on(t.taskId)],
+);

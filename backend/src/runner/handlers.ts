@@ -9,6 +9,7 @@ import type { Executor } from '../db/client';
 import { agents, comments, jobs, sessionEvents, sessions, tasks } from '../db/schema';
 import { ACTIVE_JOB_STATES, getAgentRow } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
+import { settleRun } from '../modules/schedules/service';
 import { applyProjection } from '../projection/apply';
 import { endJob, initialProjection, project } from '../projection/projector';
 import type { ProjectionState } from '../projection/projector';
@@ -268,6 +269,8 @@ async function processJobMessage(
           `The agent's process stopped unexpectedly (${msg.signal ? `signal ${msg.signal}` : `exit code ${msg.exitCode}`}).${tail(job.stderr)}`,
         );
       }
+      // A Scheduled Run ends with its first Job, unless the Job is about to start over.
+      if (job.cancelRequested || (!missing && !exists)) await settleRun(tx, after, job.id);
       after.effect((ctx) => {
         ctx.scheduler.publishJob(job.id);
         ctx.scheduler.publishTask(job.taskId);
@@ -315,6 +318,7 @@ async function failJob(
   );
   // Its Messages go back to the front of the Queue, waiting for a Retry instead of looping.
   if (stillActive) await requeue(tx, after, job, session, { held: true });
+  await settleRun(tx, after, job.id);
   after.effect((ctx) => {
     ctx.scheduler.publishJob(job.id);
     ctx.scheduler.publishTask(job.taskId);
