@@ -27,7 +27,7 @@ The Chat Dock keeps conversations at the bottom of the window, like a chat app. 
 3. As a User, I want the conversation to leave its page when I minimize it, so that the same chat is never shown twice.
 4. As a User, I want to open a Dock panel back into its full page, so that I can work with the Task details or the Wiki's Chat list.
 5. As a User, I want to collapse a panel to its title bar, so that I can keep it at hand without it taking the screen.
-6. As a User, I want each bar to show the Agent's avatar and state, the title, the Task Key or Wiki name and an unread dot, so that I can tell what needs me without opening it.
+6. As a User, I want each bar to show the Agent's avatar and state, the title, the Project and Task Key (the Wiki name and Chat Key) and an unread dot — collapsed too — so that I can tell what needs me without opening it.
 7. As a User, I want an open Dock panel to be the same conversation as the page — Timeline, Active Runs, live text, composer, Drafts — so that what I can do in one I can do in the other.
 8. As a User, I want reading in an open panel to clear the unread state everywhere, and a collapsed panel to mark nothing, so that the indicators stay honest.
 9. As a User, I want the Dock to survive a reload, so that an accidental refresh doesn't lose the chats I was keeping.
@@ -62,7 +62,8 @@ The Chat Dock keeps conversations at the bottom of the window, like a chat app. 
 - [x] Minimizing leaves the conversation's page as described and shows it in the Dock.
 - [x] A conversation is either in the Dock or on a page: opening its page from anywhere takes it out of the Dock.
 - [x] The Dock keeps up to six conversations, shows the three most recent open and the older ones as bars, with the newest nearest the bottom-right corner.
-- [x] A bar shows the Agent's state, the title, the Task Key or Wiki name and an unread dot; clicking it opens or collapses the panel.
+- [x] A bar shows the Agent's state, the title, the Project and Task Key (the Wiki name and Chat Key) even while collapsed, and an unread dot; clicking it opens or collapses the panel.
+- [x] The empty space around the bars, above a collapsed one included, takes no clicks away from the page.
 - [x] An open panel is the same conversation as the page, advances the read position while at the bottom, and its composer works; a collapsed panel does not mark anything read.
 - [x] The Dock sits above the page's own composer and above the Voice Bar.
 - [x] Below 768 px the Dock is hidden and the control is not offered, while the stored entries survive.

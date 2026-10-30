@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { ApiError, errorMessage } from '../api/client';
-import { useAgents, useTask, useTaskPreferences, useTaskSession, useUsers, useWiki, useWikiChats } from '../api/queries';
+import { useAgents, useProject, useTask, useTaskPreferences, useTaskSession, useUsers, useWiki, useWikiChats } from '../api/queries';
 import { MAX_DOCK_ENTRIES, removeFromDock, toggleInDock, useDock, useDockAvailable } from '../lib/dock';
 import type { DockEntry } from '../lib/dock';
 import { useTopic } from '../lib/realtime';
@@ -39,7 +39,8 @@ export function ChatDock() {
       className="pointer-events-none absolute inset-x-0 z-30 flex justify-end px-4"
       style={{ bottom: 'calc(var(--chat-composer-height, 0px) + 1rem)' }}
     >
-      <section aria-label="Minimized chats" className="pointer-events-auto flex max-w-full items-end gap-3">
+      {/* The row spans every panel, so only the panels themselves take clicks: the room above a collapsed one shows the page. */}
+      <section aria-label="Minimized chats" className="pointer-events-none flex max-w-full items-end gap-3">
         {shown.map((entry) => (
           <DockPanel key={entry.taskId} entry={entry} width={width} height={height} />
         ))}
@@ -72,6 +73,7 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
   const users = useUsers();
   const agents = useAgents();
   const wiki = useWiki(entry.wikiId);
+  const project = useProject(entry.wikiId ? undefined : task.data?.projectId);
   const chats = useWikiChats(entry.wikiId);
   const preferences = useTaskPreferences(entry.wikiId ? undefined : task.data?.projectId);
   const chat = entry.wikiId ? chats.data?.find((c) => c.id === entry.taskId) : undefined;
@@ -97,7 +99,9 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
   const running = state === 'running';
   const unread = entry.wikiId ? !!chat?.unread : !!preferences.data?.find((p) => p.taskId === entry.taskId)?.unread;
   const title = chat?.title ?? task.data?.title;
-  const subtitle = entry.wikiId ? wiki.data?.name : task.data?.key;
+  // The Project (or Wiki) and the Task Key stay visible, collapsed too, so a bar is identifiable at a glance.
+  const owner = entry.wikiId ? wiki.data?.name : project.data?.project.name;
+  const subtitle = [owner, task.data?.key].filter(Boolean).join(' · ') || undefined;
   const otherAgent =
     chat?.agentId && wiki.data && chat.agentId !== wiki.data.agentId
       ? agents.data?.find((a) => a.id === chat.agentId)
@@ -119,7 +123,7 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
       aria-label={title ? `Minimized chat: ${title}` : 'Minimized chat'}
       style={{ width, height: collapsed ? 50 : height }}
       className={cn(
-        'flex shrink-0 flex-col overflow-hidden rounded-xl border bg-card shadow-2xl shadow-black/50',
+        'pointer-events-auto flex shrink-0 flex-col overflow-hidden rounded-xl border bg-card shadow-2xl shadow-black/50',
         'animate-in fade-in slide-in-from-bottom-1 duration-200 motion-reduce:animate-none',
         'transition-[height] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
       )}
@@ -148,7 +152,7 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
                 <span className="h-3 w-32 animate-pulse rounded bg-muted" aria-label="Loading chat" />
               )}
             </span>
-            {!collapsed && subtitle && (
+            {subtitle && (
               <span className="flex items-center gap-1 truncate text-[10.5px] text-muted-foreground">
                 {subtitle}
                 {running && ' · running'}

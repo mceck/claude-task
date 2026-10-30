@@ -114,6 +114,34 @@ test('minimizes a Wiki Chat and drops its panel when the Chat is deleted', async
   expect((await page.request.delete(`/api/v1/git/connections/${connection.id}`, { headers: H })).status()).toBe(204);
 });
 
+test('a collapsed panel leaves the room above it clickable', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request, 'Dock clicks');
+  const tasks = [await createTask(page.request, project, 'Older chat'), await createTask(page.request, project, 'Newer chat')];
+  for (const task of tasks) {
+    await page.goto(`/t/${task.key}`);
+    await page.getByRole('button', { name: 'Minimize chat' }).click();
+  }
+
+  const dock = page.getByRole('region', { name: 'Minimized chats' });
+  const older = dock.getByRole('article', { name: 'Minimized chat: Older chat' });
+  const newer = dock.getByRole('article', { name: 'Minimized chat: Newer chat' });
+  const open = (await newer.boundingBox())!;
+  await older.getByRole('button', { name: 'Collapse Older chat' }).click();
+  await expect(older.getByRole('button', { name: 'Open Older chat' })).toHaveAttribute('aria-expanded', 'false');
+  // A collapsed bar still names its Project and Task Key.
+  await expect(older).toContainText('Dock clicks');
+  await expect(older).toContainText(tasks[0]!.key);
+  const collapsed = (await older.boundingBox())!;
+
+  // The row spans every panel, but only the panels themselves take clicks: above a collapsed one the page shows through.
+  const over = await page.evaluate(
+    ({ x, y }) => (document.elementFromPoint(x, y)?.closest('[aria-label="Minimized chats"]') ? 'dock' : 'page'),
+    { x: collapsed.x + collapsed.width / 2, y: open.y + 20 },
+  );
+  expect(over).toBe('page');
+});
+
 test('offers no minimizing where the Dock cannot fit', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request, 'Narrow dock');
