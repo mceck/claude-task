@@ -41,12 +41,22 @@ class Conversation extends StatefulWidget {
 
 class _ConversationState extends State<Conversation> {
   final _scroll = ScrollController();
+
+  /// The Timeline's sliver: its laid-out children say what the reader sees.
+  final _timeline = GlobalKey();
   bool _atBottom = true, _loadingOlder = false, _readPending = false;
 
   /// Hides Revisions (field changes), leaving only the conversation.
   bool _hideChanges = true;
   String? _readId;
   String _stamp = '';
+  bool _contentChanged = false;
+
+  /// Where each laid-out Entry ended, counted up from the bottom of the
+  /// Timeline, and the scroll offset, at the last frame.
+  Map<RenderBox, double> _edges = const {};
+  double _measuredPixels = 0;
+  bool _measuring = false;
 
   /// Entries already shown; anything else arriving later animates in.
   Set<String>? _seen;
@@ -66,6 +76,7 @@ class _ConversationState extends State<Conversation> {
     final bottom = _scroll.position.pixels < _followSlack;
     if (_atBottom != bottom) setState(() => _atBottom = bottom);
     if (bottom) _markReached();
+    _scheduleMeasure();
   }
 
   void _markReached() {
@@ -97,36 +108,75 @@ class _ConversationState extends State<Conversation> {
     final c = widget.controller;
     final stamp =
         '${c.timeline.isEmpty ? '' : c.timeline.last.id}:${c.liveText.values.join().length}:${c.timeline.length}';
-    if (stamp == _stamp) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _markReached();
-      });
+    if (stamp != _stamp) {
+      _stamp = stamp;
+      _contentChanged = true;
+    }
+    _scheduleMeasure();
+  }
+
+  /// The Timeline is built from the bottom up, so anything arriving below the
+  /// Entry the reader is on (the Live Turn preview growing, a new Entry, the
+  /// stored Comment replacing it) would carry that Entry off screen: reading
+  /// back through a running Turn would keep drifting. Once a frame, the scroll
+  /// offset moves by the same amount instead, so what is on screen stays put;
+  /// following the newest content takes over again at the bottom.
+  void _scheduleMeasure() {
+    if (_measuring) return;
+    _measuring = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measuring = false;
+      if (mounted) _measure();
+    });
+  }
+
+  void _measure() {
+    final sliver = _timeline.currentContext?.findRenderObject();
+    if (sliver is! RenderSliverList ||
+        !sliver.attached ||
+        !_scroll.hasClients) {
       return;
     }
-    final previous = _stamp;
-    _stamp = stamp;
-    final oldExtent = _scroll.hasClients
-        ? _scroll.position.maxScrollExtent
-        : 0.0;
-    final oldPixels = _scroll.hasClients ? _scroll.position.pixels : 0.0;
-    final preserve =
-        !_atBottom &&
-        !_loadingOlder &&
-        previous.split(':').first != stamp.split(':').first;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scroll.hasClients) return;
-      if (_atBottom) {
-        _scroll.jumpTo(0);
-      } else if (preserve) {
-        _scroll.jumpTo(
-          (oldPixels + _scroll.position.maxScrollExtent - oldExtent).clamp(
-            0,
-            _scroll.position.maxScrollExtent,
-          ),
-        );
-      }
-      _markReached();
-    });
+    final changed = _contentChanged;
+    _contentChanged = false;
+    final position = _scroll.position;
+    final pixels = position.pixels;
+    final before = _edges;
+    final edges = <RenderBox, double>{};
+    // The lowest Entry on screen that was already there last frame says how
+    // far everything below the reader moved: Entries are anchored to their far
+    // edge, counted from the bottom, so they all move together.
+    double? shift;
+    for (
+      RenderBox? child = sliver.firstChild;
+      child != null;
+      child = sliver.childAfter(child)
+    ) {
+      final data = child.parentData;
+      if (!child.hasSize || data is! SliverMultiBoxAdaptorParentData) continue;
+      final offset = data.layoutOffset;
+      if (offset == null) continue;
+      final edge = offset + child.size.height;
+      edges[child] = edge;
+      final was = before[child];
+      if (shift == null && was != null && edge > pixels) shift = edge - was;
+    }
+    _edges = edges;
+    if (_atBottom) {
+      // Following: the newest content stays on screen.
+      if (changed && pixels != 0) position.jumpTo(0);
+    } else if (shift != null && shift != 0 && pixels == _measuredPixels) {
+      // Nothing else moved the Timeline since last frame: move it with the
+      // content below instead of letting the reader's place slide away.
+      position.jumpTo(
+        (pixels + shift).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+      );
+    }
+    _measuredPixels = position.pixels;
+    _markReached();
   }
 
   Future<void> _loadOlder() async {
@@ -183,74 +233,96 @@ class _ConversationState extends State<Conversation> {
                             ? 'Comments here are visible to everyone on the Task.'
                             : 'Your first Comment starts the Agent.',
                       )
-                    : ListView.builder(
+                    : CustomScrollView(
                         key: const Key('timeline'),
                         controller: _scroll,
                         reverse: true,
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                        itemCount: rows.length + 2,
-                        // Entries keep their element (open sections, loaded
-                        // images, measured heights) when newer ones arrive.
-                        findChildIndexCallback: (key) {
-                          if (key is! ValueKey<String>) return null;
-                          final i = rows.indexWhere(
-                            (r) => r.entry.id == key.value,
-                          );
-                          return i < 0 ? null : rows.length - i;
-                        },
-                        itemBuilder: (context, index) {
-                          if (index == 0) return _LiveTail(controller: c);
-                          if (index == rows.length + 1) {
-                            return c.nextCursor == null
-                                ? const SizedBox(height: 12)
-                                : Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: 12,
-                                      ),
-                                      child: AppButton(
-                                        label: 'Load older entries',
-                                        icon: Icons.history_rounded,
-                                        tone: Tone.secondary,
-                                        compact: true,
-                                        busy: _loadingOlder,
-                                        onPressed: c.online ? _loadOlder : null,
-                                      ),
+                        slivers: [
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                            sliver: SliverList(
+                              key: _timeline,
+                              delegate: SliverChildBuilderDelegate(
+                                childCount: rows.length + 2,
+                                // Entries keep their element (open sections,
+                                // loaded images, measured heights) when newer
+                                // ones arrive.
+                                findChildIndexCallback: (key) {
+                                  if (key is! ValueKey<String>) return null;
+                                  final i = rows.indexWhere(
+                                    (r) => r.entry.id == key.value,
+                                  );
+                                  return i < 0 ? null : rows.length - i;
+                                },
+                                (context, index) {
+                                  if (index == 0) {
+                                    return _LiveTail(controller: c);
+                                  }
+                                  if (index == rows.length + 1) {
+                                    return c.nextCursor == null
+                                        ? const SizedBox(height: 12)
+                                        : Center(
+                                            child: Padding(
+                                              padding: const EdgeInsets.only(
+                                                bottom: 12,
+                                              ),
+                                              child: AppButton(
+                                                label: 'Load older entries',
+                                                icon: Icons.history_rounded,
+                                                tone: Tone.secondary,
+                                                compact: true,
+                                                busy: _loadingOlder,
+                                                onPressed: c.online
+                                                    ? _loadOlder
+                                                    : null,
+                                              ),
+                                            ),
+                                          );
+                                  }
+                                  final i = rows.length - index;
+                                  final entry = rows[i].entry;
+                                  final previous = i > 0
+                                      ? rows[i - 1].entry
+                                      : null;
+                                  final newDay =
+                                      previous == null ||
+                                      !_sameDay(
+                                        previous.createdAt,
+                                        entry.createdAt,
+                                      );
+                                  // Agent output was already on screen as the
+                                  // live tail.
+                                  final fresh =
+                                      (_seen?.add(entry.id) ?? false) &&
+                                      entry.type != 'agent' &&
+                                      entry.content['kind'] != 'agent';
+                                  return FadeSlideIn(
+                                    key: ValueKey(entry.id),
+                                    enabled: fresh,
+                                    duration: Motion.fast,
+                                    offset: Offset.zero,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        if (newDay)
+                                          _DaySeparator(date: entry.createdAt),
+                                        TimelineTile(
+                                          entry: entry,
+                                          controller: c,
+                                          count: rows[i].count,
+                                          grouped:
+                                              !newDay &&
+                                              _continues(previous, entry),
+                                        ),
+                                      ],
                                     ),
                                   );
-                          }
-                          final i = rows.length - index;
-                          final entry = rows[i].entry;
-                          final previous = i > 0 ? rows[i - 1].entry : null;
-                          final newDay =
-                              previous == null ||
-                              !_sameDay(previous.createdAt, entry.createdAt);
-                          // Agent output was already on screen as the live tail.
-                          final fresh =
-                              (_seen?.add(entry.id) ?? false) &&
-                              entry.type != 'agent' &&
-                              entry.content['kind'] != 'agent';
-                          return FadeSlideIn(
-                            key: ValueKey(entry.id),
-                            enabled: fresh,
-                            duration: Motion.fast,
-                            offset: Offset.zero,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (newDay)
-                                  _DaySeparator(date: entry.createdAt),
-                                TimelineTile(
-                                  entry: entry,
-                                  controller: c,
-                                  count: rows[i].count,
-                                  grouped:
-                                      !newDay && _continues(previous, entry),
-                                ),
-                              ],
+                                },
+                              ),
                             ),
-                          );
-                        },
+                          ),
+                        ],
                       ),
               ),
               if (c.wiki == null)
@@ -1435,10 +1507,12 @@ class _Bubble extends StatelessWidget {
 /// The decision is made during layout, so a Comment never shows at full height
 /// for a frame and then shrinks.
 ///
-/// The Timeline is reversed, so a box growing in place would push its top up
-/// and out of view. Expanding, collapsing and new text in an expanded box
-/// scroll by the same amount instead, keeping the top where it is, as on the
-/// web; moving off the bottom also stops the Timeline following new content.
+/// The Timeline is reversed, so a box opening in place would push its top up
+/// and out of view. Expanding and collapsing scroll by the same amount, on
+/// every animation frame, keeping the top where it is, as on the web; opening
+/// a box also stops the Timeline following new content. New text in an
+/// expanded box is the Timeline's business: it holds whatever is on screen
+/// still while content arrives below it.
 class _Clamped extends StatefulWidget {
   final Widget child;
 
@@ -1515,14 +1589,6 @@ class _ClampedState extends State<_Clamped>
     }
   }
 
-  /// New text in an expanded box, once laid out.
-  void _grew(double delta) {
-    if (!_expanded || _expansion.isAnimating) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _scrollBy(delta, always: false);
-    });
-  }
-
   /// [always] false leaves the Timeline following at the bottom.
   void _scrollBy(double delta, {required bool always}) {
     final position = Scrollable.maybeOf(context)?.position;
@@ -1543,7 +1609,6 @@ class _ClampedState extends State<_Clamped>
     builder: (context, _) => _ClampLayout(
       progress: _progress.value,
       fade: widget.fade,
-      onGrow: _grew,
       content: widget.child,
       toggle: Padding(
         padding: const EdgeInsets.only(top: 4),
@@ -1582,23 +1647,20 @@ class _ClampedState extends State<_Clamped>
 class _ClampLayout extends MultiChildRenderObjectWidget {
   final double progress;
   final Color fade;
-  final ValueChanged<double> onGrow;
   _ClampLayout({
     required this.progress,
     required this.fade,
-    required this.onGrow,
     required Widget content,
     required Widget toggle,
   }) : super(children: [content, toggle]);
   @override
   _RenderClamp createRenderObject(BuildContext context) =>
-      _RenderClamp(progress, fade, onGrow);
+      _RenderClamp(progress, fade);
   @override
   void updateRenderObject(BuildContext context, _RenderClamp renderObject) {
     renderObject
       ..progress = progress
-      ..fade = fade
-      ..onGrow = onGrow;
+      ..fade = fade;
   }
 }
 
@@ -1612,7 +1674,7 @@ class _RenderClamp extends RenderBox
         ContainerRenderObjectMixin<RenderBox, _ClampParentData>,
         RenderBoxContainerDefaultsMixin<RenderBox, _ClampParentData> {
   static const max = 320.0, slack = 40.0, fadeHeight = 64.0;
-  _RenderClamp(this._progress, this._fade, this.onGrow);
+  _RenderClamp(this._progress, this._fade);
 
   double _progress;
   set progress(double value) {
@@ -1627,9 +1689,6 @@ class _RenderClamp extends RenderBox
     _fade = value;
     markNeedsPaint();
   }
-
-  /// Called during layout when the box got taller or shorter by itself.
-  ValueChanged<double> onGrow;
 
   bool _overflowing = false;
   double _contentHeight = 0;
@@ -1678,18 +1737,8 @@ class _RenderClamp extends RenderBox
 
   @override
   void performLayout() {
-    final before = hasSize ? size.height : null;
-    final progress = _progress;
     size = _measure(constraints, dry: false);
-    if (before != null && size.height != before && progress == _laidOutAt) {
-      onGrow(size.height - before);
-    }
-    _laidOutAt = progress;
   }
-
-  /// The [progress] of the last layout: a change in height at the same
-  /// progress is the content's own.
-  double? _laidOutAt;
 
   @override
   Size computeDryLayout(BoxConstraints constraints) =>
