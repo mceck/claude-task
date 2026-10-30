@@ -248,6 +248,8 @@ The check runs once when a request starts: a fetch or push in flight completes e
 
 On a push, the proxy reads the ref-update commands at the start of the request (the packet lines up to the first flush, decompressed when the request is gzip-encoded) before contacting the provider. It accepts the push when every command updates `refs/heads/<Task Branch>` of the Job's Task to a non-zero object. Creating the Task Branch and force-pushing it are both accepted; push options pass through unchanged. Shallow-clone lines are skipped.
 
+A Job of a read-only Schedule (see [Schedules](schedules.md)) has every push rejected with `claude-task: this schedule is read-only`, without reading the pack; fetches work as usual.
+
 Everything else rejects the whole push: another branch, the Base Branch, a tag, a deletion, or any line that can't be read as a ref update (such as a push certificate). The proxy never contacts the provider for a rejected push. It reads and discards the pack git has sent, then answers with a regular push report (`unpack ok` and an `ng` line for every ref), wrapped in side-band when git asked for it, so git prints a readable rejection:
 
 - `claude-task: only <Task Branch> can be pushed`

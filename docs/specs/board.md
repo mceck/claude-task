@@ -30,6 +30,8 @@ erDiagram
 
 ### Projects
 
+A Project has a kind: `project`, `wiki` or `schedule`. Wiki Projects and Schedule Projects are hidden from the Projects list, the Boards list and Project search, and their rules are in [Wikis](wikis.md) and [Schedules](schedules.md). A Schedule Project has three fixed Statuses (`Running`, `Succeeded`, `Failed`) that nobody edits, and its Tasks are created and moved by the scheduler.
+
 **Creating.** Any User creates a Project with a key, a name (1 to 100 characters after trimming) and an optional description (up to 10,000 characters). Creation also accepts an optional Repository with its Base Branch and an optional default Agent. Clients offer enabled Agents and a No Agent option; the API accepts an existing Agent or an empty value. The default Agent applies to new Tasks under the usual assignment rules. The Repository is checked through the same Git Connection, accessibility, Base Branch and protection checks as Project settings. A selected Repository, default Agent, Project and default Statuses are saved in one transaction. An unknown Agent or invalid Repository selection answers `400` and leaves the Project Key available for another attempt. The key must be 2 to 6 uppercase letters; anything else is answered with `400`, and a key already in use with `409` "A project with this key already exists". A new Project starts with six Statuses and no Tags:
 
 | Status | Category | Color |
@@ -275,6 +277,7 @@ Deleting a Project removes its Statuses, Tags and Tasks; deleting a Task removes
 - [Agent Sessions](agent-sessions.md): Assignment, Sessions and the effect of `closed` Statuses, the Timeline, Unseen Changes, and the Task Tools Agents use to read, edit, move and create Tasks.
 - [Git integration](git-integration.md): the Project's Repository, Task Branches, Worktrees and pull requests shown on Tasks.
 - [Wikis](wikis.md): Projects of kind `wiki`.
+- [Schedules](schedules.md): Projects of kind `schedule`, whose Tasks are Scheduled Runs.
 - [Clients](clients.md): the web and Flutter interfaces and the realtime transport.
 
 - [Voice Rooms](voice-rooms.md): Deleting a Task also ends its active Voice Room participation; Task Status remains independent of voice.

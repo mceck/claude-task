@@ -576,4 +576,5 @@ Sessions, Jobs and Queue Entries belong to [Agent sessions](agent-sessions.md).
 - [Conversation](conversation.md): Comments, delivery and the slash-command menu built from an Agent's Skills.
 - [Users and auth](users-and-auth.md): Admins and Members, who manage and use Agents.
 - [Wikis](wikis.md): Wikis, each with one assigned Agent.
+- [Schedules](schedules.md): Schedules, which start an Agent's work on a timetable.
 - [Clients](clients.md): the web and mobile views of Agents.

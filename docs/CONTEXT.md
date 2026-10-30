@@ -37,7 +37,7 @@ _Avoid_: workspace, list, repo
 The short immutable uppercase code of a Project, used as the prefix of its Task Keys.
 
 **Project Kind**:
-Whether a Project is an ordinary Project or a Wiki Project.
+Whether a Project is an ordinary Project, a Wiki Project or a Schedule Project.
 
 **Archived Project**:
 A Project hidden from the Projects list but kept intact.
@@ -81,6 +81,28 @@ _Avoid_: history entry, audit log
 
 **Actor**:
 Whoever performed an action: a User, an Agent or the system.
+
+### Schedule
+
+**Schedule**:
+A recurring job an Admin configures with a name, an Agent, a cron expression, a time zone and an initial prompt, optionally tied to a Repository. At every due time it starts a Scheduled Run.
+_Avoid_: cron job, routine
+
+**Schedule Project**:
+The Project of kind `schedule` that carries one Schedule, hidden from the Projects list. Each Scheduled Run is a Task of it.
+
+**Scheduled Run**:
+One execution of a Schedule: a Task of its Schedule Project, started by the prompt posted as its first User Comment and closed as `Succeeded` or `Failed` when its Job ends.
+_Avoid_: job (a Job is one Turn of work), execution
+
+**Skipped Run**:
+A due time of a Schedule that did not start a Scheduled Run, recorded in its run history with the reason. It has no Task.
+
+**Global Schedule**:
+A Schedule without a Repository. Its Agent gets the global Task Tools to read and act on every board.
+
+**Read-only Schedule**:
+A Schedule whose Jobs have every git push refused by the Git Proxy.
 
 ### Wiki
 
@@ -316,7 +338,7 @@ An external tool server in the platform's catalog, made available to the Agents 
 A Claude Code plugin from a marketplace, kept in the platform's catalog and installed into the Agent Containers of the Agents it's assigned to. Unlike a catalog Skill, the platform stores only where to install it from, not its files.
 
 **Task Tools**:
-The actions an Agent can take from inside its Session: reading, editing and moving its own Task, reading other Tasks in the Project, creating new ones, opening a pull request, and posting files, Questions and Surveys to its Task's Conversation.
+The actions an Agent can take from inside its Session: reading, editing and moving its own Task, reading other Tasks in the Project, creating new ones, opening a pull request, and posting files, Questions and Surveys to its Task's Conversation. A global Schedule's Agent also gets the global Task Tools, which act on the Tasks of every Project.
 
 ### Execution
 
