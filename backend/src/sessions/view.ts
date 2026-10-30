@@ -62,8 +62,10 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
     .where(and(eq(agentSkills.agentId, s.agentId), eq(skills.userInvocable, true)));
   const [runtime] = await db.select({ commands: jobs.slashCommands }).from(jobs).where(and(eq(jobs.sessionId, s.id), isNotNull(jobs.slashCommands)))
     .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
+  const [project] = await db.select({ skills: jobs.projectSkills }).from(jobs).where(and(eq(jobs.sessionId, s.id), isNotNull(jobs.projectSkills)))
+    .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
   return {
-    commands: chatCommands(runtime?.commands ?? null, skillRows),
+    commands: chatCommands(runtime?.commands ?? null, skillRows, project?.skills ?? []),
     id: s.id,
     agent,
     state: s.state,

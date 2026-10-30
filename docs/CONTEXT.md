@@ -298,6 +298,10 @@ An entry of the platform's shared catalog that Admins assign to Agents: a Skill,
 **Skill**:
 A Claude Code skill whose files the platform's catalog stores and installs for the Agents it's assigned to.
 
+**Project Skill**:
+A skill or command the repository itself carries in its `.claude/` directory, which `claude` loads in the Worktree next to the Agent's Skills. The platform only reads it to suggest it in the composer.
+_Avoid_: local skill, repository skill
+
 **MCP Server**:
 An external tool server in the platform's catalog, made available to the Agents it's assigned to.
 

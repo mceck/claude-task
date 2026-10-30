@@ -57,8 +57,12 @@ export function commandName(body: string): string | null {
   const match = /^\/([a-zA-Z0-9_-][a-zA-Z0-9_:-]{0,127})(?:\s|$)/.exec(body);
   return match && !UNAVAILABLE.has(match[1]!) ? match[1]! : null;
 }
-/** An absent runtime list uses only the documented basic noninteractive commands. */
-export function chatCommands(runtime: string[] | null, skills: SkillCommand[]): ChatCommand[] {
+/**
+ * An absent runtime list uses only the documented basic noninteractive commands. Project skills
+ * (the Worktree's own) give way to the Agent's skills of the same name, as in Claude Code, and,
+ * once the runtime has reported, are offered only when it lists them.
+ */
+export function chatCommands(runtime: string[] | null, skills: SkillCommand[], projectSkills: SkillCommand[] = []): ChatCommand[] {
   const result = new Map<string, ChatCommand>();
   for (const name of runtime ?? ['compact', 'context', 'usage']) {
     if (commandName(`/${name}`) !== name || !offered(name)) continue;
@@ -69,6 +73,11 @@ export function chatCommands(runtime: string[] | null, skills: SkillCommand[]): 
     });
   }
   for (const skill of skills) if (commandName(`/${skill.name}`) === skill.name) result.set(skill.name, { ...skill, kind: 'skill' });
+  const loaded = runtime && new Set(runtime);
+  for (const skill of projectSkills) {
+    if (commandName(`/${skill.name}`) !== skill.name || result.get(skill.name)?.kind === 'skill' || (loaded && !loaded.has(skill.name))) continue;
+    result.set(skill.name, { ...skill, kind: 'skill' });
+  }
   return [...result.values()].sort((a, b) =>
     a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'skill' ? -1 : b.kind === 'skill' ? 1 : a.kind.localeCompare(b.kind),
   );

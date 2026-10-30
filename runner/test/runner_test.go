@@ -431,3 +431,49 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestReportsTheWorktreesSkillsAfterSetup(t *testing.T) {
+	b := newBackend(t)
+	startRunner(t, b)
+	outside := filepath.Join(t.TempDir(), "SKILL.md")
+	if err := os.WriteFile(outside, []byte("---\ndescription: Outside\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	long := "a" + strings.Repeat("é", 5000)
+	setup := strings.Join([]string{
+		"mkdir -p .claude/skills/deploy .claude/skills/big .claude/skills/empty .agents/skills/lint .claude/skills/outside .claude/commands",
+		"printf -- '---\\ndescription: Deploy it\\n---\\nBody\\n' > .claude/skills/deploy/SKILL.md",
+		"printf -- '---\\ndescription: Lint\\n---\\n' > .agents/skills/lint/SKILL.md",
+		"ln -s ../../.agents/skills/lint .claude/skills/lint",
+		"ln -s " + outside + " .claude/skills/outside/SKILL.md",
+		"printf '%s' '" + long + "' > .claude/skills/big/SKILL.md",
+		"printf 'Ship the release\\n' > .claude/commands/ship.md",
+		"printf 'not a command\\n' > .claude/commands/notes.txt",
+	}, " && ")
+	b.send(jobStart(jobOpts{id: "j1", text: "hi", setup: setup}))
+	reported := b.waitType("j1", "job.project_skills")
+	b.waitEvent("j1", "result", isResult)
+
+	files, _ := reported["files"].([]any)
+	got := map[string]string{}
+	var names []string
+	for _, f := range files {
+		m := msg(f.(map[string]any))
+		names = append(names, m.str("name"))
+		got[m.str("name")] = m.str("head")
+	}
+	if !slices.Equal(names, []string{"big", "deploy", "lint", "ship"}) {
+		t.Fatalf("names %q", names)
+	}
+	if got["deploy"] != "---\ndescription: Deploy it\n---\nBody\n" || got["lint"] != "---\ndescription: Lint\n---\n" || got["ship"] != "Ship the release\n" {
+		t.Fatalf("heads %q", got)
+	}
+	// Cut at 8 KiB on a character boundary.
+	if got["big"] != long[:8191] {
+		t.Fatalf("big head is %d bytes", len(got["big"]))
+	}
+	ms := b.jobMessages("j1")
+	if indexOf(ms, func(m msg) bool { return m.str("type") == "job.project_skills" }) > indexOf(ms, func(m msg) bool { return m.str("type") == "job.event" }) {
+		t.Fatal("project skills reported after claude started")
+	}
+}
