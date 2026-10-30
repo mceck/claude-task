@@ -414,16 +414,38 @@ class TaskDetails extends StatelessWidget {
                             c.agents,
                             t.agentId ?? '',
                           );
-                          if (v != null &&
-                              v != (t.agentId ?? '') &&
-                              context.mounted) {
-                            await perform(
-                              context,
-                              () => c.updateTask({
-                                'agentId': v.isEmpty ? null : v,
-                              }),
-                            );
+                          if (v == null ||
+                              v == (t.agentId ?? '') ||
+                              !context.mounted) {
+                            return;
                           }
+                          // An Agent takes a Task out of Backlog, into the first open Status.
+                          final todo = c.statuses
+                              .where((s) => s.category == 'open')
+                              .firstOrNull;
+                          final fromBacklog =
+                              v.isNotEmpty &&
+                              status?.category == 'backlog' &&
+                              todo != null;
+                          if (fromBacklog &&
+                              !await confirm(
+                                context,
+                                title: 'Assign Agent?',
+                                message:
+                                    'Assigning an Agent moves ${t.key} out of “${status!.name}” to “${todo!.name}”.',
+                                confirmLabel: 'Assign and move',
+                                destructive: false,
+                              )) {
+                            return;
+                          }
+                          if (!context.mounted) return;
+                          await perform(
+                            context,
+                            () => c.updateTask({
+                              'agentId': v.isEmpty ? null : v,
+                              if (fromBacklog) 'statusId': todo!.id,
+                            }),
+                          );
                         }
                       : null,
                 ),

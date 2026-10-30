@@ -2,6 +2,7 @@
 import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
 import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { keys } from '../api/queries';
+import { removeFromDock } from './dock';
 
 type BoardKey = ReturnType<typeof keys.board>;
 type Timeline = InfiniteData<TimelinePage, string | null>;
@@ -165,6 +166,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       void qc.invalidateQueries({ queryKey: keys.wiki(event.wikiId) });
       return;
     case 'timeline.reset':
+      // Delete Chat: the conversation is gone for everyone, so its Dock panel goes too.
+      removeFromDock(event.taskId);
       void qc.cancelQueries({ queryKey: keys.timeline(event.taskId) }, { revert: false });
       qc.setQueryData(keys.timeline(event.taskId), { pages: [{ items: [], nextCursor: null }], pageParams: [null] });
       void qc.invalidateQueries({ queryKey: keys.timeline(event.taskId) });

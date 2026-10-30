@@ -167,7 +167,7 @@ export function Composer({
           onPasteCapture={onPaste}
           onDropCapture={onDrop}
           className={cn(
-            'rounded-xl border bg-background/50 p-3 transition-colors focus-within:border-ring/60 dark:bg-input/10',
+            '@container rounded-xl border bg-background/50 p-3 transition-colors focus-within:border-ring/60 dark:bg-input/10',
             internal && 'border-dashed border-slate-400/50 bg-slate-500/[0.08] focus-within:border-slate-400/70 dark:bg-slate-500/[0.08]',
             dragOver && 'border-dashed border-primary',
           )}
@@ -223,7 +223,7 @@ export function Composer({
             </ul>
           )}
           <ErrorText>{error}</ErrorText>
-          <div className="mt-2 flex items-center gap-3 border-t pt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-3 border-t pt-2">
             <div className="flex items-center gap-2">
               <Switch
                 id={`internal-${taskId}`}
@@ -250,18 +250,21 @@ export function Composer({
             <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => fileInput.current?.click()}>
               <Paperclip /> Attach
             </Button>
-            <span className="ml-auto hidden items-center gap-1 text-[11px] text-muted-foreground sm:flex">
-              <Kbd>⇧↵</Kbd> new line
-            </span>
-            <Button
-              size="sm"
-              onClick={submit}
-              disabled={busy || empty}
-              className={cn(internal && 'bg-slate-600 text-white hover:bg-slate-600/85')}
-            >
-              {internal ? 'Send' : 'Comment'}
-              <ArrowUp />
-            </Button>
+            <div className="ml-auto flex items-center gap-3">
+              {/* Hidden in a narrow Dock panel, where it would push the Comment button out of view. */}
+              <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
+                <Kbd>⇧↵</Kbd> new line
+              </span>
+              <Button
+                size="sm"
+                onClick={submit}
+                disabled={busy || empty}
+                className={cn(internal && 'bg-slate-600 text-white hover:bg-slate-600/85')}
+              >
+                {internal ? 'Send' : 'Comment'}
+                <ArrowUp />
+              </Button>
+            </div>
           </div>
         </div>
       </PopoverAnchor>

@@ -1,6 +1,6 @@
 import { ProjectLogo } from '../components/ProjectLogo';
 import { PROJECT_KEY_PATTERN } from '@claude-task/shared';
-import type { Category, ProjectBundle, ProjectSummary } from '@claude-task/shared';
+import type { ProjectBundle, ProjectSummary } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { Archive, FolderKanban, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -19,21 +19,7 @@ import { errorMessage, post } from '../api/client';
 import { Combobox } from '../components/Combobox';
 import { keys, useAgents, useProjects, useRepositoryGroups } from '../api/queries';
 import { ErrorText } from '../components/common';
-
-export const CATEGORY_COLOR: Record<Category, string> = {
-  open: 'bg-slate-400',
-  active: 'bg-blue-500',
-  review: 'bg-violet-500',
-  done: 'bg-emerald-500',
-  closed: 'bg-zinc-600',
-};
-
-/** Project progress shows only open, review and done; active counts as open. */
-const PROGRESS_GROUPS: { key: string; categories: Category[]; color: string }[] = [
-  { key: 'open', categories: ['open', 'active'], color: CATEGORY_COLOR.open },
-  { key: 'review', categories: ['review'], color: CATEGORY_COLOR.review },
-  { key: 'done', categories: ['done'], color: CATEGORY_COLOR.done },
-];
+import { progressCounts } from '../lib/progress';
 
 export function PageHeader({ title, description, children }: { title: React.ReactNode; description?: React.ReactNode; children?: React.ReactNode }) {
   return (
@@ -96,11 +82,7 @@ export function ProjectsPage() {
 }
 
 function ProjectCard({ project: p }: { project: ProjectSummary }) {
-  const counts = PROGRESS_GROUPS.map((group) => ({
-    ...group,
-    count: group.categories.reduce((n, c) => n + p.taskCounts[c], 0),
-  }));
-  const total = counts.reduce((n, group) => n + group.count, 0);
+  const { counts, total } = progressCounts(p.taskCounts);
   const closed = p.taskCounts.closed;
   const finished = p.taskCounts.done;
   return (

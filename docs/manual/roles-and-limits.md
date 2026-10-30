@@ -56,7 +56,7 @@ Members can read Project environment variable names and plain values, but secret
 
 An Agent runs one Job at a time. Add Agents to work on several Tasks at once. Agents using the same Credential share its provider rate limits.
 
-A Project must keep at least one Status in the `open` Category and one in `closed`. Only `closed` ends an Agent Session; `done` does not.
+A Project must keep at least one Status in the `open` Category and one in `closed`. Only `closed` ends an Agent Session; `done` does not. A Task in a `backlog` Status (Backlog by default) has no Agent: choosing one asks for confirmation and moves the Task to the first `open` Status (Todo), and moving a Task out of Backlog assigns the Project's default Agent when it has none.
 
 Logins expire after 30 days without activity. Password resets and deactivation end the User's Logins. Repeated failed login attempts can temporarily block further attempts.
 

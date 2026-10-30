@@ -1,5 +1,5 @@
 {
-  "id": "797c61b8-1e47-49e6-a5ac-2e7a14e7c98d",
+  "id": "0e655d18-fb56-49eb-a926-ed02d9c13465",
   "prevId": "1a0765fa-602d-4c4b-b111-5c7907eb6a04",
   "version": "7",
   "dialect": "postgresql",
@@ -1255,12 +1255,6 @@
         },
         "slash_commands": {
           "name": "slash_commands",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "project_skills": {
-          "name": "project_skills",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
@@ -4089,6 +4083,7 @@
       "name": "category",
       "schema": "public",
       "values": [
+        "backlog",
         "open",
         "active",
         "review",

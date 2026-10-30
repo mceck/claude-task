@@ -38,7 +38,7 @@ describe('tasks', () => {
     it('fills in defaults: first open status, no priority, empty description', async () => {
       const task = await createTask(admin, projectId, { title: 'Defaults' });
       expect(task).toMatchObject({
-        statusId: statusByName(bundle, 'Backlog').id,
+        statusId: statusByName(bundle, 'Todo').id,
         priority: 'none',
         description: '',
         tagIds: [],

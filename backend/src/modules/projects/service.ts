@@ -9,7 +9,7 @@ import { UUID } from '../../ids';
 export type ProjectRow = typeof projects.$inferSelect;
 
 export const DEFAULT_STATUSES: { name: string; color: string; category: Category }[] = [
-  { name: 'Backlog', color: '#94a3b8', category: 'open' },
+  { name: 'Backlog', color: '#94a3b8', category: 'backlog' },
   { name: 'Todo', color: '#64748b', category: 'open' },
   { name: 'In Progress', color: '#3b82f6', category: 'active' },
   { name: 'Ready for Review', color: '#a855f7', category: 'review' },

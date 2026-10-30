@@ -54,7 +54,7 @@ A named step in a Project's workflow. Each Status belongs to one Category.
 _Avoid_: column (that's how a Status looks on the Board), state
 
 **Category**:
-The fixed meaning of a Status, independent of its name: open, active, review, done or closed. Only `closed` has an effect on Agents: it ends the Session.
+The fixed meaning of a Status, independent of its name: backlog, open, active, review, done or closed. `closed` ends the Session; `backlog` holds Tasks without an Agent (assigning one moves the Task to the first open Status, and leaving Backlog assigns the default Agent).
 _Avoid_: status type
 
 **Task**:
@@ -130,6 +130,13 @@ A file added to a Comment or to a Task's description.
 
 **Draft**:
 An unsent Comment kept per Task, with its Internal Note flag and files.
+
+**Chat Dock**:
+The row of Minimized Chats at the bottom of the web app. It belongs to the browser, not to the installation: another browser or another computer does not show it.
+_Avoid_: minimized chats bar, docked chat
+
+**Minimized Chat**:
+A Conversation or a Wiki Chat kept in the Chat Dock, out of its page, so it can be read and answered from anywhere in the app. A conversation is either in the Dock or on a page, never both.
 
 **Message**:
 What an Agent receives in its Session: one or more Comments merged together, or a system notice such as a Change Notice.

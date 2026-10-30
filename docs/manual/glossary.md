@@ -14,7 +14,7 @@ These are the terms you will meet while using Claude Task.
 | Project Key | The permanent uppercase prefix of a Project's Task Keys. |
 | Board | A Project's Tasks arranged in columns by Status. |
 | Status | A named step in the workflow, such as Todo or Done. |
-| Category | The meaning of a Status: open, active, review, done or closed. |
+| Category | The meaning of a Status: backlog, open, active, review, done or closed. |
 | Task | A unit of work with a description, assignments and Conversation. |
 | Task Key | A readable Task identifier, such as `PORTAL-1`. |
 | Assignee | A User responsible for a Task. |
@@ -29,6 +29,8 @@ These are the terms you will meet while using Claude Task.
 | Expected Respondent | A User assigned to the Task when a Survey was created; the Survey closes by itself once all of them have answered. |
 | Delivery | Whether a Comment is queued, delivered or not delivered to the Agent. |
 | Timeline | Comments, Revisions and Agent work shown together in time order. |
+| Chat Dock | The row of Minimized Chats at the bottom of the web app, kept in your browser. |
+| Minimized Chat | A Conversation or Wiki Chat kept in the Chat Dock, out of its page, so you can read and answer it from anywhere. |
 | Agent | A named Claude Code worker with its own instructions and environment. |
 | Default Agent | A Project’s Agent choice assigned to new Tasks when enabled. The first regular Comment starts work. |
 | Assignment | Linking an Agent to a Task; a regular Comment starts its work. |

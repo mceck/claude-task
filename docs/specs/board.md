@@ -7,7 +7,7 @@ The board is where the team organizes work. It covers **Projects** (each with it
 - A **Project** is a body of work with its own Board, Statuses and Tags. It has a **Project Key**, a name, a description, an optional link to a code **Repository** (see [Git integration](git-integration.md)), Agent-related settings, and an archived flag.
 - The **Project Key** is a short uppercase code of 2 to 6 letters (`API`, `WEB`), unique across the installation and fixed at creation. It prefixes the Project's Task Keys.
 - A Project has a **kind**. Ordinary Projects have kind `project`. Each Wiki is stored as a Project of kind `wiki` with one backing Task; these Projects are kept out of the Projects list, absent from the Project API and managed only through the Wiki (see [Wikis](wikis.md)).
-- A **Status** is a named step of a Project's workflow, with a color and a position. Each Status belongs to one **Category**: `open`, `active`, `review`, `done` or `closed`. The Category gives the Status its fixed meaning whatever its name. Only `closed` changes how Agents behave: a Task entering a `closed`-category Status ends its Agent's Session (see [Agent Sessions](agent-sessions.md)).
+- A **Status** is a named step of a Project's workflow, with a color and a position. Each Status belongs to one **Category**: `backlog`, `open`, `active`, `review`, `done` or `closed`. The Category gives the Status its fixed meaning whatever its name. Only `closed` changes how Agents behave, and `backlog` changes how Agents are assigned (see [Updating Tasks](#updating-tasks)): a Task entering a `closed`-category Status ends its Agent's Session (see [Agent Sessions](agent-sessions.md)).
 - A **Tag** is a colored, Project-scoped label. A Task can carry several.
 - A **Task** is a unit of work in a Project: title, Markdown description, Status, priority, Tags, User assignees, at most one assigned Agent, and its position within its Status. It is identified by its **Task Key**, the Project Key followed by a sequential number (`API-42`).
 - **Priority** is one of `urgent`, `high`, `normal`, `low` or `none` (the default).
@@ -34,7 +34,7 @@ erDiagram
 
 | Status | Category | Color |
 | --- | --- | --- |
-| Backlog | open | `#94a3b8` |
+| Backlog | backlog | `#94a3b8` |
 | Todo | open | `#64748b` |
 | In Progress | active | `#3b82f6` |
 | Ready for Review | review | `#a855f7` |
@@ -51,7 +51,7 @@ The answer, `201`, bundles the Project with its Statuses and Tags, and the web a
 
 Logo changes use the same realtime event as other Project edits. Concurrent replacements and removals are serialized with other Project edits. Archiving preserves the logo; replacement, removal and permanent Project deletion clean up the old stored image after the database change commits.
 
-**Listing.** The Projects list shows the non-archived Projects of kind `project`, ordered by name; a "Show archived" switch shows the archived ones instead. Each Project comes with its number of Tasks per Category. The web page shows one card per Project with key, name, description, total Tasks, the share done (Tasks in `done` and `closed` Statuses over all Tasks), a bar split by Category and the count per Category. The sidebar lists the non-archived Projects under "Boards" for quick access.
+**Listing.** The Projects list shows the non-archived Projects of kind `project`, ordered by name; a "Show archived" switch shows the archived ones instead. Each Project comes with its number of Tasks per Category. The web page shows one card per Project with key, name, description, total Tasks, the share done (Tasks in `done` and `closed` Statuses over all Tasks), a bar split by Category and the count per Category. The sidebar lists the non-archived Projects under "Boards" for quick access, each with its logo and name, a thin stacked bar of its open, review and done Tasks (backlog and active counted as open, closed Tasks left out), the open Tasks over that total, and its activity indicators: a green dot while an Agent Session runs and an orange message icon with the number of Tasks unread for the User.
 
 **Archiving.** Any User can archive a Project, which hides it from the Projects list and the sidebar while keeping everything: its Board stays reachable by URL with an "Archived" badge, and its Tasks, Comments and Agent work carry on as before. Archiving an already archived Project keeps its original archive time. Unarchiving brings it back to the list.
 
@@ -92,8 +92,8 @@ Any User creates a Task in a Project, from the "Add task" box at the bottom of a
 
 - **Title**: 1 to 500 characters after trimming. Required.
 - **Description**: Markdown, up to 100,000 characters, empty by default.
-- **Status**: any Status of the Project; by default the first `open` Status in order.
-- **Agent**: the Project's **default Agent** (set in its "Agents" settings) when it is enabled, otherwise none. Assigning it creates the usual `pending` Session; nothing starts until the first User Comment. A disabled or deleted default Agent leaves new Tasks without an Agent (deleting an Agent clears the setting).
+- **Status**: any Status of the Project; by default the first `open` Status in order (Todo in the default set, never a `backlog` one).
+- **Agent**: the Project's **default Agent** (set in its "Agents" settings) when it is enabled, otherwise none; a Task created in a `backlog`-category Status has no Agent. Assigning it creates the usual `pending` Session; nothing starts until the first User Comment. A disabled or deleted default Agent leaves new Tasks without an Agent (deleting an Agent clears the setting).
 - **Priority**: `none` by default.
 - **Tags**: up to 50, all from the same Project.
 - **Assignees**: up to 50 existing Users.
@@ -144,6 +144,7 @@ flowchart TD
 - An update that changes nothing records no Revision and keeps the version.
 - Changing the Status through an update puts the Task at the end of the new column.
 - Changing the Status or the Agent triggers the Session rules: assigning, reassigning or unassigning an Agent, closing and reopening (see [Agent Sessions](agent-sessions.md)). Status itself never starts an Agent; only entering or leaving a `closed`-category Status matters.
+- **Backlog holds Tasks without an Agent.** Assigning an Agent to a Task in a `backlog`-category Status, through an update without a Status, also moves it to the first `open` Status (the clients ask for confirmation first and send both together). A Task leaving `backlog` for a non-`backlog` Status, through an update or a move, gets the Project's default Agent when it has none and that Agent is enabled; the Agent change is part of the same Revision. A Task already in Backlog with an Agent keeps it. Projects created before the `backlog` Category existed keep their Backlog Status as `open` until its Category is changed in settings.
 - Newly added assignees start following the Task.
 
 After a successful update the card is published as `task.updated` on the Project's topic, the full Task as `task.changed` on the Task's topic, and the Revision as `revision.created`.
@@ -206,6 +207,8 @@ The web Board of a Project shows:
 - one column per shown Status in Status order, each with its color dot, name, number of visible cards, and an "Add task" box.
 
 A card shows the priority icon, the Task Key, the assigned Agent's avatar with its Session state and Queue position (`#2`), up to three assignee avatars, the pull request badge, the title, the Tags, and the Comment count.
+
+A card also carries the same **Close** action as the Task view (accessible name "Close task"), next to the Task Key: it moves the Task to the first `closed`-category Status in Status order, which ends its Session. It appears while the Task is in a Status of another Category, and a tooltip names the target Status. While the Agent is working on the Task (Session running or queued) it asks for confirmation first, since closing cancels that work; otherwise it closes at once. Clicking it does not open the Task and does not start a drag.
 
 Cards are dragged with the mouse (after moving 5 pixels) or the keyboard. Crossing into another column places the card among that column's cards at the pointer; dropping it sends a move with the card's new neighbour. The Board updates immediately; if the move fails, only that card goes back, a "Couldn't move API-42" message explains why, and the Board reloads from the server.
 

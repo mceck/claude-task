@@ -1,5 +1,6 @@
 import { autoFollow } from '../../notifications/preferences';
 import { projectTopic, taskKey, taskTopic } from '@claude-task/shared';
+import type { Category } from '@claude-task/shared';
 import type {
   Actor,
   BoardFilter,
@@ -256,7 +257,7 @@ export async function createTask(
     .returning();
   await setTags(tx, task!.id, tagIds);
   await setAssignees(tx, task!.id, assigneeIds);
-  if (opts.assignDefaultAgent !== false) await assignDefaultAgent(tx, after, projectId, task!.id);
+  if (opts.assignDefaultAgent !== false && (await categoryOf(tx, statusId)) !== 'backlog') await assignDefaultAgent(tx, after, projectId, task!.id);
 
   await autoFollow(tx, after, task!.id, [...assigneeIds, ...(actor.type === 'user' && actor.id ? [actor.id] : [])]);
   const created = await loadTask(tx, task!.id);
@@ -265,13 +266,23 @@ export async function createTask(
 }
 
 /** A new Task starts with the Project's default Agent when it still exists and is enabled; otherwise it has none. */
-async function assignDefaultAgent(tx: Executor, after: AfterCommit, projectId: string, taskId: string): Promise<void> {
+async function enabledDefaultAgent(tx: Executor, projectId: string): Promise<string | null> {
   const [project] = await tx.select({ defaultAgentId: projects.defaultAgentId }).from(projects).where(eq(projects.id, projectId));
-  if (!project?.defaultAgentId) return;
+  if (!project?.defaultAgentId) return null;
   const [agent] = await tx.select({ id: agents.id }).from(agents).where(and(eq(agents.id, project.defaultAgentId), eq(agents.enabled, true)));
-  if (!agent) return;
-  await tx.update(tasks).set({ agentId: agent.id }).where(eq(tasks.id, taskId));
+  return agent?.id ?? null;
+}
+
+async function assignDefaultAgent(tx: Executor, after: AfterCommit, projectId: string, taskId: string): Promise<void> {
+  const agentId = await enabledDefaultAgent(tx, projectId);
+  if (!agentId) return;
+  await tx.update(tasks).set({ agentId }).where(eq(tasks.id, taskId));
   await onTaskChanged(tx, after, await getTaskRow(tx, taskId), { agentId: null, statusId: (await getTaskRow(tx, taskId)).statusId });
+}
+
+async function categoryOf(tx: Executor, statusId: string): Promise<Category> {
+  const [s] = await tx.select({ category: statuses.category }).from(statuses).where(eq(statuses.id, statusId));
+  return s!.category;
 }
 
 export interface UpdateTaskInput {
@@ -319,6 +330,14 @@ export async function updateTask(
   if (patch.tagIds !== undefined) next.tagIds = await validTags(tx, row.projectId, patch.tagIds);
   if (patch.assigneeIds !== undefined) next.assigneeIds = await validAssignees(tx, patch.assigneeIds);
   if (patch.agentId !== undefined) next.agentId = patch.agentId === null ? null : await validAgent(tx, patch.agentId);
+
+  // Giving a Task in Backlog an Agent takes it out of Backlog, into the first open Status.
+  if (next.agentId && next.agentId !== current.agentId && patch.statusId === undefined && (await categoryOf(tx, row.statusId)) === 'backlog') {
+    next.statusId = await firstOpenStatus(tx, row.projectId);
+  }
+  // Leaving Backlog for another Status gives an unassigned Task the Project's default Agent.
+  const leavesBacklog = next.statusId !== current.statusId && (await categoryOf(tx, current.statusId)) === 'backlog' && (await categoryOf(tx, next.statusId)) !== 'backlog';
+  if (leavesBacklog && !next.agentId) next.agentId = await enabledDefaultAgent(tx, row.projectId);
 
   const changes = diff(current, next);
   if (changes.length === 0) return loadTask(tx, row.id);
@@ -371,12 +390,17 @@ export async function moveTask(
   await assertStatusInProject(tx, input.statusId, row.projectId);
   const { position, respaced } = await positionBetween(tx, row.id, input);
   const statusChanged = input.statusId !== row.statusId;
+  // Leaving Backlog gives an unassigned Task the Project's default Agent.
+  const leavesBacklog =
+    statusChanged && (await categoryOf(tx, row.statusId)) === 'backlog' && (await categoryOf(tx, input.statusId)) !== 'backlog';
+  const agentId = leavesBacklog && !row.agentId ? await enabledDefaultAgent(tx, row.projectId) : null;
 
   await tx
     .update(tasks)
     .set({
       statusId: input.statusId,
       position,
+      ...(agentId ? { agentId } : {}),
       ...(statusChanged ? { version: row.version + 1, updatedAt: new Date() } : {}),
     })
     .where(eq(tasks.id, row.id));
@@ -389,7 +413,14 @@ export async function moveTask(
     return loadTask(tx, row.id);
   }
   await recordRevisions(tx, after, actor, [
-    { taskId: row.id, version: row.version + 1, changes: [{ field: 'statusId', before: row.statusId, after: input.statusId }] },
+    {
+      taskId: row.id,
+      version: row.version + 1,
+      changes: [
+        { field: 'statusId', before: row.statusId, after: input.statusId },
+        ...(agentId ? [{ field: 'agentId' as const, before: null, after: agentId }] : []),
+      ],
+    },
   ]);
   await onTaskChanged(tx, after, await getTaskRow(tx, row.id), { agentId: row.agentId, statusId: row.statusId });
   const [task] = await emitTasksChanged(tx, after, [row.id], 'task.moved');
