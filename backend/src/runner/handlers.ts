@@ -2,7 +2,7 @@
 // order (per-Job seq), inside a transaction that locks task → agent → session → job.
 import type { JobFailureStage, RunnerJobMessage, RunnerToBackend } from '@claude-task/shared';
 import { taskTopic } from '@claude-task/shared';
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { AfterCommit, AppContext } from '../context';
 import { transactWithRetry } from '../context';
 import type { Executor } from '../db/client';
@@ -10,6 +10,7 @@ import { agents, comments, jobs, sessionEvents, sessions, tasks } from '../db/sc
 import { ACTIVE_JOB_STATES, getAgentRow } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
 import { settleRun } from '../modules/schedules/service';
+import { jobEventId, setAlertComment } from '../notifications/alerts';
 import { applyProjection } from '../projection/apply';
 import { endJob, initialProjection, project } from '../projection/projector';
 import type { ProjectionState } from '../projection/projector';
@@ -243,10 +244,10 @@ async function processJobMessage(
             ...(session.state === 'closed' || session.state === 'paused' ? {} : { state: 'pending' as const }),
           })
           .where(eq(sessions.id, session.id));
-        await systemComment(
+        await reportJobFailure(
           tx,
           after,
-          job.taskId,
+          job,
           "The agent's previous conversation for this task wasn't found, so its next run starts a new conversation with the task's history.",
         );
       } else if (!job.cancelRequested && exists) {
@@ -254,18 +255,18 @@ async function processJobMessage(
           .update(sessions)
           .set({ started: true, state: session.state === 'running' ? 'idle' : session.state })
           .where(eq(sessions.id, session.id));
-        await systemComment(
+        await reportJobFailure(
           tx,
           after,
-          job.taskId,
+          job,
           "The agent's conversation already existed, so its next run resumes it. Post a comment (or press **Retry**) to continue.",
         );
         if (session.state === 'running') await requeue(tx, after, job, { ...session, started: true }, { held: true });
       } else if (crashed) {
-        await systemComment(
+        await reportJobFailure(
           tx,
           after,
-          job.taskId,
+          job,
           `The agent's process stopped unexpectedly (${msg.signal ? `signal ${msg.signal}` : `exit code ${msg.exitCode}`}).${tail(job.stderr)}`,
         );
       }
@@ -310,10 +311,10 @@ async function failJob(
       .set({ state: restingState(session) })
       .where(eq(sessions.id, session.id));
   const what = { worktree: 'preparing the worktree', setup: 'running the setup script', spawn: 'starting Claude Code' }[stage] ?? stage;
-  await systemComment(
+  await reportJobFailure(
     tx,
     after,
-    job.taskId,
+    job,
     `The agent couldn't start: ${what} failed.\n\n> ${message.split('\n').join('\n> ')}${tail(job.setupOutput)}\n\nFix the problem, then press **Retry** (or post a comment).`,
   );
   // Its Messages go back to the front of the Queue, waiting for a Retry instead of looping.
@@ -384,7 +385,8 @@ async function requeue(tx: Executor, after: AfterCommit, job: JobRow, session: t
     front: true,
     held: opts.held,
   });
-  const delivered = await tx.select({ id: comments.id }).from(comments).where(eq(comments.deliveredInJobId, job.id));
+  // A handled Comment was read by a Turn: only the ones still waiting to be read go back.
+  const delivered = await tx.select({ id: comments.id }).from(comments).where(and(eq(comments.deliveredInJobId, job.id), ne(comments.deliveryState, 'handled')));
   await attachComments(
     tx,
     after,
@@ -398,12 +400,18 @@ function restingState(session: typeof sessions.$inferSelect): 'idle' | 'pending'
   return session.started ? 'idle' : 'pending';
 }
 
-export async function systemComment(tx: Executor, after: AfterCommit, taskId: string, body: string): Promise<void> {
+export async function systemComment(tx: Executor, after: AfterCommit, taskId: string, body: string): Promise<string> {
   const [row] = await tx
     .insert(comments)
     .values({ taskId, kind: 'system', authorType: 'system', authorId: null, body, createdAt: sql`clock_timestamp()` })
     .returning({ id: comments.id });
   after.effect((ctx) => ctx.scheduler.publishComments([row!.id], 'created'));
+  return row!.id;
+}
+
+/** The System Comment that reports a failed Job is what its "needs intervention" Alert previews. */
+async function reportJobFailure(tx: Executor, after: AfterCommit, job: JobRow, body: string): Promise<void> {
+  await setAlertComment(tx, jobEventId(job.id), await systemComment(tx, after, job.taskId, body));
 }
 
 function tail(output: string, lines = 20): string {

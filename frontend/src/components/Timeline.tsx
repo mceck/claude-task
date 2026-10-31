@@ -16,7 +16,7 @@ import { useAgents, useMe, useTimeline } from '../api/queries';
 import { putTimelineItem } from '../lib/cache';
 import { expandedFromLive } from '../lib/live';
 import { AgentItemView, LiveTurnView } from './AgentTimeline';
-import { AgentAvatar, DeliveryBadge } from './agents';
+import { AgentAvatar, DeliveryTicks } from './agents';
 import { ErrorText, Loading, Time, useConfirm, UserAvatar } from './common';
 import { Markdown } from './Markdown';
 import { QuestionCard, SurveyCard } from './QuestionCards';
@@ -38,7 +38,7 @@ interface Lookups {
 }
 
 /** Comments and field changes of a Task, oldest first, with older pages loaded on demand. */
-export function Timeline({ taskId, hideChanges, ...rest }: { taskId: string; hideChanges: boolean } & Lookups) {
+export function Timeline({ taskId, hideChanges, agentId = null, ...rest }: { taskId: string; hideChanges: boolean; agentId?: string | null } & Lookups) {
   const timeline = useTimeline(taskId);
   const agents = useAgents();
   const lookups = { ...rest, agents: agents.data ?? [] };
@@ -52,6 +52,12 @@ export function Timeline({ taskId, hideChanges, ...rest }: { taskId: string; hid
     .filter((i) => !seen.has(i.id) && !!seen.add(i.id))
     .reverse();
   const rows = fold(items, hideChanges, lookups);
+  // A Delivery names the Agent of the Job that carried it, known from that Job's items, else the Task's Agent.
+  const jobAgents = new Map(items.flatMap((i) => (i.type === 'agent' && i.item.jobId ? [[i.item.jobId, i.item.agentId] as const] : [])));
+  const agentName = (delivery: Comment['delivery']) => {
+    const id = (delivery?.jobId && jobAgents.get(delivery.jobId)) || agentId;
+    return lookups.agents.find((a) => a.id === id)?.name ?? null;
+  };
 
   return (
     <ol aria-label="Timeline" className="relative space-y-3 before:absolute before:top-2 before:bottom-2 before:left-[15px] before:w-px before:bg-border">
@@ -73,7 +79,7 @@ export function Timeline({ taskId, hideChanges, ...rest }: { taskId: string; hid
       {items.length === 0 && <li className="relative pl-10 text-sm text-muted-foreground">No activity yet.</li>}
       {rows.map(({ item, count }) =>
         item.type === 'comment' ? (
-          <CommentItem key={item.id} comment={item.comment} taskId={taskId} agents={lookups.agents} />
+          <CommentItem key={item.id} comment={item.comment} taskId={taskId} agents={lookups.agents} deliveryAgent={agentName(item.comment.delivery)} />
         ) : item.type === 'agent' ? (
           <AgentItemView key={item.id} item={item.item as AgentItem} taskId={taskId} />
         ) : (
@@ -108,7 +114,7 @@ function fold(items: TimelineItem[], hideChanges: boolean, lookups: Lookups): Ro
   return rows;
 }
 
-function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: string; agents: Agent[] }) {
+function CommentItem({ comment, taskId, agents, deliveryAgent }: { comment: Comment; taskId: string; agents: Agent[]; deliveryAgent: string | null }) {
   const me = useMe();
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -195,7 +201,7 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
           )}
           <Time iso={comment.createdAt} />
           {comment.editedAt && <span>· edited</span>}
-          {comment.delivery && <DeliveryBadge delivery={comment.delivery} />}
+          {comment.delivery && <DeliveryTicks delivery={comment.delivery} agentName={deliveryAgent} />}
           {(own || canDelete) && !editing && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

@@ -146,7 +146,33 @@ class TaskController extends ChangeNotifier {
     voice = VoiceController(send: (message) => _socket?.send(message) ?? false);
   }
 
+  /// The Agent a Delivery names: the one whose Job carried the Comment, known
+  /// from that Job's Timeline items, else the Task's Agent.
+  String? deliveryAgentName(Map delivery) {
+    final jobId = delivery['jobId'];
+    final fromJob = jobId == null
+        ? null
+        : timeline
+              .where((e) => e.type == 'agent' && e.content['jobId'] == jobId)
+              .map((e) => e.content['agentId'] as String?)
+              .firstOrNull;
+    return agents.byId(fromJob ?? task?.agentId)?.name;
+  }
+
+  /// Whether the User is reading this Task's conversation right now.
+  bool watchingTask(String taskId) =>
+      conversationVisible && appVisible && task?.id == taskId;
+
+  /// Opening a conversation clears its notifications from this phone.
+  void conversationShown() {
+    final id = task?.id;
+    if (id != null && conversationVisible && appVisible) {
+      unawaited(push.clearTask(id));
+    }
+  }
+
   Future<void> initialize() async {
+    push.watching = watchingTask;
     _pushOpens = push.taskOpens.listen((id) {
       unawaited(openNotification(id));
     });
@@ -364,6 +390,7 @@ class TaskController extends ChangeNotifier {
     'user:${user!.id}',
     'agents',
     'wikis',
+    'projects',
     if (scheduleSection) 'schedules',
     if (project != null) 'project:${project!.id}',
     if (task != null) 'task:${task!.id}',
@@ -491,6 +518,7 @@ class TaskController extends ChangeNotifier {
     final login = _login;
     _socket?.close();
     _refreshTimer?.cancel();
+    _projectsTimer?.cancel();
     await _events?.cancel();
     await _states?.cancel();
     if (login != null) {
@@ -542,6 +570,30 @@ class TaskController extends ChangeNotifier {
       _refreshing = null;
     });
     return _refreshing!;
+  }
+
+  Timer? _projectsTimer;
+
+  /// Refetches the Projects list, with every Project's indicators, once a
+  /// burst of activity settles.
+  void _refreshProjectsSoon() {
+    _projectsTimer?.cancel();
+    _projectsTimer = Timer(const Duration(milliseconds: 250), () {
+      unawaited(() async {
+        if (api == null || user == null || user!.mustChangePassword) return;
+        try {
+          final raw = objects((await _request('GET', '/projects'))['projects']);
+          if (user == null) return;
+          projects = raw.map(Project.fromJson).toList();
+          final cached = storage.read('global') ?? {};
+          await storage.write('global', {...cached, 'projects': raw});
+          notifyListeners();
+        } catch (e) {
+          _recordError(e);
+          notifyListeners();
+        }
+      }());
+    });
   }
 
   Future<void> _refresh() async {
@@ -1214,6 +1266,7 @@ class TaskController extends ChangeNotifier {
   }
 
   Future<void> selectTask(Task value) async {
+    unawaited(push.clearTask(value.id));
     task = value;
     timeline = [];
     scheduledMessages = [];
@@ -1971,6 +2024,12 @@ class TaskController extends ChangeNotifier {
       final pref = TaskPreference.fromJson(event['preference'] as Json);
       preferences[pref.taskId] = pref;
       notifyListeners();
+      // Reading or muting a Task changes its Project's unread badge.
+      _refreshProjectsSoon();
+      return;
+    }
+    if (type == 'project.activity') {
+      _refreshProjectsSoon();
       return;
     }
     if (type == 'scheduled_message.updated') {
@@ -2191,6 +2250,7 @@ class TaskController extends ChangeNotifier {
     voice.dispose();
     _socket?.close();
     _refreshTimer?.cancel();
+    _projectsTimer?.cancel();
     api?.close();
     unawaited(_events?.cancel());
     unawaited(_states?.cancel());

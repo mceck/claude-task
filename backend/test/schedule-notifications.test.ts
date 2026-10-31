@@ -51,6 +51,8 @@ describe('Schedule alerts', () => {
     await flush();
     expect(push.messages).toHaveLength(1);
     expect(push.messages[0]).toMatchObject({ kind: 'schedule.run_failed', taskId: run.taskId });
+    const task = (await admin.get(`/tasks/${run.taskId}`)).body.task;
+    expect(push.messages[0]!.alert).toEqual({ title: `${task.key} · ${task.title}`, sender: null, senderKind: null, text: 'Schedule "Alerts": run failed' });
   });
 
   it('sends no alert when a run succeeds', async () => {
@@ -74,6 +76,7 @@ describe('Schedule alerts', () => {
       expect(push.messages).toHaveLength(i < 2 ? 0 : 1);
     }
     expect(push.messages[0]).toMatchObject({ kind: 'schedule.blocked', taskId: null });
+    expect(push.messages[0]!.alert).toEqual({ title: 'Alerts', sender: null, senderKind: null, text: 'Schedule "Alerts": keeps being skipped' });
     expect(current.consecutiveSkips).toBe(4);
   });
 });

@@ -1116,7 +1116,11 @@ class TimelineTile extends StatelessWidget {
                 ],
               ),
             ),
-            if (delivery != null) _Delivery(delivery: delivery),
+            if (delivery != null)
+              _Delivery(
+                delivery: delivery,
+                agentName: controller.deliveryAgentName(delivery),
+              ),
           ],
         ),
       );
@@ -1365,7 +1369,11 @@ class _CommentView extends StatelessWidget {
     final meta = [
       if (e.content['editedAt'] != null)
         const Text('Edited', style: _metaStyle),
-      if (delivery != null) _Delivery(delivery: delivery),
+      if (delivery != null)
+        _Delivery(
+          delivery: delivery,
+          agentName: controller.deliveryAgentName(delivery),
+        ),
     ];
     final actions = onActions == null
         ? null
@@ -1876,40 +1884,49 @@ class _RenderClamp extends RenderBox
   }
 }
 
+/// A User Comment's Delivery as chat-style ticks; the words live in the tooltip.
 class _Delivery extends StatelessWidget {
   final Map delivery;
-  const _Delivery({required this.delivery});
+  final String? agentName;
+  const _Delivery({required this.delivery, required this.agentName});
+
+  static String _clock(String? iso) {
+    final at = iso == null ? null : DateTime.tryParse(iso)?.toLocal();
+    if (at == null) return '';
+    String two(int n) => n.toString().padLeft(2, '0');
+    return ' · ${two(at.hour)}:${two(at.minute)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = delivery['state'] as String?;
     final reason = delivery['reason'] as String?;
-    // Web DeliveryBadge colors.
+    final at = _clock(delivery['at'] as String?);
+    final agent = agentName ?? 'the agent';
     final (icon, color, label) = switch (state) {
+      'queued' => (Icons.schedule_rounded, Palette.fgSubtle, 'Queued$at'),
       'delivered' => (
-        Icons.check_circle_outline_rounded,
-        Palette.success,
-        'Delivered',
+        Icons.done_rounded,
+        Palette.fgSubtle,
+        'Delivered to $agent$at',
       ),
-      'queued' => (Icons.schedule_rounded, Palette.info, 'Queued'),
+      'handled' => (
+        Icons.done_all_rounded,
+        Palette.primary,
+        'Handled by $agent$at',
+      ),
       'not_delivered' => (
-        Icons.do_not_disturb_alt_rounded,
-        Palette.fgMuted,
-        'Not delivered',
+        Icons.warning_amber_rounded,
+        Palette.warning,
+        'Not delivered${reason == null ? '' : ': $reason'}',
       ),
       _ => (Icons.circle_outlined, Palette.fgSubtle, '$state'),
     };
     return Tooltip(
-      message: 'Delivery: $label${reason == null ? '' : ' · $reason'}',
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 3),
-          Text(
-            reason == null ? label : '$label · $reason',
-            style: TextStyle(fontSize: 11, color: color),
-          ),
-        ],
+      message: label,
+      child: Semantics(
+        label: 'Delivery: $label',
+        child: Icon(icon, size: 14, color: color),
       ),
     );
   }

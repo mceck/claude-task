@@ -11,14 +11,15 @@ The conversation is the human side of a Task's Timeline: the Comments Users writ
 - An **Internal Note** is a User Comment flagged as internal when it is posted. It is shown to every User and delivered to no Agent.
 - An **Attachment** is a file a User uploads or an Agent posts. A Comment carries up to 10 of them. Files uploaded from the Task description editor are Attachments of the Task itself rather than of a Comment.
 - A **Message** is what the Agent receives: one or more Comments merged together, or a system notice. Users write Comments; the platform turns them into Messages.
-- **Delivery** is the state of a User Comment towards the Agent: queued, delivered, or not delivered with a reason.
+- **Delivery** is the state of a User Comment towards the Agent: queued, delivered, handled (the Turn that read it has ended), or not delivered with a reason.
 - A **Scheduled Message** is a Comment a User writes ahead of time for a chosen date and time. It stays off the Timeline until it is due, then is published as an ordinary Comment.
 - A **Limit Resume** is a Scheduled Message the platform creates when a Turn stops at a usage limit that reports its reset time (see [Agent sessions](agent-sessions.md#usage-limits-and-limit-resume)).
 - A **Question** is an Agent Comment asking Users to choose among options. The first User who answers closes it, and the answer reaches the Agent as a Message.
 - A **Survey** is an Agent Comment collecting answers from several Users. Its **Expected Respondents** are the Task's Assignees when it was created. It reaches the Agent as one Message once they have all answered, or earlier when a User closes it.
 - A **Notify agent** notice is a System Comment that carries, for the Agent only, the list of Task changes Users made since the Agent last read its Task.
 - A **Task Preference** is one User's private state on one Task: whether they follow it, whether they muted it, and how far they have read its Timeline.
-- A **Notification Event** is a moment worth alerting followers about: a completed Turn, a failed Turn, or a Job that needs intervention.
+- A **Notification Event** is a moment worth alerting someone about: a completed Turn, a failed Turn, a Job that needs intervention, a User mention or a Schedule failure.
+- An **Alert** is the phone notification for a Notification Event: the Task it is about, who it is from and an excerpt of what happened. The Alerts of one Task stack like the messages of one chat.
 
 Comments, Revisions and the Agent's work items together form the Task's Timeline (see [Agent sessions](agent-sessions.md) for the Agent's items and [Board](board.md) for Revisions). A Wiki has several shared conversations, its Chats, each a Task of its Wiki Project; every Chat follows every rule in this spec (see [Wikis](wikis.md)).
 
@@ -250,35 +251,53 @@ The Board and native Task list show unread Tasks with a bold title and, when the
 
 ### Notifications
 
-Notifications are phone alerts sent to Task followers for Agent outcomes and to mentioned Users for new User Comments. A Notification Event is recorded in the same transaction as the fact it reports:
+Notifications are Alerts on the User's phones, sent to Task followers for Agent outcomes and to mentioned Users for new User Comments. A Notification Event is recorded in the same transaction as the fact it reports:
 
-| Event | When |
-| --- | --- |
-| Turn completed | A Turn of the Task's Agent ends successfully. |
-| Turn failed | A Turn ends with an error. |
-| Needs intervention | A Job fails (for example at Worktree, setup or start) without a failed Turn already reporting it. |
-| User mentioned | A User posts a Comment or Internal Note containing a selected User mention. |
-| Scheduled run failed | A Scheduled Run ends as `Failed`. |
-| Schedule blocked | A Schedule is skipped for the third time in a row. |
+| Event | When | Previewed Comment |
+| --- | --- | --- |
+| Turn completed | A Turn of the Task's Agent ends successfully. | The last Agent Comment of that Turn. |
+| Turn failed | A Turn ends with an error. | The System Comment reporting the error, or else the last Agent Comment of that Turn. |
+| Needs intervention | A Job fails (for example at Worktree, setup or start) without a failed Turn already reporting it. | The System Comment reporting the failure. |
+| User mentioned | A User posts a Comment or Internal Note containing a selected User mention. | The mentioning Comment. |
+| Scheduled run failed | A Scheduled Run ends as `Failed`. | None. |
+| Schedule blocked | A Schedule is skipped for the third time in a row. | None. |
 
-Each event is identified by the Turn, Job or Comment it reports, so the same fact is recorded once. Streaming fragments, individual Agent Comments, and the wording of the Agent's text never produce a notification.
+Each event is identified by the Turn, Job or Comment it reports, so the same fact is recorded once, and it records the Comment it previews. Streaming fragments and individual Agent Comments produce no event: an Agent outcome is alerted once per Turn, and an event's kind comes from the Turn and Job lifecycle, whatever the Agent wrote.
 
-The recipients of an Agent outcome are the Users who, at that moment, follow the Task, have not muted it, are active, have no pending forced password change, and have a registered phone whose Login is still valid. One delivery is planned per recipient and phone. Just before sending, every condition is checked again (a User who unfollowed, muted, was deactivated or whose Login expired in between receives nothing), and events older than 24 hours are dropped.
+The recipients of an Agent outcome are the Users who, at that moment, follow the Task, have not muted it, are active, have no pending forced password change, and have a registered phone whose Login is still valid. One delivery is planned per recipient and phone. The push dispatcher looks for planned deliveries every 2 seconds and sends them straight away. Just before sending, every condition is checked again (a User who unfollowed, muted, was deactivated or whose Login expired in between receives nothing), and events older than 24 hours are dropped.
 
 Mention recipients are determined from the stored User Comment in its posting transaction. Before dispatch, eligibility is checked again and only Comments still present on the Timeline qualify. Muting between posting and dispatch suppresses the alert. Mentioned Users keep their existing following preference.
 
-The two Schedule events go to the creator of the Schedule only, whether or not they follow the Task, and show the fixed texts "A scheduled run failed." and "A schedule keeps being skipped." (see [Schedules](schedules.md)). They are not suppressed by the closed Status of the run's Task.
+The two Schedule events go to the creator of the Schedule only, whether or not they follow the Task (see [Schedules](schedules.md)). They are sent whatever the Status of the run's Task.
 
-A Task in a `closed` Status produces no phone alert for Agent outcomes and mentions. Planned deliveries for Agent outcomes and mentions are discarded at dispatch time while the Task is closed, so closing a Task with alerts still pending suppresses them. Moving it back out of a `closed` Status before dispatch makes an unexpired alert eligible again, exactly as the other checks re-evaluate the Task's current state.
+Agent outcome and mention Alerts are sent for Tasks in an open Status. Planned deliveries for them are discarded at dispatch time while the Task is in a `closed` Status, so closing a Task with alerts still pending suppresses them. Moving it back out of a `closed` Status before dispatch makes an unexpired alert eligible again, exactly as the other checks re-evaluate the Task's current state.
 
-The alert shows a fixed text, "You were mentioned in a Comment." for mentions and "A Task you follow has an update." for Agent outcomes, with no Task title, Project or generated text, and carries the Task's id so the app opens its conversation after sign-in; for a Wiki's Task the app opens the Wiki's Chat that the Task holds. Alerts for the same Task collapse into one on the phone. Device registration, the push provider, retries and the unconfigured state are described in [Clients](clients.md).
+#### Alert content
+
+The dispatcher builds each Alert when it sends it, from the current Task, Agent, User and Comment, so a renamed Task shows its new title. An Alert has a title, a sender and a text:
+
+- **Title**: the Task Key and title, such as `API-42 · Fix login redirect`. For a Wiki's Chat, the Wiki's name and the Chat's title as the Chat list shows it. A blocked Schedule, which reports no Task, is titled with the Schedule's name.
+- **Sender and text**, by event:
+
+| Event | Sender | Text |
+| --- | --- | --- |
+| Turn completed | The Agent | The excerpt, or "finished its turn." when the Turn wrote no Agent Comment |
+| Turn failed | The Agent | "turn failed: " followed by the excerpt, or "turn failed" |
+| Needs intervention | The Agent | "needs your attention: " followed by the excerpt, or "needs your attention" |
+| User mentioned | The Comment's author | The excerpt |
+| Scheduled run failed | None | `Schedule "<name>": run failed` |
+| Schedule blocked | None | `Schedule "<name>": keeps being skipped` |
+
+The **excerpt** is the previewed Comment as plain text: Markdown emphasis and headings are removed, links keep their text, mentions read `@Name`, code blocks and images are left out, and whitespace collapses to single spaces. It is cut at 200 characters on a word boundary and ends with "…" when cut. A Comment with Attachments adds "📎 3 files" (or "📎 1 file") after its text, and a Comment with Attachments only shows just that; file names and contents stay out of the Alert. A previewed Comment deleted before dispatch leaves the text without its excerpt.
+
+The Alert also carries the Task's id, so the app opens its conversation after sign-in; for a Wiki's Task the app opens the Wiki's Chat that the Task holds. How phones stack, show and remove Alerts, device registration, the push provider, retries and the unconfigured state are described in [Clients](clients.md).
 
 ## Architecture
 
 - The **Comments module** owns Comments and Attachments: posting, editing, soft deletion, uploads and downloads, and the merged Timeline read. It hands every new non-internal User Comment to the Session lifecycle, which decides between delivering it to the running Job and queueing it (see [Agent sessions](agent-sessions.md)), and it publishes Comment events on the Task's real-time topic after the transaction commits.
 - The **Blob store** keeps the bytes of every Attachment behind a small interface: store a stream with its name and type and get an id and size back, read it by id, delete it. The implementation writes each blob as a file plus a metadata sidecar in the backend's data directory. Database records point to blob ids; blobs are deleted only after the transaction that removed their records commits, and blobs stored for a request that fails are removed straight away.
 - The **Notifications module** owns Task Preferences, read positions and phone registrations. The database assigns Timeline positions and records Agent outcome Notification Events. The Comments module records mention events and their planned recipients in the same transaction as the new Comment.
-- The **push dispatcher** reads planned deliveries from the database and sends them through the push transport (see [Clients](clients.md)).
+- The **push dispatcher** reads planned deliveries from the database every 2 seconds, builds each Alert's title, sender and text (the excerpt builder is a pure function shared by every event), and sends it through the push transport (see [Clients](clients.md)).
 - **Scheduled Messages** have a module of their own next to Comments. The background tick that already starts due Schedules also publishes due Scheduled Messages, each in its own transaction that locks the Task and then the message (the order the Session lifecycle uses), so a send now racing the tick, a second backend or the closing of the Task publishes or cancels it once. The tick takes an injectable clock so tests can drive it.
 - **The API** lists a Task's Scheduled Messages (`GET /tasks/:id/scheduled-messages`), creates one as JSON or multipart (`POST`, `201`), changes the text or due time (`PATCH /scheduled-messages/:id`), cancels it (`DELETE`) and sends it now (`POST /scheduled-messages/:id/send`). The offer to resume is answered with `POST /comments/:id/limit-resume` carrying `schedule: true` or `false`. A message that is not `pending` answers `409` to every change.
 - **Real-time:** Comment created, updated and deleted events go to the Task topic; answering a Question and answering or closing a Survey publish the updated Comment, with its structured part, as an update event; the refreshed card goes to the Project topic; preference changes go to the User's private topic. Transport and reconnection are described in [Clients](clients.md).
@@ -306,7 +325,7 @@ sequenceDiagram
 
 ## Data model
 
-- **Comment**: Task, kind (`user`, `agent`, `system`), author Actor, Markdown body, internal flag, edited at, deleted at, created at. Delivery fields: state (`none`, `queued`, `delivered`, `not_delivered`), reason, the Job it was delivered in, the Queue Entry it waits in. Notify agent notices and Survey results also hold the text the Agent receives; Notify agent notices also hold the Task version they cover. Agent Comments hold the Job that produced them. An answer to a Question holds the Question it answers. Comments are soft-deleted and removed only with their Task (or by Delete Chat on a Wiki). 
+- **Comment**: Task, kind (`user`, `agent`, `system`), author Actor, Markdown body, internal flag, edited at, deleted at, created at. Delivery fields: state (`none`, `queued`, `delivered`, `handled`, `not_delivered`), reason, when the state last changed, the Job it was delivered in, the Queue Entry it waits in. Notify agent notices and Survey results also hold the text the Agent receives; Notify agent notices also hold the Task version they cover. Agent Comments hold the Job that produced them. An answer to a Question holds the Question it answers. Comments are soft-deleted and removed only with their Task (or by Delete Chat on a Wiki). 
 - **Scheduled Message**: Task, kind (`user` or `limit_resume`), author User (none for a Limit Resume), Markdown body, internal flag, due time, state (`pending`, `sent`, `cancelled`), cancellation reason, the Comment it became, created at, updated at. Removed with its Task.
 - **Limit Resume offer**: the structured part of the System Comment that reports a usage limit: reset time, state (`open`, `scheduled`, `declined`, `unneeded`), who decided and when, and the Limit Resume created. Removed with its Comment.
 - **Attachment**: either a Comment, a Scheduled Message or a Task (exactly one), blob id, file name, content type, size in bytes, order within its Comment, created at.
@@ -315,7 +334,7 @@ sequenceDiagram
 - **Blob**: the stored bytes, identified by a random UUID, with file name, content type and size in a sidecar.
 - **Task Preference**: User and Task, following, muted, whether following was set explicitly, read position.
 - **Timeline position**: Task, entry id, position; one per persisted Timeline entry.
-- **Notification Event**: id derived from the Turn, Job or Comment it reports, Task, kind (`turn.completed`, `turn.failed`, `session.intervention`, `comment.mentioned`, `schedule.run_failed`, `schedule.blocked`), created at.
+- **Notification Event**: id derived from the Turn, Job or Comment it reports, Task, Schedule (Schedule events), kind (`turn.completed`, `turn.failed`, `session.intervention`, `comment.mentioned`, `schedule.run_failed`, `schedule.blocked`), the previewed Comment, created at. The previewed Comment is a plain reference: a Comment removed later leaves the event in place.
 - **Push delivery**: event, User, phone, attempts, next attempt time, finished time. Unique per event, User and phone.
 
 ## Non-functional requirements
@@ -325,7 +344,7 @@ sequenceDiagram
 - An Internal Note never leaves the backend towards an Agent: no Message, no Task Tool result and no Runner download includes it or its files.
 - Timeline positions follow commit order per Task, so unread state is exact across concurrent writers and independent of device clocks.
 - A phone alert is sent at most once per event, User and phone: the delivery is marked done before the provider is called, so a crash after sending never repeats an alert. Unread state stays the authoritative signal when an alert is lost.
-- Lock-screen alerts reveal no Task content.
+- Alerts carry Task titles and excerpts of Comments, so they show on the lock screen as the phone's settings allow; Attachment names and contents stay off the phone.
 - Phone tokens are stored encrypted, looked up by hash, and kept out of logs.
 - A User's preferences and read positions are visible only to that User.
 
@@ -354,6 +373,9 @@ sequenceDiagram
 - **Mention alerts use the durable notification outbox and respect mute independently of following.** A direct mention can reach a User who has yet to participate while preserving their existing Task preferences. A Comment creates at most one event, and edits keep its notification history.
 - **Agent outcome Notification Events are written by the database in the same transaction as the Turn or Job change.** An event exists exactly when its cause is committed, with no window where one is lost or invented. Events come from the Turn and Job lifecycle, never from reading the Agent's prose, so "intervention" means a Job that failed, which is reliable.
 - **Unread comes from server-assigned positions, not timestamps.** Timestamps can tie and device clocks drift; a commit-ordered position per Task makes "read up to here" exact.
+- **Alerts read like chat messages, with the Task and an excerpt.** A fixed generic text would make a finished Turn, a failure and a blocked Job look the same, and Users would have to open the app to learn which Task it is about. The title, sender and excerpt answer that from the notification. The Agent's text and Comments reach the lock screen, as in the chat apps the team already uses; phones offer their own setting to hide notification content on a locked screen, and that choice stays with each person. Excerpts are cut short and leave Attachments out, so a notification never carries a whole document.
+- **Alert content is built at dispatch time from a recorded Comment reference.** The event stays a small, transactional record of a fact, while the title and excerpt reflect the Task as it is when the phone is alerted, and a Comment deleted in the meantime is never shown.
+- **Alerts go out without a delay or an unread check.** The dispatcher sends within about 2 seconds of the event, so an Alert arrives while it is still news; holding it back to see whether the User reads the Task elsewhere was considered and rejected as a slower experience for every Alert.
 - **Task badges count Comments separately from unread Timeline activity.** The number represents the conversation waiting to be read, while the existing unread state also covers Revisions and Agent Items. Mute controls alerts; Task indicators continue to show unread activity so Users can find it when they return.
 
 ## Related specs

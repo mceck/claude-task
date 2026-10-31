@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { cert, deleteApp, initializeApp } from 'firebase-admin/app';
 import type { App, ServiceAccount } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
-import type { NotificationKind } from '@claude-task/shared';
+import type { NotificationKind, PushAlert } from '@claude-task/shared';
+import type { Message } from 'firebase-admin/messaging';
 
 export interface PushMessage {
   token: string;
@@ -11,15 +12,29 @@ export interface PushMessage {
   /** Null for a Schedule event that reports no Task. */
   taskId: string | null;
   kind: NotificationKind;
+  alert: PushAlert;
 }
-const ALERT_TEXT: Record<NotificationKind, string> = {
-  'turn.completed': 'A Task you follow has an update.',
-  'turn.failed': 'A Task you follow has an update.',
-  'session.intervention': 'A Task you follow has an update.',
-  'comment.mentioned': 'You were mentioned in a Comment.',
-  'schedule.run_failed': 'A scheduled run failed.',
-  'schedule.blocked': 'A schedule keeps being skipped.',
-};
+
+/**
+ * Android gets data only, so the app draws a conversation notification per Task; iOS gets an alert stacked
+ * by a thread per Task. Neither collapses, so every event reaches the phone.
+ */
+export function fcmMessage(message: PushMessage): Message {
+  const { alert } = message;
+  const thread = message.taskId ?? message.eventId;
+  return {
+    token: message.token,
+    data: {
+      taskId: message.taskId ?? '', eventId: message.eventId, kind: message.kind,
+      title: alert.title, sender: alert.sender ?? '', senderKind: alert.senderKind ?? '', text: alert.text,
+    },
+    android: { priority: 'high' },
+    apns: {
+      headers: { 'apns-push-type': 'alert', 'apns-priority': '10' },
+      payload: { aps: { alert: { title: alert.title, body: alert.sender ? `${alert.sender}: ${alert.text}` : alert.text }, sound: 'default', 'thread-id': thread } },
+    },
+  };
+}
 export class PushTransportError extends Error {
   constructor(readonly retryable: boolean) { super('Push transport failed'); }
 }
@@ -41,18 +56,8 @@ export class FirebasePushTransport implements PushTransport {
   get configured(): boolean { return this.app !== null; }
   async send(message: PushMessage): Promise<'sent' | 'invalid'> {
     if (!this.app) throw new Error('Phone push is not configured');
-    // Collapse per Task, so a burst of events on one Task shows a single alert.
-    const taskKey = createHash('sha256').update(message.taskId ?? message.eventId).digest('hex');
     try {
-      await getMessaging(this.app).send({
-        token: message.token,
-        // No title, body, Project name or generated prose from a Task on the lock screen.
-        notification: { title: 'Claude Task', body: ALERT_TEXT[message.kind] },
-        data: { taskId: message.taskId ?? '', eventId: message.eventId, kind: message.kind },
-        android: { priority: 'high', collapseKey: taskKey, notification: { tag: taskKey } },
-        apns: { headers: { 'apns-collapse-id': taskKey, 'apns-push-type': 'alert', 'apns-priority': '10' },
-          payload: { aps: { sound: 'default', 'thread-id': message.taskId ?? message.eventId } } },
-      });
+      await getMessaging(this.app).send(fcmMessage(message));
       return 'sent';
     } catch (err) {
       const code = (err as { code?: string }).code;

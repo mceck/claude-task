@@ -181,6 +181,9 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       // Everything under the schedules key: the list, the Schedule and its run history.
       void qc.invalidateQueries({ queryKey: keys.schedules });
       return;
+    case 'project.activity':
+      refreshProjectsSoon(qc);
+      return;
     case 'wiki.changed':
       void qc.invalidateQueries({ queryKey: keys.wikis });
       void qc.invalidateQueries({ queryKey: keys.wiki(event.wikiId) });
@@ -225,6 +228,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       void qc.invalidateQueries({ queryKey: keys.attachments(event.task.id) });
       return;
     case 'task.preference':
+      // Reading or muting a Task changes its Project's unread badge.
+      refreshProjectsSoon(qc);
       qc.setQueriesData<TaskPreference[]>({ queryKey: ['task-preferences'] }, (list) =>
         list?.map((p) => (p.taskId === event.preference.taskId ? event.preference : p)),
       );
@@ -311,8 +316,22 @@ function upsertAgent(qc: QueryClient, agent: Agent): void {
 }
 
 
+let projectsTimer: ReturnType<typeof setTimeout> | null = null;
+/** Refetches the Projects list, and with it every Project's indicators, once a burst of events settles. */
+function refreshProjectsSoon(qc: QueryClient): void {
+  if (projectsTimer) clearTimeout(projectsTimer);
+  projectsTimer = setTimeout(() => {
+    projectsTimer = null;
+    void qc.invalidateQueries({ queryKey: ['projects'] });
+  }, 250);
+}
+
 /** Refetches the queries a topic's events keep up to date. */
 export function refreshTopic(qc: QueryClient, topic: Topic): void {
+  if (topic === 'projects') {
+    void qc.invalidateQueries({ queryKey: ['projects'] });
+    return;
+  }
   if (topic === 'schedules') {
     void qc.invalidateQueries({ queryKey: keys.schedules });
     return;

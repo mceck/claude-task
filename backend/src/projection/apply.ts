@@ -1,9 +1,10 @@
 import { taskTopic } from '@claude-task/shared';
 import type { AgentItem } from '@claude-task/shared';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../context';
 import type { Executor } from '../db/client';
 import { offerLimitResume, onTurnWorked } from '../modules/scheduled-messages/service';
+import { setAlertComment, turnEventId } from '../notifications/alerts';
 import { agentItems, comments, jobs, rateLimitObservations, turns } from '../db/schema';
 import type { JobRow } from '../modules/agents/service';
 import type { Broadcast, Mutation } from './projector';
@@ -35,6 +36,8 @@ export async function applyProjection(
   const topic = taskTopic(job.taskId);
   const created: string[] = [];
   const updated: string[] = [];
+  /** A failed Turn's Alert previews the System Comment its `result` adds right after it. */
+  let failedTurnEvent: string | null = null;
   for (const m of mutations) {
     switch (m.op) {
       case 'comment.create':
@@ -64,6 +67,8 @@ export async function applyProjection(
           .values({ taskId: job.taskId, kind: 'system', authorType: 'system', authorId: null, body: m.body, jobId: job.id, createdAt: sql`clock_timestamp()` })
           .returning({ id: comments.id });
         created.push(row!.id);
+        if (failedTurnEvent) await setAlertComment(tx, failedTurnEvent, row!.id);
+        failedTurnEvent = null;
         if (m.limitResetsAt) await offerLimitResume(tx, after, job.taskId, row!.id, new Date(m.limitResetsAt));
         break;
       }
@@ -136,6 +141,20 @@ export async function applyProjection(
             usage: m.turn.usage,
           })
           .onConflictDoNothing();
+        if (m.turn.commentId) await setAlertComment(tx, turnEventId(job.id, m.turn.index), m.turn.commentId);
+        {
+          // The Turn read the Comments delivered to its Session before its last model call: they
+          // are handled. One written while it was finishing waits for the Turn that reads it.
+          const handled = await tx
+            .update(comments)
+            .set({ deliveryState: 'handled' })
+            .where(and(eq(comments.taskId, job.taskId), eq(comments.deliveryState, 'delivered'),
+              lte(comments.deliveryChangedAt, new Date(m.turn.readUpTo)),
+              inArray(comments.deliveredInJobId, tx.select({ id: jobs.id }).from(jobs).where(eq(jobs.sessionId, job.sessionId)))))
+            .returning({ id: comments.id });
+          for (const { id } of handled) if (!created.includes(id) && !updated.includes(id)) updated.push(id);
+        }
+        failedTurnEvent = m.turn.isError ? turnEventId(job.id, m.turn.index) : null;
         if (!m.turn.isError) await onTurnWorked(tx, after, job.taskId);
         break;
       case 'rate_limit':

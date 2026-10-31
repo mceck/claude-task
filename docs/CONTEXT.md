@@ -165,7 +165,7 @@ What an Agent receives in its Session: one or more Comments merged together, or 
 _Avoid_: prompt, input
 
 **Delivery**:
-Whether a User's Comment has reached the Agent: queued, delivered, or not delivered (with a reason).
+Whether a User's Comment has reached the Agent: queued, delivered, handled (the Turn that read it has ended), or not delivered (with a reason).
 
 **Scheduled Message**:
 A Comment a User writes ahead of time for a chosen date and time. It stays off the Timeline until then, listed on its Task where any User with access can edit, cancel or send it now. When due it is published as an ordinary Comment by its author and follows the usual Delivery. It is published even when it cannot be delivered, and then shows why.
@@ -253,7 +253,11 @@ A User's choice to silence a Task's alerts while still following it.
 The latest Timeline entry of a Task a User has read. A Task is unread while it has newer entries.
 
 **Notification Event**:
-A completed Turn, failed Turn, failed Job or User mention that alerts its recipients.
+A completed Turn, failed Turn, failed Job, User mention or Schedule failure that alerts its recipients.
+
+**Alert**:
+The phone notification for a Notification Event: its Task, who it is from and an excerpt of what happened. Alerts of one Task stack together like the messages of one chat.
+_Avoid_: push, notification (alone)
 
 **Device Registration**:
 A phone's push token, tied to one Login.

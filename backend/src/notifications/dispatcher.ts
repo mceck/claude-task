@@ -1,6 +1,7 @@
-import type { NotificationKind } from '@claude-task/shared';
+import type { NotificationKind, PushAlert } from '@claude-task/shared';
 import { sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
+import { buildAlert } from './alerts';
 import { PushTransportError } from './transport';
 
 type Delivery = {
@@ -32,23 +33,27 @@ export class PushDispatcher {
     this.running ??= this.batch().finally(() => { this.running = null; });
     return this.running;
   }
-  private async send(d: Delivery): Promise<void> {
+  private async send(d: Delivery, alert: PushAlert): Promise<void> {
     try {
       const outcome = await withTimeout(this.ctx.push.send({ token: this.ctx.config.secrets.decrypt(d.token_ciphertext),
-        eventId: d.event_id, taskId: d.task_id, kind: d.kind }), SEND_TIMEOUT_MS);
+        eventId: d.event_id, taskId: d.task_id, kind: d.kind, alert }), SEND_TIMEOUT_MS);
       if (outcome === 'invalid') await this.ctx.db.execute(sql`delete from push_devices where id = ${d.device_id}::uuid and token_hash = ${d.token_hash}`);
     } catch (err) {
-      const attempts = d.attempts + 1;
-      const retryable = err instanceof PushTransportError && err.retryable && attempts < 6;
+      const retryable = err instanceof PushTransportError && err.retryable;
       // Errors are logged by kind only: provider messages can embed a device token.
       this.ctx.log.warn({ eventId: d.event_id, retryable, transport: err instanceof PushTransportError }, 'Push delivery failed');
-      if (!retryable) return;
-      try {
-        await this.ctx.db.execute(sql`update push_deliveries set finished_at = null,
-          next_attempt_at = now() + ${Math.min(3600, 2 ** attempts * 10)} * interval '1 second' where ${this.key(d)}`);
-      } catch {
-        this.ctx.log.warn({ eventId: d.event_id }, 'Push retry could not be rescheduled');
-      }
+      if (retryable) await this.retry(d);
+    }
+  }
+  /** Reopens a claim whose Alert surely never left, with a growing delay, up to six attempts. */
+  private async retry(d: Delivery): Promise<void> {
+    const attempts = d.attempts + 1;
+    if (attempts >= 6) return;
+    try {
+      await this.ctx.db.execute(sql`update push_deliveries set finished_at = null,
+        next_attempt_at = now() + ${Math.min(3600, 2 ** attempts * 10)} * interval '1 second' where ${this.key(d)}`);
+    } catch {
+      this.ctx.log.warn({ eventId: d.event_id }, 'Push retry could not be rescheduled');
     }
   }
   private key(d: Delivery) {
@@ -87,7 +92,18 @@ export class PushDispatcher {
         taken++;
         if (d.valid) claimed.push(d);
       }
-      await Promise.all(claimed.map((d) => this.send(d)));
+      // Built when sent, so the Alert shows the Task and Comment as they are now.
+      const alerts = new Map<string, Promise<PushAlert | null | undefined>>();
+      for (const d of claimed) {
+        if (!alerts.has(d.event_id)) alerts.set(d.event_id, buildAlert(this.ctx.db, d.event_id).catch(() => undefined));
+      }
+      await Promise.all(claimed.map(async (d) => {
+        const alert = await alerts.get(d.event_id)!;
+        if (alert) return this.send(d, alert);
+        // Nothing was sent: an Alert that could not be read is tried again.
+        this.ctx.log.warn({ eventId: d.event_id }, 'Push alert could not be built');
+        if (alert === undefined) await this.retry(d);
+      }));
       if (taken < SEND_CONCURRENCY) return;
     }
   }

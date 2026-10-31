@@ -338,6 +338,84 @@ describe('Comments reaching the Agent', () => {
     expect(c.delivery).toMatchObject({ state: 'delivered', jobId: start.jobId });
   });
 
+  it('marks every delivered Comment handled when a Turn of the Session ends, live', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id, 'Start here.');
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+    const ws = await WsTestClient.connect(app.url, admin.cookie);
+    await ws.subscribe(taskTopic(task.id));
+    const steer = await comment(admin, task.id, 'Also check the logout flow.');
+    await runner.next('job.input');
+    const delivered = comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user');
+    expect(delivered.map((c) => c.delivery?.state)).toEqual(['delivered', 'delivered']);
+    expect(delivered.every((c) => typeof c.delivery?.at === 'string')).toBe(true);
+
+    const s = new Stream();
+    await runner.play(start.jobId, [s.init(), s.text('Done'), s.result()]);
+    await app.settle();
+    const live = await ws.next('comment.updated', (e) => e.comment.id === steer.id && e.comment.delivery?.state === 'handled');
+    expect(live.event.comment.delivery).toMatchObject({ jobId: start.jobId });
+    const handled = comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user');
+    expect(handled.map((c) => c.delivery?.state)).toEqual(['handled', 'handled']);
+    expect(Date.parse(handled[1]!.delivery!.at!)).toBeGreaterThanOrEqual(Date.parse(delivered[1]!.delivery!.at!));
+    ws.close();
+  });
+
+  it('leaves a Comment written after the Turn last called the model for the Turn that reads it', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+    const s = new Stream();
+    await runner.play(start.jobId, [s.init(), s.toolUse('tool-1', 'Bash', { command: 'npm test' }), s.toolResult('tool-1', 'ok'), s.text('Almost done')]);
+    await app.settle();
+    const late = await comment(admin, task.id, 'One more thing');
+    await runner.next('job.input');
+    await runner.play(start.jobId, [s.result()]);
+    await app.settle();
+    const states = async () => Object.fromEntries(comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user').map((c) => [c.body, c.delivery?.state]));
+    expect(await states()).toEqual({ 'Please get started.': 'handled', 'One more thing': 'delivered' });
+    await runner.play(start.jobId, [s.text('Done that too'), s.result()]);
+    await app.settle();
+    expect((await states())[late.body]).toBe('handled');
+  });
+
+  it('counts a stopped Turn as handling its Comments', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+    const s = new Stream();
+    await runner.play(start.jobId, [s.init(), { ...s.result({ isError: true, subtype: 'error_during_execution' }), terminal_reason: 'aborted_streaming' }]);
+    await app.settle();
+    expect(comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user').map((c) => c.delivery?.state)).toEqual(['handled']);
+  });
+
+  it('counts a failed Turn as handling its Comments, and leaves queued ones alone', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const other = await createTask(admin, project.id, { title: 'Other' });
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+    await assignAgent(admin, other.id, agent.id);
+    const waiting = await comment(admin, other.id, 'Waiting for the agent');
+    expect(waiting.delivery?.state).toBe('queued');
+    const s = new Stream();
+    await runner.play(start.jobId, [s.init(), s.result({ isError: true, subtype: 'error_during_execution' })]);
+    await app.settle();
+    expect(comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user').map((c) => c.delivery?.state)).toEqual(['handled']);
+    expect(comments(await timeline(admin, other.id)).filter((c) => c.kind === 'user').map((c) => c.delivery?.state)).toEqual(['queued']);
+  });
+
   it('requeues a Comment when the mid-Turn write finds the Runner socket closed', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
@@ -455,8 +533,8 @@ describe('Comments reaching the Agent', () => {
     expect(text.indexOf('First note')).toBeLessThan(text.indexOf('Second note'));
     const delivered = comments(await timeline(admin, other.id)).filter((c) => c.kind === 'user');
     expect(delivered.slice(-2).map((c) => c.delivery)).toEqual([
-      { state: 'delivered', reason: null, jobId: next.jobId },
-      { state: 'delivered', reason: null, jobId: next.jobId },
+      { state: 'delivered', reason: null, jobId: next.jobId, at: expect.any(String) },
+      { state: 'delivered', reason: null, jobId: next.jobId, at: expect.any(String) },
     ]);
   });
 
@@ -516,7 +594,7 @@ describe('Comments reaching the Agent', () => {
     await startAndFinish(admin, runner, task.id, agent.id);
     await assignAgent(admin, task.id, null);
     const c = await comment(admin, task.id, 'Anyone there?');
-    expect(c.delivery).toEqual({ state: 'not_delivered', reason: 'no agent assigned', jobId: null });
+    expect(c.delivery).toEqual({ state: 'not_delivered', reason: 'no agent assigned', jobId: null, at: expect.any(String) });
   });
 });
 
@@ -659,7 +737,7 @@ describe('Session lifecycle', () => {
     await app.settle();
 
     const dropped = comments(await timeline(admin, task.id)).find((c) => c.id === queued.id)!;
-    expect(dropped.delivery).toEqual({ state: 'not_delivered', reason: 'task closed', jobId: null });
+    expect(dropped.delivery).toEqual({ state: 'not_delivered', reason: 'task closed', jobId: null, at: expect.any(String) });
     expect(await getSession(admin, task.id)).toMatchObject({ state: 'closed', queuePosition: null });
     const removals = runner.messages('worktree.remove').map((m) => m.worktreePath);
     expect(removals).toEqual(expect.arrayContaining([`worktrees/${project.id}/${task.key}`, `worktrees/${project.id}/${other.key}`]));
@@ -971,7 +1049,7 @@ describe('the Queue', () => {
     expect((await admin.delete(`/comments/${first.id}`)).status).toBe(204);
 
     const deleted = comments(await timeline(admin, queued!.id)).find((c) => c.id === first.id)!;
-    expect(deleted.delivery).toEqual({ state: 'not_delivered', reason: 'comment deleted', jobId: null });
+    expect(deleted.delivery).toEqual({ state: 'not_delivered', reason: 'comment deleted', jobId: null, at: expect.any(String) });
     const entry = (await admin.get(`/agents/${agent.id}/queue`)).body.entries.find((e: { task: { id: string } }) => e.task.id === queued!.id);
     expect(entry).toMatchObject({ pendingMessages: 1 });
   });
@@ -1008,7 +1086,7 @@ describe('the Queue', () => {
     const [entry] = (await admin.get(`/agents/${agent.id}/queue`)).body.entries;
     expect((await admin.delete(`/agents/${agent.id}/queue/${entry.id}`)).status).toBe(204);
     const after = comments(await timeline(admin, task.id)).find((x) => x.id === c.id)!;
-    expect(after.delivery).toEqual({ state: 'not_delivered', reason: 'removed from queue', jobId: null });
+    expect(after.delivery).toEqual({ state: 'not_delivered', reason: 'removed from queue', jobId: null, at: expect.any(String) });
   });
 });
 

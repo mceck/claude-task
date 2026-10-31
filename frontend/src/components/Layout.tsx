@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { BookOpen, CalendarClock, GitBranch, Bot, ChevronsUpDown, FolderKanban, KeyRound, LogOut, Monitor, Moon, Sun, Users } from 'lucide-react';
-import { userTopic } from '@claude-task/shared';
+import { PROJECTS_TOPIC, userTopic } from '@claude-task/shared';
 import { useTheme } from '@/lib/theme';
 import type { Theme } from '@/lib/theme';
 import { useEffect } from 'react';
@@ -37,6 +37,8 @@ export function Layout() {
 
   // This User's own connection carries their private Task preferences (follow, mute, read position).
   useTopic(ready && user ? userTopic(user.id) : null);
+  // The sidebar's Boards list, and the Projects page with it, stay live.
+  useTopic(ready && user ? PROJECTS_TOPIC : null);
 
   useEffect(() => {
     if (!ready) return;

@@ -41,6 +41,7 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed && widget.controller.user != null) {
       setState(() => _resumeEpoch++);
       widget.controller.reconnect();
+      widget.controller.conversationShown();
     }
   }
 

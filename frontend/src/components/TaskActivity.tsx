@@ -78,7 +78,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
       >
         <div ref={content} className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
           <StopFollowing.Provider value={stopFollowing}>
-            <Timeline taskId={task.id} hideChanges={hideChanges} statuses={statuses} tags={tags} users={users} />
+            <Timeline taskId={task.id} agentId={task.agentId} hideChanges={hideChanges} statuses={statuses} tags={tags} users={users} />
           </StopFollowing.Provider>
         </div>
       </div>

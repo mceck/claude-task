@@ -23,4 +23,12 @@ export const deviceRegistrationBody = z.strictObject({
 });
 export type NotificationKind = 'turn.completed' | 'turn.failed' | 'session.intervention' | 'comment.mentioned' | 'schedule.run_failed' | 'schedule.blocked';
 export interface PushStatus { configured: boolean; provider: 'fcm'; }
+/** What an Alert shows: its conversation, who it is from and what happened (docs/specs/conversation.md#alert-content). */
+export interface PushAlert {
+  title: string;
+  /** The Agent or User the Alert is from; null for Schedule Alerts. */
+  sender: string | null;
+  senderKind: 'agent' | 'user' | null;
+  text: string;
+}
 export type UserEvent = { type: 'task.preference'; preference: TaskPreference };

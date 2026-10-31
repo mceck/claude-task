@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { taskTopic } from '@claude-task/shared';
 import type { Actor, Wiki, WikiChat } from '@claude-task/shared';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { preferences } from '../../notifications/preferences';
 import type { Executor } from '../../db/client';
 import type { AfterCommit } from '../../context';
@@ -122,6 +123,12 @@ export async function clearChat(tx: Executor, after: AfterCommit, chatId: string
 }
 
 const TITLE_LENGTH = 60;
+/** A Chat's title as the Chat list shows it: its rename, else the start of its first User Comment. */
+export const chatTitle = (task: SQL) => sql`coalesce(${task}.chat_title,
+  (select nullif(left(regexp_replace(btrim(c.body), '\\s+', ' ', 'g'), ${TITLE_LENGTH}), '') from comments c
+    where c.task_id = ${task}.id and c.kind = 'user' and c.deleted_at is null
+    order by c.created_at, c.id limit 1),
+  'Chat')`;
 
 /** A Wiki's Chats: its Tasks that hold a User Comment, most recently active first. */
 export async function listChats(db: Executor, userId: string, wiki: Wiki): Promise<WikiChat[]> {
@@ -134,11 +141,7 @@ export async function listChats(db: Executor, userId: string, wiki: Wiki): Promi
     createdAt: Date;
     lastActivityAt: Date;
   }>(sql`select t.id, t.agent_id as "agentId",
-      coalesce(t.chat_title,
-        (select nullif(left(regexp_replace(btrim(c.body), '\\s+', ' ', 'g'), ${TITLE_LENGTH}), '') from comments c
-          where c.task_id = t.id and c.kind = 'user' and c.deleted_at is null
-          order by c.created_at, c.id limit 1),
-        'Chat') as title,
+      ${chatTitle(sql`t`)} as title,
       (select s.state from sessions s where s.task_id = t.id and s.agent_id = t.agent_id) as "sessionState",
       exists (select 1 from jobs j where j.task_id = t.id and j.state in ('dispatched', 'running', 'finishing')) as running,
       a.first as "createdAt", a.last as "lastActivityAt"

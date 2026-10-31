@@ -1,11 +1,19 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
+import 'alerts.dart';
+import 'phone_alerts.dart';
+
 @pragma('vm:entry-point')
 Future<void> backgroundMessage(RemoteMessage message) async {
-  // Alert payloads are displayed by Android/APNs; no authenticated work here.
+  // Android receives data only and draws the Alert; APNs shows iOS alerts.
+  // Nothing authenticated happens here.
+  if (!Platform.isAndroid) return;
+  final alert = PushAlertData.fromData(message.data);
+  if (alert != null) await PhoneAlerts.instance.show(alert);
 }
 
 abstract class PhonePush {
@@ -17,6 +25,13 @@ abstract class PhonePush {
   Future<String?> currentToken();
   Future<void> disable();
   String? takeInitialTask();
+
+  /// Whether the User is looking at a Task's conversation right now, so its
+  /// Alerts stay quiet in the foreground.
+  set watching(bool Function(String taskId)? value);
+
+  /// Removes a Task's notifications from this phone.
+  Future<void> clearTask(String taskId);
 }
 
 class FirebasePhonePush implements PhonePush {
@@ -25,6 +40,8 @@ class FirebasePhonePush implements PhonePush {
   String? _initialTask;
   @override
   String status = 'Phone push is not configured';
+  @override
+  bool Function(String taskId)? watching;
   bool _ready = false;
   static const projectId = String.fromEnvironment('FIREBASE_PROJECT_ID');
   @override
@@ -56,13 +73,20 @@ class FirebasePhonePush implements PhonePush {
         ),
       );
       FirebaseMessaging.onBackgroundMessage(backgroundMessage);
+      await PhoneAlerts.instance.initialize(onOpen: _opens.add);
+      FirebaseMessaging.onMessage.listen(_foreground);
       FirebaseMessaging.onMessageOpenedApp.listen((message) {
         final id = message.data['taskId'];
-        if (id != null) _opens.add(id);
+        if (id is String && id.isNotEmpty) _opens.add(id);
       });
-      _initialTask = (await FirebaseMessaging.instance.getInitialMessage())
+      final remote = (await FirebaseMessaging.instance.getInitialMessage())
           ?.data['taskId'];
+      _initialTask = remote is String && remote.isNotEmpty
+          ? remote
+          : await PhoneAlerts.instance.launchTask();
       FirebaseMessaging.instance.onTokenRefresh.listen(_tokens.add);
+      // The app shows foreground Alerts itself, so iOS never presents the
+      // remote copy as well.
       await FirebaseMessaging.instance
           .setForegroundNotificationPresentationOptions(
             alert: false,
@@ -114,5 +138,23 @@ class FirebasePhonePush implements PhonePush {
   @override
   Future<void> disable() async {
     if (_ready) await FirebaseMessaging.instance.deleteToken();
+  }
+
+  void _foreground(RemoteMessage message) {
+    final alert = PushAlertData.fromData(message.data);
+    if (alert == null || !showInForeground(alert.taskId, watching: watching)) {
+      return;
+    }
+    unawaited(PhoneAlerts.instance.show(alert).catchError((Object _) {}));
+  }
+
+  @override
+  Future<void> clearTask(String taskId) async {
+    if (!_ready) return;
+    try {
+      await PhoneAlerts.instance.clear(taskId);
+    } catch (_) {
+      // A notification left on screen is harmless.
+    }
   }
 }

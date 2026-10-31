@@ -21,6 +21,10 @@ export interface ProjectionState {
   costSoFar: number;
   /** Agent Comment still being written (consecutive text blocks). */
   comment: { id: string; body: string } | null;
+  /** The last Agent Comment of the Turn, which its Alert previews. */
+  turnComment?: string | null;
+  /** When the Turn last handed input to the model (its start, then each batch of tool results). */
+  lastInputAt?: string | null;
   thinking: { id: string; text: string } | null;
   /** The open Activity item, which new tool calls join. */
   activity: string | null;
@@ -59,6 +63,10 @@ export interface TurnRecord extends TurnSummary {
   startedAt: string;
   finishedAt: string;
   stopReason: string | null;
+  /** The last Agent Comment of the Turn. */
+  commentId: string | null;
+  /** Comments delivered up to then reached one of the Turn's model calls. */
+  readUpTo: string;
 }
 
 export type Mutation =
@@ -139,6 +147,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
   const newId = () => projectionId(ctx.jobId, s.nextId++);
   const startTurn = () => {
     s.turnStartedAt ??= ctx.receivedAt;
+    s.lastInputAt ??= s.turnStartedAt;
   };
   const clearRetry = () => {
     if (!s.retrying) return;
@@ -165,6 +174,8 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       else handleAssistant();
       break;
     case 'user':
+      // Comments written to stdin so far go to the model with these results.
+      if (!e.parent_tool_use_id) s.lastInputAt = ctx.receivedAt;
       handleToolResults();
       break;
     case 'result':
@@ -300,6 +311,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
           mutations.push({ op: 'comment.update', id: s.comment.id, body: s.comment.body });
         } else {
           s.comment = { id: newId(), body: text };
+          s.turnComment = s.comment.id;
           mutations.push({ op: 'comment.create', id: s.comment.id, body: text });
         }
       } else if (block?.type === 'thinking') {
@@ -493,6 +505,8 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
         startedAt: s.turnStartedAt ?? ctx.receivedAt,
         finishedAt: ctx.receivedAt,
         stopReason: typeof e.stop_reason === 'string' ? e.stop_reason : null,
+        commentId: s.turnComment ?? null,
+        readUpTo: s.lastInputAt ?? s.turnStartedAt ?? ctx.receivedAt,
       },
     });
     if (isError) {
@@ -504,6 +518,8 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       mutations.push({ op: 'system_comment', body: e.result.trim() });
     }
     s.hasVisibleOutput = false;
+    s.turnComment = null;
+    s.lastInputAt = null;
     s.syntheticText = null;
     s.limitResetsAt = null;
     s.turns++;

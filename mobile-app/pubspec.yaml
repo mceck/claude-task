@@ -50,6 +50,7 @@ dependencies:
   markdown: ^7.3.0
   parchment: ^1.27.0
   flutter_webrtc: ^1.6.3
+  flutter_local_notifications: ^22.3.3
 
 dev_dependencies:
   integration_test:
