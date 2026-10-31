@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { del, errorMessage, patch, post, put } from '../api/client';
+import { AgentFreeDot } from './agents';
 import { keys, useAgents, useAgentSettings, useMe } from '../api/queries';
 import { Field, ErrorText, Loading, useConfirm } from './common';
 import { useAutosave } from '../lib/useAutosave';
@@ -89,7 +90,7 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
             <SelectContent>
               <SelectItem value="none">No agent</SelectItem>
               {(agents.data ?? []).filter((a) => a.enabled || a.id === settings.defaultAgentId).map((a) => (
-                <SelectItem key={a.id} value={a.id}>{a.name}{!a.enabled && ' (disabled)'}</SelectItem>
+                <SelectItem key={a.id} value={a.id}>{a.name}{!a.enabled && ' (disabled)'} <AgentFreeDot agent={a} /></SelectItem>
               ))}
             </SelectContent>
           </Select>

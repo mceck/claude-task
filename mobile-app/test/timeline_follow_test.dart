@@ -66,9 +66,9 @@ void main() {
     });
   }
 
-  Future<void> settle(WidgetTester tester) async {
+  /// The one frame that first shows the new content: what the reader sees.
+  Future<void> frame(WidgetTester tester) async {
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 16));
   }
 
   testWidgets(
@@ -83,7 +83,7 @@ void main() {
 
       for (var i = 0; i < 6; i++) {
         stream(tester, h, '\n\nParagraph $i of the answer.');
-        await settle(tester);
+        await frame(tester);
         expect(reading(tester).id, read.id, reason: 'delta $i');
         expect(
           reading(tester).top,
@@ -101,6 +101,32 @@ void main() {
   );
 
   testWidgets(
+    'the Thinking box appearing keeps the Entry being read in place',
+    (tester) async {
+      final h = await openConversation(tester);
+      final position = timeline(tester);
+      position.jumpTo(120);
+      await tester.pump();
+      final read = reading(tester);
+
+      h.live.eventController.add({
+        'type': 'live.delta',
+        'taskId': 'task-1',
+        'delta': {'kind': 'thinking', 'text': 'Looking at the code.'},
+      });
+      await frame(tester);
+
+      expect(reading(tester).id, read.id);
+      expect(
+        reading(tester).top,
+        moreOrLessEquals(read.top, epsilon: 0.5),
+        reason: 'the first frame already has the offset right: no jump back',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+    },
+  );
+
+  testWidgets(
     'the answer stored as a Comment keeps the Entry being read in place',
     (tester) async {
       final h = await openConversation(tester);
@@ -109,7 +135,7 @@ void main() {
       await tester.pump();
       for (var i = 0; i < 6; i++) {
         stream(tester, h, '\n\nParagraph $i of the answer.');
-        await settle(tester);
+        await frame(tester);
       }
       final read = reading(tester);
 
@@ -130,7 +156,7 @@ void main() {
           },
         },
       });
-      await settle(tester);
+      await frame(tester);
 
       expect(h.controller.liveText, isEmpty);
       expect(reading(tester).id, read.id);
@@ -161,7 +187,7 @@ void main() {
         'author': {'id': 'agent-1', 'displayName': 'Ada Bot', 'type': 'agent'},
       },
     });
-    await settle(tester);
+    await frame(tester);
 
     expect(reading(tester).id, read.id);
     expect(
@@ -195,7 +221,7 @@ void main() {
         'author': {'id': 'agent-1', 'displayName': 'Ada Bot', 'type': 'agent'},
       },
     });
-    await settle(tester);
+    await frame(tester);
 
     expect(reading(tester).id, read.id);
     expect(
@@ -220,7 +246,7 @@ void main() {
       final read = reading(tester);
 
       await tester.tap(find.text('Load older entries'));
-      await settle(tester);
+      await frame(tester);
 
       expect(find.textContaining('Older page'), findsOneWidget);
       expect(reading(tester).id, read.id);
@@ -239,7 +265,7 @@ void main() {
     expect(position.pixels, 0);
 
     stream(tester, h, 'Here is what I found.');
-    await settle(tester);
+    await frame(tester);
 
     expect(position.pixels, 0, reason: 'the newest content stays on screen');
     expect(find.textContaining('Here is what I found.'), findsOneWidget);

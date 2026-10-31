@@ -156,6 +156,7 @@ class _WikiFormState extends State<_WikiForm> {
             agent.name,
             detail: agent.enabled ? null : 'Disabled',
             leading: agentAvatar(c.api, agent),
+            trailing: agentFreeDot(agent.free),
           ),
       ],
     );

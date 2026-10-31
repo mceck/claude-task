@@ -88,15 +88,20 @@ class Agent implements Identified {
   final String name, emoji;
   final String? avatarImageUrl;
   final bool enabled;
+  final String state;
   final bool extensionsPending;
   final String? extensionsError;
   final List<SkillCommand> skillCommands;
+
+  /// Free and ready to start a Job.
+  bool get free => enabled && state == 'idle';
   Agent.fromJson(Json json)
     : id = json['id'] as String,
       name = json['name'] as String,
       emoji = json['avatarEmoji'] as String? ?? '🤖',
       avatarImageUrl = json['avatarImageUrl'] as String?,
       enabled = json['enabled'] == true,
+      state = json['state'] as String? ?? '',
       extensionsPending = json['extensionsPending'] == true,
       extensionsError = json['extensionsError'] as String?,
       skillCommands = objects(json['skillCommands'])
