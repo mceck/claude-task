@@ -216,6 +216,9 @@ describe('Schedules', () => {
     expect((await admin.patch(`/tasks/${task.id}`, { version: task.version, title: 'Mine' })).status).toBe(403);
     expect((await admin.delete(`/tasks/${task.id}`)).status).toBe(403);
     expect((await admin.post(`/tasks/${task.id}/move`, { statusId: task.statusId })).status).toBe(403);
+    const form = new FormData();
+    form.append('files', new Blob(['x'], { type: 'text/plain' }), 'x.txt');
+    expect((await admin.request('POST', `/tasks/${task.id}/attachments`, { form })).status).toBe(403);
   });
 
   it('keeps the latest run of a low-frequency Schedule when other Schedules have thousands', async () => {

@@ -219,6 +219,20 @@ describe('comments', () => {
       expect(res.body.comment.attachments[0].filename).toBe('passwd');
     });
 
+    it('serves a file whose 255-character name would cut an emoji in half', async () => {
+      // 254 ASCII characters put an emoji right at the truncation point.
+      const filename = `${'a'.repeat(254)}😀png`;
+      const form = new FormData();
+      form.append('files', new Blob(['x'], { type: 'text/plain' }), filename);
+      const res = await member.request('POST', `/tasks/${task.id}/attachments`, { form });
+      expect(res.status).toBe(201);
+      const attachment = res.body.attachments[0];
+      expect(attachment.filename.endsWith('😀')).toBe(true);
+
+      const download = await member.get(attachment.url.replace('/api/v1', ''));
+      expect(download.status).toBe(200);
+    });
+
     it('never keeps a dot-only filename, which would name a directory in the Worktree', async () => {
       for (const name of ['..', '.', 'a/..', ' .. ']) {
         const res = await upload(member, task.id, 'x', [{ name, type: 'text/plain', data: 'x' }]);

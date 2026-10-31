@@ -330,7 +330,8 @@ function placeCaret(root: HTMLElement, point: { x: number; y: number }): boolean
 }
 
 /** What every markdown editor understands; the toolbar is up to each. */
-function contentPlugins(taskId: string): RealmPlugin[] {
+function contentPlugins(taskId: string, opts: { images?: boolean; onImageUploaded?: () => void } = {}): RealmPlugin[] {
+  const { images = true, onImageUploaded } = opts;
   return [
     headingsPlugin(),
     listsPlugin(),
@@ -341,17 +342,24 @@ function contentPlugins(taskId: string): RealmPlugin[] {
     tablePlugin(),
     codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
     codeMirrorPlugin({ codeBlockLanguages: CODE_LANGUAGES, codeMirrorExtensions: CODE_BLOCK_THEME }),
-    imagePlugin({
-      disableImageSettingsButton: true,
-      imageUploadHandler: async (file) => {
-        try {
-          return (await uploadFiles(taskId, [file]))[0]!.url;
-        } catch (err) {
-          toast.error('Couldn’t upload the image', { description: errorMessage(err) });
-          throw err;
-        }
-      },
-    }),
+    // Pasting or dropping an image uploads it: a comment editor has no description to link it from.
+    ...(images
+      ? [
+          imagePlugin({
+            disableImageSettingsButton: true,
+            imageUploadHandler: async (file) => {
+              try {
+                const url = (await uploadFiles(taskId, [file]))[0]!.url;
+                onImageUploaded?.();
+                return url;
+              } catch (err) {
+                toast.error('Couldn’t upload the image', { description: errorMessage(err) });
+                throw err;
+              }
+            },
+          }),
+        ]
+      : []),
     // Last: it picks its shortcuts from the plugins above.
     markdownShortcutPlugin(),
   ];
@@ -409,6 +417,7 @@ export default function RichMarkdownEditor({
   const [failed, setFailed] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const editor = useRef<MDXEditorMethods>(null);
+  const qc = useQueryClient();
   /** The markdown the editor holds, to tell remote changes from our own. */
   const shown = useRef(value);
   useEffect(() => {
@@ -457,7 +466,7 @@ export default function RichMarkdownEditor({
         className={cn(isDark() && 'dark-theme')}
         contentEditableClassName="markdown min-h-6 p-0! outline-none"
         plugins={[
-          ...contentPlugins(taskId),
+          ...contentPlugins(taskId, { onImageUploaded: () => void qc.invalidateQueries({ queryKey: keys.attachments(taskId) }) }),
           toolbarPlugin({
             toolbarContents: () => (
               <>
@@ -620,7 +629,8 @@ export function CommentEditor({
   const lexical = useRef<LexicalEditor | null>(null);
   // The plugin list is built once: MDXEditor initializes plugins on mount only.
   const [plugins] = useState(() => [
-    ...contentPlugins(taskId),
+    // A comment has no description to link an image from: attachments belong to the Comment being written.
+    ...contentPlugins(taskId, { images: false }),
     chatPlugin({ hooks, editor: lexical }),
   ]);
   useFocusNewCodeBlocks(root, !failed);

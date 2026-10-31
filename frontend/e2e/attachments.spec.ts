@@ -41,3 +41,23 @@ test('lists every file of the Task under its description', async ({ page }) => {
   await expect(list.getByRole('link', { name: /shot\.png/ })).toHaveAttribute('href', /\/api\/v1\/attachments\/.+/);
   await expect(list.getByRole('link', { name: /spec\.txt/ })).toHaveAttribute('href', /\?download=1$/);
 });
+
+test('shows a description file uploaded from another page without reloading', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request, 'Live attachments');
+  const task = await createTask(page.request, project, 'Files arrive');
+  await page.goto(`/t/${task.key}`);
+  await expect(page.getByRole('region', { name: 'Attachments' })).toHaveCount(0);
+
+  const peer = await page.context().newPage();
+  try {
+    const res = await peer.request.post(`/api/v1/tasks/${task.id}/attachments`, {
+      multipart: { files: { name: 'late.txt', mimeType: 'text/plain', buffer: Buffer.from('late') } },
+      headers: HEADERS,
+    });
+    expect(res.status()).toBe(201);
+    await expect(page.getByRole('region', { name: 'Attachments' })).toContainText('late.txt');
+  } finally {
+    await peer.close();
+  }
+});

@@ -5,7 +5,8 @@ import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { badRequest, HttpError, notFound, parse } from '../../errors';
-import { getTaskRow } from '../tasks/service';
+import { assertBoardTask } from '../projects/service';
+import { getTaskRow, emitTasksChanged } from '../tasks/service';
 import { createTaskAttachments, createUserComment, loadTaskAttachments, pruneTaskAttachments, deleteComment, getAttachment, updateComment } from './service';
 import type { NewAttachment } from './service';
 import { idOrKey } from '../../ids';
@@ -41,15 +42,19 @@ export function commentRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/tasks/:taskId/attachments', async (request, reply) => {
     const { taskId } = parse(taskParams, request.params);
     const task = await getTaskRow(ctx.db, taskId);
+    await assertBoardTask(ctx.db, task.projectId);
     if (!request.isMultipart()) throw badRequest('Send the files as multipart/form-data');
     const { files } = await receiveMultipart(ctx, request);
     if (files.length === 0) throw badRequest('Missing file');
     try {
       // The Task's lock makes pruning, counting and inserting one step for concurrent uploads.
-      const { freed, created } = await ctx.db.transaction(async (tx) => {
+      const { freed, created } = await transact(ctx, async (tx, after) => {
         await getTaskRow(tx, task.id, { lock: true });
         const freed = await pruneTaskAttachments(tx, task.id);
-        return { freed, created: await createTaskAttachments(tx, task.id, files) };
+        const created = await createTaskAttachments(tx, task.id, files);
+        // Other tabs of this Task (and its Board) show the new files without a reload.
+        await emitTasksChanged(tx, after, [task.id], 'task.updated');
+        return { freed, created };
       });
       await Promise.all(freed.map((blobId) => ctx.blobs.delete(blobId)));
       return reply.status(201).send({ attachments: created });
@@ -137,8 +142,8 @@ export async function receiveMultipart(
 
 function sanitizeFilename(name: string | undefined): string {
   const base = (name ?? '').split(/[\\/]/).pop() ?? '';
-  // Drop control characters and keep it a sane length.
-  const clean = base.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 255);
+  // Drop control characters and keep it a sane length. Count code points, so an emoji is never cut in half.
+  const clean = [...base.replace(/[\u0000-\u001f\u007f]/g, '').trim()].slice(0, 255).join('');
   // `.` and `..` would name a directory once the file lands in the Worktree.
   return clean && !/^\.+$/.test(clean) ? clean : 'file';
 }

@@ -206,6 +206,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
     case 'task.changed':
       setTask(qc, event.task);
       void qc.invalidateQueries({ queryKey: keys.session(event.task.id) });
+      // A description upload links a new file, which the Task's attachment list shows.
+      void qc.invalidateQueries({ queryKey: keys.attachments(event.task.id) });
       return;
     case 'task.preference':
       qc.setQueriesData<TaskPreference[]>({ queryKey: ['task-preferences'] }, (list) =>
