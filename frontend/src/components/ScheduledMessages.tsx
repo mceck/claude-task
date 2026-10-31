@@ -60,9 +60,10 @@ export function SchedulePicker({ value, onChange, disabled }: { value: string; o
           size="sm"
           disabled={disabled}
           aria-label={value ? `Scheduled for ${formatDue(value)}` : 'Schedule'}
+          title={value ? `Scheduled for ${formatDue(value)}` : 'Schedule'}
           className={cn('text-muted-foreground', value && 'text-primary hover:text-primary')}
         >
-          <Clock /> {value ? formatDue(value) : <span className="hidden @sm:inline">Schedule</span>}
+          <Clock />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 space-y-3">

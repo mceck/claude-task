@@ -260,20 +260,21 @@ export function Composer({
               }}
             />
             <div className="ml-auto flex items-center gap-3">
-              <SchedulePicker value={scheduledFor} onChange={setScheduledFor} disabled={busy} />
               {/* Hidden in a narrow Dock panel, where it would push the Comment button out of view. */}
               <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
                 <Kbd>⇧↵</Kbd> new line
               </span>
-              {/* Below a narrow panel's width the label goes and the paperclip stays, so the row does not wrap. */}
+              <SchedulePicker value={scheduledFor} onChange={setScheduledFor} disabled={busy} />
+              {/* Schedule and Attach are icons only, so the row fits a narrow Dock panel. */}
               <Button
                 variant="ghost"
                 size="sm"
                 className="text-muted-foreground"
                 aria-label="Attach a file"
+                title="Attach a file"
                 onClick={() => fileInput.current?.click()}
               >
-                <Paperclip /> <span className="hidden @sm:inline">Attach</span>
+                <Paperclip />
               </Button>
               <Button
                 size="sm"
