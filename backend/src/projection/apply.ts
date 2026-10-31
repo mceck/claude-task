@@ -94,7 +94,13 @@ export async function applyProjection(
       case 'run.message':
         after.effect((ctx) => {
           const message = ctx.runs.message(m.runId, m.message);
-          if (message) ctx.hub.publish(topic, { type: 'run.message', taskId: job.taskId, runId: m.runId, message });
+          if (!message) return;
+          ctx.hub.publish(topic, { type: 'run.message', taskId: job.taskId, runId: m.runId, message });
+          // A tool call raises the count the bar and dialog show: announce it while the Run still runs.
+          if (message.type === 'tool') {
+            const run = ctx.runs.summary(m.runId);
+            if (run) ctx.hub.publish(topic, { type: 'run.updated', taskId: job.taskId, run });
+          }
         });
         break;
       case 'run.tool_result':

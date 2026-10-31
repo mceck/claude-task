@@ -57,8 +57,9 @@ export function applyRunEvent(event: RealtimeEvent): void {
         return { ...r, buffered: { ...r.buffered, [event.runId]: held } };
       });
     case 'timeline.reset':
-      // The transcript still lives in the backend until the Job ends; only the bar starts over.
-      return update(event.taskId, (r) => ({ ...r, runs: [] }));
+      // Delete Chat clears the conversation: its Runs, transcripts and open dialog go with it.
+      state.set(event.taskId, { ...EMPTY });
+      return notify();
     case 'task.removed':
       state.delete(event.taskId);
       return notify();
@@ -137,7 +138,10 @@ function useTaskRuns(taskId: string): TaskRuns {
 /** What the bar lists, in the backend's order: running first, then failures waiting to be read. */
 export function useRunBar(taskId: string): RunSummary[] {
   const { runs, dismissed } = useTaskRuns(taskId);
-  return runs.filter((r) => inBar(r, dismissed));
+  return runs.filter((r) => inBar(r, dismissed)).sort((a, b) => {
+    const rank = (r: RunSummary): number => (r.status === 'running' ? 0 : 1);
+    return rank(a) - rank(b) || a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id);
+  });
 }
 
 export function useRun(taskId: string, runId: string | null): RunSummary | null {

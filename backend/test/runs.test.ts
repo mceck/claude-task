@@ -56,6 +56,8 @@ describe('Runs', () => {
     // The clients hear it start, then every message of its transcript.
     await ws.next('run.message', (e) => e.runId === runId && e.message.type === 'tool');
     expect(ws.events('run.updated')[0]).toMatchObject({ taskId: task.id, run: { id: runId, description: 'Explore the repo', status: 'running' } });
+    // The tool-call count updates while the Run still runs, not only when it ends.
+    await ws.next('run.updated', (e) => e.run.id === runId && e.run.toolCalls === 1);
     const messages = () => ws.events('run.message').filter((e) => e.runId === runId).map((e) => e.message);
     expect(messages().map(label)).toEqual(['text: Reading the code.', 'tool: Read pending']);
 
@@ -187,6 +189,21 @@ describe('the Run Registry', () => {
     expect(accepted).toBeLessThan(RUN_MESSAGE_LIMIT);
     expect((accepted + 1) * RUN_CONTENT_LIMIT).toBeGreaterThan(RUN_BYTES_LIMIT);
     expect(runs.transcript('run-1')).toMatchObject({ truncated: true, nextIndex: accepted });
+  });
+
+  it('keeps tool outputs inside the 2 MB transcript limit too', () => {
+    const runs = new RunRegistry();
+    runs.create('job-1', 'task-1', 'run-1', info(), null);
+    const output = 'o'.repeat(RUN_CONTENT_LIMIT);
+    const calls = Math.ceil(RUN_BYTES_LIMIT / RUN_CONTENT_LIMIT) + 10;
+    for (let i = 0; i < calls; i++) {
+      const toolUseId = `t${i}`;
+      runs.message('run-1', { type: 'tool', toolUseId, name: 'Read', summary: 'Read a file', status: 'pending', outcome: null, input: {}, output: null, childRunId: null });
+      runs.toolResult('run-1', toolUseId, 'ok', 'ok', output);
+    }
+    const transcript = runs.transcript('run-1')!;
+    expect(transcript.truncated).toBe(true);
+    expect(JSON.stringify(transcript.messages).length).toBeLessThanOrEqual(RUN_BYTES_LIMIT);
   });
 
   it('cuts the prompt and every text block at 20 KB', () => {

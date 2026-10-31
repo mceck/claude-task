@@ -22,6 +22,7 @@ import { useTopic } from '../lib/realtime';
 import { applyEvent } from '../lib/cache';
 import { minimizeInDock, removeFromDock, useDockAvailable } from '../lib/dock';
 import { applyLiveEvent } from '../lib/live';
+import { applyRunEvent } from '../lib/runs';
 
 export function WikisPage() {
   const query = useWikis();
@@ -179,6 +180,7 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
       const event = { type: 'timeline.reset', taskId: target.id } as const;
       applyEvent(qc, event);
       applyLiveEvent(event);
+      applyRunEvent(event);
       if (reserved?.id === target.id) setReserved(null);
       if (chat?.id === target.id) {
         if (remaining[0]) openChat(remaining[0].id);

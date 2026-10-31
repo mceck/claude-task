@@ -179,6 +179,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       void qc.invalidateQueries({ queryKey: keys.session(event.taskId) });
       // The Comments and their Attachments are gone; description files stay.
       void qc.invalidateQueries({ queryKey: keys.attachments(event.taskId) });
+      // The Task may be reused by the next New Chat: an old Runs snapshot must not come back with it.
+      qc.removeQueries({ queryKey: keys.runs(event.taskId) });
       return;
     case 'task.created':
     case 'task.updated':

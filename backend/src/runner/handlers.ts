@@ -331,7 +331,9 @@ async function failJob(
  * it's interrupted, and the Session resumes from the front of the Queue.
  */
 export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow): Promise<void> {
+  // A discarded Job has no projection to settle, but its live Runs still go with it.
   if (!job.discardOutput) await settleProjection(tx, after, job);
+  else after.effect((ctx) => ctx.runs.endJob(job.id));
   await tx.update(jobs).set({ state: 'interrupted', finishedAt: new Date() }).where(eq(jobs.id, job.id));
   const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
   if (!job.discardOutput && session?.state === 'running') {
