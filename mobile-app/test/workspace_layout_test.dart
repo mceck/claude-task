@@ -270,7 +270,11 @@ void main() {
       await tester.pumpAndSettle();
       final badge = find.byKey(const ValueKey('task-unread:task-1'));
       expect(badge, findsOneWidget);
-      expect(find.byTooltip('2 unread comments'), findsOneWidget);
+      expect(find.byTooltip('2 unread comments of 5'), findsOneWidget);
+      expect(
+        find.descendant(of: badge, matching: find.text('2')),
+        findsOneWidget,
+      );
       expect(
         tester.widget<Text>(find.text('Fix login')).style!.fontWeight,
         FontWeight.w600,
@@ -281,13 +285,14 @@ void main() {
         'preference': {...h.api.pref, 'unreadComments': 3},
       });
       await tester.pumpAndSettle();
-      expect(find.byTooltip('3 unread comments'), findsOneWidget);
+      expect(find.byTooltip('3 unread comments of 5'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('task-row:task-1')));
       await tester.pumpAndSettle();
       expect(h.api.readCount, greaterThan(0));
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       expect(badge, findsNothing);
+      expect(find.byTooltip('5 comments'), findsOneWidget);
       expect(
         tester.widget<Text>(find.text('Fix login')).style!.fontWeight,
         FontWeight.w500,

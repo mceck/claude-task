@@ -14,9 +14,6 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@drawable/ic_notification" />
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_color"
-            android:resource="@color/notification_accent" />
         <service android:name=".VoiceService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="true" />
         <activity
             android:name=".MainActivity"

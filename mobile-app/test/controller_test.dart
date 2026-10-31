@@ -121,6 +121,59 @@ void main() {
     expect(h.controller.task!.version, 2);
   });
 
+  test(
+    'Project activity refreshes only the Projects list, once per burst',
+    () async {
+      final h = Harness();
+      addTearDown(h.dispose);
+      await h.login();
+      expect(h.live.topics, contains('projects'));
+      int count(String call) => h.api.calls.where((c) => c == call).length;
+      final projects = count('GET /projects'), agents = count('GET /agents');
+      h.api.projectList = [
+        {
+          ...projectData,
+          'activity': {'runningAgents': 1, 'unreadTasks': 2},
+        },
+      ];
+      for (var i = 0; i < 3; i++) {
+        h.live.eventController.add({
+          'type': 'project.activity',
+          'projectId': 'project-1',
+        });
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(count('GET /projects'), projects + 1);
+      expect(count('GET /agents'), agents);
+      expect(h.controller.projects.single.unreadTasks, 2);
+
+      h.live.eventController.add({
+        'type': 'task.preference',
+        'preference': preferenceData(unread: false),
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(count('GET /projects'), projects + 2);
+    },
+  );
+
+  test('Alerts stay quiet only for the conversation on screen, and opening a Task clears its notifications', () async {
+    final h = Harness();
+    addTearDown(h.dispose);
+    await h.login();
+    final watching = h.push.watching!;
+    expect(watching('task-1'), isFalse);
+    await h.openTask();
+    expect(h.push.cleared, contains('task-1'));
+    h.controller.conversationVisible = true;
+    expect(watching('task-1'), isTrue);
+    expect(watching('task-2'), isFalse);
+    h.controller.appVisible = false;
+    expect(watching('task-1'), isFalse);
+    h.controller.appVisible = true;
+    h.controller.conversationVisible = false;
+    expect(watching('task-1'), isFalse);
+  });
+
   test('a notification tapped offline opens its Task after reconnecting', () async {
     final h = Harness();
     addTearDown(h.dispose);

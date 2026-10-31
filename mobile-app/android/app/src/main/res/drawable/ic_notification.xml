@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status bar and notification icon: a speech bubble with the logo's spark cut out of it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M7,3 H17 A5,5 0 0 1 22,8 V12.5 A5,5 0 0 1 17,17.5 H10.5 L5.5,20.8 V17.4 A5,5 0 0 1 2,12.5 V8 A5,5 0 0 1 7,3 Z M14.535,9.2 L16.4,9.2 A1.05,1.05 0 0 1 16.4,11.3 L14.535,11.3 L15.854,12.619 A1.05,1.05 0 0 1 14.369,14.104 L13.05,12.785 L13.05,14.65 A1.05,1.05 0 0 1 10.95,14.65 L10.95,12.785 L9.631,14.104 A1.05,1.05 0 0 1 8.146,12.619 L9.465,11.3 L7.6,11.3 A1.05,1.05 0 0 1 7.6,9.2 L9.465,9.2 L8.146,7.881 A1.05,1.05 0 0 1 9.631,6.396 L10.95,7.715 L10.95,5.85 A1.05,1.05 0 0 1 13.05,5.85 L13.05,7.715 L14.369,6.396 A1.05,1.05 0 0 1 15.854,7.881 Z" />
+</vector>

@@ -1421,7 +1421,7 @@ class _GroupHeader extends StatelessWidget {
   );
 }
 
-/// The Comment count; unread Comments light it up in orange.
+/// The Comment count; unread Comments light it up in orange and show how many are new.
 class _CommentCount extends StatelessWidget {
   final String taskId;
   final int total, unread;
@@ -1436,7 +1436,7 @@ class _CommentCount extends StatelessWidget {
     final lit = unread > 0;
     final color = lit ? Palette.orange : Palette.fgSubtle;
     final description = lit
-        ? '$unread unread ${unread == 1 ? 'comment' : 'comments'}'
+        ? '$unread unread ${unread == 1 ? 'comment' : 'comments'} of $total'
         : '$total ${total == 1 ? 'comment' : 'comments'}';
     return Tooltip(
       message: description,
@@ -1456,7 +1456,7 @@ class _CommentCount extends StatelessWidget {
             ),
             const SizedBox(width: 3),
             Text(
-              '$total',
+              lit ? '$unread' : '$total',
               style: TextStyle(
                 fontSize: 10.5,
                 fontWeight: lit ? FontWeight.w700 : FontWeight.w400,

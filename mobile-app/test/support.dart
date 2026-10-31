@@ -164,6 +164,7 @@ Json responseData(Json user, List<Json> answers, {String position = '4'}) => {
   'answers': answers,
   'updatedAt': at(position),
 };
+
 /// A Scheduled Message, as the API sends it.
 Json scheduledData(
   String id, {
@@ -393,6 +394,12 @@ class FakePush implements PhonePush {
     initial = null;
     return id;
   }
+
+  @override
+  bool Function(String taskId)? watching;
+  final cleared = <String>[];
+  @override
+  Future<void> clearTask(String taskId) async => cleared.add(taskId);
 }
 
 class FakeApi implements TaskApi {
@@ -401,7 +408,10 @@ class FakeApi implements TaskApi {
   @override
   String? cookie;
   final calls = <String>[];
-  Json user = {...userData}, currentTask = taskData(), task2 = taskData(id: 'task-2', title: 'Other task'), pref = preferenceData();
+  Json user = {...userData},
+      currentTask = taskData(),
+      task2 = taskData(id: 'task-2', title: 'Other task'),
+      pref = preferenceData();
   List<Json> items = [
     commentData('comment-1', 'Hello team'),
     commentData('comment-2', 'An Internal Note', internal: true, position: '2'),
@@ -412,6 +422,7 @@ class FakeApi implements TaskApi {
       failSend = false,
       partialCreate = false;
   bool hasOlder = false;
+  List<Json> projectList = [projectData];
   Json? session;
   int createCount = 0, sendCount = 0, readCount = 0;
   final createdTags = <Json>[];
@@ -469,9 +480,7 @@ class FakeApi implements TaskApi {
     if (path == '/wikis') return {'wikis': <Json>[]};
     if (path == '/schedules') return {'schedules': <Json>[]};
     if (path == '/projects') {
-      return {
-        'projects': [projectData],
-      };
+      return {'projects': projectList};
     }
     if (path == '/agents') {
       return {
@@ -556,11 +565,7 @@ class FakeApi implements TaskApi {
     if (other != null) {
       if (path == '/tasks/task-2' && method == 'GET') return {'task': task2};
       if (path == '/tasks/task-2' && method == 'PATCH') {
-        task2 = {
-          ...task2,
-          ...body!,
-          'version': (task2['version'] as int) + 1,
-        };
+        task2 = {...task2, ...body!, 'version': (task2['version'] as int) + 1};
         return {'task': task2};
       }
       return request(
