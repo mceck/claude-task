@@ -1443,8 +1443,14 @@ class PickerOption<T> {
   final T value;
   final String label;
   final String? detail;
-  final Widget? leading;
-  const PickerOption(this.value, this.label, {this.detail, this.leading});
+  final Widget? leading, trailing;
+  const PickerOption(
+    this.value,
+    this.label, {
+    this.detail,
+    this.leading,
+    this.trailing,
+  });
 }
 
 Future<T?> showPicker<T>(
@@ -1497,6 +1503,10 @@ Future<T?> showPicker<T>(
                       ],
                     ),
                   ),
+                  if (o.trailing != null) ...[
+                    o.trailing!,
+                    const SizedBox(width: 8),
+                  ],
                   if (o.value == selected)
                     const Icon(
                       Icons.check_rounded,

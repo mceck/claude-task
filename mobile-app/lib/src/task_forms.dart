@@ -46,6 +46,19 @@ Color priorityColor(String p) => switch (p) {
 Color tagColor(Tag tag) =>
     tag.color == null ? tint(tag.name) : hexColor(tag.color!, tint(tag.name));
 
+/// Hollow green dot marking an Agent that is free and ready to start.
+Widget? agentFreeDot(bool free) => free
+    ? Container(
+        key: const Key('agent-free-dot'),
+        width: 11,
+        height: 11,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Palette.success, width: 1.5),
+        ),
+      )
+    : null;
+
 Widget agentAvatar(TaskApi? api, Agent? agent, {double size = 28}) =>
     agent == null
     ? Container(
@@ -87,6 +100,7 @@ Future<String?> _pickAgent(
         a.name,
         detail: a.enabled ? null : 'Disabled',
         leading: agentAvatar(api, a),
+        trailing: agentFreeDot(a.free),
       ),
   ],
 );

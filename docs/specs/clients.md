@@ -6,6 +6,8 @@ Users work with Claude Task through two clients that share one backend: the **we
 
 - **Web app**: the full interface, used from a browser. It covers every area of the product, including administration (Users, Agents, Credentials, Extensions, Git Connections, Project settings).
 - **Native app**: a conversation-first client for iOS, Android, macOS, Windows and Linux. It covers Projects, Tasks, their conversations, Agent assignment and Wikis, plus Project and Agent settings, and for Admins Users, Credentials, Extensions, Git Connections and Project Environment Variables. Docker configuration is managed in the web app. Its layout borrows from chat apps: Projects play the role of servers and Tasks the role of channels, grouped by Status. These are presentation metaphors only; the domain terms stay authoritative.
+
+Wherever a client lets the User pick an Agent (assigning a Task, the Project default Agent, a Wiki's Agent), an enabled Agent whose state is `idle` (free and ready to start) is marked with a hollow green dot, in both clients.
 - **Installation**: one deployment of Claude Task, identified by its origin URL (for example `https://tasks.example.com`). The web app always talks to the installation that served it; the native app asks for the installation URL at sign-in.
 - **Live connection**: the single WebSocket a client keeps open to the backend while a User is signed in.
 - **Topic**: a named stream of events a client subscribes to over its live connection: one Project's Board, one Task's Timeline, the Agents list, one Agent, the Wikis list, or the User's own private stream.
