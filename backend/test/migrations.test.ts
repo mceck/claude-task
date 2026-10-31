@@ -10,7 +10,11 @@ import { assignAgent, createAgent, createProject, createTask, getSession } from 
 describe('migration upgrades', () => {
   const app = useTestApp();
 
-  it('serializes two processes migrating the same empty database', async () => {
+  // The migrations take about 2 seconds. DROP DATABASE forces a checkpoint, which has to fsync everything the other
+  // test files wrote meanwhile: on a disk with slow fsync that took up to a minute while the whole suite was running.
+  const DROP_DATABASE_SLACK_MS = 120_000;
+
+  it('serializes two processes migrating the same empty database', { timeout: DROP_DATABASE_SLACK_MS }, async () => {
     const name = `ct_mig_${randomBytes(4).toString('hex')}`;
     const url = new URL(app.server.ctx.config.databaseUrl);
     url.pathname = `/${name}`;
