@@ -14,6 +14,16 @@ describe('TURN environment configuration', () => {
     expect(() => loadConfig({ ...base, VOICE_TURN_HOST: 'turn.example.test' })).toThrow(/VOICE_TURN_SECRET/);
     expect(() => loadConfig({ ...base, VOICE_TURN_TLS_PORT: '443' })).toThrow(/VOICE_TURN_HOST/);
   });
+  it('rejects a lone TURN port or lifetime as a partial configuration', () => {
+    for (const env of [
+      { VOICE_TURN_PORT: 'abc' },
+      { VOICE_TURN_PORT: '99999' },
+      { VOICE_TURN_TTL_SECONDS: '299' },
+      { VOICE_TURN_TTL_SECONDS: '86401' },
+    ]) {
+      expect(() => loadConfig({ ...base, ...env }), JSON.stringify(env)).toThrow(/VOICE_TURN/);
+    }
+  });
   it.each(['https://turn.example.test', 'turn.example.test:3478', 'turn.example.test/path', 'bad\nhost', 'bad..host'])(
     'rejects a non-hostname value: %s', (host) => {
       expect(() => loadConfig({ ...base, VOICE_TURN_HOST: host, VOICE_TURN_SECRET: secret })).toThrow(/VOICE_TURN_HOST/);
