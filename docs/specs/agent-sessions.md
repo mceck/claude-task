@@ -102,11 +102,14 @@ Removing the Agent from a Task pauses its Session:
 
 - if a Job is running (not yet finishing), the Runner receives an interrupt followed by an end, so `claude` stops the current Turn and exits once it has drained its input;
 - the Task's Queue Entry is removed and its Comments become `not delivered` with reason "agent unassigned";
+  (exception: when another Agent is assigned in the same change and the Session never started, with no Job yet, the queued Comments are not lost, see below);
 - the Session becomes `paused` and stays the Task's current Session, so the Task view keeps showing it.
 
 Later Comments on the Task are marked `not delivered` with reason "no agent assigned".
 
 Assigning a **different Agent** to an ordinary Task pauses the previous Agent's Session as above, then:
+
+- if the previous Agent's Session never started and no Job was dispatched for it (the first Comment is still waiting in its Queue), the Comments queued for it move to the new Agent: its Session is created or returned to `pending` and a `start` entry carrying them is queued right away, so the first Comment is not lost and nothing else needs to be posted;
 
 - if the new Agent never had a Session on this Task, a new `pending` Session is created and waits for the next Comment. Its opening Message carries the whole conversation, including the previous Agent's Comments, plus a line saying that another Agent worked on the Task before, on the same branch when there is one;
 - if the new Agent has an earlier Session that never started, it returns to `pending`;
