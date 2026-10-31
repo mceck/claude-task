@@ -38,7 +38,7 @@ function duration(run: ScheduleRun): string {
   return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.round(seconds / 60)} min` : `${(seconds / 3600).toFixed(1)} h`;
 }
 
-const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '—');
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '—');
 
 function useIsAdmin(): boolean {
   return useMe().data?.role === 'admin';
@@ -57,7 +57,7 @@ export function SchedulesPage() {
     await qc.invalidateQueries({ queryKey: keys.schedules });
   };
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-8">
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Schedules</h1>
@@ -100,10 +100,8 @@ export function SchedulesPage() {
                       {s.name}
                     </Link>
                   </TableCell>
-                  <TableCell>{agents.data?.find((a) => a.id === s.agentId)?.name ?? '—'}</TableCell>
-                  <TableCell>
-                    {describeCron(s.cron)} <span className="text-xs text-muted-foreground">({s.timeZone})</span>
-                  </TableCell>
+                  <TableCell className="max-w-40 truncate">{agents.data?.find((a) => a.id === s.agentId)?.name ?? '—'}</TableCell>
+                  <TableCell title={s.timeZone}>{describeCron(s.cron)}</TableCell>
                   <TableCell>
                     {s.repository ? `${s.repository.owner}/${s.repository.name}` : 'Global'}
                     {s.readOnly && (

@@ -45,7 +45,7 @@ You can change the Base Branch later. To change the Repository, first close ever
 
 **Base branch protection** shows **Protected**, **Not protected** or **Unknown**, based on what the code host reports. Use **Re-check protection** after changing provider settings.
 
-The platform's Push Policy allows an Agent to push its own Task Branch, including force pushes. It blocks pushes to other branches, tags and branch deletions. The provider's Base Branch Protection is an additional control; **Unknown** means the application could not determine that control's state.
+The platform's Push Policy allows an Agent to push its own Task Branch, including force pushes. It blocks pushes to other branches, tags and branch deletions. A [read-only Schedule](schedules.md) blocks every push. The provider's Base Branch Protection is an additional control; **Unknown** means the application could not determine that control's state.
 
 ## Use Git settings in the native app
 
@@ -105,4 +105,4 @@ Closing removes the Agent's local Worktree. Ask the Agent to push work before cl
 
 ---
 
-← [Wikis](wikis.md) · [Native app and notifications](native-app-and-notifications.md) →
+← [Schedules](schedules.md) · [Native app and notifications](native-app-and-notifications.md) →

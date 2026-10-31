@@ -106,7 +106,7 @@ The Profile screenshot above shows the notification controls. Your status depend
 
 Your installation and phone build must have push configured. If you see **Phone push is not configured on this installation**, ask your Admin. Declining permission leaves unread indicators available.
 
-Alerts are sent for completed or failed Agent Turns and failed Jobs requiring attention on followed, unmuted Tasks. Their text is generic: **Claude Task** and **A Task you follow has an update.** Tap an alert to open the Task or Wiki, signing in first if needed. Alerts stay silent while the app is in the foreground. Desktop apps provide live updates and unread state while running.
+Alerts are sent for completed or failed Agent Turns and failed Jobs requiring attention on followed, unmuted Tasks. Their text is generic: **Claude Task** and **A Task you follow has an update.** The creator of a [Schedule](schedules.md) also receives **A scheduled run failed.** and **A schedule keeps being skipped.** Tap an alert to open the Task or Wiki, signing in first if needed. Alerts stay silent while the app is in the foreground. Desktop apps provide live updates and unread state while running.
 
 ## Related
 

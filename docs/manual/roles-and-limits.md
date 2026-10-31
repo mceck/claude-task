@@ -16,6 +16,8 @@ Use this reference when an action is unavailable or an input is rejected. All ac
 | Delete own Comments | Yes | Yes |
 | Delete other Users', Agent and System Comments | No | Yes |
 | Create, edit and delete Wikis; start, rename and delete Chats | Yes | Yes |
+| See Schedules and read their runs | Yes | Yes |
+| Create, edit, pause, delete and run Schedules | No | Yes |
 | Inspect Agent Queue, Jobs, Builds and usage | Yes | Yes |
 | Reorder or remove eligible Queue entries; Stop and Retry | Yes | Yes |
 | Configure Agents, containers and Credentials | No | Yes |
@@ -46,6 +48,9 @@ Members can read Project environment variable names and plain values, but secret
 | Files an Agent posts at once | 10, up to 25 MB each |
 | Items in an Agent Question or Survey | 1 to 4, each with 2 to 4 options plus **Other** |
 | **Other** answer | 2,000 characters |
+| Schedule name | 100 characters |
+| Schedule prompt | 50,000 characters |
+| Schedule cron expression | 5 fields, at most one run per minute |
 | Wiki name | 200 characters |
 | Wiki description | 100,000 characters |
 | Agent avatar upload | 2 MB; PNG, JPEG, GIF or WebP |
