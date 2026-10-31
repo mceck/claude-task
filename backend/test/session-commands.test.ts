@@ -56,6 +56,35 @@ describe('native commands in managed conversations', () => {
     ]);
   });
 
+  it("reads the Worktree's Project Skills on request when no Job has reported them yet", async () => {
+    const admin = await app.admin();
+    const { agent, runner } = await createAgent(app, admin);
+    const { project } = await createProject(admin);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    await runner.next('job.start');
+
+    // Opening the Session asks the Runner for the Worktree it created for that Job.
+    await admin.get(`/tasks/${task.id}/session`);
+    const request = await runner.next('project_skills.request');
+    expect(request.worktreePath).toBeTruthy();
+    runner.send({
+      type: 'project_skills.result',
+      requestId: request.requestId,
+      files: [
+        { name: 'deploy', head: '---\ndescription: Deploy the service\n---\n' },
+        { name: 'internal', head: '---\ndescription: Background knowledge\nuser-invocable: false\n---\n' },
+      ],
+    });
+    await expect
+      .poll(async () => ((await admin.get(`/tasks/${task.id}/session`)).body.session.commands as { name: string }[]).map((c) => c.name))
+      .toContain('deploy');
+    // The Session keeps what it read: another load doesn't ask again.
+    const asked = runner.messages('project_skills.request').length;
+    await admin.get(`/tasks/${task.id}/session`);
+    expect(runner.messages('project_skills.request')).toHaveLength(asked);
+  });
+
   it('keeps commands and later comments in order, sends raw commands and renders local output exactly once', async () => {
     const admin = await app.admin();
     const { agent, runner } = await createAgent(app, admin);

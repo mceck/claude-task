@@ -65,7 +65,8 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
   const [project] = await db.select({ skills: jobs.projectSkills }).from(jobs).where(and(eq(jobs.sessionId, s.id), isNotNull(jobs.projectSkills)))
     .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
   return {
-    commands: chatCommands(runtime?.commands ?? null, skillRows, project?.skills ?? []),
+    // A Job's report follows the Worktree exactly; the Session's own copy fills the gap before one has run.
+    commands: chatCommands(runtime?.commands ?? null, skillRows, project?.skills ?? s.projectSkills ?? []),
     id: s.id,
     agent,
     state: s.state,

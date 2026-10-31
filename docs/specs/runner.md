@@ -58,6 +58,7 @@ Backend to Runner:
 | `job.end` | Job id | Closes stdin: `claude` works through what was already written, then exits. |
 | `job.cancel` | Job id | Interrupts, closes stdin and escalates to signals. |
 | `job.upload` | Job id; request id; upload URL; file paths | Reads the files and uploads them to the URL (see [Uploading files](#uploading-files)). |
+| `project_skills.request` | Request id; Worktree path | Reads the Worktree's Project Skills now, without a Job, and answers with `project_skills.result`. |
 | `worktree.remove` | Worktree path; bare clone path or none | Deletes the Worktree directory. Branches stay. |
 | `ack` | Job id; seq | Everything up to and including that seq is processed. |
 | `ping` | | Answered with `pong`. |
@@ -69,6 +70,7 @@ Runner to backend:
 | Message | Fields | Meaning |
 | --- | --- | --- |
 | `hello` | protocol version; Runner version; `claude` version; active Job id or none | First message of every connection. The active Job is the one being prepared or running, or else the oldest Job with unacknowledged messages. |
+| `project_skills.result` | Request id; files (name and beginning of each) | The answer to `project_skills.request`; no seq and no ack. |
 | `job.accepted` | Job id; seq | The Runner took the Job and starts preparing it. |
 | `job.worktree_ready` | Job id; seq; created; remote branch missing | The git Worktree is ready (sent only for Jobs with a git spec). |
 | `job.setup_output` | Job id; seq; chunk | Output of the git steps, the tool install and the Setup Script. |
@@ -161,6 +163,8 @@ The tool install and the Setup Script each:
 **Attachments.** Before starting `claude`, the Runner downloads the `job.start` attachments into the Worktree. Each download uses the Runner token as bearer, has 5 minutes, writes to a temporary file and renames it into place. The backend serves only attachments of the Task of an active Job of this Agent, from non-internal, non-deleted Comments or from the Task description. A failed download is reported on stderr as a Runner note and the Job continues. Attachments of a `job.input` are downloaded the same way right before that Message is written.
 
 **Project Skills.** After the attachments, the Runner reads the Worktree's Project Skills and sends them in one `job.project_skills`, for every Job that gets this far, with or without a Repository, and with an empty list when there are none. It reads the files `claude` loads from the project: `.claude/skills/<name>/SKILL.md` first, then `.claude/commands/<name>.md`, each in name order. Symlinks are followed, as `claude` follows them, but only while they resolve inside the Worktree. Of each regular file it sends the name (the skill's directory or the command's file name without `.md`) and the first 8 KiB, cut on a character boundary, which is enough for the frontmatter and the first paragraph. It sends at most 200 files and skips unreadable ones silently. Parsing is the backend's job (see [Agent sessions](agent-sessions.md)), so the Runner needs no YAML parser and both ends parse skills the same way.
+
+`project_skills.request` reads the same files off the Job stream: a Worktree created by an earlier Job already has them, and the backend wants them for a composer before the Session's next Job. It answers `project_skills.result` with the same list, or an empty one when the path is outside the Agent's home or the Worktree isn't there yet. Like `job.upload` it carries no seq and gets no `ack`; unlike it, it doesn't need a running Job.
 
 ### Running claude
 
@@ -344,6 +348,7 @@ On the Agent Volume it relies on:
 - **Files go up on request, over HTTP.** The backend asks with a small `job.upload` message and the Runner streams the files in a multipart POST, the mirror of attachment downloads. Large bytes stay off the WebSocket, whose messages are capped and resent after reconnects, and the request needs no seq because a lost one simply times out the tool call that asked for it.
 - **A Job arriving during a cancel waits for it.** The backend dispatches the next Queue Entry as soon as it cancels a Job, so the Runner lets the new Job wait out the cancel escalation rather than refusing it.
 - **Project Skills are read from the Worktree right before `claude` starts.** The Setup Script, or the Agent itself in an earlier Job, may add skills, and the Worktree can differ from the Base Branch, so reading the repository through the Git Provider would show a different set from the one `claude` loads. `system/init` lists command names, but with no descriptions and no way to tell a Project Skill from a bundled one. The Runner sends the files' beginnings rather than parsed fields because the backend already parses `SKILL.md` frontmatter for the catalog.
+- **The backend can also read them on request, without a Job.** A Worktree outlives its Jobs, so a Session that hasn't run one since a deploy, or whose image changed, would otherwise suggest no Project Skills until the next Job. `project_skills.request` costs one WebSocket round trip and reuses the same reader; the backend waits only briefly and falls back to what the latest Job reported. Reading the Worktree from the backend was rejected because the files are in the Agent Container.
 - **The Runner probes the `claude` it will start, not the one on the Base Image.** A repository's mise configuration can override the pinned CLI in its Worktree, and `--forward-subagent-text` exists only from 2.1.211. Asking that executable for its version before each Job that wants the flag costs one short process per Job and keeps an older or unusual CLI from failing the Job on an unknown argument; caching the answer per Agent was rejected because a repository change can swap the CLI between Jobs without touching the Agent.
 
 ## Related specs

@@ -27,6 +27,10 @@ const appendCapped = (column: typeof jobs.setupOutput | typeof jobs.stderr, chun
 export async function handleRunnerMessage(ctx: AppContext, agentId: string, msg: RunnerToBackend): Promise<void> {
   if (msg.type === 'hello') return handleHello(ctx, agentId, msg);
   if (msg.type === 'pong') return;
+  if (msg.type === 'project_skills.result') {
+    ctx.skillRequests.settle(agentId, String(msg.requestId), Array.isArray(msg.files) ? msg.files : []);
+    return;
+  }
   if (typeof msg.jobId === 'string' && typeof msg.seq === 'number') return handleJobMessage(ctx, agentId, msg);
   ctx.log.warn({ agentId, type: (msg as { type?: string }).type }, 'unknown runner message');
 }
