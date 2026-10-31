@@ -100,7 +100,9 @@ A failed run produces a `schedule.run_failed` Notification Event for the run's T
 
 ### Where Schedules appear
 
-The web app has a **Schedules** section in the main navigation, open to every User, with the list described above and a detail page holding the configuration and the run history. The history table, which lists the latest 200 runs, shows start time, duration, outcome (`Running`, `Succeeded`, `Failed`, `Skipped` with its reason) and a link to the run's Task, which opens on a run page of the Schedule with the Task's conversation and Timeline. Skipped rows have no link. The Tasks of Schedule Projects do not appear in the Projects list, the Boards list or Project search. The native app does not list Schedules; a run's Task opens from an alert as any Task does.
+The web app has a **Schedules** section in the main navigation, open to every User, with the list described above and a detail page holding the configuration and the run history. The history table, which lists the latest 200 runs, shows start time, duration, outcome (`Running`, `Succeeded`, `Failed`, `Skipped` with its reason) and a link to the run's Task, which opens on a run page of the Schedule with the Task's conversation and Timeline. Skipped rows have no link. The Tasks of Schedule Projects do not appear in the Projects list, the Boards list or Project search.
+
+The native app has the same section, adapted to its layout: a **Schedules** entry in the drawer and a button in the Project rail, a list showing the same fields, and a Schedule page with the configuration and the run history. The creation, edit, pause, resume, Run now and delete actions are offered to Admins only. A run's Task opens in the normal conversation view, read-only once the run has closed, with no way to edit, move or delete it. A push alert about a run opens the app on its Task within its Schedule.
 
 ## Architecture
 
@@ -157,4 +159,4 @@ flowchart LR
 - [Git integration](git-integration.md): the Repository, Worktrees and the Push Policy.
 - [Wikis](wikis.md): the hidden Project pattern that Schedules follow.
 - [Conversation](conversation.md): Notification Events and alert delivery.
-- [Clients](clients.md): the Schedules section of the web app.
+- [Clients](clients.md): the Schedules sections of the web and native apps.

@@ -5,10 +5,10 @@ Users work with Claude Task through two clients that share one backend: the **we
 ## Concepts
 
 - **Web app**: the full interface, used from a browser. It covers every area of the product, including administration (Users, Agents, Credentials, Extensions, Git Connections, Project settings).
-- **Native app**: a conversation-first client for iOS, Android, macOS, Windows and Linux. It covers Projects, Tasks, their conversations, Agent assignment and Wikis, plus Project and Agent settings, and for Admins Users, Credentials, Extensions, Git Connections and Project Environment Variables. Docker configuration is managed in the web app. Its layout borrows from chat apps: Projects play the role of servers and Tasks the role of channels, grouped by Status. These are presentation metaphors only; the domain terms stay authoritative.
+- **Native app**: a conversation-first client for iOS, Android, macOS, Windows and Linux. It covers Projects, Tasks, their conversations, Agent assignment, Wikis and Schedules, plus Project and Agent settings, and for Admins Users, Credentials, Extensions, Git Connections and Project Environment Variables. Docker configuration is managed in the web app. Its layout borrows from chat apps: Projects play the role of servers and Tasks the role of channels, grouped by Status. These are presentation metaphors only; the domain terms stay authoritative.
 - **Installation**: one deployment of Claude Task, identified by its origin URL (for example `https://tasks.example.com`). The web app always talks to the installation that served it; the native app asks for the installation URL at sign-in.
 - **Live connection**: the single WebSocket a client keeps open to the backend while a User is signed in.
-- **Topic**: a named stream of events a client subscribes to over its live connection: one Project's Board, one Task's Timeline, the Agents list, one Agent, the Wikis list, or the User's own private stream.
+- **Topic**: a named stream of events a client subscribes to over its live connection: one Project's Board, one Task's Timeline, the Agents list, one Agent, the Wikis list, the Schedules list, or the User's own private stream.
 - **Event**: a notification pushed on a topic. It carries the new projection of what changed (the updated card, the new Comment, the whole Status list), so a client can apply it without a further request.
 - **Live Turn preview**: the text, Thinking, API-retry status and Setup Script output of a running Turn, streamed as it is produced. It is transient: the stored Agent Comment, Thinking or Activity replaces it on the Timeline as soon as it is persisted (see [Agent sessions](agent-sessions.md)).
 - **Active Runs bar**: the row above the composer listing the Agent's Runs that have not finished, plus the ones that failed and haven't been dismissed. It reads from a Run store per Task, filled by the Run events and by the Task's Runs endpoint.
@@ -54,6 +54,7 @@ Events are grouped by the area that emits them. Each one carries the new state, 
 | Board | Project | Task created, updated or moved (each with the Task card); Task deleted; Status list changed (whole list); Tag list changed (whole list); Project updated | Put the card in every cached Board list of that Project, or take it out; replace the Status or Tag list; refresh Project details and repository settings. A card update also reflects Session state and Queue position, since the scheduler emits one whenever they change. |
 | Task view | Task | Task changed (full Task); Task removed; Comment created, updated or deleted (an update also carries a Question's answer or a Survey's answers and state); Revision created; Session changed (new Session state, or none) | Replace the Task (and refresh its Session for the "unseen changes" flag); show the Task as deleted; place the item on the Timeline; replace the Session. |
 | Scheduled messages | Task | Scheduled Message created, changed, cancelled or sent (the whole message) | Replace the message in the Task's scheduled list and its history. |
+| Schedules | Schedules | Schedule changed (the id only) | Refetch the Schedules list and the open Schedule with its run history. |
 | Agent work | Task | Agent Timeline item created or updated (Thinking, Activity, a Run, Turn Summary, notices); Live Turn text or Thinking delta; Live Turn retry status (or cleared); Setup Script output chunk; Run updated; Run transcript message | Place stored items on the Timeline; append deltas to the Live Turn preview; show the retry line; show the Worktree preparation output; update the Active Runs bar and the open Run transcript. |
 | Wiki Chat | Task | Reset event, sent when the Chat is deleted (the event keeps the name `timeline.reset`) | Remove the Chat from the list, empty its Timeline and Live Turn preview for everyone viewing it, close its Chat Dock panel, and open the most recent remaining Chat. |
 | Wiki Chat list | Wikis | Wiki changed | Refetch the Wiki's Chat list (order, titles, unread and working indicators). |
@@ -272,7 +273,7 @@ The layout adapts to the window width.
 
 | Width | Layout |
 | --- | --- |
-| Below 1000 px (phones, narrow windows) | Successive screens: Projects list, then the Project's Tasks, then the conversation. Back (button, gesture or system back) returns one level. Task details open on demand. A navigation drawer, opened by tapping the app icon in the Projects and Wiki headers or by swiping from the left edge, holds the profile, Projects, Wikis and Settings. |
+| Below 1000 px (phones, narrow windows) | Successive screens: Projects list, then the Project's Tasks, then the conversation. Back (button, gesture or system back) returns one level. Task details open on demand. A navigation drawer, opened by tapping the app icon in the Projects, Wiki and Schedules headers or by swiping from the left edge, holds the profile, Projects, Wikis, Schedules and Settings. |
 | 1000 px to 1499 px | Three panes: a 76 px Project rail, a 340 px Task list, the conversation. Task details open on demand from the conversation header. |
 | 1500 px and wider | The same three panes plus a 360 px Task details panel next to the conversation. |
 
@@ -286,7 +287,7 @@ Every screen and pane follows one page structure, so moving between them never c
 
 On phones, the app icon at the left of the Projects and Wiki headers opens the navigation drawer, with a 44 px touch target and the accessible label "Menu". On wider windows, the Wiki header keeps its decorative app icon and navigation uses the Project rail.
 
-The **Project rail** lists Projects as badges, with the Wiki button at the top and New project after the last Project in the scrollable list. At the bottom, a Settings button (online only) sits above the Profile avatar. The phone's **drawer** shows the User's avatar, name and email (opening the Profile sheet), permanent Projects and Wikis entries that open their lists even when empty, shortcuts to individual Projects and Wikis, and New project and New wiki actions. Selecting an entry closes the drawer and opens its destination. The Settings screens are listed directly instead of behind a hub: Projects, Agents and, for Admins, Users, Credentials, Extensions and Git Connections (online only).
+The **Project rail** lists Projects as badges, with the Wiki and Schedules buttons at the top and New project after the last Project in the scrollable list. At the bottom, a Settings button (online only) sits above the Profile avatar. The phone's **drawer** shows the User's avatar, name and email (opening the Profile sheet), permanent Projects, Wikis and Schedules entries that open their lists even when empty, shortcuts to individual Projects and Wikis, and New project and New wiki actions. Selecting an entry closes the drawer and opens its destination. The Settings screens are listed directly instead of behind a hub: Projects, Agents and, for Admins, Users, Credentials, Extensions and Git Connections (online only).
 
 The phone's **Projects list** shows each Project's key, name and Task count. For a Project with Tasks it also shows a stacked bar of Task counts per Category and the percentage of done Tasks, as the web's Project cards do: only open, review and done, with active Tasks counted as open and closed Tasks left out of the bar, the count and the percentage. Its header offers New project, and the empty list offers the same action with an explanation. The creation form asks for Key, Name, an optional Description, an optional default Agent and an optional Repository. The Agent picker offers enabled Agents and No Agent, with their avatars, like the Agent picker of the Task and Wiki forms. The Repository picker groups choices by Git Connection and supports search; connection failures remain visible while available Repositories can be selected. No Repository clears the choice. Selecting a Repository fills its default Base Branch, which the User can edit. Repository list loading failures offer Retry, and basic Project creation remains available. The form converts the trimmed Key to uppercase, refreshes the list and opens the new Project's Tasks. The same form is available in Project settings, where creation refreshes the list and keeps settings open. Creation actions are available online for every User. Failed submissions keep the form and its input open and show the error. Empty panes say what to pick next ("Select a Project", "Select a Task to join the conversation").
 
@@ -350,11 +351,20 @@ The description editor offers a visual mode (headings, emphasis, inline code, li
 
 The Wiki section lists Wikis and offers "New wiki" in its header and empty state. The same action is available from the phone drawer, including when the list is empty. Creation is available online for every User, asks for name, description, Agent (chosen from the Agent picker, listing enabled Agents and the current one), repository and Base Branch, and opens the new Wiki's conversation. Failed submissions keep the form and its input open and show the error. Wiki settings link to the repository, the Wiki's branch and its review. Opening a Wiki shows its Chat list (title, time of last Comment, unread indicator, working indicator, "New chat", and Rename and "Delete chat" online only, with confirmation), and opening a Chat shows its conversation like a Task's, with Mute and Follow (for the whole Wiki), Session actions and "Delete wiki". The composer of a Chat run by another Agent is disabled with the reason. On wide windows the section shows the rail, the Wiki list, the Chat list and the conversation; on phones, the successive screens Wiki list, Chat list and Chat, and Back returns one level. Cached Chats are read offline, and a notification for a Wiki opens its Chat.
 
+#### Schedules
+
+The Schedules section lists Schedules as rows: name, the cron expression in words, Agent, scope (Repository or global), a read-only badge, the next run or "paused", and the latest run's outcome. Admins see the enabled switch on each row and "New schedule" in the header and empty state; everyone else reads the list. Opening a Schedule shows its configuration (next run, Agent, scope, time zone, read-only, creator, consecutive skips) and its prompt, then its run history newest first: start time, duration, "manual", outcome, the skip reason on skipped rows and the run's Task Key. Tapping a started run opens its Task in the conversation view, with the composer while the run is Running and a read-only notice once it has closed; the Task's details, edit and delete actions are hidden because the scheduler owns it. A skipped row has no link.
+
+Admins also get Run now, Pause or Resume, Edit and Delete. The creation and edit form asks for Name, Agent (enabled Agents plus the current one), the cron expression with its reading in words and an error while it does not parse, a searchable IANA Time zone, the Prompt, an optional Repository with its Base Branch ("No repository" means global) and Read-only. A disabled Agent stays valid while it is not being changed. The form starts the time zone at UTC, since the platform does not expose the device's IANA zone.
+
+The section follows `schedule.changed`: the list and the open Schedule, with its history, are refetched. The list and the run history of each opened Schedule are cached for offline reading; creating, editing, pausing, running and deleting need a connection. On wide windows the section shows the rail, the list and the open Schedule or run; on phones, Back goes from a run to its Schedule and from it to the list. A push alert about a run opens that Task within its Schedule.
+
 #### Local state and offline use
 
 The app caches what it has fetched in a file inside the profile's application-support folder, written atomically and one write at a time so an older write can't overwrite a newer Draft:
 
-- global lists: Projects, Wikis, Agents, Users;
+- global lists: Projects, Wikis, Schedules, Agents, Users;
+- per Schedule: its run history;
 - per Project: Statuses, Tags, every Task (closed ones included) and the User's Task preferences;
 - per Task: the Task, the loaded Timeline pages, the cursor for older pages and the Session;
 - per Task: the Draft (text, Internal Note flag, staged files, and whether its last send had an unknown outcome).
@@ -380,13 +390,14 @@ Before sending, the app marks the Draft as possibly sent. If the request times o
 
 #### Live updates
 
-The native app subscribes to its User topic, the Agents and Wikis topics, the open Project and the open Task, and replaces the set whenever the selection changes. It treats events like this:
+The native app subscribes to its User topic, the Agents and Wikis topics, the Schedules topic while its section is open, the open Project and the open Task, and replaces the set whenever the selection changes. It treats events like this:
 
 - Comments, Revisions and Agent Timeline items of the open Task are merged into the Timeline at once, in the server's order. An update to an entry that isn't loaded waits for the next refresh instead of appearing at the bottom.
 - When a stored Agent Comment, Thinking, Activity, Run or Turn Summary arrives, the matching Live Turn preview is retired in the same update, so the text stays on screen continuously from preview to stored version. The Activity item also retires the preparation output.
 - A Session change replaces the Session; when the Session is no longer running, the live text, Thinking and retry status are cleared and the Active Runs bar refetched, so Runs that ended meanwhile leave it. The preparation output stays, as on the web, until its Activity or Turn Summary replaces it, so a failed setup keeps showing its error.
 - Run updates change the Active Runs bar and the open Run sheet in place, without a refresh.
 - A Task removal closes the open Task.
+- A Schedule change refetches the Schedules list and the open Schedule with its run history.
 - Any other event schedules a refresh 180 ms later (restarted by each new event, one refresh at a time), which refetches the global lists and the open Project and Task. Live Turn deltas, retry status and preference events are applied directly without a refresh.
 
 #### Following, unread state and notifications
