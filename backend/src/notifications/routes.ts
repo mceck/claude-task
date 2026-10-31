@@ -10,7 +10,7 @@ import { forbidden, parse } from '../errors';
 import { getProject } from '../modules/projects/service';
 import { getTaskRow } from '../modules/tasks/service';
 import { hashToken } from '../secrets';
-import { advanceRead, preferences, setPreference } from './preferences';
+import { advanceProjectRead, advanceRead, preferences, setPreference } from './preferences';
 import { idOrKey } from '../ids';
 
 const params = z.object({ id: idOrKey });
@@ -33,6 +33,14 @@ export function notificationRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { itemId } = parse(readPositionBody, request.body);
     const task = await getTaskRow(ctx.db, parse(params, request.params).id);
     return { preference: await transact(ctx, (tx, after) => advanceRead(tx, after, currentUser(request).id, task.id, itemId)) };
+  });
+  app.post('/projects/:id/read-all', async (request) => {
+    const project = await getProject(ctx.db, parse(params, request.params).id);
+    const userId = currentUser(request).id;
+    return transact(ctx, async (tx, after) => {
+      await advanceProjectRead(tx, after, userId, project.id);
+      return { preferences: await preferences(tx, userId, { projectId: project.id }) };
+    });
   });
   app.put('/notifications/devices', async (request, reply) => {
     const body = parse(deviceRegistrationBody, request.body);

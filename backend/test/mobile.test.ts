@@ -135,6 +135,52 @@ describe('Task preferences and read positions', () => {
     await comment(member.client, task.id, 'Now participating');
     expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.following).toBe(true);
   });
+  it('marks every open Task of a Project read in one go, leaving closed Tasks, other Projects and other Users alone', async () => {
+    const { admin, project, task, member } = await setup();
+    const second = await createTask(admin, project.id);
+    const closedTask = await createTask(admin, project.id);
+    const { agent, runner } = await createAgent(app, admin);
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text('Ready'), stream.result()]);
+    await app.settle();
+    await comment(admin, second.id, 'Second Task');
+    await comment(admin, closedTask.id, 'Settled by closing');
+    const bundle = (await admin.get(`/projects/${project.id}`)).body;
+    await moveToStatus(admin, closedTask.id, statusByName(bundle, 'Closed').id);
+    const elsewhere = await createProject(admin);
+    const elsewhereTask = await createTask(admin, elsewhere.project.id);
+    await comment(admin, elsewhereTask.id, 'Elsewhere');
+
+    const socket = await WsTestClient.connect(app.url, member.client.cookie);
+    try {
+      await socket.subscribe(userTopic(member.user.id));
+      const res = await member.client.post(`/projects/${project.id}/read-all`);
+      expect(res.status).toBe(200);
+      const prefs = res.body.preferences as { taskId: string; unread: boolean; readPosition: string; latestPosition: string }[];
+      for (const id of [task.id, second.id]) {
+        const pref = prefs.find((p) => p.taskId === id)!;
+        expect(pref).toMatchObject({ unread: false });
+        expect(pref.readPosition).toBe(pref.latestPosition);
+      }
+      // Closing settles a Task: the bulk read leaves its read position untouched.
+      expect(prefs.find((p) => p.taskId === closedTask.id)!.readPosition).toBe('0');
+      expect((await member.client.get(`/tasks/${elsewhereTask.id}/preferences`)).body.preference.unread).toBe(true);
+      expect((await admin.get(`/tasks/${task.id}/preferences`)).body.preference.unread).toBe(true);
+
+      // Every changed Task reaches the User's other clients.
+      for (const id of [task.id, second.id]) {
+        const { event } = await socket.next('task.preference', (e) => e.preference.taskId === id);
+        expect(event.preference).toMatchObject({ taskId: id, unread: false });
+      }
+    } finally {
+      socket.close();
+    }
+    expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.unread).toBe(false);
+    const secondPref = (await member.client.get(`/tasks/${second.id}/preferences`)).body.preference;
+    expect(secondPref).toMatchObject({ unread: false });
+    expect(secondPref.readPosition).toBe(secondPref.latestPosition);
+  });
   it('counts unread Comments for the badge, leaving deleted Comments out', async () => {
     const { admin, project, task, member } = await setup();
     const pref = async () => (await member.client.get(`/tasks/${task.id}/preferences`)).body.preference;
@@ -230,10 +276,12 @@ describe('Task preferences and read positions', () => {
     } finally { own.close(); other.close(); }
   });
   it('requires authentication, CSRF and valid request bodies', async () => {
-    const { admin, task } = await setup();
+    const { admin, project, task } = await setup();
     expect((await app.client().get(`/tasks/${task.id}/preferences`)).status).toBe(401);
     expect((await admin.patch(`/tasks/${task.id}/preferences`, { muted: true }, { csrf: false })).status).toBe(403);
     expect((await admin.patch(`/tasks/${task.id}/preferences`, {})).status).toBe(400);
+    expect((await app.client().post(`/projects/${project.id}/read-all`)).status).toBe(401);
+    expect((await admin.post(`/projects/${project.id}/read-all`, undefined, { csrf: false })).status).toBe(403);
     expect((await admin.put('/notifications/devices', { deviceId: 'bad', platform: 'linux', token: 'bad' })).status).toBe(400);
   });
 });

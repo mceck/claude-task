@@ -564,6 +564,29 @@ class FakeApi implements TaskApi {
         'preferences': [pref],
       };
     }
+    if (path == '/projects/project-1/read-all' && method == 'POST') {
+      final tasks = [
+        currentTask,
+        ...extraTasks,
+        taskData(
+          id: 'closed-task',
+          title: 'Archived Task',
+          statusId: 'status-2',
+        ),
+      ];
+      final preferences = [
+        for (final t in tasks)
+          {
+            ...pref,
+            'taskId': t['id'],
+            'unread': false,
+            'readPosition': '2',
+            'latestPosition': '2',
+          },
+      ];
+      pref = preferences.first;
+      return {'preferences': preferences};
+    }
     if (path == '/projects/project-1/tags' && method == 'POST') {
       final tag = {'id': 'tag-${createdTags.length + 1}', ...body!};
       createdTags.add(tag);

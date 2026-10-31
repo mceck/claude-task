@@ -57,6 +57,7 @@ Dockerfiles, Builds, Development Services and resource limits are configured in 
 On a phone, open a Project, then a Task to reach its Conversation. Back returns one level. Wider windows show the Project rail, Task list and Conversation together; very wide windows also show Task details.
 
 - Search by Task Key or title.
+- Choose **Mark all as read** (a double check beside **Create Task**) to clear every unread Task in the Project at once. It appears only while something is unread and asks for no confirmation.
 - Open **Filters** to choose priority, Tag or assignee. Use **Clear** to remove those filters.
 - Enable **Archive** to show Tasks in closed-category Statuses.
 - Open **Task details** to change Status, priority or Agent, or use **Edit Task** for title, description, assignees and Tags.

@@ -9,12 +9,13 @@ import 'support.dart';
 Future<Harness> _open(
   WidgetTester tester, {
   Size size = const Size(1000, 900),
+  FakeApi? api,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final h = Harness();
+  final h = Harness(api: api);
   addTearDown(h.dispose);
   h.api.extraTasks = [taskData(id: 'task-2', title: 'Second task')];
   await h.login();
@@ -105,6 +106,54 @@ void main() {
     });
     expect(find.text('1 selected'), findsOneWidget);
     expect(find.textContaining('An agent is working on this.'), findsOneWidget);
+  });
+
+  testWidgets('Mark all as read clears the Project in one tap', (tester) async {
+    final h = await _open(tester);
+    final mark = find.byTooltip('Mark all as read');
+    expect(mark, findsOneWidget);
+    // It sits between Edit project and Create Task.
+    expect(
+      tester.getCenter(mark).dx,
+      lessThan(tester.getCenter(find.byTooltip('Create Task')).dx),
+    );
+    expect(
+      tester
+          .widget<Text>(
+            find.descendant(
+              of: _row('task-1'),
+              matching: find.text('Fix login'),
+            ),
+          )
+          .style!
+          .fontWeight,
+      FontWeight.w600,
+    );
+
+    await tester.tap(mark);
+    await tester.pumpAndSettle();
+
+    expect(h.api.calls, contains('POST /projects/project-1/read-all'));
+    expect(mark, findsNothing);
+    expect(
+      tester
+          .widget<Text>(
+            find.descendant(
+              of: _row('task-1'),
+              matching: find.text('Fix login'),
+            ),
+          )
+          .style!
+          .fontWeight,
+      FontWeight.w500,
+    );
+  });
+
+  testWidgets('Mark all as read is hidden when every Task is read', (
+    tester,
+  ) async {
+    await _open(tester, api: FakeApi()..pref = preferenceData(unread: false));
+    expect(find.byTooltip('Mark all as read'), findsNothing);
   });
 
   testWidgets('a long press without moving opens the menu', (tester) async {
