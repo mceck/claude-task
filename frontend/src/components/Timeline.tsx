@@ -43,7 +43,8 @@ export function Timeline({ taskId, hideChanges, ...rest }: { taskId: string; hid
   const agents = useAgents();
   const lookups = { ...rest, agents: agents.data ?? [] };
   if (timeline.isPending) return <Loading />;
-  if (timeline.error) return <ErrorText>{errorMessage(timeline.error)}</ErrorText>;
+  // Only an initial load with nothing to show replaces the conversation; a later failure keeps what was read.
+  if (timeline.isLoadingError) return <ErrorText>{errorMessage(timeline.error)}</ErrorText>;
   // An item can sit on two pages when it moved across a page boundary between fetches.
   const seen = new Set<string>();
   const items = timeline.data.pages
@@ -54,6 +55,14 @@ export function Timeline({ taskId, hideChanges, ...rest }: { taskId: string; hid
 
   return (
     <ol aria-label="Timeline" className="relative space-y-3 before:absolute before:top-2 before:bottom-2 before:left-[15px] before:w-px before:bg-border">
+      {timeline.error && (
+        <li className="relative pl-10 text-sm text-destructive">
+          {errorMessage(timeline.error)}{' '}
+          <button type="button" className="underline" onClick={() => void timeline.refetch()}>
+            Try again
+          </button>
+        </li>
+      )}
       {timeline.hasNextPage && (
         <li className="relative text-center">
           <Button variant="outline" size="sm" onClick={() => timeline.fetchNextPage()} disabled={timeline.isFetchingNextPage}>

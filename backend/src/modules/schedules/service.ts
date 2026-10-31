@@ -56,7 +56,20 @@ export async function loadRuns(db: Executor, filter: { scheduleId?: string; limi
     .where(filter.scheduleId ? eq(scheduleRuns.scheduleId, filter.scheduleId) : undefined)
     .orderBy(desc(scheduleRuns.createdAt), desc(scheduleRuns.id))
     .limit(filter.limit ?? 200);
-  return rows.map(({ run, projectKey, number, statusName, category, closedAt }) => ({
+  return rows.map(toScheduleRun);
+}
+
+interface RunRow {
+  run: typeof scheduleRuns.$inferSelect;
+  projectKey: string | null;
+  number: number | null;
+  statusName: string | null;
+  category: string | null;
+  closedAt: Date | null;
+}
+
+function toScheduleRun({ run, projectKey, number, statusName, category, closedAt }: RunRow): ScheduleRun {
+  return {
     id: run.id,
     scheduleId: run.scheduleId,
     state: run.state === 'skipped' ? 'skipped' : category === 'closed' ? (statusName === 'Succeeded' ? 'succeeded' : 'failed') : 'running',
@@ -67,7 +80,26 @@ export async function loadRuns(db: Executor, filter: { scheduleId?: string; limi
     skipReason: run.skipReason,
     startedAt: run.createdAt.toISOString(),
     finishedAt: run.state === 'started' && category === 'closed' && closedAt ? closedAt.toISOString() : null,
-  }));
+  };
+}
+
+/** The latest run of every Schedule that has one, without scanning a fixed window of the whole history. */
+async function loadLatestRuns(db: Executor): Promise<Map<string, ScheduleRun>> {
+  const rows = await db
+    .selectDistinctOn([scheduleRuns.scheduleId], {
+      run: scheduleRuns,
+      projectKey: projects.key,
+      number: tasks.number,
+      statusName: statuses.name,
+      category: statuses.category,
+      closedAt: tasks.updatedAt,
+    })
+    .from(scheduleRuns)
+    .leftJoin(tasks, eq(tasks.id, scheduleRuns.taskId))
+    .leftJoin(projects, eq(projects.id, tasks.projectId))
+    .leftJoin(statuses, eq(statuses.id, tasks.statusId))
+    .orderBy(scheduleRuns.scheduleId, desc(scheduleRuns.createdAt), desc(scheduleRuns.id));
+  return new Map(rows.map((row) => [row.run.scheduleId, toScheduleRun(row)]));
 }
 
 export async function listSchedules(db: Executor, id?: string): Promise<Schedule[]> {
@@ -78,8 +110,7 @@ export async function listSchedules(db: Executor, id?: string): Promise<Schedule
     .leftJoin(users, eq(users.id, schedules.createdBy))
     .where(id ? eq(schedules.id, id) : undefined)
     .orderBy(schedules.name);
-  const latest = new Map<string, ScheduleRun>();
-  for (const run of await loadRuns(db, { limit: 1000 })) if (!latest.has(run.scheduleId)) latest.set(run.scheduleId, run);
+  const latest = await loadLatestRuns(db);
   return rows.map(({ schedule: s, repository, creatorName }) => ({
     id: s.id,
     projectId: s.projectId,

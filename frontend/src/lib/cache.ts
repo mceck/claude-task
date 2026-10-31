@@ -1,5 +1,5 @@
 // Applies real-time events to the TanStack Query caches.
-import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, ScheduledMessage, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
+import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, ScheduledMessage, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic, WikiChat } from '@claude-task/shared';
 import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { keys } from '../api/queries';
 import { removeFromDock } from './dock';
@@ -194,6 +194,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       void qc.invalidateQueries({ queryKey: keys.session(event.taskId) });
       // The Comments and their Attachments are gone; description files stay.
       void qc.invalidateQueries({ queryKey: keys.attachments(event.taskId) });
+      // The Task may be reused by the next New Chat: an old Runs snapshot must not come back with it.
+      qc.removeQueries({ queryKey: keys.runs(event.taskId) });
       return;
     case 'task.created':
     case 'task.updated':
@@ -219,10 +221,18 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
     case 'task.changed':
       setTask(qc, event.task);
       void qc.invalidateQueries({ queryKey: keys.session(event.task.id) });
+      // A description upload links a new file, which the Task's attachment list shows.
+      void qc.invalidateQueries({ queryKey: keys.attachments(event.task.id) });
       return;
     case 'task.preference':
       qc.setQueriesData<TaskPreference[]>({ queryKey: ['task-preferences'] }, (list) =>
         list?.map((p) => (p.taskId === event.preference.taskId ? event.preference : p)),
+      );
+      // A Wiki Chat's unread dot comes from its Chat list, which this event must update too.
+      qc.setQueriesData<WikiChat[]>({ queryKey: ['wiki'] }, (list) =>
+        Array.isArray(list) && list.some((c) => c?.id === event.preference.taskId)
+          ? list.map((c) => (c.id === event.preference.taskId ? { ...c, unread: event.preference.unread } : c))
+          : list,
       );
       // Reconcile the whole Project, including new Tasks and concurrent changes to other Tasks.
       refreshTaskPreferences(qc);

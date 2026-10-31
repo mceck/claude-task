@@ -21,7 +21,7 @@ import { cn } from '../lib/utils';
 import { Block, Summary, elapsed, statusLabel, StatusIcon, toolIcon } from './AgentTimeline';
 import { formatCost, formatDuration, formatTokens } from './agents';
 import { Markdown } from './Markdown';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 
 /** The Runs bar above the composer, with the dialog of the Run the reader opened. */
 export function ActiveRuns({ taskId }: { taskId: string }) {
@@ -129,6 +129,9 @@ function RunDialog({ taskId, runId }: { taskId: string; runId: string }) {
             <Icon className="size-4 shrink-0" />
             <span className="min-w-0 truncate">{run?.description ?? 'Run'}</span>
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            The live transcript of a {run?.runType === 'command' ? 'background command' : 'subagent run'}.
+          </DialogDescription>
           {run && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
               <span>{momentary}</span>

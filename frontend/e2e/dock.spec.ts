@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext, Browser, BrowserContext } from '@playwright/test';
 import { HEADERS, createProject, createTask, login } from './helpers';
 
 const H = HEADERS;
@@ -240,4 +240,109 @@ test('offers no minimizing where the Dock cannot fit', async ({ page }) => {
   await page.getByRole('article', { name: task.key }).click();
   await expect(page.getByRole('dialog').getByLabel('Task conversation')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Minimize chat' })).toHaveCount(0);
+});
+
+test('opens the oldest title bar when four chats are docked', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request, 'Dock capacity');
+  const tasks = [];
+  for (let i = 1; i <= 4; i++) tasks.push(await createTask(page.request, project, `Dock chat ${i}`));
+  for (const task of tasks) {
+    await page.goto(`/t/${task.key}`);
+    await page.getByRole('button', { name: 'Minimize chat' }).click();
+    await expect(page).toHaveURL(new RegExp(`/p/${project.key}$`));
+  }
+
+  const dock = page.getByRole('region', { name: 'Minimized chats' });
+  const oldest = dock.getByRole('article', { name: 'Minimized chat: Dock chat 1' });
+  // Only the three newest are open; the oldest is a title bar.
+  await expect(oldest.getByRole('button', { name: 'Open Dock chat 1' })).toHaveAttribute('aria-expanded', 'false');
+  await oldest.getByRole('button', { name: 'Open Dock chat 1' }).click();
+  await expect(oldest.getByRole('button', { name: 'Collapse Dock chat 1' })).toHaveAttribute('aria-expanded', 'true');
+  await expect(oldest.getByLabel('Task conversation')).toBeVisible();
+});
+
+test('does not open another Chat when the URL names an unlisted empty Chat', async ({ page }) => {
+  await login(page.request);
+  const { wiki, chat, connection } = await seedWiki(page.request, `Unlisted chat ${Date.now()}`);
+  const reserved = (await (await page.request.post(`/api/v1/wikis/${wiki.id}/chats`, { headers: H, data: {} })).json()).chat;
+  expect(reserved.id).not.toBe(chat.id);
+
+  // A New Chat is not listed until its first Comment: its URL must still show that empty Chat, not the latest one.
+  await page.goto(`/wikis/${wiki.id}/chats/${reserved.id}`);
+  await expect(page.getByLabel('Task conversation')).toBeVisible();
+  await expect(page.getByLabel('Task conversation')).not.toContainText('Wiki note to keep');
+  await expect(page.getByRole('textbox', { name: 'Comment', exact: true })).toBeVisible();
+
+  expect((await page.request.delete(`/api/v1/wikis/${wiki.id}`, { headers: H })).status()).toBe(204);
+  expect((await page.request.delete(`/api/v1/git/connections/${connection.id}`, { headers: H })).status()).toBe(204);
+});
+
+test('offers no Minimize for a Task of a Wiki Project', async ({ page }) => {
+  await login(page.request);
+  const { wiki, chat, connection } = await seedWiki(page.request, `Wiki task ${Date.now()}`);
+  const task = (await (await page.request.get(`/api/v1/tasks/${chat.id}`)).json()).task;
+  await page.goto(`/t/${task.key}`);
+  await expect(page.getByLabel('Task conversation')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Minimize chat' })).toHaveCount(0);
+
+  expect((await page.request.delete(`/api/v1/wikis/${wiki.id}`, { headers: H })).status()).toBe(204);
+  expect((await page.request.delete(`/api/v1/git/connections/${connection.id}`, { headers: H })).status()).toBe(204);
+});
+
+async function otherUser(browser: Browser, admin: APIRequestContext): Promise<BrowserContext> {
+  const context = await browser.newContext({ baseURL: 'http://localhost:5174' });
+  const email = `dock-${crypto.randomUUID()}@example.com`;
+  const created = await admin.post('/api/v1/users', { headers: H, data: { email, displayName: 'Bea Dock', role: 'member' } });
+  expect(created.status()).toBe(201);
+  const { temporaryPassword } = await created.json();
+  await login(context.request, email, temporaryPassword);
+  const changed = await context.request.post('/api/v1/auth/password', {
+    headers: H,
+    data: { currentPassword: temporaryPassword, newPassword: 'dock-test-password' },
+  });
+  expect(changed.status()).toBe(200);
+  return context;
+}
+
+test('clears a docked Wiki Chat unread dot when it is read', async ({ page, browser }) => {
+  await login(page.request);
+  const { wiki, chat, connection } = await seedWiki(page.request, `Unread chat ${Date.now()}`);
+  await page.goto(`/wikis/${wiki.id}/chats/${chat.id}`);
+  await page.getByRole('button', { name: 'Minimize chat' }).click();
+  const dock = page.getByRole('region', { name: 'Minimized chats' });
+  const panel = dock.getByRole('article', { name: 'Minimized chat: Wiki note to keep' });
+  await panel.getByRole('button', { name: 'Collapse Wiki note to keep' }).click();
+
+  // Someone else writes in the Chat while it waits collapsed in the Dock.
+  const other = await otherUser(browser, page.request);
+  try {
+    await other.request.post(`/api/v1/tasks/${chat.id}/comments`, { headers: H, data: { body: 'A new note for you' } });
+    await expect(panel.getByRole('img', { name: 'Unread' })).toBeVisible();
+
+    // Reading it in the panel clears the dot everywhere, not only on the Wiki page.
+    await panel.getByRole('button', { name: 'Open Wiki note to keep' }).click();
+    await expect(panel.getByRole('img', { name: 'Unread' })).toHaveCount(0);
+  } finally {
+    await other.close();
+    expect((await page.request.delete(`/api/v1/wikis/${wiki.id}`, { headers: H })).status()).toBe(204);
+    expect((await page.request.delete(`/api/v1/git/connections/${connection.id}`, { headers: H })).status()).toBe(204);
+  }
+});
+
+test('drops corrupt and duplicate entries from stored Dock state', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request, 'Dock state');
+  const task = await createTask(page.request, project, 'Stored chat');
+  await page.addInitScript((id) => {
+    localStorage.setItem(
+      'claude-task-chat-dock',
+      JSON.stringify({ entries: [{ taskId: '' }, { taskId: id }, { taskId: id }], collapsed: [] }),
+    );
+  }, task.id);
+  await page.goto('/');
+  // The empty id never resolves and would load forever; the duplicate would mount two panels for one conversation.
+  const panel = page.getByRole('article', { name: 'Minimized chat: Stored chat' });
+  await expect(panel).toHaveCount(1);
+  await expect(page.getByRole('region', { name: 'Minimized chats' }).getByRole('article')).toHaveCount(1);
 });

@@ -88,3 +88,33 @@ test('keeps a failed Background Command in the bar until the reader dismisses it
   await expect(trace).toContainText('failed');
   await expect(trace).toContainText('lockfile is missing');
 });
+
+/** The bar keeps running Runs before failures waiting to be read, whatever order events arrived in. */
+test('lists a running Run before an older failed one and opens it without a dialog warning', async ({ page }) => {
+  await login(page.request);
+  const agent = await seedAgent(page.request, 'Order agent');
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Ordered runs');
+  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id);
+  const s = new Stream(sessionId);
+  await replay(page.request, agent.id, jobId, [
+    s.init(),
+    s.toolUse('run_old', 'Agent', { description: 'First run', subagent_type: 'Explore', prompt: 'One' }),
+    s.toolUse('run_new', 'Agent', { description: 'Second run', subagent_type: 'Explore', prompt: 'Two' }),
+  ]);
+
+  const errors: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text());
+  });
+  await page.goto(`/t/${task.key}`);
+  const bar = page.getByLabel('Active runs');
+  await expect(bar.getByRole('button')).toHaveCount(2);
+
+  // While the page is open the older Run fails: the newer running one must move to the front.
+  await replay(page.request, agent.id, jobId, [s.toolResult('run_old', 'boom', { isError: true })]);
+  await expect(bar.getByRole('button').first()).toContainText('Second run');
+  await bar.getByRole('button').first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  expect(errors.filter((text) => text.includes('Description'))).toEqual([]);
+});

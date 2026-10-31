@@ -216,6 +216,28 @@ describe('Schedules', () => {
     expect((await admin.patch(`/tasks/${task.id}`, { version: task.version, title: 'Mine' })).status).toBe(403);
     expect((await admin.delete(`/tasks/${task.id}`)).status).toBe(403);
     expect((await admin.post(`/tasks/${task.id}/move`, { statusId: task.statusId })).status).toBe(403);
+    const form = new FormData();
+    form.append('files', new Blob(['x'], { type: 'text/plain' }), 'x.txt');
+    expect((await admin.request('POST', `/tasks/${task.id}/attachments`, { form })).status).toBe(403);
+  });
+
+  it('keeps the latest run of a low-frequency Schedule when other Schedules have thousands', async () => {
+    const { admin, agent, schedule } = await setup(app);
+    const weekly = (await admin.post('/schedules', { name: 'Weekly', agentId: agent.id, cron: '0 3 * * 1', prompt: 'Go.' })).body
+      .schedule as Schedule;
+    // The weekly Schedule's last run is older than 1001 runs of the first one.
+    await app.server.ctx.db.execute(
+      sql`insert into schedule_runs (schedule_id, due_at, state, manual, skip_reason, created_at)
+          values (${weekly.id}, now() - interval '10 days', 'skipped', false, 'missed', now() - interval '10 days')`,
+    );
+    await app.server.ctx.db.execute(
+      sql`insert into schedule_runs (schedule_id, due_at, state, manual, skip_reason, created_at)
+          select ${schedule.id}, now(), 'skipped', false, 'missed', now() from generate_series(1, 1001)`,
+    );
+
+    const schedules = (await admin.get('/schedules')).body.schedules as Schedule[];
+    expect(schedules.find((s) => s.id === weekly.id)!.lastRun).toMatchObject({ state: 'skipped', skipReason: 'missed' });
+    expect((await admin.get(`/schedules/${weekly.id}`)).body.schedule.lastRun).toMatchObject({ state: 'skipped' });
   });
 });
 
@@ -330,6 +352,20 @@ describe('Scheduled runs and the Task Tools', () => {
     const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
     expect(next.jobId).not.toBe(start.jobId);
     expect(JSON.stringify(next.initialMessage)).toContain('Implement refunds.');
+  });
+
+  it('does not let a global Agent reach an archived Project', async () => {
+    const admin = await app.admin();
+    const archived = await createProject(admin, { name: 'Old work', key: 'OLD' });
+    const old = await createTask(admin, archived.project.id, { title: 'Old task' });
+    expect((await admin.post(`/projects/${archived.project.id}/archive`)).status).toBe(200);
+    const { client } = await started();
+
+    expect((await call(client, 'list_projects')).json.projects.map((p: { key: string }) => p.key)).not.toContain('OLD');
+    expect((await call(client, 'list_tasks', { project: 'OLD' })).isError).toBe(true);
+    expect((await call(client, 'get_task', { key: old.key })).isError).toBe(true);
+    expect((await call(client, 'update_task_by_key', { key: old.key, title: 'Mine' })).isError).toBe(true);
+    expect((await call(client, 'create_task_in_project', { project: 'OLD', title: 'New' })).isError).toBe(true);
   });
 
   it('refuses a global Agent a Task that another Agent works on, and Tasks of Wikis and Schedules', async () => {

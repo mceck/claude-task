@@ -22,6 +22,7 @@ import { useTopic } from '../lib/realtime';
 import { applyEvent } from '../lib/cache';
 import { minimizeInDock, removeFromDock, useDockAvailable } from '../lib/dock';
 import { applyLiveEvent } from '../lib/live';
+import { applyRunEvent } from '../lib/runs';
 
 export function WikisPage() {
   const query = useWikis();
@@ -106,12 +107,31 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
   const reserving = useRef(false);
   const dockable = useDockAvailable();
   const list = chats.data;
-  const chat =
-    (chatId && (list?.find((c) => c.id === chatId) ?? (reserved?.id === chatId ? reserved : undefined))) || list?.[0] || reserved || undefined;
+  const urlTask = useTask(chatId);
+  const listed = chatId ? (list?.find((c) => c.id === chatId) ?? (reserved?.id === chatId ? reserved : undefined)) : undefined;
+  // An empty Chat is not listed until its first Comment: accept its Task when the URL names it.
+  const unlisted: WikiChat | undefined =
+    chatId && !listed && urlTask.data?.projectId === wiki.id
+      ? {
+          id: urlTask.data.id,
+          wikiId: wiki.id,
+          title: 'Chat',
+          agentId: urlTask.data.agentId,
+          sessionState: urlTask.data.session?.state ?? null,
+          running: urlTask.data.session?.state === 'running',
+          unread: false,
+          createdAt: urlTask.data.createdAt,
+          lastActivityAt: urlTask.data.updatedAt,
+        }
+      : undefined;
+  // A Chat id in the address is never replaced by another Chat: only the Wiki root picks the latest.
+  const chat = chatId ? (listed ?? unlisted) : (list?.[0] ?? reserved ?? undefined);
   const task = useTask(chat?.id);
   const session = useTaskSession(chat?.id);
   const users = useUsers();
   useTopic(chat ? taskTopic(chat.id) : null);
+  // The branch and pull request live on the backing Task, even when another Chat created them.
+  useTopic(wikiTask.data ? taskTopic(wikiTask.data.id) : null);
   useTopic(AGENTS_TOPIC);
   // The open Chat is not also in the Dock: opening it from there (or from anywhere) moves it back to the page.
   useEffect(() => {
@@ -160,6 +180,7 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
       const event = { type: 'timeline.reset', taskId: target.id } as const;
       applyEvent(qc, event);
       applyLiveEvent(event);
+      applyRunEvent(event);
       if (reserved?.id === target.id) setReserved(null);
       if (chat?.id === target.id) {
         if (remaining[0]) openChat(remaining[0].id);

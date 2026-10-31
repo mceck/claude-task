@@ -57,6 +57,13 @@ export function ProjectsPage() {
             <Skeleton key={i} className="h-36 rounded-xl" />
           ))}
         </div>
+      ) : projects.error && !projects.data ? (
+        <div className="space-y-3">
+          <ErrorText>{errorMessage(projects.error)}</ErrorText>
+          <Button variant="outline" onClick={() => void projects.refetch()}>
+            Retry
+          </Button>
+        </div>
       ) : projects.data?.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center">
           {archived ? <Archive className="size-8 text-muted-foreground" /> : <FolderKanban className="size-8 text-muted-foreground" />}

@@ -65,12 +65,25 @@ export class RunRegistry {
     if (!record) return null;
     const message = record.messages.find((m) => m.type === 'tool' && m.toolUseId === toolUseId);
     if (!message || message.type !== 'tool') return null;
-    record.bytes -= size(message);
-    message.status = status;
-    message.outcome = outcome;
-    message.output = output === null ? null : cut(output, RUN_CONTENT_LIMIT);
-    record.bytes += size(message);
+    const previous = size(message);
+    const settled = {
+      ...message,
+      status,
+      outcome,
+      output: output === null ? null : cut(output, RUN_CONTENT_LIMIT),
+    };
+    // An output can be much larger than the call that opened it: it must respect the same 2 MB bound.
+    const fits = record.bytes - previous + size(settled) <= RUN_BYTES_LIMIT;
+    if (!fits) record.truncated = true;
+    Object.assign(message, fits ? settled : { ...settled, output: null });
+    record.bytes += size(message) - previous;
     return message;
+  }
+
+  /** The Run as the bar keeps it, with the tool calls counted so far. */
+  summary(runId: string): RunSummary | null {
+    const record = this.runs.get(runId);
+    return record ? { ...record.run, id: record.id } : null;
   }
 
   /** Marks the Run finished; returns it as the clients keep it. */

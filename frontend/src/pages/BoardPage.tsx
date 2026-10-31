@@ -33,10 +33,10 @@ import { Label as FieldLabel } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { errorMessage, post } from '../api/client';
+import { ApiError, errorMessage, post } from '../api/client';
 import { keys, useAgents, useBoardTasks, useProject, useTaskPreferences, useUsers } from '../api/queries';
 import { AgentAvatar } from '../components/agents';
-import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, useConfirm, UserAvatar } from '../components/common';
+import { TagChip, ErrorText, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, useConfirm, UserAvatar } from '../components/common';
 import { MultiPick } from '../components/MultiPick';
 import { TaskDetail } from '../components/TaskDetail';
 import { compareCards, toCard, upsertCard } from '../lib/cache';
@@ -75,7 +75,11 @@ export function BoardPage() {
     );
 
   if (bundle.isPending) return <Loading className="h-full" />;
-  if (!bundle.data) return <NotFoundPage what="Project" />;
+  if (!bundle.data) {
+    // Only a missing Project is a 404; a server or network failure is reported as such.
+    const missing = bundle.error instanceof ApiError && bundle.error.status === 404;
+    return missing ? <NotFoundPage what="Project" /> : <ErrorText>{errorMessage(bundle.error)}</ErrorText>;
+  }
   const { statuses, tags } = bundle.data;
   const columns = statuses
     .filter((s) => showClosed || s.category !== 'closed')
@@ -109,6 +113,8 @@ export function BoardPage() {
         </div>
         {tasks.isPending ? (
           <Loading />
+        ) : tasks.isLoadingError ? (
+          <ErrorText>{errorMessage(tasks.error)}</ErrorText>
         ) : (
           <Board
             projectId={project!.id}
@@ -330,16 +336,24 @@ function Column({ projectId, status, count, children }: { projectId: string; sta
 function QuickAdd({ projectId, statusId }: { projectId: string; statusId: string }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
+  const [busy, setBusy] = useState(false);
   const qc = useQueryClient();
 
   const submit = async () => {
-    if (!title.trim()) return;
+    const value = title.trim();
+    // A held Enter or a slow request must not create the same Task twice.
+    if (!value || busy) return;
+    setBusy(true);
+    // The field is ready for the next Task at once; the value comes back if creating it fails.
+    setTitle('');
     try {
-      const { task } = await post<{ task: Task }>(`/projects/${projectId}/tasks`, { title: title.trim(), statusId });
+      const { task } = await post<{ task: Task }>(`/projects/${projectId}/tasks`, { title: value, statusId });
       upsertCard(qc, toCard(task));
-      setTitle('');
     } catch (err) {
+      setTitle((current) => current || value);
       toast.error('Couldn’t create the task', { description: errorMessage(err) });
+    } finally {
+      setBusy(false);
     }
   };
 

@@ -2,7 +2,7 @@ import { closestCenter, DndContext, DragOverlay, KeyboardSensor, PointerSensor, 
 import type { DragEndEvent, DragStartEvent, Modifier } from '@dnd-kit/core';
 import { horizontalListSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AGENTS_TOPIC, taskTopic } from '@claude-task/shared';
+import { AGENTS_TOPIC, projectTopic, taskTopic } from '@claude-task/shared';
 import { ArrowUpRight, BookOpen, Bot, ChevronDown, ChevronUp, GripVertical, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -150,6 +150,8 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
   const info = useDockEntryData(entry);
   const { task, session, users, title, readOnly, href } = info;
   useTopic(taskTopic(entry.taskId));
+  // Comments also reach the Project topic, which is what keeps this panel's unread dot current off the Board.
+  useTopic(!entry.wikiId && task.data ? projectTopic(task.data.projectId) : null);
   useTopic(AGENTS_TOPIC);
   useTopic(entry.wikiId ? 'wikis' : null);
 

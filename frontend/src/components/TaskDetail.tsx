@@ -1,6 +1,6 @@
 import { VoiceRoomPanel } from './VoiceRoom';
 import { BranchLink, PullRequestBadge, capitalize, withProvider } from './Git';
-import { AGENTS_TOPIC, PRIORITIES, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
+import { AGENTS_TOPIC, PRIORITIES, projectTopic, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { CircleCheck, Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelBottomClose, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
@@ -54,6 +54,8 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   // Values of saves still queued or in flight, shown over the Task meanwhile.
   const [pending, setPending] = useState<Fields>({});
   useTopic(task ? taskTopic(task.id) : null);
+  // Statuses and Tags come from the Project bundle, which only the Board used to keep current.
+  useTopic(task ? projectTopic(task.projectId) : null);
   useTopic(AGENTS_TOPIC);
   // Shown on a page or in the Board dialog, the conversation is no longer minimized: it can't be in both places.
   useEffect(() => {
@@ -226,8 +228,12 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   };
 
   const copyLink = async () => {
-    await navigator.clipboard.writeText(`${location.origin}/t/${task.key}`);
-    toast.success('Link copied');
+    try {
+      await navigator.clipboard.writeText(`${location.origin}/t/${task.key}`);
+      toast.success('Link copied');
+    } catch (err) {
+      toast.error('Couldn’t copy the link', { description: errorMessage(err) });
+    }
   };
 
   // Minimizing hands the conversation to the Dock and leaves the Task: the Board dialog closes, the Task page
@@ -363,7 +369,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {dockable && (
+          {dockable && (onClose !== undefined || bundle.data !== undefined) && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon-sm" aria-label="Minimize chat" onClick={minimize}>

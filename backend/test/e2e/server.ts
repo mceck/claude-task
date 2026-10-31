@@ -84,6 +84,11 @@ server.app.post<{ Body: { taskId: string } }>(`${API_PREFIX}/__test/git/pull-req
     { title: 'Fix', body: 'Test body', draft: true },
   );
 });
+server.app.post<{ Body: { provider: 'github' | 'gitlab'; repoId: string; branch: string } }>(`${API_PREFIX}/__test/git/branches`, async (request) => {
+  const provider = request.body.provider === 'gitlab' ? gitlab : git;
+  provider.branches.get(request.body.repoId)?.add(request.body.branch);
+  return { ok: true };
+});
 server.app.post<{ Body: { taskId: string } }>(`${API_PREFIX}/__test/git/merge`, async (request) => {
   git.pullRequests.get('1')![0]!.state = 'merged';
   await server.ctx.gitSync.refreshTask(request.body.taskId, 0);
