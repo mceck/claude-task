@@ -5,6 +5,7 @@ import type { Executor } from '../../db/client';
 import { projects, statuses } from '../../db/schema';
 import { forbidden, notFound } from '../../errors';
 import { UUID } from '../../ids';
+import { latestUnreadPosition } from '../../notifications/preferences';
 
 export type ProjectRow = typeof projects.$inferSelect;
 
@@ -88,7 +89,7 @@ export async function listProjects(db: Executor, userId: string, archived: boole
       (coalesce(a.latest, 0) > coalesce(p.read_position, 0) and not coalesce(p.muted, false) and s.category <> 'closed') as unread
     from tasks t join statuses s on s.id = t.status_id
     left join task_preferences p on p.task_id = t.id and p.user_id = ${userId}::uuid
-    left join lateral (select max(position) as latest from task_activity where task_id = t.id) a on true`);
+    left join lateral (select ${latestUnreadPosition(userId)} as latest) a on true`);
   const activityByProject = new Map<string, ProjectActivity>();
   for (const r of activity.rows) {
     let entry = activityByProject.get(r.project_id);

@@ -5,6 +5,14 @@ import type { Executor } from '../db/client';
 import type { AfterCommit } from '../context';
 import { badRequest } from '../errors';
 
+/**
+ * The newest Timeline entry that can be unread for a User: their own Revisions never are, since
+ * moving or editing a Task from the Board happens with its conversation closed and nothing was missed.
+ */
+export const latestUnreadPosition = (userId: string) => sql`(select max(x.position) from task_activity x
+  where x.task_id = t.id and not exists (select 1 from task_revisions r
+    where r.id = x.item_id and r.actor_type = 'user' and r.actor_id = ${userId}::uuid))`;
+
 export async function preferences(db: Executor, userId: string, filter: { taskId?: string; projectId?: string }): Promise<TaskPreference[]> {
   const result = await db.execute<{
     taskId: string; following: boolean; muted: boolean; readPosition: string; latestPosition: string; unread: boolean;
@@ -20,7 +28,7 @@ export async function preferences(db: Executor, userId: string, filter: { taskId
           and u.position > coalesce(p.read_position, 0) and c.deleted_at is null) end) as "unreadComments"
     from tasks t join statuses s on s.id = t.status_id
     left join task_preferences p on p.task_id = t.id and p.user_id = ${userId}::uuid
-    left join lateral (select max(position) as latest from task_activity where task_id = t.id) a on true
+    left join lateral (select ${latestUnreadPosition(userId)} as latest) a on true
     where ${filter.taskId ? sql`t.id = ${filter.taskId}::uuid` : sql`t.project_id = ${filter.projectId}::uuid`}`);
   return result.rows;
 }

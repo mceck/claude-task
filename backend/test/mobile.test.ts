@@ -114,6 +114,25 @@ describe('Task preferences and read positions', () => {
     // Reading on another User's Login leaves this User's count unchanged.
     expect((await admin.get(`/tasks/${task.id}/preferences`)).body.preference.unreadComments).toBe(3);
   });
+  it('never makes a Task unread for the User whose own Revision is its newest entry', async () => {
+    const { admin, project, task, member } = await setup();
+    const bundle = (await admin.get(`/projects/${project.id}`)).body;
+    const projectUnread = async (client: typeof admin) =>
+      (await client.get('/projects')).body.projects.find((p: { id: string }) => p.id === project.id).activity.unreadTasks;
+    const last = await comment(admin, task.id, 'Hello');
+    await admin.put(`/tasks/${task.id}/read-position`, { itemId: last.id });
+
+    // Moving the Task from the Board leaves the mover with nothing to read, and the others with an unread Task.
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Done').id);
+    expect((await admin.get(`/tasks/${task.id}/preferences`)).body.preference).toMatchObject({ unread: false, unreadComments: 0 });
+    expect(await projectUnread(admin)).toBe(0);
+    expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.unread).toBe(true);
+    expect(await projectUnread(member.client)).toBe(1);
+
+    // A Comment from someone else still makes it unread.
+    await comment(member.client, task.id, 'Thanks');
+    expect(await projectUnread(admin)).toBe(1);
+  });
   it('reports a closed Task as read and stops counting its unread Comments', async () => {
     const { admin, project, task, member } = await setup();
     const pref = async () => (await member.client.get(`/tasks/${task.id}/preferences`)).body.preference;
