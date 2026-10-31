@@ -297,13 +297,16 @@ export async function deliverComment(
     return 'delivered';
   }
 
-  // A new Comment is also how a held entry (after a failed Job) gets going again.
+  // A new Comment is also how a held entry (after a failed Job) gets going again. When the
+  // Agent is working on this very Task, the entry goes to the front: the Task has priority
+  // over the other Tasks waiting in the Queue, so it continues as soon as this Job ends.
   const entry = await enqueue(tx, after, {
     agentId: task.agentId,
     taskId: task.id,
     sessionId: session.id,
     kind: session.started ? 'messages' : 'start',
     held: false,
+    front: job !== null,
   });
   await attachComments(tx, after, entry.id, [comment.id]);
   after.effect((ctx) => ctx.scheduler.kick(task.agentId!));
@@ -333,11 +336,14 @@ async function requeueUnsentComment(ctx: AppContext, commentId: string, jobId: s
     if (!task.agentId || !task.currentSessionId) return failed('no agent assigned');
     if (!session || session.state === 'paused') return failed('no agent assigned');
     if (session.state === 'closed') return failed('task closed');
+    const job = await activeJob(tx, session.id);
     const entry = await enqueue(tx, after, {
       agentId: task.agentId,
       taskId: task.id,
       sessionId: session.id,
       kind: session.started ? 'messages' : 'start',
+      // The Comment was meant for the Task the Agent is working on: keep it ahead of other Tasks.
+      front: job !== null,
     });
     await attachComments(tx, after, entry.id, [commentId]);
     after.effect((c) => c.scheduler.kick(task.agentId!));
