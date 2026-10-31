@@ -11,6 +11,8 @@ import { purgeExpiredLogins } from './auth/logins';
 import { LoginRevocations } from './auth/revocations';
 import { FsBlobStore } from './blobstore';
 import type { BlobStore } from './blobstore';
+import { S3BlobStore } from './blobstore/s3';
+import { S3Client } from '@aws-sdk/client-s3';
 import { DockerRuntime } from './agents/docker-runtime';
 import { FakeRuntime } from './agents/fake-runtime';
 import type { AgentRuntime } from './agents/runtime';
@@ -34,6 +36,17 @@ export interface Server {
   close(): Promise<void>;
 }
 
+/** The disk store (`STORAGE_TYPE=disk`, the default) or an S3-compatible bucket. */
+function createBlobStore(config: Config): BlobStore {
+  if (config.storage.type !== 's3') return new FsBlobStore(path.join(config.dataDir, 'blobs'));
+  const { bucket, region, endpoint, forcePathStyle, prefix, credentials } = config.storage;
+  return new S3BlobStore({
+    bucket,
+    prefix,
+    client: new S3Client({ region, endpoint, forcePathStyle, credentials }),
+  });
+}
+
 /** Migrates the database, bootstraps the first admin and builds the app (not listening yet). */
 export async function createServer(
   config: Config,
@@ -49,7 +62,7 @@ export async function createServer(
       push: overrides.push ?? new FirebasePushTransport(config.push?.serviceAccountFile),
       git: new GitConnections(db, config, overrides.git ?? cachedProviderFactory()),
       hub: new RealtimeHub(),
-      blobs: overrides.blobs ?? new FsBlobStore(path.join(config.dataDir, 'blobs')),
+      blobs: overrides.blobs ?? createBlobStore(config),
       runtime:
         overrides.runtime ??
         (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents)),

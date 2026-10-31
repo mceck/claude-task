@@ -22,7 +22,8 @@ export interface BlobStore {
   delete(id: string): Promise<void>;
 }
 
-const ID_PATTERN = /^[0-9a-f-]{36}$/;
+/** Blob ids are UUIDs; anything else is treated as missing instead of reaching storage. */
+export const BLOB_ID_PATTERN = /^[0-9a-f-]{36}$/;
 
 /** Stores each blob as a file plus a JSON sidecar under `dir`. */
 export class FsBlobStore implements BlobStore {
@@ -46,7 +47,7 @@ export class FsBlobStore implements BlobStore {
   }
 
   async get(id: string): Promise<StoredBlob | null> {
-    if (!ID_PATTERN.test(id)) return null;
+    if (!BLOB_ID_PATTERN.test(id)) return null;
     let metadata: StoredBlob['metadata'];
     try {
       // A metadata sidecar without its data file (an interrupted delete) is not a blob.
@@ -59,7 +60,7 @@ export class FsBlobStore implements BlobStore {
   }
 
   async delete(id: string): Promise<void> {
-    if (!ID_PATTERN.test(id)) return;
+    if (!BLOB_ID_PATTERN.test(id)) return;
     await rm(this.file(id), { force: true });
     await rm(this.meta(id), { force: true });
   }
