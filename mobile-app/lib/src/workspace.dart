@@ -1433,7 +1433,8 @@ class _TaskListState extends State<TaskList> {
   }
 
   /// A swipe to the right closes the Task: the row follows the finger over a
-  /// green background and, once confirmed, leaves with its Status change.
+  /// neutral background with a green "Close" label and, once confirmed, leaves
+  /// with its Status change.
   Widget _swipeToClose(Task task, Widget row, bool closeable) {
     if (!closeable || !_isTouch) return row;
     return Dismissible(
@@ -1445,18 +1446,18 @@ class _TaskListState extends State<TaskList> {
         padding: const EdgeInsets.only(left: 18),
         alignment: Alignment.centerLeft,
         decoration: BoxDecoration(
-          color: Palette.success.withValues(alpha: .85),
+          color: Palette.muted,
           borderRadius: BorderRadius.circular(Radii.sm),
         ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.task_alt_rounded, color: Colors.white),
+            Icon(Icons.task_alt_rounded, color: Palette.success),
             SizedBox(width: 8),
             Text(
               'Close',
               style: TextStyle(
-                color: Colors.white,
+                color: Palette.success,
                 fontWeight: FontWeight.w600,
               ),
             ),
