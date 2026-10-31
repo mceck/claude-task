@@ -140,6 +140,8 @@ The Agents list shows every Agent with its avatar, state, current Task, Queue le
 - **Configuration** (Admins): the Agent form, with a Dockerfile editor that highlights instructions and checks the Base Image rule before saving.
 - **Actions** (Admins): Rebuild image, Restart, Recreate when idle, Force recreate, Duplicate, Delete. Restart and Force recreate ask for confirmation, since they interrupt the running Job.
 
+The native app has no Agent page. Its Agent settings sheet shows the same container state and recreation-pending notice, and offers Rebuild image, Restart, Recreate when idle and Force recreate among its Admin actions, with the same confirmations. Build history, Usage and container logs remain in the web app.
+
 Changes to an Agent, its Builds, its Queue and its Jobs reach open clients in real time, on the Agents topic (list) and on the Agent's own topic (details, Build log chunks).
 
 ### Credentials

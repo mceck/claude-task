@@ -79,6 +79,10 @@ class InfrastructureApi extends FakeApi {
     'name': 'Ada Bot',
     'enabled': true,
     'avatarEmoji': '🤖',
+    'state': 'idle',
+    'containerState': 'running',
+    'runnerConnected': true,
+    'recreatePending': false,
     'skillIds': ['skill-1'],
     'mcpServerIds': ['mcp-1'],
     'pluginIds': <String>[],
@@ -505,6 +509,52 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Marketplace unavailable'), findsNothing);
       expect(find.textContaining('Extension changes apply'), findsNothing);
+    },
+  );
+
+  testWidgets('Admins rebuild and recreate an Agent container', (tester) async {
+    final api = InfrastructureApi();
+    await openSettings(tester, api, showAgentsSettings);
+    await tap(tester, find.text('Ada Bot'));
+    expect(find.text('running · Runner connected'), findsOneWidget);
+
+    api.agent = {...api.agent, 'recreatePending': true};
+    await tap(tester, find.text('Rebuild image'));
+    expect(api.writes.last.$1, 'POST');
+    expect(api.writes.last.$2, '/agents/agent-1/rebuild');
+    expect(
+      find.text(
+        'Container recreation is waiting for the current Job to finish.',
+      ),
+      findsOneWidget,
+    );
+
+    await tap(tester, find.text('Recreate when idle'));
+    expect(api.writes.last.$2, '/agents/agent-1/recreate');
+    expect(api.writes.last.$3, isNull);
+  });
+
+  testWidgets(
+    'Restart and Force recreate confirm before interrupting the Job',
+    (tester) async {
+      final api = InfrastructureApi();
+      await openSettings(tester, api, showAgentsSettings);
+      await tap(tester, find.text('Ada Bot'));
+
+      await tap(tester, find.text('Restart'));
+      expect(find.text('Restart this container?'), findsOneWidget);
+      await tap(tester, find.text('Cancel'));
+      expect(api.writes, isEmpty);
+
+      await tap(tester, find.text('Restart'));
+      await tap(tester, find.text('Restart').last);
+      expect(api.writes.last.$2, '/agents/agent-1/restart');
+
+      await tap(tester, find.text('Force recreate'));
+      expect(find.text('Force recreate this container?'), findsOneWidget);
+      await tap(tester, find.text('Force recreate').last);
+      expect(api.writes.last.$2, '/agents/agent-1/recreate');
+      expect(api.writes.last.$3, {'force': true});
     },
   );
 

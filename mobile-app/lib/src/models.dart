@@ -89,6 +89,13 @@ class Agent implements Identified {
   final String? avatarImageUrl;
   final bool enabled;
   final String state;
+
+  /// Last observed container state (`running`, `exited`, `missing`, …).
+  final String containerState;
+  final bool runnerConnected;
+
+  /// A newer image is built but the container still runs the old one.
+  final bool recreatePending;
   final bool extensionsPending;
   final String? extensionsError;
   final List<SkillCommand> skillCommands;
@@ -102,6 +109,9 @@ class Agent implements Identified {
       avatarImageUrl = json['avatarImageUrl'] as String?,
       enabled = json['enabled'] == true,
       state = json['state'] as String? ?? '',
+      containerState = json['containerState'] as String? ?? '',
+      runnerConnected = json['runnerConnected'] == true,
+      recreatePending = json['recreatePending'] == true,
       extensionsPending = json['extensionsPending'] == true,
       extensionsError = json['extensionsError'] as String?,
       skillCommands = objects(json['skillCommands'])

@@ -598,7 +598,8 @@ class _SettingsHub extends StatelessWidget {
             ],
           ),
         const Text(
-          'Dockerfiles, builds and Project secret variables are managed in the web app.',
+          'Dockerfiles, Build history and Development Services are managed in '
+          'the web app.',
           style: TextStyle(fontSize: 12, color: Palette.fgSubtle),
         ),
       ]),
@@ -1253,6 +1254,11 @@ class _AgentsSettings extends StatelessWidget {
                         onSubmit: (v) =>
                             change('PATCH', '/agents/${a['id']}', body(v, a)),
                         extra: (sheet) => [
+                          _AgentContainerActions(
+                            controller: c,
+                            agent: a,
+                            change: change,
+                          ),
                           AppButton(
                             label: 'Manage shared Extensions',
                             tone: Tone.secondary,
@@ -1309,6 +1315,145 @@ class _AgentsSettings extends StatelessWidget {
               ),
             ],
           ]),
+        );
+      },
+    );
+  }
+}
+
+/// Container actions of an Agent, as on the web app's Agent page. All of them
+/// need Admin access, which the Agent form already requires. The status line
+/// follows live Agent events, so a Rebuild shows up as `building` at once.
+class _AgentContainerActions extends StatefulWidget {
+  final TaskController controller;
+  final Json agent;
+  final Future<void> Function(String method, String path, [Json? body]) change;
+  const _AgentContainerActions({
+    required this.controller,
+    required this.agent,
+    required this.change,
+  });
+  @override
+  State<_AgentContainerActions> createState() => _AgentContainerActionsState();
+}
+
+class _AgentContainerActionsState extends State<_AgentContainerActions> {
+  bool busy = false;
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() => busy = true);
+    try {
+      await action();
+    } catch (e) {
+      if (mounted) toast(context, e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _restart(BuildContext context) async {
+    if (!await confirm(
+      context,
+      title: 'Restart this container?',
+      message:
+          'This interrupts the current Job. Its Session will be resumed '
+          'after reconnecting.',
+      confirmLabel: 'Restart',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await _run(
+      () => widget.change('POST', '/agents/${widget.agent['id']}/restart'),
+    );
+  }
+
+  Future<void> _forceRecreate(BuildContext context) async {
+    if (!await confirm(
+      context,
+      title: 'Force recreate this container?',
+      message:
+          'This interrupts the current Job. Its Session will be resumed '
+          'after reconnecting.',
+      confirmLabel: 'Force recreate',
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
+    await _run(
+      () => widget.change('POST', '/agents/${widget.agent['id']}/recreate', {
+        'force': true,
+      }),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final id = widget.agent['id'] as String;
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final live = widget.controller.agents.byId(id);
+        final state = live?.state ?? (widget.agent['state'] as String? ?? '');
+        final containerState =
+            live?.containerState ??
+            (widget.agent['containerState'] as String? ?? '');
+        final runnerConnected =
+            live?.runnerConnected ?? widget.agent['runnerConnected'] == true;
+        final recreatePending =
+            live?.recreatePending ?? widget.agent['recreatePending'] == true;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SectionLabel('Container'),
+            Text(
+              '${containerState.isEmpty ? 'unknown' : containerState} · '
+              'Runner ${runnerConnected ? 'connected' : 'disconnected'}',
+              style: const TextStyle(fontSize: 13, color: Palette.fgMuted),
+            ),
+            if (recreatePending) ...[
+              const SizedBox(height: 10),
+              const Notice(
+                message:
+                    'Container recreation is waiting for the current Job to finish.',
+              ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                AppButton(
+                  label: 'Rebuild image',
+                  tone: Tone.secondary,
+                  onPressed: busy || state == 'building'
+                      ? null
+                      : () => _run(
+                          () => widget.change('POST', '/agents/$id/rebuild'),
+                        ),
+                ),
+                AppButton(
+                  label: 'Restart',
+                  tone: Tone.secondary,
+                  onPressed: busy ? null : () => _restart(context),
+                ),
+                AppButton(
+                  label: 'Recreate when idle',
+                  tone: Tone.secondary,
+                  onPressed: busy
+                      ? null
+                      : () => _run(
+                          () => widget.change('POST', '/agents/$id/recreate'),
+                        ),
+                ),
+                AppButton(
+                  label: 'Force recreate',
+                  tone: Tone.secondary,
+                  onPressed: busy ? null : () => _forceRecreate(context),
+                ),
+              ],
+            ),
+          ],
         );
       },
     );
