@@ -207,6 +207,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       refreshTaskPreferences(qc, event.task.projectId);
       return upsertCard(qc, event.task);
     case 'task.deleted':
+      // A deleted Task never comes back to the Dock, not even one whose page was open when it went.
+      removeFromDock(event.taskId);
       removeTask(qc, event.taskId);
       return removeCard(qc, event.projectId, event.taskId);
     case 'statuses.changed':

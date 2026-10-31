@@ -16,6 +16,11 @@ interface DockState {
   entries: DockEntry[];
   /** The entries reduced to their title bar. */
   collapsed: string[];
+  /**
+   * The entries whose page is open right now. They keep their place and their open/collapsed state, but no panel is
+   * drawn, so a conversation is never live in two places. Not stored: it follows the page being shown.
+   */
+  suspended: string[];
 }
 
 /** The most conversations the Dock keeps, however wide the screen. */
@@ -26,7 +31,7 @@ export const MAX_OPEN_ENTRIES = 3;
 const STORAGE_KEY = 'claude-task-chat-dock';
 
 function parse(raw: string | null): DockState {
-  if (!raw) return { entries: [], collapsed: [] };
+  if (!raw) return { entries: [], collapsed: [], suspended: [] };
   try {
     const value = JSON.parse(raw) as { entries?: unknown; collapsed?: unknown };
     const valid = (Array.isArray(value.entries) ? value.entries : []).filter(
@@ -44,9 +49,9 @@ function parse(raw: string | null): DockState {
     const collapsed = (Array.isArray(value.collapsed) ? value.collapsed : []).filter(
       (id): id is string => typeof id === 'string' && ids.has(id),
     );
-    return { entries: entries.slice(-MAX_DOCK_ENTRIES), collapsed };
+    return { entries: entries.slice(-MAX_DOCK_ENTRIES), collapsed, suspended: [] };
   } catch {
-    return { entries: [], collapsed: [] };
+    return { entries: [], collapsed: [], suspended: [] };
   }
 }
 
@@ -55,7 +60,7 @@ function load(): DockState {
     return parse(localStorage.getItem(STORAGE_KEY));
   } catch {
     // Storage can be unavailable (private windows, a blocked origin): the Dock then lasts for the page.
-    return { entries: [], collapsed: [] };
+    return { entries: [], collapsed: [], suspended: [] };
   }
 }
 
@@ -72,8 +77,12 @@ function subscribe(listener: () => void): () => void {
 function commit(next: DockState, keepOpen?: string): void {
   const ids = new Set(next.entries.map((entry) => entry.taskId));
   const collapsed = next.collapsed.filter((id) => ids.has(id));
+  const suspended = next.suspended.filter((id) => ids.has(id));
   // Keep three open: a fourth panel collapses the open one furthest from the corner, but never the one just opened.
-  const open = next.entries.map((entry) => entry.taskId).filter((id) => !collapsed.includes(id));
+  // A suspended conversation has no panel on screen, so it takes no room while its page is open.
+  const open = next.entries
+    .map((entry) => entry.taskId)
+    .filter((id) => !collapsed.includes(id) && !suspended.includes(id));
   let excess = Math.max(0, open.length - MAX_OPEN_ENTRIES);
   for (const id of open) {
     if (excess <= 0) break;
@@ -81,9 +90,10 @@ function commit(next: DockState, keepOpen?: string): void {
     collapsed.push(id);
     excess--;
   }
-  state = { entries: next.entries, collapsed };
+  state = { entries: next.entries, collapsed, suspended };
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    // Which pages are open right now is not a preference: only the entries and their state are kept.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries: state.entries, collapsed: state.collapsed }));
   } catch {
     // Only a per-browser convenience: the default (nothing minimized) is fine without it.
   }
@@ -105,13 +115,19 @@ export function minimizeInDock(entry: DockEntry): void {
   commit({
     entries: entries.slice(-MAX_DOCK_ENTRIES),
     collapsed: state.collapsed.filter((id) => id !== entry.taskId),
+    // Minimizing from its own page: the panel is about to be the only copy, so it is no longer suspended.
+    suspended: state.suspended.filter((id) => id !== entry.taskId),
   });
 }
 
 /** Takes a conversation out of the Dock, e.g. because it is about to be shown on a page. */
 export function removeFromDock(taskId: string): void {
   if (!state.entries.some((entry) => entry.taskId === taskId)) return;
-  commit({ entries: state.entries.filter((entry) => entry.taskId !== taskId), collapsed: state.collapsed });
+  commit({
+    entries: state.entries.filter((entry) => entry.taskId !== taskId),
+    collapsed: state.collapsed,
+    suspended: state.suspended.filter((id) => id !== taskId),
+  });
 }
 
 /** Gives a conversation another conversation's place in the row, e.g. when the User drags it there. */
@@ -123,7 +139,7 @@ export function moveInDock(activeId: string, overId: string): void {
   const [moved] = entries.splice(from, 1);
   entries.splice(to, 0, moved!);
   // Only the position changes: a dragged panel stays as open or as collapsed as it was.
-  commit({ entries, collapsed: state.collapsed });
+  commit({ entries, collapsed: state.collapsed, suspended: state.suspended });
 }
 
 /** Shows or hides a Dock panel's conversation. */
@@ -132,13 +148,29 @@ export function toggleInDock(taskId: string): void {
   const opening = state.collapsed.includes(taskId);
   const collapsed = opening ? state.collapsed.filter((id) => id !== taskId) : [...state.collapsed, taskId];
   // The panel the user just opened stays open: the oldest other one makes room.
-  commit({ entries: state.entries, collapsed }, opening ? taskId : undefined);
+  commit({ entries: state.entries, collapsed, suspended: state.suspended }, opening ? taskId : undefined);
+}
+
+/**
+ * A conversation is now shown on its page: its Dock panel keeps its place and state but is not drawn, so the same
+ * conversation is never live twice. Opening a page by navigation does not close a minimized chat.
+ */
+export function suspendInDock(taskId: string): void {
+  if (!state.entries.some((entry) => entry.taskId === taskId)) return;
+  if (state.suspended.includes(taskId)) return;
+  commit({ ...state, suspended: [...state.suspended, taskId] });
+}
+
+/** The conversation's page was left: its Dock panel, if it is still minimized, comes back as it was. */
+export function resumeInDock(taskId: string): void {
+  if (!state.suspended.includes(taskId)) return;
+  commit({ ...state, suspended: state.suspended.filter((id) => id !== taskId) });
 }
 
 /** Another User may log in next in this browser. */
 export function clearDock(): void {
-  if (state.entries.length === 0) return;
-  commit({ entries: [], collapsed: [] });
+  if (state.entries.length === 0 && state.suspended.length === 0) return;
+  commit({ entries: [], collapsed: [], suspended: [] });
 }
 
 const DOCK_MEDIA = '(min-width: 768px)';

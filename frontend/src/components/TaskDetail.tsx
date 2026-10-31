@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
 import { ApiError, del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
 import { removeCard, removeTask, setTask, toCard, upsertCard } from '../lib/cache';
-import { minimizeInDock, removeFromDock, useDockAvailable } from '../lib/dock';
+import { minimizeInDock, resumeInDock, suspendInDock, useDockAvailable } from '../lib/dock';
 import { useTopic } from '../lib/realtime';
 import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
 import { RichMarkdownView } from './Markdown';
@@ -57,9 +57,12 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   // Statuses and Tags come from the Project bundle, which only the Board used to keep current.
   useTopic(task ? projectTopic(task.projectId) : null);
   useTopic(AGENTS_TOPIC);
-  // Shown on a page or in the Board dialog, the conversation is no longer minimized: it can't be in both places.
+  // Shown on a page or in the Board dialog, the conversation can't be live in two places: its Dock panel waits,
+  // hidden, and comes back as it was when this view is left. Only an explicit Open full page takes it out of the Dock.
   useEffect(() => {
-    if (task) removeFromDock(task.id);
+    if (!task) return;
+    suspendInDock(task.id);
+    return () => resumeInDock(task.id);
   }, [task?.id]);
 
   if (taskQuery.isPending) return <Loading className="h-full" />;
