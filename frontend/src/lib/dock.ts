@@ -12,7 +12,7 @@ export interface DockEntry {
 }
 
 interface DockState {
-  /** Oldest first: the newest sits nearest the screen corner. */
+  /** Furthest from the corner first: new entries arrive nearest it, and the User drags them into their own order. */
   entries: DockEntry[];
   /** The entries reduced to their title bar. */
   collapsed: string[];
@@ -20,7 +20,7 @@ interface DockState {
 
 /** The most conversations the Dock keeps, however wide the screen. */
 export const MAX_DOCK_ENTRIES = 6;
-/** The most panels shown open at once; older ones stay as title bars. */
+/** The most panels shown open at once; the ones furthest from the corner stay as title bars. */
 export const MAX_OPEN_ENTRIES = 3;
 
 const STORAGE_KEY = 'claude-task-chat-dock';
@@ -69,7 +69,7 @@ function subscribe(listener: () => void): () => void {
 function commit(next: DockState): void {
   const ids = new Set(next.entries.map((entry) => entry.taskId));
   const collapsed = next.collapsed.filter((id) => ids.has(id));
-  // Keep the most recent open: a fourth panel collapses the oldest open one.
+  // Keep three open: a fourth panel collapses the open one furthest from the corner.
   const open = next.entries.map((entry) => entry.taskId).filter((id) => !collapsed.includes(id));
   for (const id of open.slice(0, Math.max(0, open.length - MAX_OPEN_ENTRIES))) collapsed.push(id);
   state = { entries: next.entries, collapsed };
@@ -90,7 +90,7 @@ export function useDock(): DockState {
   );
 }
 
-/** Puts a conversation in the Dock, open, as the newest; drops the oldest beyond the Dock's capacity. */
+/** Puts a conversation in the Dock, open, nearest the corner; drops the one furthest from it beyond the Dock's capacity. */
 export function minimizeInDock(entry: DockEntry): void {
   const entries = [...state.entries.filter((other) => other.taskId !== entry.taskId), entry];
   commit({
@@ -103,6 +103,18 @@ export function minimizeInDock(entry: DockEntry): void {
 export function removeFromDock(taskId: string): void {
   if (!state.entries.some((entry) => entry.taskId === taskId)) return;
   commit({ entries: state.entries.filter((entry) => entry.taskId !== taskId), collapsed: state.collapsed });
+}
+
+/** Gives a conversation another conversation's place in the row, e.g. when the User drags it there. */
+export function moveInDock(activeId: string, overId: string): void {
+  const from = state.entries.findIndex((entry) => entry.taskId === activeId);
+  const to = state.entries.findIndex((entry) => entry.taskId === overId);
+  if (from < 0 || to < 0 || from === to) return;
+  const entries = [...state.entries];
+  const [moved] = entries.splice(from, 1);
+  entries.splice(to, 0, moved!);
+  // Only the position changes: a dragged panel stays as open or as collapsed as it was.
+  commit({ entries, collapsed: state.collapsed });
 }
 
 /** Shows or hides a Dock panel's conversation. */
