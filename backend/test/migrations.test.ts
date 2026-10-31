@@ -56,6 +56,7 @@ describe('migration upgrades', () => {
       DROP TABLE survey_responses, questions;
       ALTER TABLE comments DROP COLUMN answers_comment_id;
       ALTER TABLE tasks DROP COLUMN chat_title;
+      DROP INDEX IF EXISTS turns_task_idx;
     `);
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.when]);
     expect((await db.$client.query('SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1')).rows[0].hash)
@@ -100,6 +101,7 @@ describe('migration upgrades', () => {
       await db.$client.query('DROP TABLE survey_responses, questions');
       await db.$client.query('ALTER TABLE comments DROP COLUMN answers_comment_id');
       await db.$client.query('ALTER TABLE tasks DROP COLUMN chat_title');
+      await db.$client.query('DROP INDEX IF EXISTS turns_task_idx');
       await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.created_at]);
       await db.$client.query('UPDATE drizzle.__drizzle_migrations SET hash = $1, created_at = $2 WHERE id = $3', [hash, when, original.id]);
       const before = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows;
