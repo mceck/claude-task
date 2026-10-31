@@ -76,6 +76,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       host: '127.0.0.1',
       port: 0,
       dataDir: blobDir,
+      storage: { type: 'disk' },
       staticDir: null,
       cookieSecure: false,
       trustProxy: false,

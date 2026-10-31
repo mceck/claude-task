@@ -34,7 +34,14 @@ These are backend environment settings. The supplied Compose file exposes a subs
 | `APP_URL` | Public installation URL used for links; defaults to localhost and the configured port. |
 | `COOKIE_SECURE` | Requires HTTPS for browser login cookies; backend default `true`, local Compose default `false`. |
 | `TRUST_PROXY` | Trust proxy forwarding headers; default `false`. Set according to your reverse proxy deployment. |
-| `DATA_DIR` | Attachment and avatar storage; backend default `./.data`, production image `/data`. |
+| `DATA_DIR` | Attachment and avatar storage with `STORAGE_TYPE=disk`; backend default `./.data`, production image `/data`. |
+| `STORAGE_TYPE` | Where attachment and avatar bytes live: `disk` (default) or `s3`. |
+| `S3_BUCKET` | Bucket for `STORAGE_TYPE=s3`; it must already exist. |
+| `S3_REGION` | Bucket region; default `us-east-1`. |
+| `S3_ENDPOINT` | S3 API endpoint for RustFS, MinIO or another S3-compatible service; leave unset for AWS S3. |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Static S3 credentials, set both or neither; otherwise the AWS credential chain is used. |
+| `S3_FORCE_PATH_STYLE` | Path-style bucket addressing; defaults to `true` when `S3_ENDPOINT` is set and `false` for AWS S3. |
+| `S3_PREFIX` | Optional key prefix, e.g. `claude-task/`, to share one bucket between installations. |
 | `STATIC_DIR` | Built web app directory; production image `/app/public`. |
 | `LOG_LEVEL` | Backend log detail; default `info`. |
 | `DOCKER_SOCKET` | Docker socket; default `/var/run/docker.sock`. |
@@ -51,6 +58,26 @@ These are backend environment settings. The supplied Compose file exposes a subs
 | `AGENT_RUNTIME` | Default `docker`. `fake` simulates containers for tests and demos and does not run Claude. |
 
 Terminate HTTPS at your reverse proxy and forward both HTTP and WebSocket traffic. The normal web frontend and backend share the same origin. Set public and Agent-facing URLs separately when only the proxy is reachable to Users.
+
+## Attachment storage
+
+Attachments and avatar images are stored in `DATA_DIR` by default. To keep them in an S3-compatible bucket instead, create the bucket and set `STORAGE_TYPE=s3` with its settings:
+
+```ini
+STORAGE_TYPE=s3
+S3_BUCKET=claude-task-files
+S3_REGION=us-east-1
+# Local RustFS/MinIO or another S3-compatible service; leave unset for AWS S3.
+S3_ENDPOINT=http://127.0.0.1:9000
+S3_ACCESS_KEY_ID=rustfsadmin
+S3_SECRET_ACCESS_KEY=rustfsadmin
+# Multiple installations: keep their objects apart.
+S3_PREFIX=installation-a/
+```
+
+With the supplied Compose stack, export the same variables (or put them in `.env`); the app service passes them through. The backend still streams every download through its own authenticated endpoints, so the bucket stays private.
+
+The setting is read at startup and does not migrate existing blobs: attachments written to the previous location are no longer found. Move the objects yourself (keeping their ids as object keys) before switching an installation with existing files.
 
 ## Stop or restart the backend
 

@@ -2,6 +2,21 @@ import { SecretBox } from './secrets';
 import { DEFAULT_VOICE_STUN_URLS } from '@claude-task/shared';
 import { z } from 'zod';
 
+/** Where attachment bytes live: the local filesystem (default) or an S3-compatible bucket. */
+export type StorageConfig =
+  | { type: 'disk' }
+  | {
+      type: 's3';
+      bucket: string;
+      region: string;
+      /** Custom S3 API endpoint (RustFS, MinIO, other S3-compatible services); unset means AWS S3. */
+      endpoint?: string;
+      forcePathStyle: boolean;
+      /** Key prefix, ending in `/` or empty. Keeps installations apart in a shared bucket. */
+      prefix: string;
+      credentials?: { accessKeyId: string; secretAccessKey: string };
+    };
+
 export interface Config {
   voiceStunUrls?: string[];
   voiceTurn?: { host: string; port: number; tlsPort: number | null; secret: string; ttlSeconds: number };
@@ -9,6 +24,7 @@ export interface Config {
   host: string;
   port: number;
   dataDir: string;
+  storage: StorageConfig;
   /** Built frontend to serve, if any (production). */
   staticDir: string | null;
   cookieSecure: boolean;
@@ -68,6 +84,40 @@ function positiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function storageConfig(env: NodeJS.ProcessEnv): StorageConfig {
+  const type = (env.STORAGE_TYPE?.trim() || 'disk').toLowerCase();
+  if (type === 'disk') return { type: 'disk' };
+  if (type !== 's3') throw new Error('STORAGE_TYPE must be "disk" or "s3"');
+  const bucket = env.S3_BUCKET?.trim();
+  if (!bucket) throw new Error('S3_BUCKET is required when STORAGE_TYPE=s3');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(bucket)) throw new Error('S3_BUCKET must be a bucket name without spaces or slashes');
+  const endpoint = env.S3_ENDPOINT?.trim() || undefined;
+  if (endpoint !== undefined) {
+    let url: URL;
+    try {
+      url = new URL(endpoint);
+    } catch {
+      throw new Error('S3_ENDPOINT must be an http or https URL');
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('S3_ENDPOINT must be an http or https URL');
+  }
+  const accessKeyId = env.S3_ACCESS_KEY_ID?.trim() || undefined;
+  const secretAccessKey = env.S3_SECRET_ACCESS_KEY?.trim() || undefined;
+  if (!!accessKeyId !== !!secretAccessKey) throw new Error('S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together');
+  const prefix = (env.S3_PREFIX ?? '').trim().replace(/^\/+|\/+$/g, '');
+  if (prefix && !/^[A-Za-z0-9._/-]+$/.test(prefix)) throw new Error('S3_PREFIX may contain only letters, digits, ".", "_", "-" and "/"');
+  return {
+    type: 's3',
+    bucket,
+    region: env.S3_REGION?.trim() || 'us-east-1',
+    endpoint,
+    // S3-compatible services (RustFS, MinIO) address buckets by path; AWS S3 prefers virtual hosts.
+    forcePathStyle: bool(env.S3_FORCE_PATH_STYLE, endpoint !== undefined),
+    prefix: prefix ? `${prefix}/` : '',
+    credentials: accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined,
+  };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const secrets = SecretBox.fromEnv(env.SECRETS_MASTER_KEY);
   const databaseUrl = env.DATABASE_URL;
@@ -103,6 +153,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.HOST ?? '0.0.0.0',
     port: Number(env.PORT ?? 3000),
     dataDir: env.DATA_DIR ?? './.data',
+    storage: storageConfig(env),
     staticDir: env.STATIC_DIR || null,
     cookieSecure: bool(env.COOKIE_SECURE, true),
     trustProxy: bool(env.TRUST_PROXY, false),
