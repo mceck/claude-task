@@ -128,6 +128,14 @@ export type QueueEntryKind = (typeof QUEUE_ENTRY_KINDS)[number];
 export const JOB_STATES = ['dispatched', 'running', 'finishing', 'finished', 'failed', 'interrupted'] as const;
 export type JobState = (typeof JOB_STATES)[number];
 
+/** How full the conversation's context is: the tokens sent and received at its last model call, and the model's window. */
+export interface ContextUsage {
+  /** Prompt tokens (input, cache read and cache creation) plus the reply the last model call produced. */
+  tokens: number;
+  /** The model's context window, when the CLI reports it. */
+  window: number | null;
+}
+
 /** The current Session of a Task, as the Task view and its card show it. */
 export interface TaskSession {
   commands?: import('./commands').ChatCommand[];
@@ -140,6 +148,8 @@ export interface TaskSession {
   held: boolean;
   /** Edits by Users the Agent hasn't read yet (title, description, priority, tags). */
   unseenChanges: boolean;
+  /** Context the conversation carries after its latest Turn; null before the first one. */
+  context: ContextUsage | null;
   /** Version of the latest failed Job, so the UI can offer Retry. */
   lastJob: { id: string; state: JobState; failureStage: string | null; error: string | null } | null;
 }
@@ -314,6 +324,8 @@ export interface TurnSummary {
   subtype: string;
   isError: boolean;
   usage: Usage | null;
+  /** How full the context was after the Turn's last model call; null when the CLI didn't say. */
+  context: ContextUsage | null;
 }
 
 export type AgentItemPayload =

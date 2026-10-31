@@ -56,6 +56,7 @@ describe('migration upgrades', () => {
       DROP TABLE survey_responses, questions;
       ALTER TABLE comments DROP COLUMN answers_comment_id;
       ALTER TABLE tasks DROP COLUMN chat_title;
+      ALTER TABLE turns DROP COLUMN context_tokens, DROP COLUMN context_window;
       DROP INDEX IF EXISTS turns_task_idx;
     `);
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.when]);

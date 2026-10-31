@@ -85,7 +85,7 @@ export class Stream {
     };
   }
 
-  result(opts: { subtype?: string; isError?: boolean; costUsd?: number; durationMs?: number; result?: string; numTurns?: number } = {}): StreamEvent {
+  result(opts: { subtype?: string; isError?: boolean; costUsd?: number; durationMs?: number; result?: string; numTurns?: number; modelUsage?: Record<string, unknown> | null } = {}): StreamEvent {
     return {
       type: 'result',
       subtype: opts.subtype ?? 'success',
@@ -98,6 +98,7 @@ export class Stream {
       session_id: this.sessionId,
       total_cost_usd: opts.costUsd ?? 0.01,
       usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 20, cache_creation_input_tokens: 5 },
+      modelUsage: opts.modelUsage === null ? undefined : (opts.modelUsage ?? { [this.model]: { contextWindow: 1_000_000 } }),
       permission_denials: [],
       uuid: uuid(),
     };

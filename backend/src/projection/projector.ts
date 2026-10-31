@@ -2,7 +2,7 @@
 // (state, event) to (state, mutations, broadcasts), so it can be tested over recorded streams
 // and replayed when the display rules change. Applying the mutations is someone else's job.
 import { createHash } from 'node:crypto';
-import type { ActivityEntry, AgentItemPayload, LiveDelta, RunInfo, RunMessageDraft, TurnSummary, Usage } from '@claude-task/shared';
+import type { ActivityEntry, AgentItemPayload, ContextUsage, LiveDelta, RunInfo, RunMessageDraft, TurnSummary, Usage } from '@claude-task/shared';
 
 /** A Run while it is open: its item payload plus what the projection needs to route its output. */
 export interface RunState {
@@ -19,6 +19,8 @@ export interface ProjectionState {
   toolCalls: number;
   /** `total_cost_usd` of the previous `result`: the CLI reports it cumulatively per process. */
   costSoFar: number;
+  /** Usage of the last top-level assistant message: what the conversation's context held at that call. */
+  lastUsage: { input: number; output: number; cacheRead: number; cacheCreation: number; model: string | null } | null;
   /** Agent Comment still being written (consecutive text blocks). */
   comment: { id: string; body: string } | null;
   /** The last Agent Comment of the Turn, which its Alert previews. */
@@ -106,6 +108,7 @@ export function initialProjection(): ProjectionState {
     turnStartedAt: null,
     toolCalls: 0,
     costSoFar: 0,
+    lastUsage: null,
     comment: null,
     thinking: null,
     activity: null,
@@ -299,6 +302,19 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       s.syntheticText = text || null;
       closeText();
       return;
+    }
+    // The last model call of the Turn is what the conversation's context holds (docs/specs/agent-sessions.md).
+    const rawUsage = e.message?.usage as Json | undefined;
+    if (rawUsage && typeof rawUsage === 'object') {
+      const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+      const lastUsage = {
+        input: n(rawUsage.input_tokens),
+        output: n(rawUsage.output_tokens),
+        cacheRead: n(rawUsage.cache_read_input_tokens),
+        cacheCreation: n(rawUsage.cache_creation_input_tokens),
+        model: typeof e.message?.model === 'string' ? e.message.model : null,
+      };
+      if (lastUsage.input + lastUsage.output + lastUsage.cacheRead + lastUsage.cacheCreation > 0) s.lastUsage = lastUsage;
     }
     for (const block of content) {
       if (block?.type === 'text') {
@@ -495,7 +511,9 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       subtype,
       isError,
       usage: usage(e.usage, costUsd),
+      context: contextUsage(s.lastUsage, e.modelUsage),
     };
+    s.lastUsage = null;
     mutations.push({ op: 'item.create', id: newId(), payload: { kind: 'turn_summary', summary } });
     mutations.push({
       op: 'turn',
@@ -684,6 +702,34 @@ function outcome(name: string, output: string, isError: boolean, structured: unk
     return exit ? `exit ${exit}` : 'failed';
   }
   return isError ? oneLine(output, 120) || 'failed' : null;
+}
+
+/**
+ * The context the conversation holds after a Turn. The `result` usage sums every model call of the
+ * Turn, which overcounts the cached prompt; the last assistant message is the real context size.
+ * The model's window comes from the `result`'s `modelUsage`, which older CLIs don't report.
+ */
+function contextUsage(last: ProjectionState['lastUsage'], modelUsage: unknown): ContextUsage | null {
+  if (!last) return null;
+  const tokens = last.input + last.cacheRead + last.cacheCreation + last.output;
+  if (tokens <= 0) return null;
+  return { tokens, window: contextWindowFor(modelUsage, last.model) };
+}
+
+/** The window of the model the last message used; otherwise the model whose prompt grew the most. */
+function contextWindowFor(raw: unknown, model: string | null): number | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const entries = Object.entries(raw as Json).filter((entry): entry is [string, Json] => !!entry[1] && typeof entry[1] === 'object');
+  const windowOf = (u: Json | undefined) => {
+    const w = u?.contextWindow;
+    return typeof w === 'number' && Number.isFinite(w) && w > 0 ? w : null;
+  };
+  const exact = model === null ? undefined : entries.find(([name]) => name === model)?.[1];
+  if (windowOf(exact) !== null) return windowOf(exact);
+  // A Turn can involve a Subagent's model too: the main model is the one that read the biggest prompt.
+  const promptTokens = (u: Json) => Number(u.inputTokens ?? 0) + Number(u.cacheReadInputTokens ?? 0) + Number(u.cacheCreationInputTokens ?? 0);
+  const busiest = [...entries].sort((a, b) => promptTokens(b[1]) - promptTokens(a[1]))[0]?.[1];
+  return windowOf(busiest);
 }
 
 function usage(raw: unknown, costUsd: number | null): Usage | null {

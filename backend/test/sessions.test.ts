@@ -204,6 +204,35 @@ describe('assignment and the first Job', () => {
     await admin.patch(`/agents/${agent.id}`, { enabled: true });
     await runner.next('job.start');
   });
+
+  it('carries the context the latest Turn left, and none before the first', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const start = await startAndFinish(admin, runner, task.id, agent.id);
+    const session = await getSession(admin, task.id);
+    // The Stream's assistant message reports 10 input and 5 output tokens; the result names a 1M window.
+    expect(session).toMatchObject({ id: start.sessionId, state: 'idle', context: { tokens: 15, window: 1_000_000 } });
+
+    // A Session that has not run a Turn yet has no context to show.
+    const other = await createTask(admin, project.id);
+    await assignAndStart(admin, other.id, agent.id);
+    await app.settle();
+    expect(await getSession(admin, other.id)).toMatchObject({ state: 'running', context: null });
+  });
+
+  it('keeps the last measured context when a later Turn reports none', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const start = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Continue.');
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    runner.accept(next.jobId);
+    // A result with no assistant message before it says nothing about the context.
+    await runner.play(next.jobId, [new Stream(next.sessionId).result({ subtype: 'error_during_execution', isError: true })]);
+    await runner.next('job.end', (m) => m.jobId === next.jobId);
+    await runner.exit(next.jobId);
+    expect(await getSession(admin, task.id)).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
+  });
 });
 
 describe('the Agent on the Timeline', () => {
