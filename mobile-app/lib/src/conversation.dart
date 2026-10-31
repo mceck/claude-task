@@ -1119,9 +1119,7 @@ class TimelineTile extends StatelessWidget {
             if (delivery != null)
               _Delivery(
                 delivery: delivery,
-                agentName: controller.agents
-                    .byId(controller.task?.agentId)
-                    ?.name,
+                agentName: controller.deliveryAgentName(delivery),
               ),
           ],
         ),
@@ -1374,7 +1372,7 @@ class _CommentView extends StatelessWidget {
       if (delivery != null)
         _Delivery(
           delivery: delivery,
-          agentName: controller.agents.byId(controller.task?.agentId)?.name,
+          agentName: controller.deliveryAgentName(delivery),
         ),
     ];
     final actions = onActions == null

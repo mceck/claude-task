@@ -11,7 +11,7 @@ The conversation is the human side of a Task's Timeline: the Comments Users writ
 - An **Internal Note** is a User Comment flagged as internal when it is posted. It is shown to every User and delivered to no Agent.
 - An **Attachment** is a file a User uploads or an Agent posts. A Comment carries up to 10 of them. Files uploaded from the Task description editor are Attachments of the Task itself rather than of a Comment.
 - A **Message** is what the Agent receives: one or more Comments merged together, or a system notice. Users write Comments; the platform turns them into Messages.
-- **Delivery** is the state of a User Comment towards the Agent: queued, delivered, handled (the Turn that received it has ended), or not delivered with a reason.
+- **Delivery** is the state of a User Comment towards the Agent: queued, delivered, handled (the Turn that read it has ended), or not delivered with a reason.
 - A **Scheduled Message** is a Comment a User writes ahead of time for a chosen date and time. It stays off the Timeline until it is due, then is published as an ordinary Comment.
 - A **Limit Resume** is a Scheduled Message the platform creates when a Turn stops at a usage limit that reports its reset time (see [Agent sessions](agent-sessions.md#usage-limits-and-limit-resume)).
 - A **Question** is an Agent Comment asking Users to choose among options. The first User who answers closes it, and the answer reaches the Agent as a Message.

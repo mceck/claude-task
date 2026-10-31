@@ -33,8 +33,13 @@ export class ProjectActivity {
     if (topic.startsWith('project:') && BOARD_EVENTS.has(event.type)) this.projects.add(topic.slice('project:'.length));
     else if (topic.startsWith('task:') && TIMELINE_EVENTS.has(event.type)) this.tasks.add(topic.slice('task:'.length));
     else return;
-    if (this.stopped) return;
-    this.timer ??= setTimeout(() => void this.flush(), Math.max(0, this.last + this.windowMs - Date.now()));
+    this.schedule();
+  }
+
+  /** Flushes once the window since the last flush has passed. */
+  private schedule(): void {
+    if (this.stopped || this.timer) return;
+    this.timer = setTimeout(() => void this.flush(), Math.max(0, this.last + this.windowMs - Date.now()));
     this.timer.unref?.();
   }
 
@@ -53,10 +58,7 @@ export class ProjectActivity {
       this.onError(err);
     } finally {
       this.timer = null;
-      if (!this.stopped && (this.projects.size || this.tasks.size)) {
-        this.timer = setTimeout(() => void this.flush(), Math.max(0, this.last + this.windowMs - Date.now()));
-        this.timer.unref?.();
-      }
+      if (this.projects.size || this.tasks.size) this.schedule();
     }
   }
 }

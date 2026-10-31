@@ -128,6 +128,8 @@ class PhoneAlerts {
           category: AndroidNotificationCategory.message,
           visibility: NotificationVisibility.public,
           groupKey: _group,
+          // Only the Task's notification sounds, never the summary as well.
+          groupAlertBehavior: GroupAlertBehavior.children,
           styleInformation: MessagingStyleInformation(
             const Person(name: 'You', key: 'you'),
             conversationTitle: conversation.title,
@@ -147,6 +149,7 @@ class PhoneAlerts {
           icon: 'ic_notification',
           groupKey: _group,
           setAsGroupSummary: true,
+          groupAlertBehavior: GroupAlertBehavior.children,
           visibility: NotificationVisibility.public,
           onlyAlertOnce: true,
         ),
@@ -161,7 +164,7 @@ class PhoneAlerts {
       await initialize();
       await _plugin.cancel(id: alertNotificationId(taskId));
       final rest = await _plugin.getActiveNotifications();
-      if (!rest.any((n) => n.id != null && n.id != _summaryId)) {
+      if (!rest.any((n) => n.groupKey == _group && n.id != _summaryId)) {
         await _plugin.cancel(id: _summaryId);
       }
     } else if (Platform.isIOS) {

@@ -2,7 +2,7 @@
 // order (per-Job seq), inside a transaction that locks task → agent → session → job.
 import type { JobFailureStage, RunnerJobMessage, RunnerToBackend } from '@claude-task/shared';
 import { taskTopic } from '@claude-task/shared';
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { AfterCommit, AppContext } from '../context';
 import { transactWithRetry } from '../context';
 import type { Executor } from '../db/client';
@@ -10,7 +10,7 @@ import { agents, comments, jobs, sessionEvents, sessions, tasks } from '../db/sc
 import { ACTIVE_JOB_STATES, getAgentRow } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
 import { settleRun } from '../modules/schedules/service';
-import { previewEvent } from '../notifications/alerts';
+import { jobEventId, setAlertComment } from '../notifications/alerts';
 import { applyProjection } from '../projection/apply';
 import { endJob, initialProjection, project } from '../projection/projector';
 import type { ProjectionState } from '../projection/projector';
@@ -385,7 +385,8 @@ async function requeue(tx: Executor, after: AfterCommit, job: JobRow, session: t
     front: true,
     held: opts.held,
   });
-  const delivered = await tx.select({ id: comments.id }).from(comments).where(eq(comments.deliveredInJobId, job.id));
+  // A handled Comment was read by a Turn: only the ones still waiting to be read go back.
+  const delivered = await tx.select({ id: comments.id }).from(comments).where(and(eq(comments.deliveredInJobId, job.id), ne(comments.deliveryState, 'handled')));
   await attachComments(
     tx,
     after,
@@ -410,7 +411,7 @@ export async function systemComment(tx: Executor, after: AfterCommit, taskId: st
 
 /** The System Comment that reports a failed Job is what its "needs intervention" Alert previews. */
 async function reportJobFailure(tx: Executor, after: AfterCommit, job: JobRow, body: string): Promise<void> {
-  await previewEvent(tx, `job:${job.id}`, await systemComment(tx, after, job.taskId, body));
+  await setAlertComment(tx, jobEventId(job.id), await systemComment(tx, after, job.taskId, body));
 }
 
 function tail(output: string, lines = 20): string {

@@ -28,9 +28,22 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final h = Harness();
     addTearDown(h.dispose);
-    h.api.currentTask = {...h.api.currentTask, 'agentId': 'agent-1'};
+    // The Task has no Agent now: the names come from the Job that carried each Comment.
     const at = '2026-10-31T12:43:00.000Z';
     h.api.items = [
+      {
+        'type': 'agent',
+        'id': 'notice-1',
+        'createdAt': '2026-10-31T12:42:00.000Z',
+        'readPosition': '5',
+        'item': {
+          'id': 'notice-1',
+          'taskId': 'task-1',
+          'jobId': 'job-1',
+          'agentId': 'agent-1',
+          'payload': {'kind': 'notice', 'text': 'Working'},
+        },
+      },
       _comment('queued', {
         'state': 'queued',
         'reason': null,

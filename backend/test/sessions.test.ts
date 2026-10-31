@@ -364,6 +364,40 @@ describe('Comments reaching the Agent', () => {
     ws.close();
   });
 
+  it('leaves a Comment written after the Turn last called the model for the Turn that reads it', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+    const s = new Stream();
+    await runner.play(start.jobId, [s.init(), s.toolUse('tool-1', 'Bash', { command: 'npm test' }), s.toolResult('tool-1', 'ok'), s.text('Almost done')]);
+    await app.settle();
+    const late = await comment(admin, task.id, 'One more thing');
+    await runner.next('job.input');
+    await runner.play(start.jobId, [s.result()]);
+    await app.settle();
+    const states = async () => Object.fromEntries(comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user').map((c) => [c.body, c.delivery?.state]));
+    expect(await states()).toEqual({ 'Please get started.': 'handled', 'One more thing': 'delivered' });
+    await runner.play(start.jobId, [s.text('Done that too'), s.result()]);
+    await app.settle();
+    expect((await states())[late.body]).toBe('handled');
+  });
+
+  it('counts a stopped Turn as handling its Comments', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+    const s = new Stream();
+    await runner.play(start.jobId, [s.init(), { ...s.result({ isError: true, subtype: 'error_during_execution' }), terminal_reason: 'aborted_streaming' }]);
+    await app.settle();
+    expect(comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user').map((c) => c.delivery?.state)).toEqual(['handled']);
+  });
+
   it('counts a failed Turn as handling its Comments, and leaves queued ones alone', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);

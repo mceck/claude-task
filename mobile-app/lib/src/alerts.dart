@@ -83,6 +83,14 @@ class AlertLines {
   final Future<File> Function() file;
   AlertLines(this.file);
 
+  /// Changes made in one isolate run one after the other.
+  Future<void> _queue = Future.value();
+  Future<T> _serial<T>(Future<T> Function() change) {
+    final result = _queue.then((_) => change());
+    _queue = result.then((_) {}, onError: (_) {});
+    return result;
+  }
+
   Future<Map<String, dynamic>> _read() async {
     try {
       final f = await file();
@@ -106,7 +114,7 @@ class AlertLines {
     PushAlertData alert, {
     bool fresh = false,
     DateTime? now,
-  }) async {
+  }) => _serial(() async {
     final all = await _read();
     final stored = all[alert.thread];
     final previous = fresh || stored is! Map
@@ -133,12 +141,12 @@ class AlertLines {
     };
     await _write(all);
     return TaskAlert(alert.thread, alert.title, kept);
-  }
+  });
 
-  Future<void> clear(String thread) async {
+  Future<void> clear(String thread) => _serial(() async {
     final all = await _read();
     if (all.remove(thread) != null) await _write(all);
-  }
+  });
 }
 
 /// A stable, positive 31-bit notification id per Task (FNV-1a).

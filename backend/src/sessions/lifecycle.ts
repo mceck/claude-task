@@ -330,7 +330,8 @@ async function requeueUnsentComment(ctx: AppContext, commentId: string, jobId: s
     if (task.agentId) await lockAgents(tx, [task.agentId]);
     const session = task.agentId ? await lockSession(tx, task.id, task.agentId) : null;
     const [comment] = await tx.select().from(comments).where(eq(comments.id, commentId)).for('update');
-    if (!comment || comment.deletedAt || comment.deliveryState !== 'delivered' || comment.deliveredInJobId !== jobId) return;
+    // A Turn ending before this ran may have marked it handled, though it never reached the process.
+    if (!comment || comment.deletedAt || !['delivered', 'handled'].includes(comment.deliveryState) || comment.deliveredInJobId !== jobId) return;
     const failed = async (reason: string) => {
       await tx
         .update(comments)

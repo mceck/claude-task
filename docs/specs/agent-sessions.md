@@ -10,7 +10,7 @@ Agent Sessions are how an **Agent** works a **Task**. Assigning an Agent opens a
 - A **Job** is one `claude` process for a Session, from dispatch to exit. An Agent runs at most one Job at a time. A Job contains one or more **Turns**; each Turn ends with a `result` event in the stream.
 - A **Message** is what the Agent receives: one or more Comments merged into one stream-json user message, the opening Task snapshot of a new Session, or a platform notice (change list, resume or reassignment notice).
 - The **Queue** is the ordered list of pending work of one Agent. It holds at most one **Queue Entry** per Task. An entry has a kind (`start`, `messages` or `resume_interrupted`), a position, and the Comments waiting to be delivered with it. An entry can be **held**: it stays in the Queue but waits for a Retry or a new Comment.
-- A Comment's **Delivery** tells whether it reached the Agent: `queued`, `delivered` (with the Job), `handled` (the Turn that received it has ended) or `not delivered` (with a reason).
+- A Comment's **Delivery** tells whether it reached the Agent: `queued`, `delivered` (with the Job), `handled` (the Turn that read it has ended) or `not delivered` (with a reason).
 - **Agent output** lands on the Timeline as **Agent Comments** (the Agent's text, stored as Comments of kind agent), **System Comments** (errors and platform notices), and **Agent Items**: Thinking, Activity, Runs, Turn Summaries and short notices.
 - A **Run** is work the Agent starts and gets on with inside a Turn: a **Subagent Run** (a call to Claude Code's `Agent` tool, named `Task` in older CLIs) or a **Background Command** (a shell command left running in the container). Each Run has one Agent Item recording how it started and how it ended, and a transcript kept live while its Job lasts (see [Runs](#runs)).
 - The **Job token** is a random secret created for each Job. It authenticates the Job's `claude` process on the Task Tools server and its git traffic on the Git Proxy, and it works only while that Job is active.
@@ -150,13 +150,13 @@ stateDiagram-v2
   queued --> not_delivered: entry removed (task closed, agent unassigned, removed from queue)
   delivered --> queued: its Job failed or vanished before running, so it is queued again
   not_delivered --> queued: the same Agent is assigned again
-  delivered --> handled: a Turn of the Session ends after its delivery
+  delivered --> handled: a Turn that read it ends
   handled --> [*]
 ```
 
 The reasons shown with `not delivered` are "no agent assigned", "task closed", "agent unassigned" and "removed from queue". A delivered Comment records the Job that carried it. Every Delivery records when it last changed state.
 
-A Comment becomes `handled` when a Turn of its Task's current Session ends after the Comment was delivered, whatever the Turn's outcome: completed, failed or ended by Stop. In the same transaction that stores the Turn, every `delivered` Comment of the Task whose delivering Job belongs to that Session moves to `handled`, and each one is published as an updated Comment on the Task topic so clients change its indicator live. A Comment written mid-Turn is read by that same Turn, so the Turn that follows its delivery is the one that worked on it. `handled` is final: recovery, Retry and reassignment leave it as it is, and every rule that treats a Comment as already received by the Agent applies to `handled` as to `delivered`.
+A Comment becomes `handled` when the Turn that read it ends, whatever the Turn's outcome: completed, failed or ended by Stop. A Turn reads what was on stdin when it last called the model: at its start, and each time it hands a batch of tool results back. In the same transaction that stores the Turn, every `delivered` Comment of the Task whose delivering Job belongs to that Turn's Session, and that was delivered before the Turn's last model call, moves to `handled`. Each one is published as an updated Comment on the Task topic so clients change its indicator live. A Comment written while the Turn was already writing its final answer stays `delivered` until the next Turn, which reads it, ends. `handled` is final: Retry and reassignment leave it as it is, a Job's Comments that go back to the Queue leave out the handled ones, and every rule that treats a Comment as already received by the Agent applies to `handled` as to `delivered`. The one exception is a mid-Turn write that never reached the process: when the Runner socket was already closed, the Comment goes back to the Queue even if a Turn ending meanwhile marked it handled.
 
 ### The Queue
 
@@ -493,7 +493,7 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 
 ## Decisions
 
-- **`handled` is tied to the end of a Turn, not to the Agent's reply.** The stream says when a Turn ends, and a Comment delivered to the Session is read by the Turn that follows. Matching a Comment to the Agent Comment that answers it would mean reading the Agent's prose. A failed or stopped Turn also counts: the Comment was processed, and the Turn Summary already shows how it went.
+- **`handled` is tied to the end of the Turn that read the Comment, not to the Agent's reply.** The stream says when a Turn ends and when it hands tool results back to the model, which is when `claude` reads what waits on stdin; a Comment delivered after the last of those moments belongs to the next Turn. Matching a Comment to the Agent Comment that answers it would mean reading the Agent's prose. A failed or stopped Turn also counts: the Comment was processed, and the Turn Summary already shows how it went.
 - **The resume after a limit is a Scheduled Message, not a special Queue operation.** Users already understand, see and can cancel scheduled messages, and the Agent receives a Message through the normal delivery path with no new kind of Queue Entry. The cost is one visible Comment per resume, which also tells everyone why the Agent started again.
 - **One pending Limit Resume per Task, cancelled when it stops being useful.** Two resumes would tell the Agent to continue twice, and one that arrives after the Agent already worked again is noise.
 - **The offer lives on the System Comment that reports the limit.** The decision sits next to the error it answers, stays on the Timeline as a trace of who decided, and older clients still show the error text.

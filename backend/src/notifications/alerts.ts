@@ -18,8 +18,12 @@ type AlertRow = {
   files: number;
 };
 
+/** Notification Event ids, as the database triggers write them for Turns and failed Jobs. */
+export const turnEventId = (jobId: string, index: number) => `turn:${jobId}:${index}`;
+export const jobEventId = (jobId: string) => `job:${jobId}`;
+
 /** Records the Comment an event's Alert previews, once the Comment exists. */
-export async function previewEvent(db: Executor, eventId: string, commentId: string): Promise<void> {
+export async function setAlertComment(db: Executor, eventId: string, commentId: string): Promise<void> {
   await db.execute(sql`update notification_events set comment_id = ${commentId}::uuid where id = ${eventId}`);
 }
 
@@ -34,6 +38,7 @@ export async function buildAlert(db: Executor, eventId: string): Promise<PushAle
     left join tasks t on t.id = e.task_id
     left join projects p on p.id = t.project_id
     left join schedules s on s.id = e.schedule_id
+    -- Turn and Job event ids carry the Job (turnEventId, jobEventId).
     left join jobs j on e.kind in ('turn.completed', 'turn.failed', 'session.intervention') and j.id = split_part(e.id, ':', 2)::uuid
     left join agents a on a.id = j.agent_id
     left join comments c on c.id = e.comment_id and c.deleted_at is null
@@ -45,15 +50,15 @@ export async function buildAlert(db: Executor, eventId: string): Promise<PushAle
     ? `${r.wiki_name} · ${r.chat_title}`
     : r.task_key ? `${r.task_key} · ${r.task_title}` : (r.schedule_name ?? 'Claude Task');
   const excerpt = r.body === null ? '' : alertExcerpt(r.body, r.files);
-  const after = (lead: string) => (excerpt ? `${lead}: ${excerpt}` : lead);
+  const withExcerpt = (lead: string) => (excerpt ? `${lead}: ${excerpt}` : lead);
   const agent = r.agent_name ?? 'The agent';
   switch (r.kind) {
     case 'turn.completed':
       return { title, sender: agent, senderKind: 'agent', text: excerpt || 'finished its turn.' };
     case 'turn.failed':
-      return { title, sender: agent, senderKind: 'agent', text: after('turn failed') };
+      return { title, sender: agent, senderKind: 'agent', text: withExcerpt('turn failed') };
     case 'session.intervention':
-      return { title, sender: agent, senderKind: 'agent', text: after('needs your attention') };
+      return { title, sender: agent, senderKind: 'agent', text: withExcerpt('needs your attention') };
     case 'comment.mentioned':
       return { title, sender: r.author_name, senderKind: r.author_name ? 'user' : null, text: excerpt };
     case 'schedule.run_failed':

@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Notifications review: chat-style Alerts and read feedback
@@ -32,7 +32,7 @@ Read feedback:
 
 - a Task card (web Board and native Task list) with unread Comments shows the orange glowing Comment icon with the **number of unread Comments**; without unread Comments it shows the grey icon with the total, as today. The native row's unread dot goes away; the bold title stays;
 - the Projects list and the sidebar's unread and running indicators update live;
-- the Delivery of a User Comment shows as ticks: a clock while queued, one grey tick once delivered, two indigo ticks once **handled** (the Turn that received it has ended), a warning sign when not delivered.
+- the Delivery of a User Comment shows as ticks: a clock while queued, one grey tick once delivered, two indigo ticks once **handled** (the Turn that read it has ended), a warning sign when not delivered.
 
 ## User Stories
 
@@ -62,7 +62,7 @@ Read feedback:
 24. As a User, I want reading a Task to clear its Project's unread badge right away, so that the badge matches what I've read.
 25. As a User who wrote a Comment, I want a clock while it waits in the Queue, so that I know the Agent hasn't received it yet.
 26. As a User who wrote a Comment, I want one grey tick once the Agent received it, so that I know it reached the Agent.
-27. As a User who wrote a Comment, I want two indigo ticks once the Turn that received it has ended, so that I know the Agent has worked on it.
+27. As a User who wrote a Comment, I want two indigo ticks once the Turn that read it has ended, so that I know the Agent has worked on it.
 28. As a User who wrote a Comment, I want a warning sign with the reason when it couldn't be delivered, so that I can fix it.
 29. As a User, I want the tick's tooltip and accessible label to say the state, the Agent and the time, so that the icons stay understandable and accessible.
 30. As a User, I want the ticks to change live, so that I see the Agent pick up and finish my message.
@@ -90,7 +90,7 @@ Read feedback:
 
 ### Push payload (backend → phone)
 
-- `PushMessage` gains `title`, `sender` (name or null), `senderKind` (`agent`, `user` or null), `text`, and `taskKey`.
+- `PushMessage` gains an `alert` (shared `PushAlert`): `title`, `sender` (name or null), `senderKind` (`agent`, `user` or null) and `text`. The Task Key travels inside the title.
 - Android: **data-only** high-priority message carrying `taskId`, `eventId`, `kind`, `title`, `sender`, `senderKind`, `text`. No `collapseKey`, so an offline phone receives every event. The app renders the notification.
 - iOS: APNs alert with `title` and body `"<sender>: <text>"` (or `text` alone), `thread-id` = Task id (or the Schedule id for a blocked Schedule), sound default, and the same data fields. No `apns-collapse-id`, so Alerts stack instead of replacing each other.
 - The recipients, eligibility rechecks, 24-hour expiry, closed-Status suppression, retries and the 2-second dispatch interval are unchanged. No delay and no unread check before sending.
@@ -98,16 +98,16 @@ Read feedback:
 ### Native app
 
 - Add `flutter_local_notifications` for rendering and removal.
-- Android: the background message handler and the foreground handler both render the Alert as a `MessagingStyle` notification, one per Task (notification id and tag from the Task id), titled with `title`. Each event adds a message (sender as a `Person` whose icon is the initials on the colour the app uses for that name), keeping the last 5. The lines of each Task are kept in a small file in the app's support directory so a new event, in any isolate, rebuilds the conversation. Notifications share the group `claude-task` with a summary notification "Claude Task". Channel "Task updates" with default importance and sound. Lock-screen visibility public.
+- Android: the background message handler and the foreground handler both render the Alert as a `MessagingStyle` notification, one per Task (notification id derived from the Task id), titled with `title`. Each event adds a message (sender as a `Person` whose icon is the initials on the colour the app uses for that name), keeping the last 5. The lines of each Task are kept in a small file in the app's support directory so a new event, in any isolate, rebuilds the conversation. Notifications share the group `claude-task` with a summary notification "Claude Task". Channel "Task updates" with high importance (so it shows as a banner) and the default sound; the summary stays silent. Lock-screen visibility public.
 - iOS: background Alerts are shown by the system. In the foreground, the app shows the Alert itself as a local notification with the same title, body and thread identifier, unless suppressed.
 - Foreground suppression: an Alert is not shown when its Task's conversation is the open, visible screen of the foreground app (the same condition that advances the read position, without the scroll-to-bottom part). Otherwise it is shown with sound. `setForegroundNotificationPresentationOptions` stays all off so iOS never shows the remote copy twice.
-- Opening a Task's conversation removes its notifications from that phone and clears its stored lines (Android: cancel by id; iOS: remove the delivered notifications with that thread identifier, through a small platform channel if the plugin can't). Swiping a notification away also clears its stored lines. No silent "read" pushes: notifications otherwise stay until dismissed.
+- Opening a Task's conversation removes its notifications from that phone and clears its stored lines (Android: cancel by id; iOS: remove the delivered notifications with that thread identifier, through a small platform channel if the plugin can't). A notification swiped away is noticed at the next Alert of its Task, which starts the conversation over. No silent "read" pushes: notifications otherwise stay until dismissed.
 - Tapping a notification opens the Task as today (and the Wiki's Chat for a Wiki).
 - Android small icon: a vector drawable of design A (solid speech bubble, tail bottom-left, with the eight-armed spark cut out of it), within Android's 24 dp grid with standard padding. The `default_notification_color` metadata and the `notification_accent` colour are removed, so the system's neutral colour applies; the locally rendered notifications use the same icon and no colour. The PNG `ic_notification` files are deleted. The SVG drawn during the design discussion is the source (24×24 viewBox: bubble from (2,3) to (22,17.5), radius 5, tail to (5.5,20.8); spark centred at (12,10.25), arms 8.8 long and 2.1 wide with round caps).
 
 ### Delivery `handled`
 
-- `DELIVERY_STATES` gains `handled` (Postgres enum value added in a migration). A `delivered` Comment becomes `handled` when a Turn of its Task's current Session ends after its delivery, whether completed, failed or stopped: in the same transaction as the Turn, every `delivered` Comment of that Session's Task moves to `handled`. `handled` is final; nothing moves back from it.
+- `DELIVERY_STATES` gains `handled` (Postgres enum value added in a migration). A `delivered` Comment becomes `handled` when the Turn that read it ends, whether completed, failed or stopped: in the same transaction as the Turn, every `delivered` Comment delivered to that Session before the Turn's last model call (its start or its last batch of tool results) moves to `handled`. A Comment written while the Turn was finishing waits for the next Turn. `handled` is final, except for a mid-Turn write that never reached the process, which still goes back to the Queue.
 - Comments gain `delivery_changed_at`, set whenever the Delivery state changes (including the initial state). `Delivery` in the shared types gains `at` (ISO time) next to `state`, `reason` and `jobId`.
 - Moving to `handled` publishes a Comment updated event on the Task topic, so the ticks change live.
 - Everything that reads Delivery today (`delivered` checks in the Session lifecycle, recovery, Queue) treats `handled` as already delivered; recovery never re-queues a `handled` Comment.
@@ -153,20 +153,20 @@ The ticks replace the text badge in the Comment header on both clients. The Agen
 
 ## Acceptance Criteria
 
-- [ ] Every Alert kind carries the title, sender and text described above, built at dispatch time.
-- [ ] Turn Alerts preview the last Agent Comment of that Turn; failed Turns and Jobs preview the System Comment's detail.
-- [ ] Excerpts are plain text, at most about 200 characters, and never include file names or contents.
-- [ ] Android receives data-only messages without collapse key; iOS receives alerts with the Task's thread id and no collapse id.
-- [ ] On Android, Alerts of one Task stack in one conversation notification (last 5 events) with initials avatars, grouped under Claude Task.
-- [ ] On iOS, Alerts stack per Task.
-- [ ] With the app in the foreground, an Alert appears unless its Task's conversation is the visible screen.
-- [ ] Opening a Task in the app removes its notifications from that phone.
-- [ ] The Android small icon is the bubble-with-spark vector with no accent colour; the old PNGs and colour are gone.
-- [ ] A delivered Comment becomes `handled` when a Turn of the Session ends after its delivery, live, and shows two indigo ticks on web and native; queued, delivered and not delivered show their icons with labelled tooltips.
-- [ ] Cards and native rows show the unread Comment count in the orange badge, the total otherwise; native rows have no unread dot.
-- [ ] The Projects list and sidebar indicators update live through the `projects` topic, without 15-second polling.
-- [ ] Specs and `docs/CONTEXT.md` describe the new behaviour; the "Lock-screen alerts reveal no Task content" decision is replaced with its rationale.
-- [ ] `pnpm typecheck`, `pnpm test`, the Playwright suite and the Flutter tests pass.
+- [x] Every Alert kind carries the title, sender and text described above, built at dispatch time.
+- [x] Turn Alerts preview the last Agent Comment of that Turn; failed Turns and Jobs preview the System Comment's detail.
+- [x] Excerpts are plain text, at most about 200 characters, and never include file names or contents.
+- [x] Android receives data-only messages without collapse key; iOS receives alerts with the Task's thread id and no collapse id.
+- [x] On Android, Alerts of one Task stack in one conversation notification (last 5 events) with initials avatars, grouped under Claude Task.
+- [x] On iOS, Alerts stack per Task.
+- [x] With the app in the foreground, an Alert appears unless its Task's conversation is the visible screen.
+- [x] Opening a Task in the app removes its notifications from that phone.
+- [x] The Android small icon is the bubble-with-spark vector with no accent colour; the old PNGs and colour are gone.
+- [x] A delivered Comment becomes `handled` when the Turn that read it ends, live, and shows two indigo ticks on web and native; queued, delivered and not delivered show their icons with labelled tooltips.
+- [x] Cards and native rows show the unread Comment count in the orange badge, the total otherwise; native rows have no unread dot.
+- [x] The Projects list and sidebar indicators update live through the `projects` topic, without 15-second polling.
+- [x] Specs and `docs/CONTEXT.md` describe the new behaviour; the "Lock-screen alerts reveal no Task content" decision is replaced with its rationale.
+- [x] `pnpm typecheck`, `pnpm test`, the Playwright suite and the Flutter tests pass.
 
 ## Out of Scope
 

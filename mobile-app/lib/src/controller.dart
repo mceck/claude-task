@@ -146,6 +146,19 @@ class TaskController extends ChangeNotifier {
     voice = VoiceController(send: (message) => _socket?.send(message) ?? false);
   }
 
+  /// The Agent a Delivery names: the one whose Job carried the Comment, known
+  /// from that Job's Timeline items, else the Task's Agent.
+  String? deliveryAgentName(Map delivery) {
+    final jobId = delivery['jobId'];
+    final fromJob = jobId == null
+        ? null
+        : timeline
+              .where((e) => e.type == 'agent' && e.content['jobId'] == jobId)
+              .map((e) => e.content['agentId'] as String?)
+              .firstOrNull;
+    return agents.byId(fromJob ?? task?.agentId)?.name;
+  }
+
   /// Whether the User is reading this Task's conversation right now.
   bool watchingTask(String taskId) =>
       conversationVisible && appVisible && task?.id == taskId;
