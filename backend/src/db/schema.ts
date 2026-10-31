@@ -536,6 +536,11 @@ export const sessions = pgTable(
     lastSeenTaskVersion: integer('last_seen_task_version').notNull().default(0),
     /** When the latest Job of this Session was dispatched. */
     lastJobAt: timestamp('last_job_at', { withTimezone: true }),
+    /**
+     * The Worktree's Project Skills as last read on request, before any Job of this Session
+     * reported them (`jobs.project_skills` wins once one has).
+     */
+    projectSkills: jsonb('project_skills').$type<{ name: string; description: string }[]>(),
     /** The Worktree must be removed once the Runner is connected. */
     worktreeRemovalPending: boolean('worktree_removal_pending').notNull().default(false),
     createdAt: createdAt(),

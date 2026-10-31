@@ -477,3 +477,28 @@ func TestReportsTheWorktreesSkillsAfterSetup(t *testing.T) {
 		t.Fatal("project skills reported after claude started")
 	}
 }
+
+func TestAnswersAProjectSkillsRequestBeforeAJob(t *testing.T) {
+	b := newBackend(t)
+	home := startRunner(t, b)
+	wt := filepath.Join(home, "worktrees/proj/T-1")
+	if err := os.MkdirAll(filepath.Join(wt, ".claude/skills/deploy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, ".claude/skills/deploy/SKILL.md"), "---\ndescription: Deploy it\n---\n")
+	b.send(msg{"type": "project_skills.request", "requestId": "r1", "worktreePath": "worktrees/proj/T-1"})
+	answer := b.waitFor("project_skills.result", func(m msg) bool { return m.str("requestId") == "r1" })
+	files, _ := answer["files"].([]any)
+	if len(files) != 1 {
+		t.Fatalf("files %v", files)
+	}
+	if f := msg(files[0].(map[string]any)); f.str("name") != "deploy" || !strings.Contains(f.str("head"), "Deploy it") {
+		t.Fatalf("file %v", f)
+	}
+	// A path outside the Agent's home is never read.
+	b.send(msg{"type": "project_skills.request", "requestId": "r2", "worktreePath": "../../etc"})
+	answer = b.waitFor("outside", func(m msg) bool { return m.str("type") == "project_skills.result" && m.str("requestId") == "r2" })
+	if files, _ := answer["files"].([]any); len(files) != 0 {
+		t.Fatalf("files %v", files)
+	}
+}

@@ -23,6 +23,7 @@ import { getTaskRow, unassignDeletedAgent } from '../tasks/service';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { retrySession, stopTurn } from '../../sessions/lifecycle';
 import { notifyAgent } from '../../sessions/notify';
+import { refreshProjectSkills } from '../../sessions/project-skills';
 import { loadTaskSession } from '../../sessions/view';
 import { agentNeedsContainer, getAgentRow, loadAgent, loadAgents, loadBuilds, loadJobs, serializeBuild, taskRefs } from './service';
 import type { AgentRow } from './service';
@@ -345,6 +346,8 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/tasks/:id/session', async (request) => {
     const { id } = parse(taskParams, request.params);
     const task = await getTaskRow(ctx.db, id);
+    // Before the Session's next Job: the Worktree already has the Project Skills claude will load.
+    await refreshProjectSkills(ctx, task.id);
     return { session: await loadTaskSession(ctx.db, task.id) };
   });
 

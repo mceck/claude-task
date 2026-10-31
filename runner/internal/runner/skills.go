@@ -69,3 +69,13 @@ func projectSkills(wt string) []protocol.ProjectSkillFile {
 	}
 	return files
 }
+
+// answerProjectSkills reads the Worktree named by a project_skills.request and sends the files
+// back. It runs outside the Job stream, so the backend can fill a composer before the next Job.
+func (r *Runner) answerProjectSkills(m *protocol.Incoming) {
+	files := []protocol.ProjectSkillFile{}
+	if wt, err := within(r.cfg.Home, m.WorktreePath); err == nil {
+		files = projectSkills(wt)
+	}
+	r.sendNow(map[string]any{"type": "project_skills.result", "requestId": m.RequestID, "files": files})
+}

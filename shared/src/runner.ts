@@ -118,6 +118,11 @@ export type BackendToRunner =
    * A request outside the Job's stream: no seq, no ack; paths are relative to the Worktree or absolute.
    */
   | { type: 'job.upload'; jobId: string; requestId: string; url: string; files: { path: string }[] }
+  /**
+   * Read a Worktree's Project Skills now, without a Job: the backend answers with
+   * `project_skills.result`. Sent before the Session's next Job, to fill the composer.
+   */
+  | { type: 'project_skills.request'; requestId: string; worktreePath: string }
   /** Remove a Worktree directory (never the branch). Paths relative to the Agent's home. */
   | { type: 'worktree.remove'; worktreePath: string; repoPath: string | null }
   /** Everything the Runner sent for this Job up to and including `seq` is processed. */
@@ -163,4 +168,6 @@ export type RunnerToBackend =
       activeJobId: string | null;
     }
   | RunnerJobMessage
+  /** The answer to `project_skills.request`; an empty list when the Worktree isn't there yet. */
+  | { type: 'project_skills.result'; requestId: string; files: ProjectSkillFile[] }
   | { type: 'pong' };

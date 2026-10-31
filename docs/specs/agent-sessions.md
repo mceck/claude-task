@@ -202,6 +202,8 @@ The commands offered in the composers come from the `slash_commands` list report
 
 **Project Skills.** The backend parses each reported file like a catalog `SKILL.md`: the YAML frontmatter's `description`, or else the first paragraph after it (a leading heading marker removed), cut at 2,000 characters. A file with `user-invocable: false`, unparseable frontmatter or a name outside letters, digits, `_` and `-` (at most 64) is left out, and of two files with the same name the first wins, so a skill wins over a command. The result is stored on the Job and the Task's Session is republished. In the composer a Project Skill shows as a Skill. It gives way to an Agent's Skill of the same name, as `claude` gives personal skills precedence over project ones. Once the Session's `system/init` has reported its `slash_commands`, a Project Skill is offered only when that list names it, so one that settings disable, or that the CLI doesn't load, is not suggested. Before that, every reported Project Skill is offered. The composer itself is described in [Conversation](conversation.md).
 
+The Project Skills a Job reported follow its Worktree exactly, so they win. The Session also keeps its own copy, read on request from the Runner when a page opens the Session and no Job of it has reported any yet (see [Runner](runner.md)); that copy is what lets a Worktree created by an earlier Job fill the composer before the Session's next Job, and the Session is republished with it. A Session with no Job has no Worktree, so it has nothing to read.
+
 ### End of a Turn and of a Job
 
 Every Job ends after its Turn. When the Runner reports a `result`, the backend records the Turn, moves the Job to `finishing` and tells the Runner to end it: the Runner closes stdin, `claude` processes anything already written (each such Message becomes a Turn of its own, recorded normally) and exits. From `finishing` on, new Comments are queued. When the process exits, the Job finishes, the Session returns to `idle`, and the dispatcher picks the Agent's next entry.
@@ -472,7 +474,7 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 
 ## Data model
 
-- **Session**: Task, Agent (unique together), state, Worktree path, Claude session identity (optional), started flag, last-read Task version, last dispatch time, Worktree removal pending flag, created and closed times. Deleted with its Task or its Agent.
+- **Session**: Task, Agent (unique together), state, Worktree path, Claude session identity (optional), started flag, last-read Task version, last dispatch time, Project Skills read on request, Worktree removal pending flag, created and closed times. Deleted with its Task or its Agent.
 - **Queue Entry**: Agent, Task (unique together), Session, kind, position, held flag, queued time.
 - **Job**: Session, Agent, Task, kind (the entry kind it came from), state (`dispatched`, `running`, `finishing`, `finished`, `failed`, `interrupted`), Job token hash, last processed sequence number, projection state, `claude` version, MCP servers and commands reported at start, Project Skills reported before start, Setup Script output and stderr (last 64 KB each), exit code, signal, failure stage (`worktree`, `setup`, `spawn`), error, cancel-requested and discard-output flags, created, started and finished times.
 - **Turn**: Job, Task, Agent, index in the Job, start and end, `result` subtype, error flag, stop reason, duration, tool call count, cost, usage.

@@ -204,6 +204,13 @@
       "when": 1793451361766,
       "tag": "0028_notifications_review",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793457544135,
+      "tag": "0029_session_project_skills",
+      "breakpoints": true
     }
   ]
 }

@@ -14,6 +14,7 @@ import type { ProjectActivity } from './realtime/project-activity';
 import type { RunnerHub } from './runner/hub';
 import type { RunRegistry } from './sessions/runs';
 import type { UploadRequests } from './runner/uploads';
+import type { ProjectSkillRequests } from './runner/skill-requests';
 import type { LoginRevocations } from './auth/revocations';
 
 export interface AppContext {
@@ -35,6 +36,8 @@ export interface AppContext {
   runs: RunRegistry;
   /** Files Agents post, waiting for their Runner's upload. */
   uploads: UploadRequests;
+  /** Project Skills read from a Worktree on request, before the Session's next Job. */
+  skillRequests: ProjectSkillRequests;
   /** Dispatcher, builds and the container reconciler. */
   scheduler: Scheduler;
   log: FastifyBaseLogger;
