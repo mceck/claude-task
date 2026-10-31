@@ -346,7 +346,7 @@ export function ScheduleRunPage() {
           tags={[]}
           users={users.data ?? []}
           session={session.data}
-          hideChanges
+          filter="changes"
           reserveDockSpace
           readOnly={closed ? 'This run is closed: its conversation is read-only.' : undefined}
         />

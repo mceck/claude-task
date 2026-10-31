@@ -275,6 +275,22 @@ void main() {
         revisionData('revision-3', [
           {'field': 'description', 'before': 'b', 'after': 'c'},
         ], position: '4'),
+        {
+          'type': 'agent',
+          'id': 'item-1',
+          'createdAt': '2026-10-26T10:06:00.000Z',
+          'item': {
+            'id': 'item-1',
+            'taskId': 'task-1',
+            'sessionId': 'session-1',
+            'jobId': 'job-1',
+            'agentId': 'agent-1',
+            'createdAt': '2026-10-26T10:06:00.000Z',
+            'updatedAt': '2026-10-26T10:06:00.000Z',
+            'payload': {'kind': 'activity', 'entries': <Map<String, dynamic>>[]},
+          },
+          'readPosition': '5',
+        },
       ];
       h.api.session = {
         'state': 'idle',
@@ -286,14 +302,22 @@ void main() {
       await h.openTask();
       await tester.pumpWidget(TaskApp(controller: h.controller));
       await tester.pumpAndSettle();
-      // Changes are hidden by default.
+      // Changes are hidden by default, the Agent's activity shown.
       expect(find.textContaining('moved it from Open to Closed'), findsNothing);
-      await tester.tap(find.byKey(const Key('hide-changes')));
+      expect(find.text('Activity'), findsOneWidget);
+      // The second level hides the Agent's activity and tool calls too.
+      await tester.tap(find.byKey(const Key('timeline-filter')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('moved it from Open to Closed'), findsNothing);
+      expect(find.text('Activity'), findsNothing);
+      // The third level shows everything.
+      await tester.tap(find.byKey(const Key('timeline-filter')));
       await tester.pumpAndSettle();
       expect(
         find.textContaining('moved it from Open to Closed'),
         findsOneWidget,
       );
+      expect(find.text('Activity'), findsOneWidget);
       // Identical consecutive changes fold into one line.
       expect(find.textContaining('updated the description'), findsOneWidget);
       expect(find.textContaining('×2'), findsOneWidget);

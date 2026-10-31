@@ -24,6 +24,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import type { TimelineFilter } from '../lib/timeline-filter';
 import { useTaskSession } from '../api/queries';
 import { setLiveExpanded, useLiveTurn } from '../lib/live';
 import { openRun } from '../lib/runs';
@@ -276,13 +277,15 @@ function TurnSummaryView({ summary, at }: { summary: TurnSummary; at: string }) 
 }
 
 /** What the running Turn is writing right now (not stored yet), retries and setup output. */
-export function LiveTurnView({ taskId }: { taskId: string }) {
+export function LiveTurnView({ taskId, filter = 'all' }: { taskId: string; filter?: TimelineFilter }) {
   const live = useLiveTurn(taskId);
   const session = useTaskSession(taskId);
   const [showSetup, setShowSetup] = useState(false);
+  // At the "activity" level the Agent's work stays hidden; its streaming text is the Comment being written.
+  const showWork = filter !== 'activity';
   return (
     <>
-      {live.setup && (
+      {showWork && live.setup && (
         <li className="relative flex items-start gap-3 pl-1.5 text-xs">
           <Rail icon={Terminal} />
           <div className="min-w-0 flex-1">
@@ -294,13 +297,13 @@ export function LiveTurnView({ taskId }: { taskId: string }) {
           </div>
         </li>
       )}
-      {live.retrying && (
+      {showWork && live.retrying && (
         <li role="status" className="relative flex items-center gap-3 pl-1.5 text-xs text-amber-400">
           <Rail icon={RefreshCw} className="[&_svg]:animate-spin" />
           Retrying the Claude API (attempt {live.retrying.attempt}/{live.retrying.maxRetries}){live.retrying.error ? `: ${live.retrying.error}` : ''}
         </li>
       )}
-      {live.thinking && !live.text && (
+      {showWork && live.thinking && !live.text && (
         <li className="relative flex items-center gap-3 pl-1.5 text-xs text-muted-foreground">
           <Rail icon={Brain} className="text-violet-400" />
           <span className="animate-pulse">Thinking…</span>

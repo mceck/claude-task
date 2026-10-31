@@ -17,6 +17,8 @@ import { ApiError, del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
 import { removeCard, removeTask, setTask, toCard, upsertCard } from '../lib/cache';
 import { minimizeInDock, resumeInDock, suspendInDock, useDockAvailable } from '../lib/dock';
+import { nextTimelineFilter, timelineFilterOption } from '../lib/timeline-filter';
+import type { TimelineFilter } from '../lib/timeline-filter';
 import { useTopic } from '../lib/realtime';
 import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
 import { RichMarkdownView } from './Markdown';
@@ -47,7 +49,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const confirm = useConfirm();
   const [merging, setMerging] = useState(false);
   const layout = useTaskLayout();
-  const [hideChanges, setHideChanges] = useState(true);
+  const [filter, setFilter] = useState<TimelineFilter>('changes');
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
   const dockable = useDockAvailable();
   const saves = useRef({ queue: Promise.resolve<unknown>(undefined), version: -1, count: 0, owners: new Map<string, number>() });
@@ -248,6 +250,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   };
 
   const asideName = layout.focus === 'activity' ? 'details' : 'activity';
+  const filterOption = timelineFilterOption(filter);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -284,16 +287,20 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                 <TooltipContent>Move to “{closedStatus.name}” and end the agent session</TooltipContent>
               </Tooltip>
             )}
-            <Button
-              size="xs"
-              variant="ghost"
-              className="text-muted-foreground"
-              aria-label="Hide changes"
-              aria-pressed={hideChanges}
-              onClick={() => setHideChanges((v) => !v)}
-            >
-              {hideChanges ? <EyeOff /> : <Eye />} Changes
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  aria-label={filterOption.name}
+                  onClick={() => setFilter(nextTimelineFilter)}
+                >
+                  {filter === 'all' ? <Eye /> : <EyeOff />} {filterOption.label}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{filterOption.hint}</TooltipContent>
+            </Tooltip>
             {session.data && <>
               <SessionChip session={session.data} />
               {session.data.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
@@ -394,7 +401,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
             tags={tags}
             users={people}
             session={session.data}
-            hideChanges={hideChanges}
+            filter={filter}
             reserveDockSpace={layout.focus === 'activity' || layout.sidebarOpen}
           />
         </Panel>
