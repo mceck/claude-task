@@ -156,14 +156,34 @@ void main() {
     expect(find.byTooltip('Mark all as read'), findsNothing);
   });
 
-  testWidgets('a long press without moving opens the menu', (tester) async {
+  testWidgets('a long press without moving starts multi-selection', (
+    tester,
+  ) async {
     await _open(tester, size: const Size(430, 900));
     final gesture = await tester.startGesture(tester.getCenter(_row('task-1')));
     await tester.pump(const Duration(milliseconds: 700));
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(find.text('Select'), findsOneWidget);
-    expect(find.text('Delete'), findsOneWidget);
+    expect(find.text('Select'), findsNothing);
+    expect(find.text('1 selected'), findsOneWidget);
+  });
+
+  testWidgets('swiping a row to the right closes the Task', (tester) async {
+    final h = await _open(tester, size: const Size(430, 900));
+    await tester.drag(_row('task-1'), const Offset(300, 0));
+    await tester.pumpAndSettle();
+    expect(h.api.bodies['POST /projects/project-1/tasks/bulk'], {
+      'action': 'move',
+      'taskIds': ['task-1'],
+      'statusId': 'status-2',
+    });
+  });
+
+  testWidgets('swiping a row to the left does nothing', (tester) async {
+    final h = await _open(tester, size: const Size(430, 900));
+    await tester.drag(_row('task-1'), const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    expect(h.api.bodies['POST /projects/project-1/tasks/bulk'], isNull);
   });
 
   testWidgets('a long press then a move drags the Task', (tester) async {

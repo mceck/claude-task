@@ -1088,6 +1088,30 @@ class _TaskListState extends State<TaskList> {
   Timer? _scrollTimer;
   double _scrollSpeed = 0;
 
+  /// The Task being dragged, its row height, and where it would land now: the
+  /// placeholder opens there while the other rows slide apart.
+  Task? _dragging;
+  double _dragHeight = 56;
+  _DropSpot? _spot;
+  int _spotStamp = 0;
+
+  void _hover(_DropSpot? spot) {
+    _spotStamp++;
+    if (_spot == spot) return;
+    setState(() => _spot = spot);
+  }
+
+  /// Leaving a target clears the spot unless another target took over in the
+  /// same pointer event.
+  void _hoverLeft() {
+    final stamp = _spotStamp;
+    Future.microtask(() {
+      if (mounted && stamp == _spotStamp && _spot != null) {
+        setState(() => _spot = null);
+      }
+    });
+  }
+
   @override
   void dispose() {
     _scrollTimer?.cancel();
@@ -1141,7 +1165,19 @@ class _TaskListState extends State<TaskList> {
     }
   }
 
+  void _dragStarted(Task task, double height) => setState(() {
+    _dragging = task;
+    _dragHeight = height;
+    _spot = null;
+  });
+
   void _dragEnded() {
+    if (mounted) {
+      setState(() {
+        _dragging = null;
+        _spot = null;
+      });
+    }
     _scrollSpeed = 0;
     _scrollTimer?.cancel();
     _scrollTimer = null;
@@ -1305,6 +1341,22 @@ class _TaskListState extends State<TaskList> {
     }
   }
 
+  Widget _slot(
+    _DropSpot spot,
+    TaskStatus status, {
+    Task? target,
+    bool? before,
+  }) {
+    return _DropSlot(
+      open: _dragging != null && _spot == spot,
+      height: _dragHeight,
+      onHover: () => _hover(spot),
+      onLeave: _hoverLeft,
+      onDrop: (task) =>
+          _dropOn(task, status, target: target, before: before ?? true),
+    );
+  }
+
   Widget _row(Task task, TaskStatus status, {required bool reorder}) {
     final c = widget.controller;
     final row = _TaskRow(
@@ -1316,48 +1368,109 @@ class _TaskListState extends State<TaskList> {
       onToggle: () => _toggle(task.id),
     );
     if (_selectMode) return row;
+    final closeable =
+        c.online &&
+        _closedStatus != null &&
+        c.statuses.byId(task.statusId)?.category != 'closed';
     Widget dropZone(bool before) => Expanded(
       child: DragTarget<Task>(
-        onWillAcceptWithDetails: (d) => d.data.id != task.id,
+        onWillAcceptWithDetails: (d) {
+          if (d.data.id == task.id) {
+            _hover(null);
+            return false;
+          }
+          _hover(_DropSpot(task.id, before: before));
+          return true;
+        },
+        onMove: (_) => _hover(_DropSpot(task.id, before: before)),
+        onLeave: (_) => _hoverLeft(),
         onAcceptWithDetails: (d) =>
             _dropOn(d.data, status, target: task, before: before),
-        builder: (context, candidate, _) => IgnorePointer(
-          child: DecoratedBox(
-            position: DecorationPosition.foreground,
-            decoration: BoxDecoration(
-              border: candidate.isEmpty
-                  ? null
-                  : Border(
-                      top: before
-                          ? const BorderSide(color: Palette.primary, width: 2)
-                          : BorderSide.none,
-                      bottom: before
-                          ? BorderSide.none
-                          : const BorderSide(color: Palette.primary, width: 2),
-                    ),
-            ),
-            child: const SizedBox.expand(),
-          ),
-        ),
+        builder: (context, candidate, rejected) =>
+            const IgnorePointer(child: SizedBox.expand()),
       ),
     );
     final body = Stack(
       children: [
-        row,
+        _swipeToClose(task, row, closeable),
         if (reorder)
           Positioned.fill(
             child: Column(children: [dropZone(true), dropZone(false)]),
           ),
       ],
     );
-    return _DraggableTask(
+    final draggable = _DraggableTask(
       key: ValueKey('drag:${task.id}'),
       task: task,
       enabled: c.online,
+      feedbackRow: row,
+      collapsed: _spot != null,
+      onStarted: _dragStarted,
       onMoved: _dragMoved,
       onEnded: _dragEnded,
+      onSelect: () => _startSelecting(task),
       onMenu: (anchor, at) => _rowMenu(anchor, task, at),
       child: body,
+    );
+    if (!reorder) return draggable;
+    return Column(
+      children: [
+        _slot(
+          _DropSpot(task.id, before: true),
+          status,
+          target: task,
+          before: true,
+        ),
+        draggable,
+        _slot(
+          _DropSpot(task.id, before: false),
+          status,
+          target: task,
+          before: false,
+        ),
+      ],
+    );
+  }
+
+  /// A swipe to the right closes the Task: the row follows the finger over a
+  /// green background and, once confirmed, leaves with its Status change.
+  Widget _swipeToClose(Task task, Widget row, bool closeable) {
+    if (!closeable || !_isTouch) return row;
+    return Dismissible(
+      key: ValueKey('swipe:${task.id}'),
+      direction: DismissDirection.startToEnd,
+      dismissThresholds: const {DismissDirection.startToEnd: .35},
+      background: Container(
+        margin: const EdgeInsets.only(left: 16, bottom: 2),
+        padding: const EdgeInsets.only(left: 18),
+        alignment: Alignment.centerLeft,
+        decoration: BoxDecoration(
+          color: Palette.success.withValues(alpha: .85),
+          borderRadius: BorderRadius.circular(Radii.sm),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.task_alt_rounded, color: Colors.white),
+            SizedBox(width: 8),
+            Text(
+              'Close',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+      // The Task leaves through its Status change; until then the row stays
+      // (or springs back when the close is refused or declined).
+      confirmDismiss: (_) async {
+        HapticFeedback.lightImpact();
+        await _closeTasks([task]);
+        return false;
+      },
+      child: row,
     );
   }
 
@@ -1556,8 +1669,16 @@ class _TaskListState extends State<TaskList> {
                     children: [
                       for (final (status, tasks) in groups) ...[
                         DragTarget<Task>(
+                          onWillAcceptWithDetails: (d) {
+                            _hover(_DropSpot(null, statusId: status.id));
+                            return true;
+                          },
+                          onMove: (_) =>
+                              _hover(_DropSpot(null, statusId: status.id)),
+                          onLeave: (_) => _hoverLeft(),
                           onAcceptWithDetails: (d) => _dropOn(d.data, status),
-                          builder: (context, candidate, _) => DecoratedBox(
+                          builder: (context, candidate, _) => AnimatedContainer(
+                            duration: Motion.fast,
                             decoration: BoxDecoration(
                               color: candidate.isEmpty
                                   ? null
@@ -1595,6 +1716,10 @@ class _TaskListState extends State<TaskList> {
                                           reorder: !filtering,
                                         ),
                                       ),
+                                    _slot(
+                                      _DropSpot(null, statusId: status.id),
+                                      status,
+                                    ),
                                   ],
                                 ),
                         ),
@@ -2026,23 +2151,140 @@ class _TaskRow extends StatelessWidget {
   }
 }
 
+/// Where a dragged Task would land: above or below a Task, or at the end of a
+/// Status (dropped on its header).
+class _DropSpot {
+  final String? taskId;
+  final bool before;
+  final String? statusId;
+  const _DropSpot(this.taskId, {this.before = true, this.statusId});
+  @override
+  bool operator ==(Object other) =>
+      other is _DropSpot &&
+      other.taskId == taskId &&
+      other.before == before &&
+      other.statusId == statusId;
+  @override
+  int get hashCode => Object.hash(taskId, before, statusId);
+}
+
+bool get _isTouch =>
+    defaultTargetPlatform == TargetPlatform.android ||
+    defaultTargetPlatform == TargetPlatform.iOS;
+
+/// The dashed outline that marks where the dragged Task will land.
+class _Placeholder extends StatelessWidget {
+  final double height;
+  const _Placeholder({required this.height});
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: 16, bottom: 2),
+    child: CustomPaint(
+      painter: _DashedBorder(color: Palette.primary),
+      child: SizedBox(
+        height: height - 2,
+        width: double.infinity,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Palette.primary.withValues(alpha: .08),
+            borderRadius: BorderRadius.circular(Radii.sm),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _DashedBorder extends CustomPainter {
+  final Color color;
+  const _DashedBorder({required this.color});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          (Offset.zero & size).deflate(.75),
+          const Radius.circular(Radii.sm),
+        ),
+      );
+    final paint = Paint()
+      ..color = color.withValues(alpha: .8)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    for (final metric in path.computeMetrics()) {
+      for (var d = 0.0; d < metric.length; d += 10) {
+        canvas.drawPath(metric.extractPath(d, d + 5), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedBorder old) => old.color != color;
+}
+
+/// A gap between rows that opens into the placeholder while a Task hovers it,
+/// and takes the drop itself so the rows sliding apart never lose the target.
+class _DropSlot extends StatelessWidget {
+  final bool open;
+  final double height;
+  final VoidCallback onHover, onLeave;
+  final ValueChanged<Task> onDrop;
+  const _DropSlot({
+    required this.open,
+    required this.height,
+    required this.onHover,
+    required this.onLeave,
+    required this.onDrop,
+  });
+  @override
+  Widget build(BuildContext context) => DragTarget<Task>(
+    onWillAcceptWithDetails: (_) {
+      onHover();
+      return true;
+    },
+    onMove: (_) => onHover(),
+    onLeave: (_) => onLeave(),
+    onAcceptWithDetails: (d) => onDrop(d.data),
+    builder: (context, candidate, rejected) => AnimatedSize(
+      duration: Motion.medium,
+      curve: Motion.enter,
+      alignment: Alignment.topCenter,
+      child: open
+          ? _Placeholder(height: height)
+          : const SizedBox(width: double.infinity),
+    ),
+  );
+}
+
 /// Makes a Task row draggable and gives it its menu. A mouse drags at once and
 /// opens the menu with a right click; a finger presses and holds, then either
-/// lets go (the menu) or moves on (the drag).
+/// lets go (multi-selection starts) or moves on (the drag).
 class _DraggableTask extends StatefulWidget {
   final Task task;
   final bool enabled;
   final Widget child;
+
+  /// The plain row, drawn lifted under the finger.
+  final Widget feedbackRow;
+
+  /// Whether the dragged Task would land elsewhere: its own place then closes.
+  final bool collapsed;
+  final void Function(Task task, double height) onStarted;
   final ValueChanged<Offset> onMoved;
   final VoidCallback onEnded;
+  final VoidCallback onSelect;
   final void Function(BuildContext anchor, Offset? at) onMenu;
   const _DraggableTask({
     super.key,
     required this.task,
     required this.enabled,
     required this.child,
+    required this.feedbackRow,
+    required this.collapsed,
+    required this.onStarted,
     required this.onMoved,
     required this.onEnded,
+    required this.onSelect,
     required this.onMenu,
   });
   @override
@@ -2051,61 +2293,73 @@ class _DraggableTask extends StatefulWidget {
 
 class _DraggableTaskState extends State<_DraggableTask> {
   Offset _origin = Offset.zero;
+  Size _size = Size.zero;
 
-  bool get _touch =>
-      defaultTargetPlatform == TargetPlatform.android ||
-      defaultTargetPlatform == TargetPlatform.iOS;
-
-  Widget _feedback(BuildContext context) => Material(
+  Widget _feedback() => Material(
     color: Colors.transparent,
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 320),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: Palette.raised,
-          borderRadius: BorderRadius.circular(Radii.sm),
-          border: Border.all(color: Palette.primary),
-          boxShadow: const [
-            BoxShadow(color: Color(0x66000000), blurRadius: 18),
-          ],
-        ),
-        child: Text(
-          '${widget.task.key}  ${widget.task.title}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500),
+    child: TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Motion.fast,
+      curve: Motion.pop,
+      builder: (context, t, child) => Transform.scale(
+        scale: 1 + .035 * t,
+        child: Container(
+          width: _size.width,
+          decoration: BoxDecoration(
+            color: Palette.raised,
+            borderRadius: BorderRadius.circular(Radii.sm),
+            border: Border.all(color: Palette.primary.withValues(alpha: .7)),
+            boxShadow: [
+              BoxShadow(
+                color: Color.fromRGBO(0, 0, 0, .5 * t),
+                blurRadius: 22 * t,
+                offset: Offset(0, 8 * t),
+              ),
+            ],
+          ),
+          child: child,
         ),
       ),
+      child: widget.feedbackRow,
     ),
   );
 
   void _started() {
     final box = context.findRenderObject() as RenderBox?;
     _origin = box == null ? Offset.zero : box.localToGlobal(Offset.zero);
+    _size = box?.size ?? Size.zero;
     HapticFeedback.mediumImpact();
+    widget.onStarted(widget.task, _size.height);
   }
 
   void _ended(DraggableDetails details) {
     widget.onEnded();
     // Let go without moving: that was a long press, not a drag.
-    if (_touch &&
+    if (_isTouch &&
         !details.wasAccepted &&
         (details.offset - _origin).distance < 24 &&
         mounted) {
-      widget.onMenu(context, null);
+      HapticFeedback.selectionClick();
+      widget.onSelect();
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (!widget.enabled) return widget.child;
-    final dimmed = Opacity(opacity: .35, child: widget.child);
-    final draggable = _touch
+    final gap = AnimatedSize(
+      duration: Motion.medium,
+      curve: Motion.enter,
+      alignment: Alignment.topCenter,
+      child: widget.collapsed
+          ? const SizedBox(width: double.infinity)
+          : _Placeholder(height: _size.height),
+    );
+    final draggable = _isTouch
         ? LongPressDraggable<Task>(
             data: widget.task,
-            feedback: _feedback(context),
-            childWhenDragging: dimmed,
+            feedback: _feedback(),
+            childWhenDragging: gap,
             onDragStarted: _started,
             onDragUpdate: (d) => widget.onMoved(d.globalPosition),
             onDragEnd: _ended,
@@ -2113,8 +2367,8 @@ class _DraggableTaskState extends State<_DraggableTask> {
           )
         : Draggable<Task>(
             data: widget.task,
-            feedback: _feedback(context),
-            childWhenDragging: dimmed,
+            feedback: _feedback(),
+            childWhenDragging: gap,
             onDragStarted: _started,
             onDragUpdate: (d) => widget.onMoved(d.globalPosition),
             onDragEnd: _ended,
