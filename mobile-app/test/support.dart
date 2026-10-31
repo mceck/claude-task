@@ -467,6 +467,7 @@ class FakeApi implements TaskApi {
       };
     }
     if (path == '/wikis') return {'wikis': <Json>[]};
+    if (path == '/schedules') return {'schedules': <Json>[]};
     if (path == '/projects') {
       return {
         'projects': [projectData],

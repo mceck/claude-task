@@ -387,8 +387,18 @@ class _ConversationState extends State<Conversation> {
               message: c.chatReadOnlyReason!,
             ),
           )
+        else if (c.scheduleRunReadOnlyReason != null)
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Notice(
+              key: const Key('schedule-run-read-only'),
+              message: c.scheduleRunReadOnlyReason!,
+            ),
+          )
         else ...[
-          ScheduledSection(controller: c),
+          // A Scheduled Run is managed by the scheduler: no Scheduled Messages
+          // on it, but Comments while it runs.
+          if (!c.scheduleRunOpen) ScheduledSection(controller: c),
           Composer(key: ValueKey('composer:${t.id}'), controller: c),
         ],
       ],
@@ -448,6 +458,7 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller, t = task, session = c.session;
+    final runMode = c.scheduleRunOpen;
     final following = c.preference?.following == true;
     final muted = c.preference?.muted == true;
     final running = c.online && session?['state'] == 'running';
@@ -501,40 +512,43 @@ class _Header extends StatelessWidget {
         ],
       ),
       actions: [
-        if (showDetailsAction && c.wiki == null)
+        if (showDetailsAction && c.wiki == null && !runMode)
           IconAction(
             icon: Icons.info_outline_rounded,
             tooltip: 'Task details',
             onPressed: () => showDetails(context, c),
           ),
-        IconAction(
-          icon: muted
-              ? Icons.notifications_off_outlined
-              : Icons.notifications_none_rounded,
-          tooltip: c.wiki != null
-              ? (muted ? 'Unmute wiki' : 'Mute wiki')
-              : (muted ? 'Unmute Task' : 'Mute Task'),
-          active: muted,
-          onPressed: c.online
-              ? () => perform(context, () => c.setPreference({'muted': !muted}))
-              : null,
-        ),
+        if (!runMode)
+          IconAction(
+            icon: muted
+                ? Icons.notifications_off_outlined
+                : Icons.notifications_none_rounded,
+            tooltip: c.wiki != null
+                ? (muted ? 'Unmute wiki' : 'Mute wiki')
+                : (muted ? 'Unmute Task' : 'Mute Task'),
+            active: muted,
+            onPressed: c.online
+                ? () =>
+                      perform(context, () => c.setPreference({'muted': !muted}))
+                : null,
+          ),
         Builder(
           builder: (anchor) => IconAction(
             icon: Icons.more_horiz_rounded,
             tooltip: c.wiki == null ? 'Task actions' : 'Wiki actions',
             onPressed: () async {
               final action = await showActions<String>(anchor, [
-                ActionItem(
-                  'follow',
-                  c.wiki != null
-                      ? (following ? 'Unfollow wiki' : 'Follow wiki')
-                      : (following ? 'Unfollow Task' : 'Follow Task'),
-                  following
-                      ? Icons.bookmark_rounded
-                      : Icons.bookmark_outline_rounded,
-                  enabled: c.online,
-                ),
+                if (!runMode)
+                  ActionItem(
+                    'follow',
+                    c.wiki != null
+                        ? (following ? 'Unfollow wiki' : 'Follow wiki')
+                        : (following ? 'Unfollow Task' : 'Follow Task'),
+                    following
+                        ? Icons.bookmark_rounded
+                        : Icons.bookmark_outline_rounded,
+                    enabled: c.online,
+                  ),
                 ActionItem(
                   'stop',
                   'Stop',
@@ -553,14 +567,15 @@ class _Header extends StatelessWidget {
                   Icons.campaign_outlined,
                   enabled: c.online && session?['unseenChanges'] == true,
                 ),
-                ActionItem(
-                  'auto-resume',
-                  'Automatic resume at limit',
-                  t.autoResume
-                      ? Icons.check_box_rounded
-                      : Icons.check_box_outline_blank_rounded,
-                  enabled: c.online,
-                ),
+                if (!runMode)
+                  ActionItem(
+                    'auto-resume',
+                    'Automatic resume at limit',
+                    t.autoResume
+                        ? Icons.check_box_rounded
+                        : Icons.check_box_outline_blank_rounded,
+                    enabled: c.online,
+                  ),
                 if (c.wiki != null)
                   ActionItem(
                     'wiki-settings',
@@ -568,13 +583,14 @@ class _Header extends StatelessWidget {
                     Icons.settings_outlined,
                     enabled: c.online,
                   ),
-                ActionItem(
-                  'delete',
-                  c.wiki == null ? 'Delete Task' : 'Delete wiki',
-                  Icons.delete_outline_rounded,
-                  enabled: c.online,
-                  destructive: true,
-                ),
+                if (!runMode)
+                  ActionItem(
+                    'delete',
+                    c.wiki == null ? 'Delete Task' : 'Delete wiki',
+                    Icons.delete_outline_rounded,
+                    enabled: c.online,
+                    destructive: true,
+                  ),
               ], title: '${t.key} · ${t.title}');
               if (action == null || !anchor.mounted) return;
               if (action == 'wiki-settings') {

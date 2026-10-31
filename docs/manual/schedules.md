@@ -38,10 +38,10 @@ A Schedule can be **Read-only**. The Agent can read and fetch the Repository, bu
 
 Admins only.
 
-1. Open **Schedules** in the sidebar and click **New schedule**.
+1. Open **Schedules** in the sidebar on the web, or from the drawer (phones) or the calendar button in the rail (desktops) in the native app, and click **New schedule**.
 2. Enter a **Name** and choose an enabled **Agent**.
 3. Write the **Cron expression**. A line under the field shows it in words, for example **Monday to Friday at 09:00**.
-4. Check the **Time zone**. It starts with your browser's zone, and the Schedule follows that zone's daylight saving changes.
+4. Check the **Time zone**. It starts with your browser's zone on the web and with **UTC** in the native app, where you pick it from a searchable list. The Schedule follows that zone's daylight saving changes.
 5. Write the **Prompt**. It is posted as the first message of every run.
 6. Optionally choose a **Repository** and its **Base branch**, and turn on **Read-only**. Leave the Repository empty for a global Schedule.
 7. Click **Create schedule**.
@@ -65,11 +65,11 @@ The **Schedules** list shows each Schedule's Agent, when it runs, its scope (the
 
 ![The Schedules list with a global, a read-only Repository and a paused Schedule](images/schedules/list.png)
 
-Click a Schedule to see its prompt and its **Runs**: when each started, how long it took, its outcome and a link to its Task. Click the link to read the conversation and everything the Agent did.
+Open a Schedule to see its prompt and its **Runs**: when each started, how long it took, its outcome and a link to its Task. Open the link to read the conversation and everything the Agent did. Skipped runs have no link.
 
 ![A Schedule with its prompt and the history of its runs](images/schedules/detail.png)
 
-A run is **Running** while its Agent works. While it runs you can write a Comment on its Task, for example to steer or stop the Agent. You cannot edit, move or delete the Task of a run.
+A run is **Running** while its Agent works. While it runs you can write a Comment on its Task, for example to steer or stop the Agent. You cannot edit, move or delete the Task of a run; in the native app the conversation of a closed run is read-only and its Task details are hidden.
 
 ![A run with the Schedule's prompt as its first message](images/schedules/run.png)
 

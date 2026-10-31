@@ -53,6 +53,12 @@ class TaskController extends ChangeNotifier {
   Wiki? wiki;
   bool wikiSection = false;
 
+  /// The Schedules section: the list, the open Schedule and its run history.
+  List<Schedule> schedules = [];
+  Schedule? schedule;
+  List<ScheduleRun> scheduleRuns = [];
+  bool scheduleSection = false;
+
   /// The open Wiki's Chats, most recently active first, and the one shown.
   List<WikiChat> chats = [];
   WikiChat? openChat;
@@ -289,6 +295,10 @@ class TaskController extends ChangeNotifier {
     wikis = [];
     wiki = null;
     wikiSection = false;
+    schedules = [];
+    schedule = null;
+    scheduleRuns = [];
+    scheduleSection = false;
     chats = [];
     openChat = null;
     preferences = {};
@@ -306,6 +316,13 @@ class TaskController extends ChangeNotifier {
     projects = objects(cached['projects']).map(Project.fromJson).toList();
     wikis = objects(cached['wikis']).map(Wiki.fromJson).toList();
     if (wiki != null) wiki = wikis.byId(wiki!.id) ?? wiki;
+    final cachedSchedules = storage.read('schedules') ?? {};
+    schedules = objects(cachedSchedules['schedules'])
+        .map(Schedule.fromJson)
+        .toList();
+    if (schedule != null) {
+      schedule = schedules.byId(schedule!.id) ?? schedule;
+    }
     agents = objects(cached['agents']).map(Agent.fromJson).toList();
     users = objects(cached['users']).map(User.fromJson).toList();
   }
@@ -347,6 +364,7 @@ class TaskController extends ChangeNotifier {
     'user:${user!.id}',
     'agents',
     'wikis',
+    if (scheduleSection) 'schedules',
     if (project != null) 'project:${project!.id}',
     if (task != null) 'task:${task!.id}',
   });
@@ -533,6 +551,7 @@ class TaskController extends ChangeNotifier {
       _request('GET', '/agents'),
       _request('GET', '/users'),
       _request('GET', '/wikis'),
+      _request('GET', '/schedules'),
     ]);
     if (user == null) return;
     await storage.write('global', {
@@ -541,12 +560,15 @@ class TaskController extends ChangeNotifier {
       'users': results[2]['users'],
       'wikis': results[3]['wikis'],
     });
+    await storage.write('schedules', {'schedules': results[4]['schedules']});
     _hydrateGlobal();
     user = users.byId(user!.id) ?? user;
     final selectedProject = project;
     if (selectedProject != null) await _fetchProject(selectedProject.id);
     final selectedWiki = wiki;
     if (selectedWiki != null) await _fetchChats(selectedWiki.id);
+    final selectedSchedule = schedule;
+    if (selectedSchedule != null) await _fetchSchedule(selectedSchedule.id);
     final selectedTask = task;
     if (selectedTask != null) await _fetchTask(selectedTask.id);
     error = null;
@@ -559,6 +581,9 @@ class TaskController extends ChangeNotifier {
     chats = [];
     openChat = null;
     project = null;
+    scheduleSection = false;
+    schedule = null;
+    scheduleRuns = [];
     task = null;
     _clearConversation();
     _subscribe();
@@ -567,6 +592,9 @@ class TaskController extends ChangeNotifier {
 
   void showProjects() {
     wikiSection = false;
+    scheduleSection = false;
+    schedule = null;
+    scheduleRuns = [];
     backToProjects();
   }
 
@@ -583,6 +611,9 @@ class TaskController extends ChangeNotifier {
     openChat = null;
     _clearConversation();
     project = null;
+    scheduleSection = false;
+    schedule = null;
+    scheduleRuns = [];
     statuses = [];
     tags = [];
     chats = _cachedChats(value.id);
@@ -755,6 +786,16 @@ class TaskController extends ChangeNotifier {
         'to continue it.';
   }
 
+  /// Whether the open Task is the conversation of a Scheduled Run.
+  bool get scheduleRunOpen =>
+      scheduleSection && schedule != null && task != null;
+
+  /// Why the open Scheduled Run can't be written to: the scheduler closed it.
+  String? get scheduleRunReadOnlyReason {
+    if (!scheduleRunOpen || session?['state'] != 'closed') return null;
+    return 'This run is closed: its conversation is read-only.';
+  }
+
   Future<List<Json>> wikiRepositories() async {
     final result = await _request('GET', '/git/repositories');
     final groups = objects(result['groups']);
@@ -781,6 +822,180 @@ class TaskController extends ChangeNotifier {
     await refresh();
     if (existing == null) {
       await selectWiki(Wiki.fromJson(result['wiki'] as Json));
+    }
+  }
+
+  // Schedules (docs/specs/schedules.md). The scheduler owns their runs; clients
+  // list them, read their history and, for Admins, configure and start them.
+
+  /// The Schedules section, or its list on wide layouts.
+  void showSchedules() {
+    scheduleSection = true;
+    schedule = null;
+    scheduleRuns = [];
+    project = null;
+    task = null;
+    wikiSection = false;
+    wiki = null;
+    chats = [];
+    openChat = null;
+    _clearConversation();
+    _subscribe();
+    notifyListeners();
+  }
+
+  /// Opens a Schedule on its configuration and run history.
+  Future<void> selectSchedule(Schedule value) async {
+    scheduleSection = true;
+    schedule = value;
+    scheduleRuns = _cachedScheduleRuns(value.id);
+    task = null;
+    project = null;
+    wikiSection = false;
+    wiki = null;
+    chats = [];
+    openChat = null;
+    _clearConversation();
+    _subscribe();
+    notifyListeners();
+    if (!online) return;
+    try {
+      await _fetchSchedule(value.id);
+    } catch (e) {
+      _recordError(e);
+    }
+    notifyListeners();
+  }
+
+  /// Back from a Scheduled Run's Task to the Schedule's history.
+  void backToScheduleDetail() {
+    task = null;
+    conversationVisible = false;
+    _clearConversation();
+    _subscribe();
+    notifyListeners();
+  }
+
+  /// Back from the Schedule to the Schedules list.
+  void backToSchedules() {
+    schedule = null;
+    scheduleRuns = [];
+    task = null;
+    conversationVisible = false;
+    _clearConversation();
+    _subscribe();
+    notifyListeners();
+  }
+
+  /// Opens the Task of a Scheduled Run in the normal conversation view.
+  /// Skipped runs have no Task.
+  Future<void> openScheduleRun(ScheduleRun run) async {
+    final id = run.taskId;
+    if (id == null) return;
+    final cached = storage.read('task:$id')?['task'];
+    if (!online && cached != null) {
+      await selectTask(Task.fromJson(Json.from(cached as Map)));
+      return;
+    }
+    final result = await _request('GET', '/tasks/$id');
+    await selectTask(Task.fromJson(result['task'] as Json));
+  }
+
+  Future<void> saveSchedule(Json body, {Schedule? existing}) async {
+    final result = await _request(
+      existing == null ? 'POST' : 'PATCH',
+      existing == null ? '/schedules' : '/schedules/${existing.id}',
+      body: body,
+    );
+    final saved = Schedule.fromJson(result['schedule'] as Json);
+    _replaceSchedule(saved);
+    await _cacheSchedules();
+    if (existing == null) {
+      await selectSchedule(saved);
+    } else if (schedule?.id == saved.id) {
+      await _fetchSchedule(saved.id);
+      notifyListeners();
+    }
+  }
+
+  Future<void> setScheduleEnabled(Schedule value, bool enabled) async {
+    final result = await _request(
+      'PATCH',
+      '/schedules/${value.id}',
+      body: {'enabled': enabled},
+    );
+    final fresh = Schedule.fromJson(result['schedule'] as Json);
+    _replaceSchedule(fresh);
+    await _cacheSchedules();
+    if (schedule?.id == fresh.id) schedule = fresh;
+    notifyListeners();
+  }
+
+  /// Starts a run immediately, ignoring the previous-run check. The next run
+  /// time does not move.
+  Future<void> runScheduleNow() async {
+    final current = schedule;
+    if (current == null) return;
+    await _request('POST', '/schedules/${current.id}/run');
+    await _fetchSchedule(current.id);
+    notifyListeners();
+  }
+
+  Future<void> deleteSchedule() async {
+    final current = schedule;
+    if (current == null) return;
+    await _request('DELETE', '/schedules/${current.id}');
+    for (final run in scheduleRuns) {
+      if (run.taskId != null) await storage.write('task:${run.taskId}', {});
+    }
+    await storage.write('schedule:${current.id}', {});
+    schedules = schedules.where((s) => s.id != current.id).toList();
+    await _cacheSchedules();
+    showSchedules();
+  }
+
+  void _replaceSchedule(Schedule fresh) {
+    final known = schedules.any((s) => s.id == fresh.id);
+    schedules = [
+      if (known)
+        for (final s in schedules) s.id == fresh.id ? fresh : s
+      else ...[...schedules, fresh],
+    ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
+  Future<void> _cacheSchedules() => storage.write('schedules', {
+    'schedules': [for (final s in schedules) s.json],
+  });
+
+  List<ScheduleRun> _cachedScheduleRuns(String id) =>
+      objects(storage.read('schedule:$id')?['runs'])
+          .map(ScheduleRun.fromJson)
+          .toList();
+
+  /// Loads the Schedule's configuration and its run history.
+  Future<void> _fetchSchedule(String id) async {
+    try {
+      final results = await Future.wait([
+        _request('GET', '/schedules/$id'),
+        _request('GET', '/schedules/$id/runs'),
+      ]);
+      final fresh = Schedule.fromJson(results[0]['schedule'] as Json);
+      _replaceSchedule(fresh);
+      await _cacheSchedules();
+      if (schedule?.id != id) return;
+      schedule = fresh;
+      final rawRuns = objects(results[1]['runs']);
+      scheduleRuns = rawRuns.map(ScheduleRun.fromJson).toList();
+      await storage.write('schedule:$id', {'runs': rawRuns});
+    } on ApiException catch (e) {
+      // Another client deleted the Schedule: the list is the truth.
+      if (e.status == 404 && schedule?.id == id) {
+        schedule = null;
+        scheduleRuns = [];
+        notifyListeners();
+        return;
+      }
+      rethrow;
     }
   }
 
@@ -947,6 +1162,9 @@ class TaskController extends ChangeNotifier {
     wiki = null;
     chats = [];
     openChat = null;
+    scheduleSection = false;
+    schedule = null;
+    scheduleRuns = [];
     project = value;
     task = null;
     timeline = [];
@@ -1272,7 +1490,12 @@ class TaskController extends ChangeNotifier {
   /// Plans a Comment for [dueAt] from the draft. Scheduling needs the
   /// connection and is never queued: offline, the draft stays as it is.
   Future<bool> scheduleDraft(DateTime dueAt) async {
-    if (sending || task == null || chatReadOnlyReason != null) return false;
+    if (sending ||
+        task == null ||
+        chatReadOnlyReason != null ||
+        scheduleRunReadOnlyReason != null) {
+      return false;
+    }
     if (!online) {
       error = 'Offline. Scheduling needs a connection; the draft is kept.';
       notifyListeners();
@@ -1429,7 +1652,12 @@ class TaskController extends ChangeNotifier {
   }
 
   Future<void> send() async {
-    if (sending || task == null || chatReadOnlyReason != null) return;
+    if (sending ||
+        task == null ||
+        chatReadOnlyReason != null ||
+        scheduleRunReadOnlyReason != null) {
+      return;
+    }
     if (!online) {
       error = 'Offline. Draft saved; send manually after reconnecting.';
       notifyListeners();
@@ -1706,6 +1934,17 @@ class TaskController extends ChangeNotifier {
         pendingTaskId = null;
         return;
       }
+      // A Scheduled Run's Task opens within its Schedule, as on the web.
+      final targetSchedule = schedules
+          .where((s) => s.projectId == target.projectId)
+          .firstOrNull;
+      if (targetSchedule != null) {
+        await selectSchedule(targetSchedule);
+        await selectTask(target);
+        pendingTaskId = null;
+        notifyListeners();
+        return;
+      }
       final matches = projects.where((p) => p.id == target.projectId);
       if (matches.isEmpty) return;
       await selectProject(matches.first);
@@ -1741,6 +1980,24 @@ class TaskController extends ChangeNotifier {
         unawaited(_cacheTask());
         notifyListeners();
       }
+      return;
+    }
+    if (type == 'schedule.changed') {
+      // The event carries only the id: refetch the list and the open Schedule.
+      unawaited(() async {
+        try {
+          final result = await _request('GET', '/schedules');
+          final raw = objects(result['schedules']);
+          schedules = raw.map(Schedule.fromJson).toList();
+          await storage.write('schedules', {'schedules': raw});
+          final open = schedule;
+          if (open != null) await _fetchSchedule(open.id);
+          notifyListeners();
+        } catch (e) {
+          _recordError(e);
+          notifyListeners();
+        }
+      }());
       return;
     }
     if (type == 'live.delta' && event['taskId'] == task?.id) {
@@ -1900,6 +2157,9 @@ class TaskController extends ChangeNotifier {
 
   void backToProjects() {
     wiki = null;
+    scheduleSection = false;
+    schedule = null;
+    scheduleRuns = [];
     task = null;
     project = null;
     conversationVisible = false;
