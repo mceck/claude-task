@@ -2,7 +2,7 @@
 
 # Work from the native app and receive notifications
 
-Use the native app to read Conversations, create and edit Tasks, work with Wikis and receive phone alerts. Settings also let you manage Projects and their Repositories. Admins can configure Agents, Credentials, Users, Extensions and Git Connections.
+Use the native app to read Conversations, create and edit Tasks, work with Wikis and Schedules and receive phone alerts. Settings also let you manage Projects and their Repositories. Admins can configure Agents, Credentials, Users, Extensions and Git Connections.
 
 ## Sign in
 
@@ -22,7 +22,7 @@ On a phone, tap the teal Claude Task icon at the top left of **Projects** or **W
 
 ![The phone Projects screen with the app icon at the top left](images/native-app-and-notifications/projects-phone.png)
 
-The drawer shows your profile, Projects, Wikis and Settings. Tap a Project or Wiki to open it and close the drawer. Tap your profile to manage your photo, notifications or Login.
+The drawer shows your profile, Projects, Wikis, Schedules and Settings. Tap a Project or Wiki to open it and close the drawer; **Schedules** opens the Schedules list. Tap your profile to manage your photo, notifications or Login.
 
 - **Projects settings** opens Project details, Statuses, Tags, archiving, **Agent setup** and Repository settings.
 - **Agents** lists Agents. Admins can create or edit them and select their Extensions.
@@ -30,7 +30,7 @@ The drawer shows your profile, Projects, Wikis and Settings. Tap a Project or Wi
 
 ![The phone drawer with Projects, Wikis and administration entries](images/native-app-and-notifications/drawer-phone.png)
 
-On desktop, choose Projects and Wikis from the left rail. The **Settings** button at the bottom of the rail opens the same Settings screens. Settings actions are available while online.
+On desktop, choose Projects, Wikis and Schedules from the left rail. The **Settings** button at the bottom of the rail opens the same Settings screens. Settings actions are available while online.
 
 ## Change your profile photo
 
@@ -79,6 +79,10 @@ Use **Attach local files** to stage files. They stay with your Draft until you s
 Scroll to the latest entry to mark the Conversation read while online and in the foreground. A bold Task row with a dot means it has unread entries. Read state is shared with your other devices and the web app. While reading older entries, use **Jump to latest** to return to the bottom.
 
 The **Wiki** section offers each Wiki's list of Chats, with **New chat**, rename and delete, plus the Wiki's settings and deletion. See [Wikis](wikis.md) before deleting a shared Chat.
+
+## Schedules
+
+The **Schedules** section lists the Schedules and opens one on its configuration and run history, as on the web: see [Let an Agent work on a schedule](schedules.md). Admins create, edit, pause, resume, run and delete them there; everyone can read. A run's Conversation accepts Comments while it runs and becomes read-only once it has closed, and skipped runs have no link. The list and the histories you have opened stay readable offline.
 
 ## Continue while offline
 

@@ -42,9 +42,6 @@ class Conversation extends StatefulWidget {
 
 class _ConversationState extends State<Conversation> {
   final _scroll = ScrollController();
-
-  /// The Timeline's sliver: its laid-out children say what the reader sees.
-  final _timeline = GlobalKey();
   bool _atBottom = true, _loadingOlder = false, _readPending = false;
 
   /// Hides Revisions (field changes), leaving only the conversation.
@@ -52,12 +49,12 @@ class _ConversationState extends State<Conversation> {
   String? _readId;
   String _stamp = '';
   bool _contentChanged = false;
+  bool _settling = false;
 
-  /// Where each laid-out Entry ended, counted up from the bottom of the
-  /// Timeline, and the scroll offset, at the last frame.
+  /// Where each laid-out entry ended, counted up from the bottom of the
+  /// Timeline, and the scroll offset, at the last layout.
   Map<RenderBox, double> _edges = const {};
   double _measuredPixels = 0;
-  bool _measuring = false;
 
   /// Entries already shown; anything else arriving later animates in.
   Set<String>? _seen;
@@ -77,7 +74,6 @@ class _ConversationState extends State<Conversation> {
     final bottom = _scroll.position.pixels < _followSlack;
     if (_atBottom != bottom) setState(() => _atBottom = bottom);
     if (bottom) _markReached();
-    _scheduleMeasure();
   }
 
   void _markReached() {
@@ -105,6 +101,57 @@ class _ConversationState extends State<Conversation> {
     );
   }
 
+  /// Keeps what the reader is looking at in place: the Timeline is built from
+  /// the bottom up, so content arriving below them (the Live Turn preview
+  /// growing, a new entry, the Agent Comment replacing it) would carry it off
+  /// screen, and reading back through a running Turn would keep drifting.
+  ///
+  /// Called by [_ReadingSliverList] while laying out, after the entries took
+  /// their new size, and returns the offset correction for the viewport to
+  /// apply before it paints: the frame that shows the new content is already
+  /// where it belongs, instead of sliding and then snapping back.
+  double _holdReading(RenderSliverList list) {
+    if (!_scroll.hasClients) return 0;
+    final position = _scroll.position;
+    final pixels = position.pixels;
+    final before = _edges;
+    final edges = <RenderBox, double>{};
+    // The lowest entry on screen that was already there at the last layout
+    // says how far everything below the reader moved: entries are anchored to
+    // their far edge, counted from the bottom, so they all move together.
+    double? shift;
+    for (
+      RenderBox? entry = list.firstChild;
+      entry != null;
+      entry = list.childAfter(entry)
+    ) {
+      final data = entry.parentData;
+      if (!entry.hasSize || data is! SliverMultiBoxAdaptorParentData) continue;
+      final offset = data.layoutOffset;
+      if (offset == null) continue;
+      final edge = offset + entry.size.height;
+      edges[entry] = edge;
+      final was = before[entry];
+      if (shift == null && was != null && edge > pixels) shift = edge - was;
+    }
+    // The Timeline moved since the last layout for a reason of its own (the
+    // reader scrolled, a box opened, this correction landed): leave it be.
+    final elsewhere = pixels != _measuredPixels;
+    _edges = edges;
+    _measuredPixels = pixels;
+    if (elsewhere) return 0;
+    // Following: the newest content stays on screen.
+    if (pixels < _followSlack) {
+      return _contentChanged && pixels != 0 ? -pixels : 0;
+    }
+    if (shift == null || shift == 0) return 0;
+    final target = (pixels + shift).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    return target - pixels;
+  }
+
   void _afterContent() {
     final c = widget.controller;
     final stamp =
@@ -113,71 +160,13 @@ class _ConversationState extends State<Conversation> {
       _stamp = stamp;
       _contentChanged = true;
     }
-    _scheduleMeasure();
-  }
-
-  /// The Timeline is built from the bottom up, so anything arriving below the
-  /// Entry the reader is on (the Live Turn preview growing, a new Entry, the
-  /// stored Comment replacing it) would carry that Entry off screen: reading
-  /// back through a running Turn would keep drifting. Once a frame, the scroll
-  /// offset moves by the same amount instead, so what is on screen stays put;
-  /// following the newest content takes over again at the bottom.
-  void _scheduleMeasure() {
-    if (_measuring) return;
-    _measuring = true;
+    if (_settling) return;
+    _settling = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _measuring = false;
-      if (mounted) _measure();
+      _settling = false;
+      _contentChanged = false;
+      if (mounted) _markReached();
     });
-  }
-
-  void _measure() {
-    final sliver = _timeline.currentContext?.findRenderObject();
-    if (sliver is! RenderSliverList ||
-        !sliver.attached ||
-        !_scroll.hasClients) {
-      return;
-    }
-    final changed = _contentChanged;
-    _contentChanged = false;
-    final position = _scroll.position;
-    final pixels = position.pixels;
-    final before = _edges;
-    final edges = <RenderBox, double>{};
-    // The lowest Entry on screen that was already there last frame says how
-    // far everything below the reader moved: Entries are anchored to their far
-    // edge, counted from the bottom, so they all move together.
-    double? shift;
-    for (
-      RenderBox? child = sliver.firstChild;
-      child != null;
-      child = sliver.childAfter(child)
-    ) {
-      final data = child.parentData;
-      if (!child.hasSize || data is! SliverMultiBoxAdaptorParentData) continue;
-      final offset = data.layoutOffset;
-      if (offset == null) continue;
-      final edge = offset + child.size.height;
-      edges[child] = edge;
-      final was = before[child];
-      if (shift == null && was != null && edge > pixels) shift = edge - was;
-    }
-    _edges = edges;
-    if (_atBottom) {
-      // Following: the newest content stays on screen.
-      if (changed && pixels != 0) position.jumpTo(0);
-    } else if (shift != null && shift != 0 && pixels == _measuredPixels) {
-      // Nothing else moved the Timeline since last frame: move it with the
-      // content below instead of letting the reader's place slide away.
-      position.jumpTo(
-        (pixels + shift).clamp(
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        ),
-      );
-    }
-    _measuredPixels = position.pixels;
-    _markReached();
   }
 
   Future<void> _loadOlder() async {
@@ -241,8 +230,8 @@ class _ConversationState extends State<Conversation> {
                         slivers: [
                           SliverPadding(
                             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                            sliver: SliverList(
-                              key: _timeline,
+                            sliver: _ReadingSliverList(
+                              hold: _holdReading,
                               delegate: SliverChildBuilderDelegate(
                                 childCount: rows.length + 2,
                                 // Entries keep their element (open sections,
@@ -398,8 +387,18 @@ class _ConversationState extends State<Conversation> {
               message: c.chatReadOnlyReason!,
             ),
           )
+        else if (c.scheduleRunReadOnlyReason != null)
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Notice(
+              key: const Key('schedule-run-read-only'),
+              message: c.scheduleRunReadOnlyReason!,
+            ),
+          )
         else ...[
-          ScheduledSection(controller: c),
+          // A Scheduled Run is managed by the scheduler: no Scheduled Messages
+          // on it, but Comments while it runs.
+          if (!c.scheduleRunOpen) ScheduledSection(controller: c),
           Composer(key: ValueKey('composer:${t.id}'), controller: c),
         ],
       ],
@@ -459,6 +458,7 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller, t = task, session = c.session;
+    final runMode = c.scheduleRunOpen;
     final following = c.preference?.following == true;
     final muted = c.preference?.muted == true;
     final running = c.online && session?['state'] == 'running';
@@ -512,40 +512,43 @@ class _Header extends StatelessWidget {
         ],
       ),
       actions: [
-        if (showDetailsAction && c.wiki == null)
+        if (showDetailsAction && c.wiki == null && !runMode)
           IconAction(
             icon: Icons.info_outline_rounded,
             tooltip: 'Task details',
             onPressed: () => showDetails(context, c),
           ),
-        IconAction(
-          icon: muted
-              ? Icons.notifications_off_outlined
-              : Icons.notifications_none_rounded,
-          tooltip: c.wiki != null
-              ? (muted ? 'Unmute wiki' : 'Mute wiki')
-              : (muted ? 'Unmute Task' : 'Mute Task'),
-          active: muted,
-          onPressed: c.online
-              ? () => perform(context, () => c.setPreference({'muted': !muted}))
-              : null,
-        ),
+        if (!runMode)
+          IconAction(
+            icon: muted
+                ? Icons.notifications_off_outlined
+                : Icons.notifications_none_rounded,
+            tooltip: c.wiki != null
+                ? (muted ? 'Unmute wiki' : 'Mute wiki')
+                : (muted ? 'Unmute Task' : 'Mute Task'),
+            active: muted,
+            onPressed: c.online
+                ? () =>
+                      perform(context, () => c.setPreference({'muted': !muted}))
+                : null,
+          ),
         Builder(
           builder: (anchor) => IconAction(
             icon: Icons.more_horiz_rounded,
             tooltip: c.wiki == null ? 'Task actions' : 'Wiki actions',
             onPressed: () async {
               final action = await showActions<String>(anchor, [
-                ActionItem(
-                  'follow',
-                  c.wiki != null
-                      ? (following ? 'Unfollow wiki' : 'Follow wiki')
-                      : (following ? 'Unfollow Task' : 'Follow Task'),
-                  following
-                      ? Icons.bookmark_rounded
-                      : Icons.bookmark_outline_rounded,
-                  enabled: c.online,
-                ),
+                if (!runMode)
+                  ActionItem(
+                    'follow',
+                    c.wiki != null
+                        ? (following ? 'Unfollow wiki' : 'Follow wiki')
+                        : (following ? 'Unfollow Task' : 'Follow Task'),
+                    following
+                        ? Icons.bookmark_rounded
+                        : Icons.bookmark_outline_rounded,
+                    enabled: c.online,
+                  ),
                 ActionItem(
                   'stop',
                   'Stop',
@@ -564,14 +567,15 @@ class _Header extends StatelessWidget {
                   Icons.campaign_outlined,
                   enabled: c.online && session?['unseenChanges'] == true,
                 ),
-                ActionItem(
-                  'auto-resume',
-                  'Automatic resume at limit',
-                  t.autoResume
-                      ? Icons.check_box_rounded
-                      : Icons.check_box_outline_blank_rounded,
-                  enabled: c.online,
-                ),
+                if (!runMode)
+                  ActionItem(
+                    'auto-resume',
+                    'Automatic resume at limit',
+                    t.autoResume
+                        ? Icons.check_box_rounded
+                        : Icons.check_box_outline_blank_rounded,
+                    enabled: c.online,
+                  ),
                 if (c.wiki != null)
                   ActionItem(
                     'wiki-settings',
@@ -579,13 +583,14 @@ class _Header extends StatelessWidget {
                     Icons.settings_outlined,
                     enabled: c.online,
                   ),
-                ActionItem(
-                  'delete',
-                  c.wiki == null ? 'Delete Task' : 'Delete wiki',
-                  Icons.delete_outline_rounded,
-                  enabled: c.online,
-                  destructive: true,
-                ),
+                if (!runMode)
+                  ActionItem(
+                    'delete',
+                    c.wiki == null ? 'Delete Task' : 'Delete wiki',
+                    Icons.delete_outline_rounded,
+                    enabled: c.online,
+                    destructive: true,
+                  ),
               ], title: '${t.key} · ${t.title}');
               if (action == null || !anchor.mounted) return;
               if (action == 'wiki-settings') {
@@ -1524,6 +1529,48 @@ class _Bubble extends StatelessWidget {
     return dashed
         ? DashedOutline(color: line, borderRadius: radius, child: box)
         : box;
+  }
+}
+
+/// A [SliverList] that asks [hold] for a scroll offset correction right after
+/// its entries take their new size, and reports it to the viewport, which
+/// applies it and lays out again before painting. Asking from inside the
+/// list's own layout is what lets [hold] read the entries' sizes.
+class _ReadingSliverList extends SliverList {
+  const _ReadingSliverList({required this.hold, required super.delegate});
+
+  final double Function(RenderSliverList list) hold;
+
+  @override
+  RenderSliverList createRenderObject(BuildContext context) =>
+      _RenderReadingSliverList(
+        childManager: context as SliverMultiBoxAdaptorElement,
+        hold: hold,
+      );
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderReadingSliverList renderObject,
+  ) {
+    renderObject.hold = hold;
+  }
+}
+
+class _RenderReadingSliverList extends RenderSliverList {
+  _RenderReadingSliverList({required super.childManager, required this.hold});
+
+  double Function(RenderSliverList list) hold;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    // The list asked for a correction of its own: it knows better.
+    if (geometry!.scrollOffsetCorrection != null) return;
+    final correction = hold(this);
+    if (correction != 0) {
+      geometry = SliverGeometry(scrollOffsetCorrection: correction);
+    }
   }
 }
 

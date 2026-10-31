@@ -321,6 +321,94 @@ class ScheduledMessage implements Identified {
   bool get isLimitResume => kind == 'limit_resume';
 }
 
+/// A configured recurring job: an Agent, a cron expression, a time zone and a
+/// prompt. Its runs are Tasks of its hidden Schedule Project.
+class Schedule implements Identified {
+  @override
+  final String id;
+  final String projectId, name, cron, timeZone, prompt;
+  final String? agentId;
+
+  /// Null for a global Schedule: its Agent works on the boards.
+  final Json? repository;
+  final bool readOnly, enabled;
+  final DateTime? nextRunAt;
+  final int consecutiveSkips;
+  final Actor? createdBy;
+  final ScheduleRun? lastRun;
+  final DateTime createdAt, updatedAt;
+
+  /// As the API sent it, for the offline cache.
+  final Json json;
+  Schedule.fromJson(this.json)
+    : id = json['id'] as String,
+      projectId = json['projectId'] as String? ?? '',
+      name = json['name'] as String? ?? '',
+      agentId = json['agentId'] as String?,
+      cron = json['cron'] as String? ?? '',
+      timeZone = json['timeZone'] as String? ?? 'UTC',
+      prompt = json['prompt'] as String? ?? '',
+      repository = json['repository'] == null
+          ? null
+          : Json.from(json['repository'] as Map),
+      readOnly = json['readOnly'] == true,
+      enabled = json['enabled'] != false,
+      nextRunAt = DateTime.tryParse(json['nextRunAt'] as String? ?? ''),
+      consecutiveSkips = (json['consecutiveSkips'] as num?)?.toInt() ?? 0,
+      createdBy = Actor.maybe(json['createdBy']),
+      lastRun = json['lastRun'] is Map
+          ? ScheduleRun.fromJson(Json.from(json['lastRun'] as Map))
+          : null,
+      createdAt =
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      updatedAt =
+          DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+  bool get global => repository == null;
+  String get repositoryName =>
+      global ? 'Global' : '${repository!['owner']}/${repository!['name']}';
+}
+
+/// One execution of a [Schedule]: a Task of its Schedule Project, or a due
+/// time that was skipped and has no Task.
+class ScheduleRun implements Identified {
+  @override
+  final String id;
+  final String scheduleId;
+
+  /// `running`, `succeeded`, `failed` or `skipped`.
+  final String state;
+  final bool manual;
+  final DateTime dueAt, startedAt;
+  final DateTime? finishedAt;
+
+  /// Null for a skipped run.
+  final String? taskId, taskKey;
+  final String? skipReason;
+
+  /// As the API sent it, for the offline cache.
+  final Json json;
+  ScheduleRun.fromJson(this.json)
+    : id = json['id'] as String,
+      scheduleId = json['scheduleId'] as String? ?? '',
+      state = json['state'] as String? ?? 'running',
+      manual = json['manual'] == true,
+      dueAt =
+          DateTime.tryParse(json['dueAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      startedAt =
+          DateTime.tryParse(json['startedAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      finishedAt = DateTime.tryParse(json['finishedAt'] as String? ?? ''),
+      taskId = json['taskId'] as String?,
+      taskKey = json['taskKey'] as String?,
+      skipReason = json['skipReason'] as String?;
+  bool get skipped => state == 'skipped';
+  bool get running => state == 'running';
+  Duration? get duration => finishedAt?.difference(startedAt);
+}
+
 /// Whoever performed an action; [id] is null for the system.
 class Actor {
   final String? id;

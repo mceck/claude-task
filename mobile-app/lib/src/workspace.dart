@@ -6,6 +6,7 @@ import 'app.dart';
 import 'controller.dart';
 import 'conversation.dart';
 import 'models.dart';
+import 'schedules_page.dart';
 import 'task_forms.dart';
 import 'settings.dart';
 import 'wiki.dart';
@@ -22,6 +23,62 @@ class Workspace extends StatelessWidget {
     builder: (context, box) {
       final c = controller, wide = box.maxWidth >= 1000;
       c.conversationVisible = c.task != null;
+      if (c.scheduleSection) {
+        if (wide) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(width: 76, child: ProjectRail(controller: c)),
+              Container(
+                width: 340,
+                decoration: const BoxDecoration(
+                  color: Palette.sidebar,
+                  border: Border(right: BorderSide(color: Palette.border)),
+                ),
+                child: ScheduleList(controller: c, selectedId: c.schedule?.id),
+              ),
+              Expanded(
+                child: c.task != null
+                    ? Conversation(
+                        key: ValueKey('schedule-run:${c.task!.id}'),
+                        controller: c,
+                        onBack: c.backToScheduleDetail,
+                      )
+                    : c.schedule == null
+                    ? const EmptyState(
+                        icon: Icons.calendar_month_outlined,
+                        title: 'Select a Schedule',
+                        message: 'Open one to see its configuration and run history.',
+                      )
+                    : SchedulePage(
+                        key: ValueKey('schedule:${c.schedule!.id}'),
+                        controller: c,
+                      ),
+              ),
+            ],
+          );
+        }
+        return PopScope(
+          canPop: c.schedule == null,
+          onPopInvokedWithResult: (popped, _) {
+            if (popped) return;
+            c.task != null ? c.backToScheduleDetail() : c.backToSchedules();
+          },
+          child: c.task != null
+              ? Conversation(
+                  key: ValueKey('schedule-run:${c.task!.id}'),
+                  controller: c,
+                  onBack: c.backToScheduleDetail,
+                )
+              : c.schedule != null
+              ? SchedulePage(
+                  key: ValueKey('schedule:${c.schedule!.id}'),
+                  controller: c,
+                  onBack: c.backToSchedules,
+                )
+              : ScheduleList(controller: c),
+        );
+      }
       if (c.wikiSection) {
         if (wide) {
           return Row(
@@ -274,7 +331,8 @@ class AppDrawer extends StatelessWidget {
                   color: Palette.primary,
                 ),
                 title: 'Projects',
-                selected: !c.wikiSection && c.project == null,
+                selected:
+                    !c.wikiSection && !c.scheduleSection && c.project == null,
                 onTap: () => go(c.showProjects),
               ),
               if (c.projects.isEmpty)
@@ -289,9 +347,14 @@ class AppDrawer extends StatelessWidget {
                 row(
                   leading: ProjectLogo(project: p, api: c.api, size: 28),
                   title: p.name,
-                  selected: !c.wikiSection && c.project?.id == p.id,
+                  selected:
+                      !c.wikiSection &&
+                      !c.scheduleSection &&
+                      c.project?.id == p.id,
                   onTap: () => go(() {
-                    if (c.wikiSection || c.project?.id != p.id) {
+                    if (c.wikiSection ||
+                        c.scheduleSection ||
+                        c.project?.id != p.id) {
                       c.selectProject(p);
                     }
                   }),
@@ -337,6 +400,17 @@ class AppDrawer extends StatelessWidget {
                 leading: const Icon(Icons.add_rounded, size: 22),
                 title: 'New wiki',
                 onTap: c.online ? () => go(() => showWikiForm(host, c)) : null,
+              ),
+              const SizedBox(height: 12),
+              row(
+                leading: const Icon(
+                  Icons.calendar_month_outlined,
+                  size: 22,
+                  color: Palette.info,
+                ),
+                title: 'Schedules',
+                selected: c.scheduleSection,
+                onTap: () => go(c.showSchedules),
               ),
               const Divider(height: 24),
               const Padding(
@@ -420,6 +494,13 @@ class ProjectRail extends StatelessWidget {
             tooltip: 'Wiki',
             active: c.wikiSection,
             onPressed: c.showWikis,
+          ),
+          const SizedBox(height: 4),
+          IconAction(
+            icon: Icons.calendar_month_outlined,
+            tooltip: 'Schedules',
+            active: c.scheduleSection,
+            onPressed: c.showSchedules,
           ),
           const SizedBox(height: 8),
           Expanded(
