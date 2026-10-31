@@ -12,6 +12,7 @@ import 'controller.dart';
 import 'voice_widgets.dart';
 import 'models.dart';
 import 'questions.dart';
+import 'scheduled.dart';
 import 'task_forms.dart';
 import 'wiki.dart';
 import 'uploads.dart';
@@ -397,8 +398,10 @@ class _ConversationState extends State<Conversation> {
               message: c.chatReadOnlyReason!,
             ),
           )
-        else
+        else ...[
+          ScheduledSection(controller: c),
           Composer(key: ValueKey('composer:${t.id}'), controller: c),
+        ],
       ],
     );
   }
@@ -561,6 +564,14 @@ class _Header extends StatelessWidget {
                   Icons.campaign_outlined,
                   enabled: c.online && session?['unseenChanges'] == true,
                 ),
+                ActionItem(
+                  'auto-resume',
+                  'Automatic resume at limit',
+                  t.autoResume
+                      ? Icons.check_box_rounded
+                      : Icons.check_box_outline_blank_rounded,
+                  enabled: c.online,
+                ),
                 if (c.wiki != null)
                   ActionItem(
                     'wiki-settings',
@@ -585,6 +596,8 @@ class _Header extends StatelessWidget {
                 } else {
                   await confirmDeleteTask(anchor, c);
                 }
+              } else if (action == 'auto-resume') {
+                await perform(anchor, () => c.setAutoResume(!t.autoResume));
               } else if (action == 'follow') {
                 await perform(
                   anchor,
@@ -1269,6 +1282,7 @@ class _CommentView extends StatelessWidget {
     final isAgent = kind == 'agent', isSystem = kind == 'system';
     final delivery = e.content['delivery'] as Map?;
     final question = e.question, survey = e.survey;
+    final limitResume = e.limitResume;
     // Claude uses orange; Internal chat stays gray and System notices use amber.
     final line = e.internal
         ? Palette.slate.withValues(alpha: .65)
@@ -1322,6 +1336,16 @@ class _CommentView extends StatelessWidget {
             fade: Palette.bg,
             expanded: controller.expandedComments.contains(e.id),
             child: Md(e.body, size: isSystem ? 13.5 : 14.5, onLink: openLink),
+          ),
+        if (limitResume != null)
+          Padding(
+            padding: EdgeInsets.only(top: e.body.isEmpty ? 0 : 10),
+            child: LimitResumeCard(
+              key: ValueKey('limit-resume:${e.id}'),
+              commentId: e.id,
+              offer: limitResume,
+              controller: controller,
+            ),
           ),
         for (final attachment in e.attachments)
           AttachmentTile(attachment: attachment, controller: controller),
@@ -3053,6 +3077,9 @@ class Composer extends StatefulWidget {
 
 class _ComposerState extends State<Composer> {
   bool _attaching = false;
+
+  /// The time the draft is scheduled for; while set, Send reads "Schedule".
+  DateTime? _dueAt;
   late final TextEditingController _text;
   final _focus = FocusNode();
   final _link = LayerLink();
@@ -3095,7 +3122,19 @@ class _ComposerState extends State<Composer> {
   Future<void> _send() async {
     if (!_canSend) return;
     final restoreFocus = _focus.hasFocus;
-    await perform(context, widget.controller.send);
+    final due = _dueAt;
+    if (due != null) {
+      final problem = scheduleProblem(due);
+      if (problem != null) {
+        toast(context, problem);
+        return;
+      }
+      if (await widget.controller.scheduleDraft(due) && mounted) {
+        setState(() => _dueAt = null);
+      }
+    } else {
+      await perform(context, widget.controller.send);
+    }
     if (mounted && restoreFocus) _focus.requestFocus();
   }
 
@@ -3132,6 +3171,11 @@ class _ComposerState extends State<Composer> {
       _send();
     }
     return KeyEventResult.handled;
+  }
+
+  Future<void> _pickDue() async {
+    final due = await pickScheduleTime(context, initial: _dueAt);
+    if (due != null && mounted) setState(() => _dueAt = due);
   }
 
   Future<void> _attach() async {
@@ -3176,7 +3220,12 @@ class _ComposerState extends State<Composer> {
         ? Palette.primary
         : Palette.borderStrong;
     final radius = BorderRadius.circular(Radii.xl);
-    final sendLabel = internal ? 'Send to internal chat' : 'Send comment';
+    final due = _dueAt;
+    final sendLabel = due != null
+        ? 'Schedule'
+        : internal
+        ? 'Send to internal chat'
+        : 'Send comment';
     // Buttons sit in fixed-height slots as tall as one line of text, so they
     // stay centered on it whatever the platform's font metrics, and stay on
     // the last line as the text grows.
@@ -3224,6 +3273,36 @@ class _ComposerState extends State<Composer> {
                 ],
               ),
             ),
+          if (due != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 6, 0),
+              child: Row(
+                key: const Key('schedule-chip'),
+                children: [
+                  const Icon(
+                    Icons.schedule_rounded,
+                    size: 14,
+                    color: Palette.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Scheduled for ${formatDue(due)}',
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: Palette.fgMuted,
+                      ),
+                    ),
+                  ),
+                  IconAction(
+                    icon: Icons.close_rounded,
+                    tooltip: 'Clear schedule',
+                    size: 28,
+                    onPressed: () => setState(() => _dueAt = null),
+                  ),
+                ],
+              ),
+            ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -3263,6 +3342,18 @@ class _ComposerState extends State<Composer> {
                             ),
                     ),
                   ),
+                ),
+              ),
+              slot(
+                IconAction(
+                  key: const Key('schedule-button'),
+                  icon: Icons.schedule_rounded,
+                  tooltip: due == null
+                      ? 'Schedule for later'
+                      : 'Change scheduled time',
+                  color: due == null ? Palette.fgSubtle : Palette.primary,
+                  size: 36,
+                  onPressed: c.sending ? null : _pickDue,
                 ),
               ),
               Expanded(
@@ -3337,8 +3428,9 @@ class _ComposerState extends State<Composer> {
                       color: internal ? Palette.slateDeep : Palette.primary,
                       hoverColor: const Color(0x22ffffff),
                       borderRadius: BorderRadius.circular(99),
-                      child: SizedBox.square(
-                        dimension: 36,
+                      child: SizedBox(
+                        height: 36,
+                        width: due == null ? 36 : 104,
                         child: AnimatedSwitcher(
                           duration: Motion.fast,
                           transitionBuilder: (child, animation) =>
@@ -3356,6 +3448,32 @@ class _ComposerState extends State<Composer> {
                                   child: Spinner(
                                     size: 16,
                                     color: sendForeground,
+                                  ),
+                                )
+                              : due != null
+                              ? Center(
+                                  key: const ValueKey('schedule'),
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.schedule_rounded,
+                                          size: 16,
+                                          color: sendForeground,
+                                        ),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          'Schedule',
+                                          style: TextStyle(
+                                            color: sendForeground,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 )
                               : Icon(

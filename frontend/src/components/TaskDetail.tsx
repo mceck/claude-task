@@ -9,11 +9,11 @@ import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { ApiError, del, errorMessage, patch, post } from '../api/client';
+import { ApiError, del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
 import { removeCard, removeTask, setTask, toCard, upsertCard } from '../lib/cache';
 import { minimizeInDock, removeFromDock, useDockAvailable } from '../lib/dock';
@@ -217,6 +217,16 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     }
   };
 
+  const setAutoResume = async (enabled: boolean) => {
+    try {
+      const res = await put<{ task: Task }>(`/tasks/${task.id}/auto-resume`, { enabled });
+      setTask(qc, res.task);
+      upsertCard(qc, toCard(res.task));
+    } catch (err) {
+      toast.error('Couldn’t change automatic resume', { description: errorMessage(err) });
+    }
+  };
+
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(`${location.origin}/t/${task.key}`);
@@ -350,6 +360,9 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               <DropdownMenuItem onSelect={copyLink}>
                 <Link2 /> Copy link
               </DropdownMenuItem>
+              <DropdownMenuCheckboxItem checked={task.autoResume} onCheckedChange={(on) => void setAutoResume(on)}>
+                Automatic resume at limit
+              </DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={remove}>
                 <Trash2 /> Delete task

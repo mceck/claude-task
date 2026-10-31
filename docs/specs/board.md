@@ -63,7 +63,7 @@ Logo changes use the same realtime event as other Project edits. Concurrent repl
 
 - **General**: logo upload, replacement and removal, name, description (the key is shown read-only), archive and unarchive, and for Admins on archived Projects, "Delete permanently".
 - **Statuses** and **Tags**: described below.
-- **Agents**: the Setup Script and Agent Instructions (each up to 100,000 characters, editable by any User and saved automatically after a 600 ms pause or when leaving the field or view) and the Project's environment variables and secrets (Admins only). The section shows save progress and errors with a Retry action. See [Agents](agents.md) and [Agent Sessions](agent-sessions.md).
+- **Agents**: the **Automatic resume at limit** switch (off by default; new Tasks copy its value, see Creating Tasks), the Setup Script and Agent Instructions (each up to 100,000 characters, editable by any User and saved automatically after a 600 ms pause or when leaving the field or view) and the Project's environment variables and secrets (Admins only). The section shows save progress and errors with a Retry action. See [Agents](agents.md) and [Agent Sessions](agent-sessions.md).
 - **Repository**: the linked Repository and its Base Branch. See [Git integration](git-integration.md).
 
 ### Statuses
@@ -96,6 +96,7 @@ Any User creates a Task in a Project, from the "Add task" box at the bottom of a
 - **Description**: Markdown, up to 100,000 characters, empty by default.
 - **Status**: any Status of the Project; by default the first `open` Status in order (Todo in the default set, never a `backlog` one).
 - **Agent**: the Project's **default Agent** (set in its "Agents" settings) when it is enabled, otherwise none; a Task created in a `backlog`-category Status has no Agent. Assigning it creates the usual `pending` Session; nothing starts until the first User Comment. A disabled or deleted default Agent leaves new Tasks without an Agent (deleting an Agent clears the setting).
+- **Automatic resume at limit**: copied from the Project's switch when the Task is created, by a User, an Agent or a Schedule. It is the Task's own switch from then on: changing the Project's does not change existing Tasks. When it is on, a Turn that stops at a usage limit with a known reset time gets its Limit Resume without asking (see [Agent sessions](agent-sessions.md#usage-limits-and-limit-resume)). Any User changes it from the Task's menu; it is a dedicated call that creates no Revision and leaves the Task's version as it is.
 - **Priority**: `none` by default.
 - **Tags**: up to 50, all from the same Project.
 - **Assignees**: up to 50 existing Users.
@@ -236,10 +237,10 @@ Realtime topics: `project:<id>` carries `task.created`, `task.updated`, `task.mo
 
 ## Data model
 
-- **Project**: key (unique, 2 to 6 uppercase letters, fixed), kind (`project` or `wiki`), name, description, archived at, Repository link, default Agent, next Task number (starts at 1), Setup Script, Agent Instructions, created at, updated at.
+- **Project**: key (unique, 2 to 6 uppercase letters, fixed), kind (`project` or `wiki`), name, description, archived at, Repository link, default Agent, automatic resume switch (off by default), next Task number (starts at 1), Setup Script, Agent Instructions, created at, updated at.
 - **Status**: Project, name (unique within the Project, case-insensitive), color, Category, position.
 - **Tag**: Project, name (unique within the Project, case-insensitive), color.
-- **Task**: Project, number (unique within the Project), title, description, Status, priority, position (fractional key compared byte by byte), creator Actor, assigned Agent, current Session, Task Branch and pull request, conversation generation (see [Wikis](wikis.md)), version (starts at 1, increased on every recorded change), created at, updated at.
+- **Task**: Project, number (unique within the Project), title, description, Status, priority, position (fractional key compared byte by byte), creator Actor, assigned Agent, automatic resume switch, current Session, Task Branch and pull request, conversation generation (see [Wikis](wikis.md)), version (starts at 1, increased on every recorded change), created at, updated at.
 - **Task assignee**: Task, User. **Task Tag**: Task, Tag.
 - **Revision**: Task, version (unique per Task), Actor, changes (field, before, after), created at.
 
@@ -254,6 +255,7 @@ Deleting a Project removes its Statuses, Tags and Tasks; deleting a Task removes
 
 ## Decisions
 
+- **The automatic resume switch is copied to the Task at creation.** A Task of a Project that resumes automatically keeps doing so when the Project's switch changes later, and a Task can opt out on its own. A single inherited value would make a Project-wide change silently alter Tasks mid-work.
 - **Project creation saves the initial Repository and default Agent atomically.** Both clients send the initial configuration in the creation request, so a failed Repository check or Agent selection leaves the User free to retry with the same Project Key.
 
 - **Project-owned logos in the shared file store.** The Project stores a reference to its own image. Authenticated downloads reuse the existing file store and Login rules, while changing the URL on replacement lets both clients refresh the image. Cleanup runs after commit so failed edits keep the existing logo available.

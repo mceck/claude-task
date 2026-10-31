@@ -61,6 +61,8 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
   late String _savedInstructions = _instructions.text;
   late String? _defaultAgentId = _settings['defaultAgentId'] as String?;
   late String? _savedDefaultAgentId = _defaultAgentId;
+  late bool _autoResume = _settings['autoResume'] == true;
+  late bool _savedAutoResume = _autoResume;
   Timer? _debounce;
   Future<bool>? _saveFuture;
   String? _saveError, _envError;
@@ -74,6 +76,7 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
       'agentInstructions': _instructions.text,
     if (_defaultAgentId != _savedDefaultAgentId)
       'defaultAgentId': _defaultAgentId,
+    if (_autoResume != _savedAutoResume) 'autoResume': _autoResume,
   };
 
   @override
@@ -105,6 +108,9 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
     if (_defaultAgentId == _savedDefaultAgentId) {
       _defaultAgentId = _savedDefaultAgentId =
           _settings['defaultAgentId'] as String?;
+    }
+    if (_autoResume == _savedAutoResume) {
+      _autoResume = _savedAutoResume = _settings['autoResume'] == true;
     }
   }
 
@@ -153,6 +159,9 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
           }
           if (changes.containsKey('defaultAgentId')) {
             _savedDefaultAgentId = changes['defaultAgentId'] as String?;
+          }
+          if (changes.containsKey('autoResume')) {
+            _savedAutoResume = changes['autoResume'] as bool;
           }
         });
       }
@@ -284,6 +293,16 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
                 placeholder: selected == null,
                 onTap: _pickAgent,
               ),
+            ),
+            SwitchRow(
+              label: 'Automatic resume at limit',
+              description:
+                  'When an Agent hits a usage limit with a known reset time, resume it without asking. New Tasks copy this switch; existing Tasks keep theirs.',
+              value: _autoResume,
+              onChanged: (v) {
+                setState(() => _autoResume = v);
+                unawaited(_flush());
+              },
             ),
             _autoField(
               'Worktree Setup Script',

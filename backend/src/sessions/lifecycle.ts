@@ -1,6 +1,7 @@
 // Session lifecycle rules (docs/specs/agent-sessions.md): Assignment, unassignment, reassignment, closing and
 // reopening a Task, and how a User's Comment reaches the Agent. Lock order everywhere:
 // project → task → agents (by id) → session → job → queue entries.
+import { cancelLimitResumes } from '../modules/scheduled-messages/service';
 import { commandName, taskKey } from '@claude-task/shared';
 import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { transactWithRetry } from '../context';
@@ -24,7 +25,7 @@ export async function worktreePathFor(db: Executor, task: Pick<TaskRow, 'id' | '
   return `worktrees/${task.projectId}/${taskKey(p!.key, owner.number)}`;
 }
 
-async function isClosedStatus(db: Executor, statusId: string): Promise<boolean> {
+export async function isClosedStatus(db: Executor, statusId: string): Promise<boolean> {
   const [s] = await db.select({ category: statuses.category }).from(statuses).where(eq(statuses.id, statusId));
   return s?.category === 'closed';
 }
@@ -72,7 +73,10 @@ export async function onTaskChanged(
   const closedBefore = await isClosedStatus(tx, before.statusId);
   const closedNow = statusChanged ? await isClosedStatus(tx, task.statusId) : closedBefore;
 
-  if (agentChanged) await reassign(tx, after, task, before.agentId, closedNow);
+  if (agentChanged) {
+    await cancelLimitResumes(tx, after, task.id, 'The agent was unassigned or replaced');
+    await reassign(tx, after, task, before.agentId, closedNow);
+  }
   if (!closedBefore && closedNow) await closeSessions(tx, after, task);
   else if (closedBefore && !closedNow) await reopenSession(tx, after, task);
 }
@@ -174,6 +178,7 @@ export async function resumeTaskSession(tx: Executor, after: AfterCommit, task: 
 
 /** Closed: cancel any Job, drop undelivered Messages, close every Session and remove the Worktrees. */
 async function closeSessions(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
+  await cancelLimitResumes(tx, after, task.id, 'The task was closed');
   const open = await tx
     .select({ id: sessions.id, agentId: sessions.agentId })
     .from(sessions)
@@ -297,13 +302,16 @@ export async function deliverComment(
     return 'delivered';
   }
 
-  // A new Comment is also how a held entry (after a failed Job) gets going again.
+  // A new Comment is also how a held entry (after a failed Job) gets going again. When the
+  // Agent is working on this very Task, the entry goes to the front: the Task has priority
+  // over the other Tasks waiting in the Queue, so it continues as soon as this Job ends.
   const entry = await enqueue(tx, after, {
     agentId: task.agentId,
     taskId: task.id,
     sessionId: session.id,
     kind: session.started ? 'messages' : 'start',
     held: false,
+    front: job !== null,
   });
   await attachComments(tx, after, entry.id, [comment.id]);
   after.effect((ctx) => ctx.scheduler.kick(task.agentId!));
@@ -333,11 +341,14 @@ async function requeueUnsentComment(ctx: AppContext, commentId: string, jobId: s
     if (!task.agentId || !task.currentSessionId) return failed('no agent assigned');
     if (!session || session.state === 'paused') return failed('no agent assigned');
     if (session.state === 'closed') return failed('task closed');
+    const job = await activeJob(tx, session.id);
     const entry = await enqueue(tx, after, {
       agentId: task.agentId,
       taskId: task.id,
       sessionId: session.id,
       kind: session.started ? 'messages' : 'start',
+      // The Comment was meant for the Task the Agent is working on: keep it ahead of other Tasks.
+      front: job !== null,
     });
     await attachComments(tx, after, entry.id, [commentId]);
     after.effect((c) => c.scheduler.kick(task.agentId!));

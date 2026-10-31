@@ -460,7 +460,7 @@ describe('Comments reaching the Agent', () => {
     ]);
   });
 
-  it('ends the Job after a Turn, and queues a Comment arriving after the result at the back', async () => {
+  it('ends the Job after a Turn, and queues a Comment arriving after the result for the running Task at the front', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);
     const waiting = await createTask(admin, project.id, { title: 'Waiting' });
@@ -472,11 +472,42 @@ describe('Comments reaching the Agent', () => {
     await runner.play(start.jobId, [s.init(), s.text('Done.'), s.result()]);
     await runner.next('job.end', (m) => m.jobId === start.jobId);
 
+    // The Turn is over, so the Comment can't go to stdin; the Task the Agent was working on
+    // still keeps priority over the other Task waiting in the Queue.
     const late = await comment(admin, task.id, 'One more thing');
     expect(late.delivery?.state).toBe('queued');
     expect(runner.messages('job.input')).toHaveLength(0);
     const queue = (await admin.get(`/agents/${agent.id}/queue`)).body.entries;
-    expect(queue.map((e: { task: { id: string } }) => e.task.id)).toEqual([waiting.id, task.id]);
+    expect(queue.map((e: { task: { id: string } }) => e.task.id)).toEqual([task.id, waiting.id]);
+  });
+
+  it('queues a Comment for the Task being dispatched ahead of the other Tasks waiting', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const waiting = await createTask(admin, project.id, { title: 'Waiting' });
+    // Dispatched but not accepted yet: worktree preparation and container start can take a while.
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    await assignAndStart(admin, waiting.id, agent.id);
+    expect(await getSession(admin, waiting.id)).toMatchObject({ queuePosition: 1 });
+
+    const c = await comment(admin, task.id, 'While you set up, also check Safari.');
+    expect(c.delivery?.state).toBe('queued');
+    const queue = (await admin.get(`/agents/${agent.id}/queue`)).body.entries;
+    expect(queue.map((e: { task: { id: string }; pendingMessages: number }) => [e.task.id, e.pendingMessages])).toEqual([
+      [task.id, 1],
+      [waiting.id, 1],
+    ]);
+
+    // After the running Task's Job, the steering Comment comes before the waiting Task.
+    runner.accept(start.jobId);
+    const s = new Stream();
+    await runner.play(start.jobId, [s.init(), s.text('Done.'), s.result()]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    await runner.exit(start.jobId);
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(next.sessionId).toBe(start.sessionId);
+    expect(texts(next.initialMessage)).toContain('While you set up, also check Safari.');
   });
 
   it("marks Comments not delivered once the Agent is unassigned", async () => {

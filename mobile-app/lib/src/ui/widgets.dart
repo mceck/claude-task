@@ -1422,12 +1422,15 @@ class _ActionRow extends StatelessWidget {
                 : color,
           ),
           SizedBox(width: dense ? 10 : 14),
-          Text(
-            item.label,
-            style: TextStyle(
-              color: color,
-              fontSize: dense ? 13.5 : 15,
-              fontWeight: FontWeight.w500,
+          Flexible(
+            child: Text(
+              item.label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: dense ? 13.5 : 15,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ],

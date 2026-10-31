@@ -3,6 +3,7 @@ import type { AgentItem } from '@claude-task/shared';
 import { eq, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../context';
 import type { Executor } from '../db/client';
+import { offerLimitResume, onTurnWorked } from '../modules/scheduled-messages/service';
 import { agentItems, comments, jobs, rateLimitObservations, turns } from '../db/schema';
 import type { JobRow } from '../modules/agents/service';
 import type { Broadcast, Mutation } from './projector';
@@ -63,6 +64,7 @@ export async function applyProjection(
           .values({ taskId: job.taskId, kind: 'system', authorType: 'system', authorId: null, body: m.body, jobId: job.id, createdAt: sql`clock_timestamp()` })
           .returning({ id: comments.id });
         created.push(row!.id);
+        if (m.limitResetsAt) await offerLimitResume(tx, after, job.taskId, row!.id, new Date(m.limitResetsAt));
         break;
       }
       case 'item.create': {
@@ -134,6 +136,7 @@ export async function applyProjection(
             usage: m.turn.usage,
           })
           .onConflictDoNothing();
+        if (!m.turn.isError) await onTurnWorked(tx, after, job.taskId);
         break;
       case 'rate_limit':
         await tx.insert(rateLimitObservations).values({ credentialId, agentId: job.agentId, payload: m.info });

@@ -1,5 +1,5 @@
 import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES, chatCommands, skillToken } from '@claude-task/shared';
-import type { ChatCommand, Comment } from '@claude-task/shared';
+import type { ChatCommand, Comment, ScheduledMessage } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, FileText, Lock, Paperclip, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
@@ -10,11 +10,12 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
-import { putTimelineItem } from '../lib/cache';
+import { putScheduledMessage, putTimelineItem } from '../lib/cache';
 import { commentDrafts } from '../lib/drafts';
 import { useAgent, useUsers } from '../api/queries';
 import { ErrorText, Kbd } from './common';
 import type { CommandToken, CommentEditorHandle } from './RichMarkdownEditor';
+import { dueError, SchedulePicker, toInstant } from './ScheduledMessages';
 
 const CommentEditor = lazy(() => import('./RichMarkdownEditor').then((m) => ({ default: m.CommentEditor })));
 
@@ -23,13 +24,15 @@ export function useCommentDraft(taskId: string) {
   const [body, setBody] = useState(() => commentDrafts.get(taskId)?.body ?? '');
   const [internal, setInternal] = useState(() => commentDrafts.get(taskId)?.internal ?? false);
   const [files, setFiles] = useState<File[]>(() => commentDrafts.get(taskId)?.files ?? []);
+  // A `datetime-local` value; empty sends now. Not kept in the draft: a plan is made per message.
+  const [scheduledFor, setScheduledFor] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (body.trim() || files.length > 0) commentDrafts.set(taskId, { body, internal, files });
     else commentDrafts.delete(taskId);
   }, [taskId, body, internal, files]);
-  return { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy };
+  return { body, setBody, internal, setInternal, files, setFiles, scheduledFor, setScheduledFor, error, setError, busy, setBusy };
 }
 
 export function Composer({
@@ -43,7 +46,7 @@ export function Composer({
   commands?: ChatCommand[];
   draft: ReturnType<typeof useCommentDraft>;
 }) {
-  const { body, setBody, internal, setInternal, files, setFiles, error, setError, busy, setBusy } = draft;
+  const { body, setBody, internal, setInternal, files, setFiles, scheduledFor, setScheduledFor, error, setError, busy, setBusy } = draft;
   // What the editor holds now, which can be ahead of `body` in a send started a few renders ago.
   const latestBody = useRef(body);
   latestBody.current = body;
@@ -100,19 +103,27 @@ export function Composer({
 
   const submit = async () => {
     if (busy || (!body.trim() && files.length === 0)) return;
+    const problem = scheduledFor ? dueError(scheduledFor) : null;
+    if (problem) return setError(problem);
     setBusy(true);
     setError(null);
     try {
-      let payload: unknown = { body, internal };
+      let payload: Record<string, unknown> | FormData = { body, internal };
+      if (scheduledFor) payload.dueAt = toInstant(scheduledFor);
       if (files.length > 0) {
         const form = new FormData();
-        form.set('body', body);
-        form.set('internal', String(internal));
+        for (const [name, value] of Object.entries(payload)) form.set(name, String(value));
         for (const f of files) form.append('files', f, f.name);
         payload = form;
       }
-      const { comment } = await post<{ comment: Comment }>(`/tasks/${taskId}/comments`, payload);
-      putTimelineItem(qc, taskId, { type: 'comment', id: comment.id, createdAt: comment.createdAt, comment });
+      if (scheduledFor) {
+        const { message } = await post<{ message: ScheduledMessage }>(`/tasks/${taskId}/scheduled-messages`, payload);
+        putScheduledMessage(qc, message);
+        setScheduledFor('');
+      } else {
+        const { comment } = await post<{ comment: Comment }>(`/tasks/${taskId}/comments`, payload);
+        putTimelineItem(qc, taskId, { type: 'comment', id: comment.id, createdAt: comment.createdAt, comment });
+      }
       // Only what was sent goes: text typed or files added while sending stay. Text that changed what was
       // sent is kept whole, rather than guessing which part is new.
       const now = latestBody.current;
@@ -156,6 +167,7 @@ export function Composer({
   const empty = !body.trim() && files.length === 0;
 
   const placeholder = internal ? 'Write an internal chat…' : 'Leave a comment…';
+  const submitLabel = scheduledFor ? 'Schedule' : internal ? 'Send' : 'Comment';
 
   return (
     <Popover open={count > 0}>
@@ -247,21 +259,31 @@ export function Composer({
                 e.target.value = '';
               }}
             />
-            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => fileInput.current?.click()}>
-              <Paperclip /> Attach
-            </Button>
             <div className="ml-auto flex items-center gap-3">
+              <SchedulePicker value={scheduledFor} onChange={setScheduledFor} disabled={busy} />
               {/* Hidden in a narrow Dock panel, where it would push the Comment button out of view. */}
               <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
                 <Kbd>⇧↵</Kbd> new line
               </span>
+              {/* Below a narrow panel's width the label goes and the paperclip stays, so the row does not wrap. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                aria-label="Attach a file"
+                onClick={() => fileInput.current?.click()}
+              >
+                <Paperclip /> <span className="hidden @sm:inline">Attach</span>
+              </Button>
               <Button
                 size="sm"
                 onClick={submit}
                 disabled={busy || empty}
+                aria-label={submitLabel}
                 className={cn(internal && 'bg-slate-600 text-white hover:bg-slate-600/85')}
               >
-                {internal ? 'Send' : 'Comment'}
+                {/* The action keeps its name for screen readers; in a narrow panel only the arrow shows. */}
+                <span className="hidden @sm:inline">{submitLabel}</span>
                 <ArrowUp />
               </Button>
             </div>

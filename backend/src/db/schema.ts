@@ -27,6 +27,9 @@ import {
   EFFORT_LEVELS,
   IMAGE_STATES,
   JOB_STATES,
+  LIMIT_RESUME_STATES,
+  SCHEDULED_MESSAGE_KINDS,
+  SCHEDULED_MESSAGE_STATES,
   PERMISSION_MODES,
   PRIORITIES,
   QUESTION_KINDS,
@@ -108,6 +111,8 @@ export const projects = pgTable(
     agentInstructions: text('agent_instructions').notNull().default(''),
     /** Assigned to every new Task of the Project when it is enabled. */
     defaultAgentId: uuid('default_agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'set null' }),
+    /** Copied to each new Task: a usage limit with a known reset time resumes it without asking. */
+    autoResume: boolean('auto_resume').notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -165,6 +170,7 @@ export const tasks = pgTable(
     agentId: uuid('agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'set null' }),
     currentSessionId: uuid('current_session_id'),
     chatGeneration: integer('chat_generation').notNull().default(0),
+    autoResume: boolean('auto_resume').notNull().default(false),
     /** A Wiki Chat's title once someone renamed it; until then the Chat is titled by its first User Comment. */
     chatTitle: text('chat_title'),
     version: integer('version').notNull().default(1),
@@ -263,6 +269,8 @@ export const attachments = pgTable(
     commentId: uuid('comment_id').references(() => comments.id, { onDelete: 'cascade' }),
     /** Set for files embedded in a Task's description (no Comment). */
     taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
+    /** Set for files of a pending Scheduled Message; they move to its Comment when it is published. */
+    scheduledMessageId: uuid('scheduled_message_id').references((): AnyPgColumn => scheduledMessages.id, { onDelete: 'cascade' }),
     blobId: text('blob_id').notNull(),
     filename: text('filename').notNull(),
     contentType: text('content_type').notNull(),
@@ -274,9 +282,49 @@ export const attachments = pgTable(
   (t) => [
     index('attachments_comment_idx').on(t.commentId),
     index('attachments_task_idx').on(t.taskId),
-    check('attachments_owner_check', sql`(${t.commentId} is not null) <> (${t.taskId} is not null)`),
+    index('attachments_scheduled_message_idx').on(t.scheduledMessageId),
+    check('attachments_owner_check', sql`(${t.commentId} is not null)::int + (${t.taskId} is not null)::int + (${t.scheduledMessageId} is not null)::int = 1`),
   ],
 );
+
+/** A Comment a User wrote ahead of time, or a Limit Resume; published as a Comment when due. */
+export const scheduledMessages = pgTable(
+  'scheduled_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: SCHEDULED_MESSAGE_KINDS }).notNull(),
+    /** Null for a Limit Resume. */
+    authorId: uuid('author_id').references(() => users.id, { onDelete: 'set null' }),
+    body: text('body').notNull(),
+    internal: boolean('internal').notNull().default(false),
+    dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    state: text('state', { enum: SCHEDULED_MESSAGE_STATES }).notNull().default('pending'),
+    cancelReason: text('cancel_reason'),
+    commentId: uuid('comment_id').references((): AnyPgColumn => comments.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('scheduled_messages_task_idx').on(t.taskId, t.dueAt), index('scheduled_messages_due_idx').on(t.state, t.dueAt)],
+);
+
+/** The offer to resume a Task after a usage limit, on the System Comment that reports the limit. */
+export const limitResumeOffers = pgTable('limit_resume_offers', {
+  commentId: uuid('comment_id')
+    .primaryKey()
+    .references(() => comments.id, { onDelete: 'cascade' }),
+  taskId: uuid('task_id')
+    .notNull()
+    .references(() => tasks.id, { onDelete: 'cascade' }),
+  resetsAt: timestamp('resets_at', { withTimezone: true }).notNull(),
+  state: text('state', { enum: LIMIT_RESUME_STATES }).notNull().default('open'),
+  decidedBy: uuid('decided_by').references(() => users.id, { onDelete: 'set null' }),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  scheduledMessageId: uuid('scheduled_message_id').references((): AnyPgColumn => scheduledMessages.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+});
 
 /** The structured part of an Agent's Question or Survey (docs/specs/conversation.md). */
 export const questions = pgTable('questions', {

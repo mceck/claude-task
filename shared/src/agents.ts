@@ -341,5 +341,7 @@ export interface ProjectAgentSettings {
   agentInstructions: string;
   /** New Tasks start assigned to this Agent while it is enabled. */
   defaultAgentId: string | null;
+  /** New Tasks resume by themselves after a usage limit. */
+  autoResume: boolean;
   env: ProjectEnvVar[];
 }
