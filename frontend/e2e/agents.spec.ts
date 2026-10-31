@@ -5,7 +5,8 @@ import { HEADERS as headers, createProject, createTask, login, replay, runnerMes
 
 async function assign(page: Page, agentName: string) {
   await page.getByRole('combobox', { name: 'Assign agent' }).click();
-  await page.getByRole('option', { name: agentName, exact: true }).click();
+  // A free Agent's option also says "Free".
+  await page.getByRole('option', { name: new RegExp(`^${agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( Free)?$`) }).click();
 }
 
 /** Assignment alone doesn't start the Agent: the first User Comment does. */
@@ -262,12 +263,13 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
 
   await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please check logout too.');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
-  await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel('Delivery: Delivered')).toBeVisible();
+  await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Delivered to Runtime agent/)).toBeVisible();
   await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.input')).toBe(true);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.interrupt')).toBe(true);
   await replay(page.request, agent.id, job.jobId, [s.text('Stopped after checking logout.'), s.result()]);
   await expect(page.getByLabel('Turn summary')).toContainText('Turn finished');
+  await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Handled by Runtime agent/)).toBeVisible();
   await replay(page.request, agent.id, job.jobId, [], true);
   await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
 
@@ -343,11 +345,11 @@ test('shows card state and lets a member reorder the queue without managing agen
   await page.getByRole('alertdialog').getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(page.getByRole('list', { name: 'Agent queue' }).getByRole('listitem')).toHaveCount(1);
   await page.goto(`/t/${tasks[2]!.key}`);
-  await expect(page.getByLabel('Delivery: Not delivered')).toBeVisible();
+  await expect(page.getByLabel(/^Delivery: Not delivered/)).toBeVisible();
   await page.goto(`/t/${tasks[1]!.key}`);
-  await expect(page.getByLabel('Delivery: Queued')).toBeVisible();
+  await expect(page.getByLabel(/^Delivery: Queued/)).toBeVisible();
   await replay(admin.request, agent.id, running.jobId, [new Stream(running.sessionId).result()], true);
-  await expect(page.getByLabel('Delivery: Delivered')).toBeVisible();
+  await expect(page.getByLabel(/^Delivery: Delivered/)).toBeVisible();
   await page.goto('/admin/credentials');
   await expect(page.getByText('Page not found')).toBeVisible();
   await member.close();

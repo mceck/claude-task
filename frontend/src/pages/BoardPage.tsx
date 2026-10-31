@@ -429,7 +429,7 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
   const unread = preference?.unread ?? false;
   const unreadComments = preference?.unreadComments ?? 0;
   const commentsLabel = unreadComments > 0
-    ? `${unreadComments} unread ${unreadComments === 1 ? 'comment' : 'comments'}`
+    ? `${unreadComments} unread ${unreadComments === 1 ? 'comment' : 'comments'} of ${card.commentCount}`
     : `${card.commentCount} comments`;
 
   const close = async () => {
@@ -511,7 +511,7 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
               title={commentsLabel}
               aria-label={commentsLabel}
             >
-              <MessageSquare className={cn('size-3', unreadComments > 0 && 'fill-amber-500/30 drop-shadow-[0_0_4px_var(--color-amber-500)]')} /> {card.commentCount}
+              <MessageSquare className={cn('size-3', unreadComments > 0 && 'fill-amber-500/30 drop-shadow-[0_0_4px_var(--color-amber-500)]')} /> {unreadComments > 0 ? unreadComments : card.commentCount}
             </span>
           )}
         </div>

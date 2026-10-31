@@ -46,8 +46,8 @@ test('marks cards with unread comments and clears them once the task is read', a
   await page.goto(`/p/${project.key}`);
 
   const card = page.getByRole('article', { name: task.key });
-  await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
-  await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+  await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment of 1');
+  await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment of 1');
   await expect(card.locator('p')).toHaveCSS('font-weight', '600');
   await card.click();
   await expect(page.getByText('Fresh news')).toBeVisible();
@@ -58,6 +58,26 @@ test('marks cards with unread comments and clears them once the task is read', a
   await page.keyboard.press('Escape');
   await expect(card.getByTestId('task-unread')).toHaveCount(0);
   await expect(card.locator('p')).toHaveCSS('font-weight', '500');
+});
+
+test('counts only the unread Comments on the card, and the total once read', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Long thread');
+  const headers = { 'x-claude-task': '1' };
+  let last = '';
+  for (const body of ['First', 'Second']) last = (await (await page.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body }, headers })).json()).comment.id;
+  expect((await page.request.put(`/api/v1/tasks/${task.id}/read-position`, { data: { itemId: last }, headers })).status()).toBeLessThan(300);
+  await page.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'Third' }, headers });
+  await page.goto(`/p/${project.key}`);
+  const card = page.getByRole('article', { name: task.key });
+  await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment of 3');
+  await expect(card.getByTestId('task-unread')).toHaveText('1');
+  await card.click();
+  await expect(page.getByText('Third')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(card.getByTestId('task-unread')).toHaveCount(0);
+  await expect(card.getByLabel('3 comments')).toHaveText('3');
 });
 
 test('updates muted Task badges live for Comments, deletions and reads on another client', async ({ browser }) => {
@@ -81,13 +101,13 @@ test('updates muted Task badges live for Comments, deletions and reads on anothe
 
     const first = await a.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'Public news' }, headers });
     expect(first.status()).toBe(201);
-    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment of 1');
     const second = await b.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'Internal news', internal: true }, headers });
     expect(second.status()).toBe(201);
-    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('2 unread comments');
+    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('2 unread comments of 2');
     const secondComment = (await second.json()).comment;
     expect((await b.request.delete(`/api/v1/comments/${secondComment.id}`, { headers })).status()).toBe(204);
-    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+    await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment of 1');
 
     const reader = await b.newPage();
     await reader.goto(`/t/${task.key}`);
@@ -111,7 +131,7 @@ for (const initial of [true, false]) {
     const card = page.getByRole('article', { name: task.key });
     if (!initial) {
       await page.goto(`/p/${project.key}`);
-      await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment');
+      await expect(card.getByTestId('task-unread')).toHaveAccessibleName('1 unread comment of 1');
     }
 
     let release!: () => void;

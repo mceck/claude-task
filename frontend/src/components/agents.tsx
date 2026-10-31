@@ -1,5 +1,5 @@
 import type { AgentRef, AgentState, Delivery, SessionState, TaskSession } from '@claude-task/shared';
-import { CircleCheck, CircleDashed, CircleSlash, Clock } from 'lucide-react';
+import { Check, CheckCheck, Clock, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -110,23 +110,41 @@ export function SessionChip({ session }: { session: TaskSession }) {
   );
 }
 
-/** Whether a User's Comment reached the Agent. */
-export function DeliveryBadge({ delivery }: { delivery: Delivery }) {
-  const { icon: Icon, label, className } = {
-    queued: { icon: Clock, label: 'Queued', className: 'text-sky-400' },
-    delivered: { icon: CircleCheck, label: 'Delivered', className: 'text-emerald-400' },
-    not_delivered: { icon: CircleSlash, label: 'Not delivered', className: 'text-muted-foreground' },
-  }[delivery.state] ?? { icon: CircleDashed, label: delivery.state, className: '' };
-  const badge = (
-    <span aria-label={`Delivery: ${label}`} className={cn('inline-flex items-center gap-1 text-[11px]', className)}>
-      <Icon className="size-3" /> {label}
-    </span>
-  );
-  if (!delivery.reason) return badge;
+const clock = (iso: string | null) =>
+  iso ? ` · ${new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+
+/** The text behind a Delivery's ticks: its state, the Agent and when it changed. */
+export function deliveryLabel(delivery: Delivery, agentName: string | null): string {
+  const agent = agentName ?? 'the agent';
+  switch (delivery.state) {
+    case 'queued':
+      return `Queued${clock(delivery.at)}`;
+    case 'delivered':
+      return `Delivered to ${agent}${clock(delivery.at)}`;
+    case 'handled':
+      return `Handled by ${agent}${clock(delivery.at)}`;
+    case 'not_delivered':
+      return `Not delivered${delivery.reason ? `: ${delivery.reason}` : ''}`;
+  }
+}
+
+/** Whether a User's Comment reached the Agent, as chat-style ticks. */
+export function DeliveryTicks({ delivery, agentName }: { delivery: Delivery; agentName: string | null }) {
+  const { icon: Icon, className } = {
+    queued: { icon: Clock, className: 'text-muted-foreground' },
+    delivered: { icon: Check, className: 'text-muted-foreground' },
+    handled: { icon: CheckCheck, className: 'text-primary' },
+    not_delivered: { icon: TriangleAlert, className: 'text-amber-500' },
+  }[delivery.state];
+  const label = deliveryLabel(delivery, agentName);
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{badge}</TooltipTrigger>
-      <TooltipContent>{delivery.reason}</TooltipContent>
+      <TooltipTrigger asChild>
+        <span role="img" aria-label={`Delivery: ${label}`} data-delivery={delivery.state} className={cn('inline-flex items-center', className)}>
+          <Icon className="size-3.5" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
 }
