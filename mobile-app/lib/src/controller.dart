@@ -2008,6 +2008,21 @@ class TaskController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Moves the User's read position to the newest entry of every Task of the
+  /// open Project at once.
+  Future<void> markProjectRead() async {
+    final p = project;
+    if (p == null || !online) return;
+    final result = await _request('POST', '/projects/${p.id}/read-all');
+    for (final item in objects(result['preferences'])) {
+      final pref = TaskPreference.fromJson(item);
+      preferences[pref.taskId] = pref;
+    }
+    notifyListeners();
+    // The Project badges count unread Turns: refetch them.
+    _refreshProjectsSoon();
+  }
+
   Future<File> downloadAttachment(Json attachment) async {
     final file = await storage.attachment(
       attachment['id'] as String,

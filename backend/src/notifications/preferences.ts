@@ -84,3 +84,22 @@ export async function advanceRead(db: Executor, after: AfterCommit, userId: stri
     on conflict(user_id, task_id) do update set read_position = greatest(task_preferences.read_position, excluded.read_position)`);
   return emitPreference(db, after, userId, taskId);
 }
+
+/**
+ * Moves the User's read position to the newest entry of every open Task of a Project that has
+ * something newer, in one step. Closed Tasks are already settled and stay as they are.
+ */
+export async function advanceProjectRead(db: Executor, after: AfterCommit, userId: string, projectId: string): Promise<string[]> {
+  const changed = await db.execute<{ taskId: string }>(sql`insert into task_preferences(user_id, task_id, following, read_position)
+    select ${userId}::uuid, t.id, false, a.latest
+    from tasks t join statuses s on s.id = t.status_id
+    cross join lateral (select ${latestUnreadPosition(userId)} as latest) a
+    where t.project_id = ${projectId}::uuid and s.category <> 'closed'
+      and coalesce(a.latest, 0) > coalesce((select p.read_position from task_preferences p
+        where p.user_id = ${userId}::uuid and p.task_id = t.id), 0)
+    on conflict(user_id, task_id) do update set read_position = greatest(task_preferences.read_position, excluded.read_position)
+    returning task_id as "taskId"`);
+  const taskIds = changed.rows.map((r) => r.taskId);
+  for (const taskId of taskIds) await emitPreference(db, after, userId, taskId);
+  return taskIds;
+}

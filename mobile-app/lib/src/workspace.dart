@@ -1202,6 +1202,16 @@ class _TaskListState extends State<TaskList> {
     }
   }
 
+  /// Marks every Task of the Project read without asking: the header only
+  /// shows the action while something is unread.
+  Future<void> _markAllRead() async {
+    try {
+      await widget.controller.markProjectRead();
+    } catch (e) {
+      if (mounted) toast(context, e.toString());
+    }
+  }
+
   Future<void> _closeTasks(List<Task> list) async {
     final closed = _closedStatus;
     final c = widget.controller;
@@ -1386,6 +1396,7 @@ class _TaskListState extends State<TaskList> {
       for (final t in c.tasks)
         if (_selected.contains(t.id)) t,
     ];
+    final hasUnread = c.tasks.any((t) => c.preferences[t.id]?.unread == true);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1454,6 +1465,13 @@ class _TaskListState extends State<TaskList> {
                     ? () => showProjectSettings(context, c, c.project!)
                     : null,
               ),
+              if (hasUnread)
+                IconAction(
+                  key: const ValueKey('mark-all-read'),
+                  icon: Icons.done_all_rounded,
+                  tooltip: 'Mark all as read',
+                  onPressed: c.online ? _markAllRead : null,
+                ),
               IconAction(
                 icon: Icons.add_rounded,
                 tooltip: 'Create Task',
