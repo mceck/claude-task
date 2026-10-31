@@ -164,6 +164,9 @@ class Task {
   final int? queuePosition;
   final List<String> tagIds, assigneeIds;
   final int version, commentCount, chatGeneration;
+
+  /// Whether a usage limit with a known reset time resumes the Task without asking.
+  final bool autoResume;
   Task.fromJson(Json json)
     : id = json['id'] as String,
       projectId = json['projectId'] as String,
@@ -176,6 +179,7 @@ class Task {
       tagIds = strings(json['tagIds']),
       assigneeIds = strings(json['assigneeIds']),
       chatGeneration = json['chatGeneration'] as int? ?? 0,
+      autoResume = json['autoResume'] == true,
       version = json['version'] as int? ?? 1,
       commentCount = (json['commentCount'] as num?)?.toInt() ?? 0,
       sessionState = (json['session'] as Map?)?['state'] as String?,
@@ -245,6 +249,61 @@ class TimelineEntry {
 
   /// On the User Comment that answers a Question: the Question's Comment id.
   String? get answersCommentId => content['answersCommentId'] as String?;
+
+  /// On the System Comment of a usage limit: the offer to resume at the reset.
+  LimitResume? get limitResume => content['limitResume'] is Map
+      ? LimitResume.fromJson(Json.from(content['limitResume'] as Map))
+      : null;
+}
+
+/// The offer to resume a Task once its usage limit resets.
+class LimitResume {
+  final DateTime resetsAt;
+  final DateTime? decidedAt;
+
+  /// `open`, `scheduled`, `declined` or `unneeded`.
+  final String state;
+
+  /// Null while open, when automatic resume decided and when it became unneeded.
+  final Actor? decidedBy;
+  LimitResume.fromJson(Json json)
+    : resetsAt =
+          DateTime.tryParse(json['resetsAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      decidedAt = DateTime.tryParse(json['decidedAt'] as String? ?? ''),
+      state = json['state'] as String? ?? 'open',
+      decidedBy = Actor.maybe(json['decidedBy']);
+  bool get open => state == 'open';
+}
+
+/// A Comment written ahead of time, published when it is due.
+class ScheduledMessage implements Identified {
+  @override
+  final String id;
+  final String taskId, kind, body, state;
+  final String? cancelReason;
+  final Actor author;
+  final bool internal;
+  final List<Json> attachments;
+  final DateTime dueAt;
+
+  /// As the API sent it, for the offline cache.
+  final Json json;
+  ScheduledMessage.fromJson(this.json)
+    : id = json['id'] as String,
+      taskId = json['taskId'] as String? ?? '',
+      kind = json['kind'] as String? ?? 'user',
+      body = json['body'] as String? ?? '',
+      state = json['state'] as String? ?? 'pending',
+      cancelReason = json['cancelReason'] as String?,
+      author = Actor.fromJson(Json.from(json['author'] as Map? ?? {})),
+      internal = json['internal'] == true,
+      attachments = objects(json['attachments']),
+      dueAt =
+          DateTime.tryParse(json['dueAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+  bool get pending => state == 'pending';
+  bool get isLimitResume => kind == 'limit_resume';
 }
 
 /// Whoever performed an action; [id] is null for the system.

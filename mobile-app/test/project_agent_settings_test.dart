@@ -223,6 +223,21 @@ Future<Harness> _open(
 }
 
 void main() {
+  testWidgets('the Automatic resume at limit switch saves on its own', (
+    tester,
+  ) async {
+    final api = _ProjectAgentApi();
+    await _open(tester, api);
+    await _tap(tester, find.text('Automatic resume at limit'));
+    _expectWrite(api.writes.last, (
+      'PATCH',
+      '/projects/project-1/agent-settings',
+      {'autoResume': true},
+    ));
+    expect(tester.widget<Switch>(find.byType(Switch).first).value, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('phone Project settings selects and clears the default Agent', (
     tester,
   ) async {
@@ -452,7 +467,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('API_URL · overwrites'), findsOneWidget);
       expect(find.text('TOKEN · overwrites secret'), findsOneWidget);
-      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byType(Switch).last);
       await _tap(tester, find.text('Import variables'));
       _expectWrite(api.writes.last, (
         'POST',

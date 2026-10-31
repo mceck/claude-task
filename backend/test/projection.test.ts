@@ -368,6 +368,37 @@ describe('stream projection', () => {
   });
 });
 
+describe('usage limits', () => {
+  const resetsAt = Date.parse(ctx.receivedAt) / 1000 + 3600;
+  const limited = (s: Stream, info: Record<string, unknown>) => [s.init(), s.rateLimit(info), s.synthetic('You hit your limit'), s.result({ isError: true, result: 'You hit your limit' })];
+  const offers = (mutations: Mutation[]) => mutations.filter((m) => m.op === 'system_comment').map((m) => (m as { limitResetsAt?: string }).limitResetsAt);
+
+  it('attaches the reset time of a rejected limit to the System Comment', () => {
+    const { mutations } = replay(limited(new Stream(), { status: 'rejected', resetsAt, rateLimitType: 'five_hour' }));
+    expect(offers(mutations)).toEqual([new Date(resetsAt * 1000).toISOString()]);
+  });
+
+  it('offers the resume from the recorded spend-limit stream, whose reset is still ahead', () => {
+    const lines = readFileSync(path.join(import.meta.dirname, 'fixtures/streams/spend-limit.jsonl'), 'utf8').trim().split('\n');
+    expect(offers(replay(lines.map((l) => JSON.parse(l))).mutations)).toEqual(['2026-10-26T17:00:00.000Z']);
+  });
+
+  it.each([
+    ['without a reset time', { status: 'rejected' }],
+    ['when the limit is only a warning', { status: 'allowed_warning', resetsAt }],
+    ['when the reset time has passed', { status: 'rejected', resetsAt: resetsAt - 7200 }],
+  ])('offers nothing %s', (_name, info) => {
+    expect(offers(replay(limited(new Stream(), info)).mutations)).toEqual([undefined]);
+  });
+
+  it('forgets the limit when the Turn ends, so the next error is not offered a stale reset', () => {
+    const s = new Stream();
+    const first = replay(limited(s, { status: 'rejected', resetsAt }));
+    const second = replay([s.text('hi'), s.result({ isError: true, result: 'boom' })], first.state);
+    expect(offers(second.mutations)).toEqual([undefined]);
+  });
+});
+
 describe('recorded streams (real CLI spike)', () => {
   const load = (name: string) =>
     readFileSync(path.join(import.meta.dirname, `fixtures/streams/${name}.jsonl`), 'utf8')

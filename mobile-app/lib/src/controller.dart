@@ -70,6 +70,10 @@ class TaskController extends ChangeNotifier {
   /// (newest first), as the Task details list shows them.
   List<Json> attachments = [];
   Json? session;
+
+  /// The open Task's Scheduled Messages: pending by due time, then the
+  /// finished ones, newest first.
+  List<ScheduledMessage> scheduledMessages = [];
   List<TimelineEntry> timeline = [];
   String? nextCursor;
   final Map<String, String> liveText = {};
@@ -144,8 +148,7 @@ class TaskController extends ChangeNotifier {
       if (user != null && !user!.mustChangePassword) {
         unawaited(
           _registerToken(token).catchError((Object _) {
-            error =
-                'Phone token registration failed; try Enable notifications again';
+            error = 'Phone token registration failed; try Enable notifications again';
             notifyListeners();
           }),
         );
@@ -273,6 +276,7 @@ class TaskController extends ChangeNotifier {
     project = null;
     task = null;
     timeline = [];
+    scheduledMessages = [];
     session = null;
     nextCursor = null;
     _olderLoaded = false;
@@ -327,12 +331,10 @@ class TaskController extends ChangeNotifier {
         liveText.clear();
         liveThinking = '';
         unawaited(
-          refresh()
-              .then((_) => _openPending())
-              .catchError((Object e) {
-                _recordError(e);
-                notifyListeners();
-              }),
+          refresh().then((_) => _openPending()).catchError((Object e) {
+            _recordError(e);
+            notifyListeners();
+          }),
         );
         unawaited(_flushPendingLogout());
       }
@@ -614,9 +616,10 @@ class TaskController extends ChangeNotifier {
     }
   }
 
-  List<WikiChat> _cachedChats(String wikiId) => objects(
-    storage.read('chats:$wikiId')?['chats'],
-  ).map(WikiChat.fromJson).toList();
+  List<WikiChat> _cachedChats(String wikiId) =>
+      objects(storage.read('chats:$wikiId')?['chats'])
+          .map(WikiChat.fromJson)
+          .toList();
 
   /// Loads the Wiki's Chat list. Cached Chats the server no longer lists are
   /// dropped with their cached conversation, and when the open one is among
@@ -995,6 +998,7 @@ class TaskController extends ChangeNotifier {
   Future<void> selectTask(Task value) async {
     task = value;
     timeline = [];
+    scheduledMessages = [];
     attachments = [];
     session = null;
     nextCursor = null;
@@ -1011,6 +1015,7 @@ class TaskController extends ChangeNotifier {
       if (cachedTask.version >= value.version) task = cachedTask;
       timeline = objects(cached['items']).map(TimelineEntry.new).toList();
       attachments = objects(cached['attachments']);
+      _setScheduled(objects(cached['scheduled']));
       nextCursor = cached['nextCursor'] as String?;
       session = cached['session'] as Json?;
     }
@@ -1033,6 +1038,7 @@ class TaskController extends ChangeNotifier {
       _request('GET', '/tasks/$id/preferences'),
       _request('GET', '/tasks/$id/runs'),
       _request('GET', '/tasks/$id/attachments'),
+      _request('GET', '/tasks/$id/scheduled-messages'),
     ]);
     if (task?.id != id || epoch != _timelineEpoch) return;
     final fresh = Task.fromJson(result[0]['task'] as Json);
@@ -1049,6 +1055,7 @@ class TaskController extends ChangeNotifier {
     preferences[id] = TaskPreference.fromJson(result[3]['preference'] as Json);
     _setActiveRuns(objects(result[4]['runs']));
     attachments = objects(result[5]['attachments']);
+    _setScheduled(objects(result[6]['messages']));
     _mergeTimeline(objects(result[1]['items']));
     if (!_olderLoaded) nextCursor = result[1]['nextCursor'] as String?;
     await _cacheTask();
@@ -1096,9 +1103,11 @@ class TaskController extends ChangeNotifier {
         'branchName': t.branchName,
         'branchUrl': t.branchUrl,
         'pullRequest': t.pullRequest,
+        'autoResume': t.autoResume,
       },
       'items': timeline.map((e) => e.json).toList(),
       'attachments': attachments,
+      'scheduled': scheduledMessages.map((m) => m.json).toList(),
       'nextCursor': nextCursor,
       'session': session,
     });
@@ -1162,9 +1171,9 @@ class TaskController extends ChangeNotifier {
       }
     }
     unawaited(
-      _fetchProject(
-        projectId,
-      ).then((_) => notifyListeners()).catchError((Object _) {}),
+      _fetchProject(projectId)
+          .then((_) => notifyListeners())
+          .catchError((Object _) {}),
     );
     notifyListeners();
     return task;
@@ -1230,10 +1239,183 @@ class TaskController extends ChangeNotifier {
     );
     if (task?.id == current.id) {
       task = Task.fromJson(result['task'] as Json);
-      if (fields.containsKey('agentId') && assignmentRetryTaskId == current.id) {
+      if (fields.containsKey('agentId') &&
+          assignmentRetryTaskId == current.id) {
         assignmentRetryId = null;
         assignmentRetryTaskId = null;
       }
+      await _cacheTask();
+      notifyListeners();
+    }
+  }
+
+  /// Pending first by due time, then the finished ones, newest first.
+  void _setScheduled(List<Json> messages) {
+    final list = messages.map(ScheduledMessage.fromJson).toList();
+    scheduledMessages = [
+      ...list.where((m) => m.pending).toList()
+        ..sort((a, b) => a.dueAt.compareTo(b.dueAt)),
+      ...list.where((m) => !m.pending).toList()
+        ..sort((a, b) => b.dueAt.compareTo(a.dueAt)),
+    ];
+  }
+
+  void _upsertScheduled(Json message) {
+    final id = message['id'];
+    _setScheduled([
+      for (final m in scheduledMessages)
+        if (m.id != id) m.json,
+      message,
+    ]);
+  }
+
+  /// Plans a Comment for [dueAt] from the draft. Scheduling needs the
+  /// connection and is never queued: offline, the draft stays as it is.
+  Future<bool> scheduleDraft(DateTime dueAt) async {
+    if (sending || task == null || chatReadOnlyReason != null) return false;
+    if (!online) {
+      error = 'Offline. Scheduling needs a connection; the draft is kept.';
+      notifyListeners();
+      return false;
+    }
+    final current = task!, value = draft;
+    if (value.text.trim().isEmpty && value.files.isEmpty) return false;
+    sending = true;
+    error = null;
+    notifyListeners();
+    try {
+      final result = await _request(
+        'POST',
+        '/tasks/${current.id}/scheduled-messages',
+        body: {
+          'body': value.text,
+          'internal': value.internal,
+          'dueAt': dueAt.toUtc().toIso8601String(),
+        },
+        files: value.files,
+      );
+      await storage.write('draft:${current.id}', const Draft().toJson());
+      if (task?.id == current.id) {
+        _upsertScheduled(Json.from(result['message'] as Map));
+        await _cacheTask();
+      }
+      return true;
+    } catch (e) {
+      _recordError(e);
+      return false;
+    } finally {
+      sending = false;
+      notifyListeners();
+    }
+  }
+
+  /// Edits, cancels or sends now a Scheduled Message; all need a connection.
+  /// A `409` (it left `pending` meanwhile) refreshes the list.
+  Future<bool> changeScheduled(
+    String id,
+    String method,
+    String path, {
+    Json? body,
+  }) async {
+    final current = task;
+    if (current == null) return false;
+    if (!online) {
+      error = 'Offline. Scheduled messages can only change online.';
+      notifyListeners();
+      return false;
+    }
+    error = null;
+    try {
+      final result = await _request(method, path, body: body);
+      if (task?.id == current.id) {
+        _upsertScheduled(Json.from(result['message'] as Map));
+        await _cacheTask();
+      }
+      return true;
+    } catch (e) {
+      _recordError(e);
+      if (e is ApiException && e.status == 409 && task?.id == current.id) {
+        try {
+          await _fetchTask(current.id);
+        } catch (_) {
+          /* The banner already explains; the next refresh catches up. */
+        }
+      }
+      return false;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<bool> editScheduled(String id, {String? body, DateTime? dueAt}) =>
+      changeScheduled(
+        id,
+        'PATCH',
+        '/scheduled-messages/$id',
+        body: {
+          'body': ?body,
+          if (dueAt != null) 'dueAt': dueAt.toUtc().toIso8601String(),
+        },
+      );
+  Future<bool> cancelScheduled(String id) =>
+      changeScheduled(id, 'DELETE', '/scheduled-messages/$id');
+  Future<bool> sendScheduledNow(String id) =>
+      changeScheduled(id, 'POST', '/scheduled-messages/$id/send');
+
+  /// Answers the offer on a usage limit's System Comment. The first answer
+  /// wins: a `409` refreshes the conversation and says who answered.
+  Future<bool> answerLimitResume(String commentId, bool schedule) async {
+    final current = task;
+    if (current == null) return false;
+    if (!online) {
+      error = 'Offline. Answer once back online.';
+      notifyListeners();
+      return false;
+    }
+    error = null;
+    try {
+      final result = await _request(
+        'POST',
+        '/comments/$commentId/limit-resume',
+        body: {'schedule': schedule},
+      );
+      final comment = result['comment'] as Map;
+      if (task?.id == current.id && comment['taskId'] == current.id) {
+        _mergeTimeline([
+          {
+            'type': 'comment',
+            'id': comment['id'],
+            'createdAt': comment['createdAt'],
+            'comment': Json.from(comment),
+          },
+        ]);
+        await _cacheTask();
+      }
+      return true;
+    } catch (e) {
+      _recordError(e);
+      if (e is ApiException && e.status == 409 && task?.id == current.id) {
+        try {
+          await _fetchTask(current.id);
+        } catch (_) {
+          /* The banner already explains; the next refresh catches up. */
+        }
+      }
+      return false;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<void> setAutoResume(bool enabled) async {
+    final current = task!;
+    final result = await _request(
+      'PUT',
+      '/tasks/${current.id}/auto-resume',
+      body: {'enabled': enabled},
+    );
+    if (task?.id == current.id) {
+      task = Task.fromJson(result['task'] as Json);
       await _cacheTask();
       notifyListeners();
     }
@@ -1308,8 +1490,7 @@ class TaskController extends ChangeNotifier {
   Future<void> reconcileSend() async {
     await _fetchTask(task!.id);
     await setDraft(draft.copyWith(ambiguous: false));
-    error =
-        'Conversation refreshed. Check for your Comment; sending again is a manual action.';
+    error = 'Conversation refreshed. Check for your Comment; sending again is a manual action.';
     notifyListeners();
   }
 
@@ -1551,6 +1732,15 @@ class TaskController extends ChangeNotifier {
       final pref = TaskPreference.fromJson(event['preference'] as Json);
       preferences[pref.taskId] = pref;
       notifyListeners();
+      return;
+    }
+    if (type == 'scheduled_message.updated') {
+      final message = Json.from(event['message'] as Map);
+      if (message['taskId'] == task?.id) {
+        _upsertScheduled(message);
+        unawaited(_cacheTask());
+        notifyListeners();
+      }
       return;
     }
     if (type == 'live.delta' && event['taskId'] == task?.id) {

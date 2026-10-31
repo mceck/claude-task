@@ -3,7 +3,7 @@
 import type { UserEvent } from './mobile';
 import type { VoiceCommand, VoiceServerMessage, VoiceRoom } from './voice';
 import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, RunMessage, RunSummary, TaskSession } from './agents';
-import type { AgentItem, Comment, Tag, Project, Revision, Status, Task, TaskCard } from './domain';
+import type { AgentItem, Comment, Tag, Project, Revision, ScheduledMessage, Status, Task, TaskCard } from './domain';
 
 export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | 'schedules' | `agent:${string}` | `user:${string}`;
 
@@ -32,6 +32,8 @@ export type TaskEvent =
   | { type: 'comment.updated'; comment: Comment }
   | { type: 'comment.deleted'; comment: Comment }
   | { type: 'revision.created'; revision: Revision }
+  /** A scheduled message was created, changed, cancelled or published. */
+  | { type: 'scheduled_message.updated'; message: ScheduledMessage }
   | { type: 'session.changed'; taskId: string; session: TaskSession | null }
   | { type: 'agent_item.created'; item: AgentItem }
   | { type: 'agent_item.updated'; item: AgentItem }

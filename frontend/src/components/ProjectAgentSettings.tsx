@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useAgents, useAgentSettings, useMe } from '../api/queries';
@@ -93,6 +94,21 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
             </SelectContent>
           </Select>
         </Field>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <span id="auto-resume-label" className="text-sm font-medium">Automatic resume at limit</span>
+            <p className="text-xs text-muted-foreground">New tasks resume by themselves after a usage limit resets.</p>
+          </div>
+          <Switch
+            aria-labelledby="auto-resume-label"
+            checked={settings.autoResume}
+            onCheckedChange={(autoResume) =>
+              void patch<{ settings: Settings }>(`/projects/${projectId}/agent-settings`, { autoResume })
+                .then((r) => qc.setQueryData(keys.agentSettings(projectId), r.settings))
+                .catch((err) => toast.error(errorMessage(err)))
+            }
+          />
+        </div>
         <Field label="Worktree setup script" hint="Runs once for each new worktree, before Claude starts.">
           <Textarea
             aria-label="Worktree setup script"

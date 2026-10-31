@@ -167,6 +167,17 @@ _Avoid_: prompt, input
 **Delivery**:
 Whether a User's Comment has reached the Agent: queued, delivered, or not delivered (with a reason).
 
+**Scheduled Message**:
+A Comment a User writes ahead of time for a chosen date and time. It stays off the Timeline until then, listed on its Task where any User with access can edit, cancel or send it now. When due it is published as an ordinary Comment by its author and follows the usual Delivery. It is published even when it cannot be delivered, and then shows why.
+_Avoid_: delayed comment, queued comment (the Queue is the Agent's)
+
+**Limit Resume**:
+A Scheduled Message the platform creates for a Task whose Turn stopped at a Claude usage limit, due just after the limit resets. A Task has at most one pending; a new limit replaces it and a successful Turn before it is due cancels it. It is offered, or created directly when the Task's automatic resume is on, only when the limit reports a reset time.
+_Avoid_: retry (a Retry releases a Held Queue Entry)
+
+**Automatic Resume**:
+A Project setting, copied to each new Task as its own on/off switch, that makes the platform create the Limit Resume without asking.
+
 **Native Command**:
 A Comment starting with `/name` that runs as a Claude Code command of its own.
 _Avoid_: chat command, session command, slash comment

@@ -228,6 +228,24 @@ Outcomes when a Job ends:
 
 Tool calls still waiting for a result when a Turn or a Job ends are shown as `interrupted` on the Timeline.
 
+### Usage limits and Limit Resume
+
+When a Turn stops with an error and the last `rate_limit_event` of that Turn has `status: rejected` and a `resetsAt` in the future, the System Comment that reports the error also carries the reset time and offers to resume. A limit without a usable reset time produces the System Comment alone.
+
+The offer shows "Schedule resume" and "No", with the reset time in the reader's time zone. The first User who answers decides for everyone, and a later answer is answered with `409` and the name of who answered. "Schedule resume" on a Task that is closed or has no Agent is answered with `409`. "Schedule resume" creates a **Limit Resume**: a Scheduled Message (see [Conversation](conversation.md#scheduled-messages)) due one minute after the reset time. "No" closes the offer and leaves the Session as it is.
+
+A Task whose automatic resume setting is on (see [Board](board.md)) gets the Limit Resume in the same transaction as the System Comment, which then shows it as scheduled and asks nothing.
+
+A Task has at most one pending Limit Resume and at most one open offer:
+
+- a new limit that reports a reset time cancels the pending Limit Resume ("replaced") and closes the open offer as no longer needed;
+- a Turn of the Task that ends without error cancels the pending Limit Resume ("the Agent worked again") and closes the open offer as no longer needed;
+- closing the Task, unassigning the Agent or replacing it cancels the pending Limit Resume with that reason and closes the open offer as no longer needed;
+- an offer whose Limit Resume is cancelled for any reason shows as no longer needed;
+- an offer still open one minute after its reset time is closed as no longer needed by the background tick, and answering it gets `409`.
+
+When the Limit Resume is due it is published as a System Comment and delivered like a Notify agent notice: written to the running Turn, or queued and merged into the Task's entry, so the Agent continues in the same Session. Limits shared by several Agents through one Credential are handled per Task: each Task decides on its own, and the resumes go through the Queue in order after the reset.
+
 ### Stop (Interrupt)
 
 The **Stop** button on a Task interrupts the current Turn without ending the Session. The Runner sends `claude` a stream-json interrupt control request: the running tool call is rejected, the Turn ends with a `result` marked as aborted, and the process stays alive. The normal end of Turn follows (the Job finishes), and the next Comment resumes the same conversation. Stop is available while the Session's Job is dispatched or running, and answers `409` otherwise.
@@ -471,6 +489,9 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 
 ## Decisions
 
+- **The resume after a limit is a Scheduled Message, not a special Queue operation.** Users already understand, see and can cancel scheduled messages, and the Agent receives a Message through the normal delivery path with no new kind of Queue Entry. The cost is one visible Comment per resume, which also tells everyone why the Agent started again.
+- **One pending Limit Resume per Task, cancelled when it stops being useful.** Two resumes would tell the Agent to continue twice, and one that arrives after the Agent already worked again is noise.
+- **The offer lives on the System Comment that reports the limit.** The decision sits next to the error it answers, stays on the Timeline as a trace of who decided, and older clients still show the error text.
 - **Headless `claude -p` with stream-json input and output, one process per Job, resumed with `--resume`.** It is the real Claude Code binary, so repository instructions, settings, Skills and `.mcp.json` load as usual; input and output are structured; and it is the documented headless path that also works with a subscription token from `claude setup-token`. Running the interactive TUI in a terminal multiplexer was rejected: simulated typing breaks on dialogs and multiline text, busy detection is unreliable, and hooks don't carry the assistant's text. The Claude Agent SDK was rejected for now: it drives the same binary and protocol, and would add a language runtime to every image without a capability we need. Consequence: the stream-json format is a contract, so the `claude` version is pinned centrally and upgraded on purpose. This setup is for internal team use with each person's or the organization's own Credentials.
 - **The backend owns the Queue; the Runner dials out and holds no state.** Sessions, Jobs, Queue Entries and Deliveries live in Postgres and are decided by the backend. A container restart or a dropped connection loses no work: the backend sees a Job without an outcome and resumes it. The same design works on remote hosts later without opening ports on Agent Containers. Calling into the container (HTTP or exec) was rejected because it needs reachable ports and ties the backend to Docker networking; a queue inside the Runner was rejected because it would be lost on container recreation and invisible to the UI. Consequence: Credentials, the Agent's environment and Project environment travel with each Job, so rotation and Agent changes take effect on the next Job and Project secrets reach only that Project's Tasks.
 - **One Job at a time per Agent.** An Agent is "one worker, one thing at a time", and Tasks in one container would otherwise share ports, databases and background processes. Throughput comes from more Agents. Feedback on another Task can wait behind a long Job, which is why Users can reorder the Queue. See [Agents](agents.md) for the container side.

@@ -98,6 +98,8 @@ export interface TaskCard {
   tagIds: string[];
   assigneeIds: string[];
   commentCount: number;
+  /** Whether a usage limit with a known reset time resumes the Task without asking. */
+  autoResume: boolean;
   /** Incremented when Delete Chat clears the conversation of a Wiki's Chat. */
   chatGeneration?: number;
   /** The assigned Agent, if any. */
@@ -179,7 +181,54 @@ export interface Comment {
   survey: Survey | null;
   /** On the User Comment that answers a Question: the Question's Comment id. */
   answersCommentId: string | null;
+  /** Set on the System Comment that reports a usage limit with a known reset time. */
+  limitResume: LimitResumeOffer | null;
 }
+
+export const LIMIT_RESUME_STATES = ['open', 'scheduled', 'declined', 'unneeded'] as const;
+export type LimitResumeState = (typeof LIMIT_RESUME_STATES)[number];
+
+/** The offer to resume a Task once its usage limit resets, carried by the limit's System Comment. */
+export interface LimitResumeOffer {
+  /** When the usage limit resets. */
+  resetsAt: string;
+  state: LimitResumeState;
+  /** Who answered; null while open, when automatic resume decided, and when the offer became unneeded. */
+  decidedBy: Actor | null;
+  decidedAt: string | null;
+  /** The Limit Resume created when the state is `scheduled`. */
+  scheduledMessageId: string | null;
+}
+
+export const SCHEDULED_MESSAGE_KINDS = ['user', 'limit_resume'] as const;
+export type ScheduledMessageKind = (typeof SCHEDULED_MESSAGE_KINDS)[number];
+export const SCHEDULED_MESSAGE_STATES = ['pending', 'sent', 'cancelled'] as const;
+export type ScheduledMessageState = (typeof SCHEDULED_MESSAGE_STATES)[number];
+
+/** A Comment written ahead of time, published when it is due. */
+export interface ScheduledMessage {
+  id: string;
+  taskId: string;
+  kind: ScheduledMessageKind;
+  /** The User who scheduled it; the system for a Limit Resume. */
+  author: Actor;
+  body: string;
+  internal: boolean;
+  attachments: Attachment[];
+  dueAt: string;
+  state: ScheduledMessageState;
+  /** Why a cancelled message was cancelled. */
+  cancelReason: string | null;
+  /** The Comment a sent message became. */
+  commentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A scheduled message must be due between one minute and this many days from now. */
+export const SCHEDULED_MESSAGE_MAX_DAYS = 366;
+/** How many finished scheduled messages a Task's list carries. */
+export const SCHEDULED_MESSAGE_HISTORY = 20;
 
 /** The two kinds of multiple-choice Agent Comments. */
 export const QUESTION_KINDS = ['question', 'survey'] as const;

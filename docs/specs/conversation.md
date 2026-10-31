@@ -12,6 +12,8 @@ The conversation is the human side of a Task's Timeline: the Comments Users writ
 - An **Attachment** is a file a User uploads or an Agent posts. A Comment carries up to 10 of them. Files uploaded from the Task description editor are Attachments of the Task itself rather than of a Comment.
 - A **Message** is what the Agent receives: one or more Comments merged together, or a system notice. Users write Comments; the platform turns them into Messages.
 - **Delivery** is the state of a User Comment towards the Agent: queued, delivered, or not delivered with a reason.
+- A **Scheduled Message** is a Comment a User writes ahead of time for a chosen date and time. It stays off the Timeline until it is due, then is published as an ordinary Comment.
+- A **Limit Resume** is a Scheduled Message the platform creates when a Turn stops at a usage limit that reports its reset time (see [Agent sessions](agent-sessions.md#usage-limits-and-limit-resume)).
 - A **Question** is an Agent Comment asking Users to choose among options. The first User who answers closes it, and the answer reaches the Agent as a Message.
 - A **Survey** is an Agent Comment collecting answers from several Users. Its **Expected Respondents** are the Task's Assignees when it was created. It reaches the Agent as one Message once they have all answered, or earlier when a User closes it.
 - A **Notify agent** notice is a System Comment that carries, for the Agent only, the list of Task changes Users made since the Agent last read its Task.
@@ -181,6 +183,24 @@ stateDiagram-v2
 
 The first User Comment on a Task with an assigned Agent is what starts the Agent's work; until then the Session stays pending. The full rules for injection into a running Turn, merging queued Comments into one Message, and the Session states shown next to the conversation are in [Agent sessions](agent-sessions.md).
 
+### Scheduled Messages
+
+Every signed-in User can schedule a Comment on any Task. In the composer a schedule control next to Send opens a date and time picker in the User's time zone. The Scheduled Message takes what the composer takes: a Markdown body of up to 100,000 characters, up to 10 Attachments, the Internal Note flag and Native Commands. It needs a body or an Attachment (`400` otherwise). The due time must be at least one minute and at most 366 days ahead (`400` with the allowed range otherwise).
+
+A Scheduled Message is `pending`, `sent` or `cancelled`. While it is `pending`:
+
+- it is listed on the Task, ordered by due time, with its author, text, files and due time, for every User with access to the Task, Internal Notes included (a Scheduled Message is shared, not a private Draft);
+- any User can change its text and due time, cancel it or send it now. Its Internal Note flag and files are fixed, like a Comment's; a User who needs other files cancels it and schedules another;
+- changing, cancelling or sending a message that is no longer `pending` is answered with `409`.
+
+A cancelled message keeps its row with the reason (cancelled by a User, Task closed, Agent unassigned, replaced, or the Agent worked again) and loses its files. The list shows the pending messages and the 20 most recent finished ones, so Users can see what became of a message.
+
+When a message is due, or a User sends it now, the platform publishes it in one transaction as a User Comment authored by whoever scheduled it, through the same path as a posted Comment: the author follows the Task, mentions are notified and the Comment gets its Delivery. The files move to the Comment and the message becomes `sent`, linked to it. The Comment is published in every case; a Task that is closed, or has no Agent, shows the usual "not delivered" reason on it. A message due while the backend was down is published when the background tick next runs. A message of a deleted Task disappears with it.
+
+A Limit Resume is a Scheduled Message of its own kind: Users can change its due time, cancel it or send it now, but not its text. It is published as a System Comment whose notice, the text the Agent receives, tells it the usage limit was reset and to continue where it stopped; it is delivered like a Notify agent notice.
+
+Creating, changing, cancelling and publishing a message publishes a `scheduled_message.updated` event with the whole message on the Task's topic.
+
 ### Notify agent
 
 When Users edit a Task's title, description, priority or Tags after the Agent last read it, the Task view shows a banner offering **Notify agent**. Only edits made by Users to those four fields count; Status and User assignee changes leave the banner as it is. The banner is shown while the Session is idle or running.
@@ -259,6 +279,8 @@ The alert shows a fixed text, "You were mentioned in a Comment." for mentions an
 - The **Blob store** keeps the bytes of every Attachment behind a small interface: store a stream with its name and type and get an id and size back, read it by id, delete it. The implementation writes each blob as a file plus a metadata sidecar in the backend's data directory. Database records point to blob ids; blobs are deleted only after the transaction that removed their records commits, and blobs stored for a request that fails are removed straight away.
 - The **Notifications module** owns Task Preferences, read positions and phone registrations. The database assigns Timeline positions and records Agent outcome Notification Events. The Comments module records mention events and their planned recipients in the same transaction as the new Comment.
 - The **push dispatcher** reads planned deliveries from the database and sends them through the push transport (see [Clients](clients.md)).
+- **Scheduled Messages** have a module of their own next to Comments. The background tick that already starts due Schedules also publishes due Scheduled Messages, each in its own transaction that locks the Task and then the message (the order the Session lifecycle uses), so a send now racing the tick, a second backend or the closing of the Task publishes or cancels it once. The tick takes an injectable clock so tests can drive it.
+- **The API** lists a Task's Scheduled Messages (`GET /tasks/:id/scheduled-messages`), creates one as JSON or multipart (`POST`, `201`), changes the text or due time (`PATCH /scheduled-messages/:id`), cancels it (`DELETE`) and sends it now (`POST /scheduled-messages/:id/send`). The offer to resume is answered with `POST /comments/:id/limit-resume` carrying `schedule: true` or `false`. A message that is not `pending` answers `409` to every change.
 - **Real-time:** Comment created, updated and deleted events go to the Task topic; answering a Question and answering or closing a Survey publish the updated Comment, with its structured part, as an update event; the refreshed card goes to the Project topic; preference changes go to the User's private topic. Transport and reconnection are described in [Clients](clients.md).
 
 ```mermaid
@@ -285,7 +307,9 @@ sequenceDiagram
 ## Data model
 
 - **Comment**: Task, kind (`user`, `agent`, `system`), author Actor, Markdown body, internal flag, edited at, deleted at, created at. Delivery fields: state (`none`, `queued`, `delivered`, `not_delivered`), reason, the Job it was delivered in, the Queue Entry it waits in. Notify agent notices and Survey results also hold the text the Agent receives; Notify agent notices also hold the Task version they cover. Agent Comments hold the Job that produced them. An answer to a Question holds the Question it answers. Comments are soft-deleted and removed only with their Task (or by Delete Chat on a Wiki). 
-- **Attachment**: either a Comment or a Task (exactly one), blob id, file name, content type, size in bytes, order within its Comment, created at.
+- **Scheduled Message**: Task, kind (`user` or `limit_resume`), author User (none for a Limit Resume), Markdown body, internal flag, due time, state (`pending`, `sent`, `cancelled`), cancellation reason, the Comment it became, created at, updated at. Removed with its Task.
+- **Limit Resume offer**: the structured part of the System Comment that reports a usage limit: reset time, state (`open`, `scheduled`, `declined`, `unneeded`), who decided and when, and the Limit Resume created. Removed with its Comment.
+- **Attachment**: either a Comment, a Scheduled Message or a Task (exactly one), blob id, file name, content type, size in bytes, order within its Comment, created at.
 - **Question or Survey**: its Comment, kind (`question`, `survey`), items, state (`open`, then `answered` for a Question or `closed` for a Survey), Expected Respondents (Survey), the answer, who answered and when, and the answer Comment (Question), who closed it and when, and the results Comment (Survey). Removed with its Comment.
 - **Survey answer**: Survey, User, one answer per item (chosen option labels and the "Other" text), created and updated at. One per Survey and User.
 - **Blob**: the stored bytes, identified by a random UUID, with file name, content type and size in a sidecar.
@@ -307,6 +331,9 @@ sequenceDiagram
 
 ## Decisions
 
+- **A Scheduled Message is not a Comment until it is due.** Keeping it off the Timeline means nothing reaches the Agent, the Comment count or the unread state early, and an edit or cancellation never rewrites something the Agent already received. Publishing through the normal posting path means Delivery, following and mentions need no special cases.
+- **Scheduled Messages are shared by every User with access to the Task.** A colleague must be able to cancel a plan, or an automatic resume, that no longer fits. The author stays the one who scheduled it.
+- **A due message is always published, even when it cannot be delivered.** The Timeline then shows the Comment and why it did not reach the Agent, as for any Comment written to a closed Task, instead of a message that silently disappears.
 - **Soft deletion of Comments.** The tombstone keeps the Timeline coherent: the Agent may have already received and answered the Comment, and Users see that something was there. The body and files are removed, which is what deletion is for.
 - **The internal flag is fixed at posting time.** Turning a delivered Comment into a note cannot take it back from the Agent, and turning a note into a Comment would deliver it out of order. Users post a new Comment instead.
 - **Only the author edits; Admins may also delete.** Editing someone else's words would misattribute them. Deleting is the moderation tool Admins need, for any kind of Comment.
