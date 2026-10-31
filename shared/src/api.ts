@@ -158,6 +158,21 @@ export const moveTaskBody = z.strictObject({
 });
 export type MoveTaskBody = z.infer<typeof moveTaskBody>;
 
+/**
+ * One action on several Tasks of a Project. `move` puts them, in the given order,
+ * at the end of `statusId`; `delete` removes them. Each Task is handled on its own.
+ */
+export const bulkTasksBody = z.discriminatedUnion('action', [
+  z.strictObject({ action: z.literal('move'), taskIds: z.array(id).min(1).max(200), statusId: id }),
+  z.strictObject({ action: z.literal('delete'), taskIds: z.array(id).min(1).max(200) }),
+]);
+export type BulkTasksBody = z.infer<typeof bulkTasksBody>;
+
+export interface BulkTasksResult {
+  succeeded: string[];
+  failed: { taskId: string; message: string }[];
+}
+
 const csv = <T extends z.ZodType<unknown, string>>(item: T) =>
   z
     .union([z.string(), z.array(z.string())])

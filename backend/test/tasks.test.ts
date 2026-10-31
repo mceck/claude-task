@@ -428,6 +428,33 @@ describe('tasks', () => {
       }
     });
   });
+
+  describe('bulk actions', () => {
+    it('moves several tasks to the end of a status and reports foreign tasks as failed', async () => {
+      const a = await createTask(admin, projectId, { title: 'a' });
+      const b = await createTask(admin, projectId, { title: 'b' });
+      const other = await createProject(admin, { key: 'WEB' });
+      const foreign = await createTask(admin, other.project.id, { title: 'x' });
+      const done = statusByName(bundle, 'Done');
+      const res = await admin.post(`/projects/${projectId}/tasks/bulk`, {
+        action: 'move',
+        taskIds: [b.id, a.id, foreign.id],
+        statusId: done.id,
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.succeeded).toEqual([b.id, a.id]);
+      expect(res.body.failed).toEqual([{ taskId: foreign.id, message: 'Task not found' }]);
+      expect(await columnTitles(admin, projectId, done.id)).toEqual(['b', 'a']);
+    });
+
+    it('deletes several tasks', async () => {
+      const a = await createTask(admin, projectId, { title: 'a' });
+      const b = await createTask(admin, projectId, { title: 'b' });
+      const res = await admin.post(`/projects/${projectId}/tasks/bulk`, { action: 'delete', taskIds: [a.id, b.id] });
+      expect(res.body).toEqual({ succeeded: [a.id, b.id], failed: [] });
+      expect((await admin.get(`/tasks/${a.id}`)).status).toBe(404);
+    });
+  });
 });
 
 describe('tags', () => {

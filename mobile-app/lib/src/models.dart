@@ -119,6 +119,7 @@ class Agent implements Identified {
 
 class SkillCommand {
   final String name, description, kind;
+  const SkillCommand.system(this.name, this.description) : kind = 'system';
   SkillCommand.fromJson(Json json)
     : name = json['name'] as String,
       description = json['description'] as String? ?? '',

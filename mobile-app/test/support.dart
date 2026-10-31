@@ -453,6 +453,12 @@ class FakeApi implements TaskApi {
   /// it may throw an [ApiException].
   Json Function(String method, String path, Json? body)? scheduleTool;
 
+  /// More open Tasks on the Project's list, after the current one.
+  List<Json> extraTasks = [];
+
+  /// What the bulk Task route answers; by default it applies to every Task.
+  Json? bulkResult;
+
   /// The last body sent to each `METHOD /path`.
   final bodies = <String, Json?>{};
   @override
@@ -531,12 +537,26 @@ class FakeApi implements TaskApi {
       return {
         'tasks': [
           currentTask,
+          ...extraTasks,
           taskData(
             id: 'closed-task',
             title: 'Archived Task',
             statusId: 'status-2',
           ),
         ],
+      };
+    }
+    if (path == '/projects/project-1/tasks/bulk' && method == 'POST') {
+      return bulkResult ?? {'succeeded': body!['taskIds'], 'failed': <Json>[]};
+    }
+    final moving = RegExp(r'^/tasks/([^/]+)/move$').firstMatch(path);
+    if (moving != null && method == 'POST') {
+      final id = moving.group(1)!;
+      final base = id == 'task-1'
+          ? currentTask
+          : extraTasks.firstWhere((t) => t['id'] == id, orElse: () => task2);
+      return {
+        'task': {...base, 'statusId': body!['statusId']},
       };
     }
     if (path == '/projects/project-1/task-preferences') {

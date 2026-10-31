@@ -3,12 +3,15 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 
 import 'app.dart';
 import 'controller.dart';
+import 'features.dart';
 import 'voice_widgets.dart';
 import 'models.dart';
 import 'questions.dart';
@@ -74,6 +77,13 @@ class _ConversationState extends State<Conversation> {
     final bottom = _scroll.position.pixels < _followSlack;
     if (_atBottom != bottom) setState(() => _atBottom = bottom);
     if (bottom) _markReached();
+    final c = widget.controller;
+    if (!_loadingOlder &&
+        c.nextCursor != null &&
+        c.online &&
+        _scroll.position.maxScrollExtent - _scroll.position.pixels < 400) {
+      unawaited(_loadOlder());
+    }
   }
 
   void _markReached() {
@@ -198,7 +208,8 @@ class _ConversationState extends State<Conversation> {
           onBack: widget.onBack,
           showDetailsAction: widget.showDetailsAction,
         ),
-        if (c.wiki == null) TaskVoiceRoom(controller: c, task: t),
+        if (voiceRoomsEnabled && c.wiki == null)
+          TaskVoiceRoom(controller: c, task: t),
         if (c.assignmentRetryId != null && c.assignmentRetryTaskId == t.id)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
@@ -215,7 +226,11 @@ class _ConversationState extends State<Conversation> {
           child: Stack(
             children: [
               Positioned.fill(
-                child: c.timeline.isEmpty && !live
+                child: c.timeline.isEmpty && !live && c.timelineLoading
+                    ? const Center(
+                        child: Spinner(key: Key('loading-timeline'), size: 26),
+                      )
+                    : c.timeline.isEmpty && !live
                     ? EmptyState(
                         icon: Icons.chat_bubble_outline_rounded,
                         title: 'Start the conversation with a Comment.',
@@ -249,8 +264,21 @@ class _ConversationState extends State<Conversation> {
                                     return _LiveTail(controller: c);
                                   }
                                   if (index == rows.length + 1) {
-                                    return c.nextCursor == null
-                                        ? const SizedBox(height: 12)
+                                    if (c.nextCursor == null) {
+                                      return const SizedBox(height: 12);
+                                    }
+                                    return _loadingOlder
+                                        ? const Padding(
+                                            padding: EdgeInsets.only(
+                                              bottom: 16,
+                                            ),
+                                            child: Center(
+                                              child: Spinner(
+                                                key: Key('loading-older'),
+                                                size: 20,
+                                              ),
+                                            ),
+                                          )
                                         : Center(
                                             child: Padding(
                                               padding: const EdgeInsets.only(
@@ -468,10 +496,20 @@ class _Header extends StatelessWidget {
         _held(session) &&
         session?['state'] != 'running';
     final unseen = c.online && session?['unseenChanges'] == true;
+    final status = c.statuses.byId(t.statusId);
+    final closeStatus =
+        c.wiki != null || runMode || status?.category == 'closed'
+        ? null
+        : c.statuses.where((s) => s.category == 'closed').firstOrNull;
     return PageHeader(
       onBack: onBack,
       title: c.wiki != null ? (c.openChat?.title ?? t.title) : t.title,
       onTitleTap: showDetailsAction ? () => showDetails(context, c) : null,
+      titleTrailing: running
+          ? _StopButton(
+              onTap: () => perform(context, () => c.sessionAction('stop')),
+            )
+          : null,
       meta: Row(
         children: [
           Text(
@@ -499,7 +537,6 @@ class _Header extends StatelessWidget {
           // Beside the state it acts on, in free space: showing it
           // never shifts the title or the header actions.
           for (final action in [
-            if (running) _PillAction.stop,
             if (retry) _PillAction.retry,
             if (unseen) _PillAction.notify,
           ]) ...[
@@ -512,25 +549,20 @@ class _Header extends StatelessWidget {
         ],
       ),
       actions: [
+        if (closeStatus != null)
+          IconAction(
+            icon: Icons.check_circle_outline_rounded,
+            tooltip: 'Close Task',
+            hoverColor: Palette.success,
+            onPressed: c.online
+                ? () => confirmCloseTask(context, c, closeStatus)
+                : null,
+          ),
         if (showDetailsAction && c.wiki == null && !runMode)
           IconAction(
             icon: Icons.info_outline_rounded,
             tooltip: 'Task details',
             onPressed: () => showDetails(context, c),
-          ),
-        if (!runMode)
-          IconAction(
-            icon: muted
-                ? Icons.notifications_off_outlined
-                : Icons.notifications_none_rounded,
-            tooltip: c.wiki != null
-                ? (muted ? 'Unmute wiki' : 'Mute wiki')
-                : (muted ? 'Unmute Task' : 'Mute Task'),
-            active: muted,
-            onPressed: c.online
-                ? () =>
-                      perform(context, () => c.setPreference({'muted': !muted}))
-                : null,
           ),
         Builder(
           builder: (anchor) => IconAction(
@@ -538,6 +570,17 @@ class _Header extends StatelessWidget {
             tooltip: c.wiki == null ? 'Task actions' : 'Wiki actions',
             onPressed: () async {
               final action = await showActions<String>(anchor, [
+                if (!runMode)
+                  ActionItem(
+                    'mute',
+                    c.wiki != null
+                        ? (muted ? 'Unmute wiki' : 'Mute wiki')
+                        : (muted ? 'Unmute Task' : 'Mute Task'),
+                    muted
+                        ? Icons.notifications_off_outlined
+                        : Icons.notifications_none_rounded,
+                    enabled: c.online,
+                  ),
                 if (!runMode)
                   ActionItem(
                     'follow',
@@ -603,6 +646,8 @@ class _Header extends StatelessWidget {
                 }
               } else if (action == 'auto-resume') {
                 await perform(anchor, () => c.setAutoResume(!t.autoResume));
+              } else if (action == 'mute') {
+                await perform(anchor, () => c.setPreference({'muted': !muted}));
               } else if (action == 'follow') {
                 await perform(
                   anchor,
@@ -687,7 +732,6 @@ class SessionBadge extends StatelessWidget {
 }
 
 enum _PillAction {
-  stop(Icons.stop_rounded, 'Stop', 'Stop the Agent', Palette.danger),
   retry(
     Icons.replay_rounded,
     'Retry',
@@ -705,6 +749,27 @@ enum _PillAction {
   final String label, detail;
   final Color color;
   const _PillAction(this.icon, this.label, this.detail, this.color);
+}
+
+/// Stops the running Agent: a red circled icon beside the title, no text.
+class _StopButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _StopButton({required this.onTap});
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Stop the Agent',
+    child: Pressable(
+      key: const Key('session-stop'),
+      onTap: onTap,
+      semanticLabel: 'Stop the Agent',
+      pressedScale: .92,
+      color: Palette.danger.withValues(alpha: .12),
+      border: Border.all(color: Palette.danger, width: 1.5),
+      borderRadius: BorderRadius.circular(99),
+      padding: const EdgeInsets.all(3),
+      child: const Icon(Icons.stop_rounded, size: 14, color: Palette.danger),
+    ),
+  );
 }
 
 /// A Session action as a small pill beside the Session state, in the header's
@@ -3183,8 +3248,28 @@ class _ComposerState extends State<Composer> {
     return !c.sending && c.online && !c.draft.ambiguous;
   }
 
+  /// The `/schedule` system command: sending it alone, like picking it in the
+  /// hints, opens the time picker instead of posting a Comment.
+  static const _scheduleCommand = SkillCommand.system(
+    'schedule',
+    'Send this message later, at a time you pick',
+  );
+
+  bool get _softKeyboard =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   Future<void> _send() async {
     if (!_canSend) return;
+    if (_text.text.trim() == '/schedule') {
+      await widget.controller.setDraft(
+        widget.controller.draft.copyWith(text: ''),
+      );
+      _text.clear();
+      if (mounted) await _pickDue();
+      if (mounted) _focus.requestFocus();
+      return;
+    }
     final restoreFocus = _focus.hasFocus;
     final due = _dueAt;
     if (due != null) {
@@ -3408,18 +3493,6 @@ class _ComposerState extends State<Composer> {
                   ),
                 ),
               ),
-              slot(
-                IconAction(
-                  key: const Key('schedule-button'),
-                  icon: Icons.schedule_rounded,
-                  tooltip: due == null
-                      ? 'Schedule for later'
-                      : 'Change scheduled time',
-                  color: due == null ? Palette.fgSubtle : Palette.primary,
-                  size: 36,
-                  onPressed: c.sending ? null : _pickDue,
-                ),
-              ),
               Expanded(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minHeight: _composerLine),
@@ -3439,7 +3512,11 @@ class _ComposerState extends State<Composer> {
                         maxLines: 6,
                         maxLength: 100000,
                         keyboardType: TextInputType.multiline,
-                        textInputAction: TextInputAction.send,
+                        // Soft keyboards: Enter starts a new line and Send
+                        // is the button. Hardware keyboards send on Enter.
+                        textInputAction: _softKeyboard
+                            ? TextInputAction.newline
+                            : TextInputAction.send,
                         onEditingComplete: _text.clearComposing,
                         onSubmitted: (_) => _send(),
                         textCapitalization: TextCapitalization.sentences,
@@ -3606,19 +3683,23 @@ class _ComposerState extends State<Composer> {
                           if (!internal)
                             SkillSuggestions(
                               text: _text,
-                              skills: c.session?['commands'] is List
-                                  ? objects(c.session?['commands'])
-                                        .map(SkillCommand.fromJson)
-                                        .toList()
-                                  : c.agents
-                                            .where(
-                                              (a) => a.id == c.task?.agentId,
-                                            )
-                                            .firstOrNull
-                                            ?.skillCommands ??
-                                        [],
+                              skills: [
+                                _scheduleCommand,
+                                ...c.session?['commands'] is List
+                                    ? objects(c.session?['commands'])
+                                          .map(SkillCommand.fromJson)
+                                          .toList()
+                                    : c.agents
+                                              .where(
+                                                (a) => a.id == c.task?.agentId,
+                                              )
+                                              .firstOrNull
+                                              ?.skillCommands ??
+                                          [],
+                              ],
                               onSelected: (value) =>
                                   c.setDraft(c.draft.copyWith(text: value)),
+                              onSystem: (_) => _pickDue(),
                             ),
                         ],
                       ),

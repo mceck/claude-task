@@ -268,19 +268,6 @@ class TaskDetails extends StatelessWidget {
       tooltip: 'Edit Task',
       onPressed: edit,
     );
-    final closedStatus = c.statuses
-        .where((s) => s.category == 'closed')
-        .firstOrNull;
-    final closeAction = closedStatus == null || status?.category == 'closed'
-        ? null
-        : IconAction(
-            icon: Icons.check_circle_outline_rounded,
-            tooltip: 'Close Task',
-            hoverColor: Palette.success,
-            onPressed: c.online
-                ? () => confirmCloseTask(context, c, closedStatus)
-                : null,
-          );
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -548,8 +535,7 @@ class TaskDetails extends StatelessWidget {
                           field: 'tagIds',
                           title: 'Tags',
                           current: t.tagIds,
-                          empty:
-                              'This Project has no Tags yet. Type a name to create one.',
+                          empty: 'This Project has no Tags yet. Type a name to create one.',
                           createNoun: 'tag',
                           onCreate: (name) async {
                             final tag = await c.createTag(name);
@@ -693,14 +679,14 @@ class TaskDetails extends StatelessWidget {
     if (inSheet) {
       return SheetScaffold(
         title: 'Task details',
-        headerActions: [?closeAction, editAction],
+        headerActions: [editAction],
         body: body,
       );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        PageHeader(title: 'Task details', actions: [?closeAction, editAction]),
+        PageHeader(title: 'Task details', actions: [editAction]),
         Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(Space.page, 16, Space.page, 28),
@@ -1048,8 +1034,7 @@ Future<void> confirmMergePullRequest(
   final accepted = await confirm(
     context,
     title: 'Merge $noun?',
-    message:
-        'It is merged into the base branch with the provider\'s default merge method. If there is a later Status, the Task advances to it.',
+    message: 'It is merged into the base branch with the provider\'s default merge method. If there is a later Status, the Task advances to it.',
     confirmLabel: 'Merge',
   );
   if (accepted && context.mounted) {

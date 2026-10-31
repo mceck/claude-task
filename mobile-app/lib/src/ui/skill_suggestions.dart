@@ -9,11 +9,16 @@ class SkillSuggestions extends StatelessWidget {
   final TextEditingController text;
   final List<SkillCommand> skills;
   final ValueChanged<String> onSelected;
+
+  /// Picking a `system` command removes its token and runs it here instead of
+  /// completing it as text.
+  final ValueChanged<SkillCommand>? onSystem;
   const SkillSuggestions({
     super.key,
     required this.text,
     required this.skills,
     required this.onSelected,
+    this.onSystem,
   });
 
   @override
@@ -37,7 +42,7 @@ class SkillSuggestions extends StatelessWidget {
           .where(
             (s) =>
                 s.name.toLowerCase().startsWith(query) &&
-                (tokenStart == 0 || s.kind == 'skill'),
+                (tokenStart == 0 || s.kind == 'skill' || s.kind == 'system'),
           )
           .toList();
       if (suggestions.isEmpty) return const SizedBox.shrink();
@@ -91,11 +96,15 @@ class SkillSuggestions extends StatelessWidget {
                                 ? 'Skill'
                                 : skill.kind == 'mcp'
                                 ? 'MCP'
+                                : skill.kind == 'system'
+                                ? 'System'
                                 : 'Claude',
                             color: skill.kind == 'skill'
                                 ? Palette.primary
                                 : skill.kind == 'mcp'
                                 ? Palette.info
+                                : skill.kind == 'system'
+                                ? Palette.warning
                                 : Palette.agent,
                           ),
                         ],
@@ -117,6 +126,17 @@ class SkillSuggestions extends StatelessWidget {
                   ),
                   onTap: () {
                     final start = caret - query.length - 1;
+                    if (skill.kind == 'system' && onSystem != null) {
+                      final rest = value.text.substring(caret);
+                      final next = value.text.substring(0, start) + rest;
+                      text.value = TextEditingValue(
+                        text: next,
+                        selection: TextSelection.collapsed(offset: start),
+                      );
+                      onSelected(next);
+                      onSystem!(skill);
+                      return;
+                    }
                     final suffix = RegExp(r'^[a-zA-Z0-9_:-]*')
                         .firstMatch(value.text.substring(caret))!
                         .end;

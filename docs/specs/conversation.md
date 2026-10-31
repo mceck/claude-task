@@ -186,7 +186,7 @@ The first User Comment on a Task with an assigned Agent is what starts the Agent
 
 ### Scheduled Messages
 
-Every signed-in User can schedule a Comment on any Task. In the composer a schedule control next to Send opens a date and time picker in the User's time zone. The Scheduled Message takes what the composer takes: a Markdown body of up to 100,000 characters, up to 10 Attachments, the Internal Note flag and Native Commands. It needs a body or an Attachment (`400` otherwise). The due time must be at least one minute and at most 366 days ahead (`400` with the allowed range otherwise).
+Every signed-in User can schedule a Comment on any Task. In the web composer a schedule control next to Send opens a date and time picker in the User's time zone; the native app's `/schedule` command does the same (see [Clients](clients.md)). The Scheduled Message takes what the composer takes: a Markdown body of up to 100,000 characters, up to 10 Attachments, the Internal Note flag and Native Commands. It needs a body or an Attachment (`400` otherwise). The due time must be at least one minute and at most 366 days ahead (`400` with the allowed range otherwise).
 
 A Scheduled Message is `pending`, `sent` or `cancelled`. While it is `pending`:
 

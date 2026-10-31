@@ -151,21 +151,32 @@ void main() {
       return h;
     }
 
-    testWidgets('the schedule button turns Send into Schedule', (tester) async {
+    Future<void> pickTime(WidgetTester tester) async {
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the /schedule command turns Send into Schedule', (
+      tester,
+    ) async {
       final h = await pump(tester, []);
       expect(find.byKey(const Key('scheduled-section')), findsNothing);
+      expect(find.byKey(const Key('schedule-button')), findsNothing);
       await tester.enterText(
         find.byKey(const Key('comment-composer')),
-        'Later',
+        'Later /sch',
       );
-      await tester.tap(find.byKey(const Key('schedule-button')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('OK'));
+      // The hint is tagged System, and picking it removes the token.
+      expect(find.text('System'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('skill-command:schedule')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('OK'));
-      await tester.pumpAndSettle();
+      await pickTime(tester);
       expect(find.byKey(const Key('schedule-chip')), findsOneWidget);
       expect(find.text('Schedule'), findsOneWidget);
+      expect(h.controller.draft.text.trim(), 'Later');
 
       // Clearing goes back to a plain send.
       await tester.tap(find.byTooltip('Clear schedule'));
@@ -173,11 +184,21 @@ void main() {
       expect(find.byKey(const Key('schedule-chip')), findsNothing);
       expect(find.text('Schedule'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('schedule-button')));
+      // Sending only /schedule runs the command instead of posting it.
+      await tester.enterText(
+        find.byKey(const Key('comment-composer')),
+        '/schedule',
+      );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('OK'));
+      await tester.tap(find.byKey(const Key('send-comment')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('OK'));
+      expect(h.api.sendCount, 0);
+      await pickTime(tester);
+      expect(find.byKey(const Key('schedule-chip')), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('comment-composer')),
+        'Later',
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('send-comment')));
       await tester.pumpAndSettle();

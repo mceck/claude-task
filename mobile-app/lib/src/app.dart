@@ -9,6 +9,7 @@ import 'controller.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 import 'workspace.dart';
+import 'features.dart';
 import 'voice_widgets.dart';
 
 class TaskApp extends StatefulWidget {
@@ -120,7 +121,9 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
                     child: page,
                   ),
                 ),
-                if (c.user != null && !c.user!.mustChangePassword)
+                if (voiceRoomsEnabled &&
+                    c.user != null &&
+                    !c.user!.mustChangePassword)
                   VoiceControls(
                     voice: c.voice,
                     onOpenTask: () => perform(

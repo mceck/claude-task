@@ -1,3 +1,8 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -1072,10 +1077,278 @@ class _TaskListState extends State<TaskList> {
   /// never while searching, filtering or coming back from a conversation.
   late bool _intro = firstIntro('tasks:${widget.controller.project?.id}');
 
+  final _scroll = ScrollController();
+  final _listKey = GlobalKey();
+
+  /// Multi-selection: on from "Select" in a row's menu until it is left or
+  /// the last Task is unchecked.
+  bool _selectMode = false;
+  final _selected = <String>{};
+
+  Timer? _scrollTimer;
+  double _scrollSpeed = 0;
+
   @override
   void dispose() {
+    _scrollTimer?.cancel();
+    _scroll.dispose();
     _searchField.dispose();
     super.dispose();
+  }
+
+  TaskStatus? get _closedStatus => widget.controller.statuses
+      .where((s) => s.category == 'closed')
+      .firstOrNull;
+
+  void _toggle(String id) => setState(() {
+    if (!_selected.remove(id)) _selected.add(id);
+    if (_selected.isEmpty) _selectMode = false;
+  });
+
+  void _startSelecting(Task task) => setState(() {
+    _selectMode = true;
+    _selected
+      ..clear()
+      ..add(task.id);
+  });
+
+  void _stopSelecting() => setState(() {
+    _selectMode = false;
+    _selected.clear();
+  });
+
+  /// Edge auto-scroll while a Task is dragged near the top or bottom.
+  void _dragMoved(Offset global) {
+    final box = _listKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached) return;
+    final y = box.globalToLocal(global).dy;
+    const edge = 72.0;
+    if (y < edge) {
+      _scrollSpeed = -(edge - y) / edge * 16;
+    } else if (y > box.size.height - edge) {
+      _scrollSpeed = (y - (box.size.height - edge)) / edge * 16;
+    } else {
+      _scrollSpeed = 0;
+    }
+    if (_scrollSpeed != 0 && _scrollTimer == null) {
+      _scrollTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+        if (_scrollSpeed == 0 || !_scroll.hasClients) return;
+        final p = _scroll.position;
+        _scroll.jumpTo(
+          (p.pixels + _scrollSpeed).clamp(p.minScrollExtent, p.maxScrollExtent),
+        );
+      });
+    }
+  }
+
+  void _dragEnded() {
+    _scrollSpeed = 0;
+    _scrollTimer?.cancel();
+    _scrollTimer = null;
+  }
+
+  Future<void> _dropOn(
+    Task dragged,
+    TaskStatus status, {
+    Task? target,
+    bool before = true,
+  }) async {
+    if (target?.id == dragged.id) return;
+    await perform(
+      context,
+      () => widget.controller.moveTask(
+        dragged,
+        status.id,
+        beforeTaskId: target != null && before ? target.id : null,
+        afterTaskId: target != null && !before ? target.id : null,
+      ),
+    );
+  }
+
+  Future<void> _runBulk(
+    String action,
+    List<Task> list, {
+    String? statusId,
+    required String done,
+  }) async {
+    final c = widget.controller;
+    try {
+      final result = await c.bulkTasks(action, [
+        for (final t in list) t.id,
+      ], statusId: statusId);
+      if (!mounted) return;
+      final byId = {for (final t in list) t.id: t};
+      setState(() {
+        _selected
+          ..clear()
+          ..addAll(result.failed.keys);
+        if (_selected.isEmpty) _selectMode = false;
+      });
+      if (result.failed.isEmpty) {
+        toast(
+          context,
+          '${result.succeeded} ${result.succeeded == 1 ? 'task' : 'tasks'} $done',
+          error: false,
+        );
+      } else {
+        final first = result.failed.entries.first;
+        toast(
+          context,
+          '${result.failed.length} not $done: ${byId[first.key]?.key ?? ''} ${first.value}',
+        );
+      }
+    } catch (e) {
+      if (mounted) toast(context, e.toString());
+    }
+  }
+
+  Future<void> _closeTasks(List<Task> list) async {
+    final closed = _closedStatus;
+    final c = widget.controller;
+    final open = [
+      for (final t in list)
+        if (c.statuses.byId(t.statusId)?.category != 'closed') t,
+    ];
+    if (closed == null || open.isEmpty) return;
+    final working = open.any(
+      (t) => t.sessionState == 'running' || t.queuePosition != null,
+    );
+    if (open.length > 1 || working) {
+      final ok = await confirm(
+        context,
+        title: open.length == 1
+            ? 'Close ${open.first.key}?'
+            : 'Close ${open.length} tasks?',
+        message:
+            'Closing ends the Agent Sessions${working ? ' and stops the work in progress' : ''}. The tasks move to “${closed.name}”.',
+        confirmLabel: 'Close',
+        destructive: false,
+      );
+      if (!ok || !mounted) return;
+    }
+    await _runBulk('move', open, statusId: closed.id, done: 'closed');
+  }
+
+  Future<void> _deleteTasks(List<Task> list) async {
+    final ok = await confirm(
+      context,
+      title: list.length == 1
+          ? 'Delete ${list.first.key}?'
+          : 'Delete ${list.length} tasks?',
+      message: 'This removes the tasks and their conversations permanently.',
+      confirmLabel: 'Delete',
+    );
+    if (!ok || !mounted) return;
+    await _runBulk('delete', list, done: 'deleted');
+  }
+
+  Future<void> _moveSelected(BuildContext anchor, List<Task> list) async {
+    final c = widget.controller;
+    final id = await showActions<String>(anchor, [
+      for (final status in c.statuses)
+        ActionItem(status.id, status.name, Icons.circle, enabled: c.online),
+    ], title: 'Move ${list.length} to…');
+    if (id == null || !mounted) return;
+    await _runBulk(
+      'move',
+      list,
+      statusId: id,
+      done: 'moved to ${c.statuses.byId(id)?.name ?? 'the new status'}',
+    );
+  }
+
+  Future<void> _rowMenu(BuildContext anchor, Task task, Offset? at) async {
+    final c = widget.controller;
+    final closeable =
+        _closedStatus != null &&
+        c.statuses.byId(task.statusId)?.category != 'closed';
+    final action = await showActions<String>(
+      anchor,
+      [
+        ActionItem('select', 'Select', Icons.check_circle_outline_rounded),
+        if (closeable)
+          ActionItem(
+            'close',
+            'Close',
+            Icons.task_alt_rounded,
+            enabled: c.online,
+          ),
+        ActionItem(
+          'delete',
+          'Delete',
+          Icons.delete_outline_rounded,
+          enabled: c.online,
+          destructive: true,
+        ),
+      ],
+      title: '${task.key} · ${task.title}',
+      at: at,
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case 'select':
+        _startSelecting(task);
+      case 'close':
+        await _closeTasks([task]);
+      case 'delete':
+        await _deleteTasks([task]);
+    }
+  }
+
+  Widget _row(Task task, TaskStatus status, {required bool reorder}) {
+    final c = widget.controller;
+    final row = _TaskRow(
+      task: task,
+      controller: c,
+      selected: c.task?.id == task.id,
+      selecting: _selectMode,
+      checked: _selected.contains(task.id),
+      onToggle: () => _toggle(task.id),
+    );
+    if (_selectMode) return row;
+    Widget dropZone(bool before) => Expanded(
+      child: DragTarget<Task>(
+        onWillAcceptWithDetails: (d) => d.data.id != task.id,
+        onAcceptWithDetails: (d) =>
+            _dropOn(d.data, status, target: task, before: before),
+        builder: (context, candidate, _) => IgnorePointer(
+          child: DecoratedBox(
+            position: DecorationPosition.foreground,
+            decoration: BoxDecoration(
+              border: candidate.isEmpty
+                  ? null
+                  : Border(
+                      top: before
+                          ? const BorderSide(color: Palette.primary, width: 2)
+                          : BorderSide.none,
+                      bottom: before
+                          ? BorderSide.none
+                          : const BorderSide(color: Palette.primary, width: 2),
+                    ),
+            ),
+            child: const SizedBox.expand(),
+          ),
+        ),
+      ),
+    );
+    final body = Stack(
+      children: [
+        row,
+        if (reorder)
+          Positioned.fill(
+            child: Column(children: [dropZone(true), dropZone(false)]),
+          ),
+      ],
+    );
+    return _DraggableTask(
+      key: ValueKey('drag:${task.id}'),
+      task: task,
+      enabled: c.online,
+      onMoved: _dragMoved,
+      onEnded: _dragEnded,
+      onMenu: (anchor, at) => _rowMenu(anchor, task, at),
+      child: body,
+    );
   }
 
   @override
@@ -1107,39 +1380,89 @@ class _TaskListState extends State<TaskList> {
     if (_intro && c.tasks.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _intro = false);
     }
+    // A Task that vanished (deleted elsewhere) drops out of the selection.
+    _selected.removeWhere((id) => !c.tasks.any((t) => t.id == id));
+    final picked = [
+      for (final t in c.tasks)
+        if (_selected.contains(t.id)) t,
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        PageHeader(
-          onBack: widget.onBack,
-          leading: widget.onBack == null
-              ? null
-              : ProjectLogo(
-                  project: c.project!,
-                  api: c.api,
-                  size: 32,
-                  selected: true,
+        if (_selectMode)
+          PageHeader(
+            onBack: _stopSelecting,
+            title: '${_selected.length} selected',
+            actions: [
+              IconAction(
+                icon: Icons.select_all_rounded,
+                tooltip: 'Select all shown',
+                onPressed: () => setState(
+                  () => _selected.addAll([
+                    for (final g in groups)
+                      for (final t in g.$2) t.id,
+                  ]),
                 ),
-          title: c.project!.name,
-          subtitle:
-              '${c.tasks.length} ${c.tasks.length == 1 ? 'task' : 'tasks'}',
-          actions: [
-            IconAction(
-              icon: Icons.edit_outlined,
-              tooltip: 'Edit project',
-              onPressed: c.online
-                  ? () => showProjectSettings(context, c, c.project!)
-                  : null,
-            ),
-            IconAction(
-              icon: Icons.add_rounded,
-              tooltip: 'Create Task',
-              filled: true,
-              size: 36,
-              onPressed: c.online ? () => showCreateTask(context, c) : null,
-            ),
-          ],
-        ),
+              ),
+              Builder(
+                builder: (anchor) => IconAction(
+                  icon: Icons.drive_file_move_outlined,
+                  tooltip: 'Move to status',
+                  onPressed: c.online && picked.isNotEmpty
+                      ? () => _moveSelected(anchor, picked)
+                      : null,
+                ),
+              ),
+              IconAction(
+                icon: Icons.check_circle_outline_rounded,
+                tooltip: 'Close selected',
+                hoverColor: Palette.success,
+                onPressed:
+                    c.online && picked.isNotEmpty && _closedStatus != null
+                    ? () => _closeTasks(picked)
+                    : null,
+              ),
+              IconAction(
+                icon: Icons.delete_outline_rounded,
+                tooltip: 'Delete selected',
+                hoverColor: Palette.danger,
+                onPressed: c.online && picked.isNotEmpty
+                    ? () => _deleteTasks(picked)
+                    : null,
+              ),
+            ],
+          )
+        else
+          PageHeader(
+            onBack: widget.onBack,
+            leading: widget.onBack == null
+                ? null
+                : ProjectLogo(
+                    project: c.project!,
+                    api: c.api,
+                    size: 32,
+                    selected: true,
+                  ),
+            title: c.project!.name,
+            subtitle:
+                '${c.tasks.length} ${c.tasks.length == 1 ? 'task' : 'tasks'}',
+            actions: [
+              IconAction(
+                icon: Icons.edit_outlined,
+                tooltip: 'Edit project',
+                onPressed: c.online
+                    ? () => showProjectSettings(context, c, c.project!)
+                    : null,
+              ),
+              IconAction(
+                icon: Icons.add_rounded,
+                tooltip: 'Create Task',
+                filled: true,
+                size: 36,
+                onPressed: c.online ? () => showCreateTask(context, c) : null,
+              ),
+            ],
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
           child: TextField(
@@ -1208,19 +1531,32 @@ class _TaskListState extends State<TaskList> {
               : AppRefresh(
                   onRefresh: () => perform(context, c.refresh),
                   child: ListView(
+                    key: _listKey,
+                    controller: _scroll,
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(8, 2, 8, 24),
                     children: [
                       for (final (status, tasks) in groups) ...[
-                        _GroupHeader(
-                          status: status,
-                          count: tasks.length,
-                          collapsed: _collapsed.contains(status.id),
-                          onTap: () => setState(() {
-                            if (!_collapsed.remove(status.id)) {
-                              _collapsed.add(status.id);
-                            }
-                          }),
+                        DragTarget<Task>(
+                          onAcceptWithDetails: (d) => _dropOn(d.data, status),
+                          builder: (context, candidate, _) => DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: candidate.isEmpty
+                                  ? null
+                                  : Palette.primary.withValues(alpha: .14),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: _GroupHeader(
+                              status: status,
+                              count: tasks.length,
+                              collapsed: _collapsed.contains(status.id),
+                              onTap: () => setState(() {
+                                if (!_collapsed.remove(status.id)) {
+                                  _collapsed.add(status.id);
+                                }
+                              }),
+                            ),
+                          ),
                         ),
                         AnimatedSize(
                           duration: Motion.medium,
@@ -1235,10 +1571,10 @@ class _TaskListState extends State<TaskList> {
                                         key: ValueKey('row:${task.id}'),
                                         enabled: _intro,
                                         index: row++,
-                                        child: _TaskRow(
-                                          task: task,
-                                          controller: c,
-                                          selected: c.task?.id == task.id,
+                                        child: _row(
+                                          task,
+                                          status,
+                                          reorder: !filtering,
                                         ),
                                       ),
                                   ],
@@ -1473,11 +1809,15 @@ class _CommentCount extends StatelessWidget {
 class _TaskRow extends StatelessWidget {
   final Task task;
   final TaskController controller;
-  final bool selected;
+  final bool selected, selecting, checked;
+  final VoidCallback onToggle;
   const _TaskRow({
     required this.task,
     required this.controller,
     required this.selected,
+    required this.selecting,
+    required this.checked,
+    required this.onToggle,
   });
   @override
   Widget build(BuildContext context) {
@@ -1494,14 +1834,22 @@ class _TaskRow extends StatelessWidget {
         selected: selected,
         child: Tooltip(
           message: task.title,
+          // A press and hold belongs to the row's menu and drag.
+          triggerMode: TooltipTriggerMode.manual,
           child: Stack(
             children: [
               Pressable(
                 onTap: () {
-                  if (!selected) c.selectTask(task);
+                  if (selecting) {
+                    onToggle();
+                  } else if (!selected) {
+                    c.selectTask(task);
+                  }
                 },
                 pressedScale: 1,
-                color: selected ? Palette.surface : Colors.transparent,
+                color: selected || checked
+                    ? Palette.surface
+                    : Colors.transparent,
                 hoverColor: const Color(0x08ffffff),
                 borderRadius: BorderRadius.circular(Radii.sm),
                 padding: const EdgeInsets.symmetric(
@@ -1513,6 +1861,17 @@ class _TaskRow extends StatelessWidget {
                   children: [
                     Row(
                       children: [
+                        if (selecting) ...[
+                          Icon(
+                            checked
+                                ? Icons.check_circle_rounded
+                                : Icons.radio_button_unchecked_rounded,
+                            key: ValueKey('task-check:${task.id}'),
+                            size: 17,
+                            color: checked ? Palette.primary : Palette.fgSubtle,
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         Expanded(
                           child: Text(
                             task.title,
@@ -1645,6 +2004,108 @@ class _TaskRow extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Makes a Task row draggable and gives it its menu. A mouse drags at once and
+/// opens the menu with a right click; a finger presses and holds, then either
+/// lets go (the menu) or moves on (the drag).
+class _DraggableTask extends StatefulWidget {
+  final Task task;
+  final bool enabled;
+  final Widget child;
+  final ValueChanged<Offset> onMoved;
+  final VoidCallback onEnded;
+  final void Function(BuildContext anchor, Offset? at) onMenu;
+  const _DraggableTask({
+    super.key,
+    required this.task,
+    required this.enabled,
+    required this.child,
+    required this.onMoved,
+    required this.onEnded,
+    required this.onMenu,
+  });
+  @override
+  State<_DraggableTask> createState() => _DraggableTaskState();
+}
+
+class _DraggableTaskState extends State<_DraggableTask> {
+  Offset _origin = Offset.zero;
+
+  bool get _touch =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  Widget _feedback(BuildContext context) => Material(
+    color: Colors.transparent,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Palette.raised,
+          borderRadius: BorderRadius.circular(Radii.sm),
+          border: Border.all(color: Palette.primary),
+          boxShadow: const [
+            BoxShadow(color: Color(0x66000000), blurRadius: 18),
+          ],
+        ),
+        child: Text(
+          '${widget.task.key}  ${widget.task.title}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500),
+        ),
+      ),
+    ),
+  );
+
+  void _started() {
+    final box = context.findRenderObject() as RenderBox?;
+    _origin = box == null ? Offset.zero : box.localToGlobal(Offset.zero);
+    HapticFeedback.mediumImpact();
+  }
+
+  void _ended(DraggableDetails details) {
+    widget.onEnded();
+    // Let go without moving: that was a long press, not a drag.
+    if (_touch &&
+        !details.wasAccepted &&
+        (details.offset - _origin).distance < 24 &&
+        mounted) {
+      widget.onMenu(context, null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) return widget.child;
+    final dimmed = Opacity(opacity: .35, child: widget.child);
+    final draggable = _touch
+        ? LongPressDraggable<Task>(
+            data: widget.task,
+            feedback: _feedback(context),
+            childWhenDragging: dimmed,
+            onDragStarted: _started,
+            onDragUpdate: (d) => widget.onMoved(d.globalPosition),
+            onDragEnd: _ended,
+            child: widget.child,
+          )
+        : Draggable<Task>(
+            data: widget.task,
+            feedback: _feedback(context),
+            childWhenDragging: dimmed,
+            onDragStarted: _started,
+            onDragUpdate: (d) => widget.onMoved(d.globalPosition),
+            onDragEnd: _ended,
+            child: widget.child,
+          );
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapUp: (d) => widget.onMenu(context, d.globalPosition),
+      child: draggable,
     );
   }
 }
