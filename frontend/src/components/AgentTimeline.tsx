@@ -24,7 +24,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import type { TimelineFilter } from '../lib/timeline-filter';
+import { useHiddenTimelineItems } from '../lib/timeline-filter';
 import { useTaskSession } from '../api/queries';
 import { setLiveExpanded, useLiveTurn } from '../lib/live';
 import { openRun } from '../lib/runs';
@@ -277,12 +277,13 @@ function TurnSummaryView({ summary, at }: { summary: TurnSummary; at: string }) 
 }
 
 /** What the running Turn is writing right now (not stored yet), retries and setup output. */
-export function LiveTurnView({ taskId, filter = 'all' }: { taskId: string; filter?: TimelineFilter }) {
+export function LiveTurnView({ taskId }: { taskId: string }) {
+  const hidden = useHiddenTimelineItems();
   const live = useLiveTurn(taskId);
   const session = useTaskSession(taskId);
   const [showSetup, setShowSetup] = useState(false);
-  // At the "activity" level the Agent's work stays hidden; its streaming text is the Comment being written.
-  const showWork = filter !== 'activity';
+  // With Agent activity hidden the Agent's work stays hidden; its streaming text is the Comment being written.
+  const showWork = !hidden.activity;
   return (
     <>
       {showWork && live.setup && (

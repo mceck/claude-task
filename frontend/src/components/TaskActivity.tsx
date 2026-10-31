@@ -3,7 +3,6 @@ import { createContext, useCallback, useContext, useEffect, useRef } from 'react
 import type { ReactNode, RefObject } from 'react';
 import { put } from '../api/client';
 import { useTimeline } from '../api/queries';
-import type { TimelineFilter } from '../lib/timeline-filter';
 import { ActiveRuns } from './ActiveRuns';
 import { Composer, useCommentDraft } from './Composer';
 import { ScheduledStrip } from './ScheduledMessages';
@@ -17,8 +16,6 @@ interface Props {
   session: TaskSession | null | undefined;
   /** Shown just above the composer, e.g. the "agent hasn't seen the changes" notice. */
   notice?: ReactNode;
-  /** How much of the Timeline to show: task changes, also the Agent's work, or everything. */
-  filter: TimelineFilter;
   /** Replaces the composer with this reason when the conversation cannot be written in. */
   readOnly?: string;
   /** The composer is bottom chrome of the page: the Chat Dock keeps its panels above it. */
@@ -29,7 +26,7 @@ interface Props {
 export const InDockContext = createContext(false);
 
 /** The Task's conversation: the Timeline, following new output while at the bottom, with the composer docked below. */
-export function TaskActivity({ task, statuses, tags, users, session, notice, filter, readOnly, reserveDockSpace }: Props) {
+export function TaskActivity({ task, statuses, tags, users, session, notice, readOnly, reserveDockSpace }: Props) {
   const draft = useCommentDraft(task.id);
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -79,7 +76,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, fil
       >
         <div ref={content} className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
           <StopFollowing.Provider value={stopFollowing}>
-            <Timeline taskId={task.id} agentId={task.agentId} filter={filter} statuses={statuses} tags={tags} users={users} />
+            <Timeline taskId={task.id} agentId={task.agentId} statuses={statuses} tags={tags} users={users} />
           </StopFollowing.Provider>
         </div>
       </div>

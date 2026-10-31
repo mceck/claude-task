@@ -187,7 +187,7 @@ The chronological record of a Task: Comments, Revisions and the Agent's work, in
 _Avoid_: feed, log, chat
 
 **Timeline Filter**:
-The Timeline control with three levels, cycled by one click: "Changes" hides Revisions (the default), "Changes + Activity" hides Agent Items too, and "Everything" shows all.
+The viewer's choice of which Timeline entries to hide: Revisions and Agent Items. Each kind can be hidden on its own; hiding Agent Items keeps the Agent's streaming text, which is the Comment being written.
 _Avoid_: changes toggle, visibility toggle
 
 **Agent Comment**:
