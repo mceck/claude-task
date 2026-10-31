@@ -73,6 +73,8 @@ describe('Schedules', () => {
     expect((await admin.post('/schedules', { ...base, name: '' })).status).toBe(400);
     expect((await admin.post('/schedules', { ...base, agentId: crypto.randomUUID() })).status).toBe(400);
     expect((await admin.post('/schedules', { ...base, name: 'nightly REVIEW' })).status).toBe(409);
+    await admin.patch(`/agents/${agent.id}`, { enabled: false });
+    expect((await admin.post('/schedules', { ...base, name: 'Disabled agent' })).status).toBe(400);
     expect((await admin.get('/schedules')).body.schedules).toHaveLength(1);
   });
 

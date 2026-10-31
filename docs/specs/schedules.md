@@ -32,7 +32,7 @@ Requests outside these permissions are answered with `403`.
 | Field | Rule | Default |
 | --- | --- | --- |
 | Name | 1 to 100 characters, trimmed, unique ignoring case among Schedules (`409` otherwise) | required |
-| Agent | an existing enabled Agent | required |
+| Agent | an existing enabled Agent (`400` otherwise) | required |
 | Cron expression | five fields (minute, hour, day of month, month, day of week), with lists, ranges and steps; at most one run per minute | required |
 | Time zone | an IANA name such as `Europe/Rome` | `UTC` |
 | Prompt | 1 to 50,000 characters | required |
@@ -40,7 +40,7 @@ Requests outside these permissions are answered with `403`.
 | Read-only | yes or no | no |
 | Enabled | yes or no | yes |
 
-An invalid field is answered with `400` and nothing is stored. The Schedule Project is created in the same transaction, with a Project Key generated from the name and the fixed Statuses below. The creator is recorded. Editing any field applies from the next run; runs already started keep what they started with. Changing the cron expression, the time zone or the enabled flag recomputes the next run time. Deleting a Schedule deletes its Schedule Project, its Tasks and its history, and stops its running Sessions.
+An invalid field is answered with `400` and nothing is stored. The Schedule Project is created in the same transaction, with a Project Key generated from the name and the fixed Statuses below. The creator is recorded. Editing any field applies from the next run; runs already started keep what they started with. Changing the cron expression, the time zone or the enabled flag recomputes the next run time. Deleting a Schedule deletes its Schedule Project, its Tasks and its history. While an Agent is working on one of its runs, the deletion is answered with `409`, as for a Task.
 
 The list shows each Schedule with its Agent, the cron expression in words, its scope (Repository or global), a read-only badge, the next run time, the outcome of the latest run and an enabled switch.
 

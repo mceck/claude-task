@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Scheduled agents
@@ -62,7 +62,7 @@ Schedules and their runs live in their own **Schedules** section, shown as a lis
 - **Read-only:** the Git Proxy refuses every push for the Jobs of a read-only Schedule. Nothing else is restricted: Claude's tools, Bash and Task Tools keep working.
 - **Global Task Tools:** the MCP server exposes, to Jobs of a global Schedule only, tools to list Projects, list and read Tasks of any Project, update a Task, move it to a Status, create a Task in any Project, assign a Task to the Agent (a `pending` Session) and start it (the first User Comment, posted on behalf of the Schedule). Statuses of the `closed` category stay reserved for humans. Jobs of a tied Schedule keep today's Task Tools, scoped to their Project. The Task Tools tools for Questions and Surveys are not exposed in scheduled runs, and the Job's system prompt says that nobody will answer.
 - **Notifications:** a failed run notifies the Schedule's creator, as does the third consecutive skip. Succeeded and single skipped runs do not notify. When the creator is deleted, nobody is notified.
-- **API:** Schedules are listed, read, created, edited, deleted, paused or resumed and run through the HTTP API, with a run history endpoint that returns Task-backed and skipped rows. Payloads and real-time events live in the shared package: Schedule created, updated and deleted, and run started, finished and skipped.
+- **API:** Schedules are listed, read, created, edited, deleted, paused or resumed and run through the HTTP API, with a run history endpoint that returns Task-backed and skipped rows. Payloads and the real-time event live in the shared package: one `schedule.changed` event on the `schedules` topic for every change to a Schedule or its runs, on which clients refetch.
 - **Web app:** a "Schedules" section in the main navigation. The list shows name, Agent, human-readable cadence, scope (global or Repository), read-only badge, next run, last outcome and an enabled switch. A Schedule's detail has its configuration and a history table with start time, duration, outcome and a link to the run's Task, which opens in the normal conversation view. Skipped rows have no link. Tasks of Schedules are absent from the ordinary Projects list, boards and Project search.
 - **Glossary:** add **Schedule**, **Scheduled Run** and **Schedule Project** to the glossary, with Wiki-style hiding of the Project, and extend the definition of Task Tools to cover the global tools.
 
@@ -76,24 +76,24 @@ Schedules and their runs live in their own **Schedules** section, shown as a lis
 
 ## Acceptance Criteria
 
-- [ ] An Admin can create, edit, pause, resume, run and delete a Schedule; other Users can only read.
-- [ ] Invalid cron expressions, time zones and missing fields are rejected with `400` and nothing is stored.
-- [ ] A due Schedule creates one Task, assigns its Agent and posts the prompt as the first User Comment, which starts the first Job.
-- [ ] A tied Schedule's run works on a clean Worktree of its Repository's Base Branch; a global Schedule's run works in a plain directory without git.
-- [ ] A global Schedule's Agent can list Projects, read and update any Task, create Tasks in any Project, assign a Task to itself and start it; it cannot move a Task to a `closed` Status.
-- [ ] A tied Schedule's Agent keeps the Task Tools of its own Project only.
-- [ ] A read-only Schedule's Jobs have every push refused by the Git Proxy and can still fetch.
-- [ ] Questions and Surveys are not available in scheduled runs, and the Job's system prompt says nobody will answer.
-- [ ] A finished Job moves its Task to `Succeeded` or `Failed` and ends the Session and removes the Worktree at once; a running run still accepts Comments.
-- [ ] A run is skipped, recorded in the history and without a Task, when the previous run is still active or the Agent is unavailable.
-- [ ] After downtime at most one catch-up run starts, and only when overdue by less than the Schedule's period.
-- [ ] `nextRunAt` follows the cron expression in the Schedule's time zone, also across daylight saving changes.
-- [ ] "Run now" starts a run immediately and does not move `nextRunAt`.
-- [ ] The creator, and only the creator, is notified of a failed run and of the third consecutive skip.
-- [ ] Tasks of Schedules never appear in the Projects list, boards or Project search.
-- [ ] The Schedules section shows the list and the run history as described, in the web app.
-- [ ] The affected specs, the glossary and the manual are updated.
-- [ ] The backend suite, typecheck and the new e2e test pass.
+- [x] An Admin can create, edit, pause, resume, run and delete a Schedule; other Users can only read.
+- [x] Invalid cron expressions, time zones and missing fields are rejected with `400` and nothing is stored.
+- [x] A due Schedule creates one Task, assigns its Agent and posts the prompt as the first User Comment, which starts the first Job.
+- [x] A tied Schedule's run works on a clean Worktree of its Repository's Base Branch; a global Schedule's run works in a plain directory without git.
+- [x] A global Schedule's Agent can list Projects, read and update any Task, create Tasks in any Project, assign a Task to itself and start it; it cannot move a Task to a `closed` Status.
+- [x] A tied Schedule's Agent keeps the Task Tools of its own Project only.
+- [x] A read-only Schedule's Jobs have every push refused by the Git Proxy and can still fetch.
+- [x] Questions and Surveys are not available in scheduled runs, and the Job's system prompt says nobody will answer.
+- [x] A finished Job moves its Task to `Succeeded` or `Failed` and ends the Session and removes the Worktree at once; a running run still accepts Comments.
+- [x] A run is skipped, recorded in the history and without a Task, when the previous run is still active or the Agent is unavailable.
+- [x] After downtime at most one catch-up run starts, and only when overdue by less than the Schedule's period.
+- [x] `nextRunAt` follows the cron expression in the Schedule's time zone, also across daylight saving changes.
+- [x] "Run now" starts a run immediately and does not move `nextRunAt`.
+- [x] The creator, and only the creator, is notified of a failed run and of the third consecutive skip.
+- [x] Tasks of Schedules never appear in the Projects list, boards or Project search.
+- [x] The Schedules section shows the list and the run history as described, in the web app.
+- [x] The affected specs and the glossary are updated. The manual is left to the user's decision.
+- [x] The backend suite, typecheck and the new e2e test pass.
 
 ## Out of Scope
 

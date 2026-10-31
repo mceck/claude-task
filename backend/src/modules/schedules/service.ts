@@ -2,21 +2,20 @@
 // tick and settling them when their Job ends.
 import { randomUUID } from 'node:crypto';
 import { SCHEDULE_STATUSES, nextCronRun, taskKey } from '@claude-task/shared';
-import type { Actor, ProjectRepository, Schedule, ScheduleRun } from '@claude-task/shared';
+import type { ProjectRepository, Schedule, ScheduleRun } from '@claude-task/shared';
 import { and, desc, eq, lte, ne, sql } from 'drizzle-orm';
 import type { AfterCommit, AppContext } from '../../context';
 import { transact } from '../../context';
 import type { Executor } from '../../db/client';
 import { agents, jobs, projects, scheduleRuns, schedules, sessions, statuses, tasks, turns, users } from '../../db/schema';
 import { badRequest, conflict, notFound } from '../../errors';
+import { SYSTEM_ACTOR } from '../actors';
 import { notifySchedule } from '../../notifications/schedules';
 import { createUserComment } from '../comments/service';
 import { createTask, deleteTask, getTaskRow, moveTask, updateTask } from '../tasks/service';
 
 export type ScheduleRow = typeof schedules.$inferSelect;
 
-/** The Actor behind everything a Schedule does: its Tasks and the prompt Comments. */
-export const SYSTEM_ACTOR: Actor = { type: 'system', id: null, displayName: 'System' };
 
 /** Skipped runs in a row after which the creator is told the Schedule is blocked. */
 const BLOCKED_AFTER_SKIPS = 3;
@@ -110,8 +109,9 @@ export async function getSchedule(db: Executor, id: string): Promise<Schedule> {
 // Writing
 
 async function assertAgent(db: Executor, agentId: string): Promise<void> {
-  const [agent] = await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId));
+  const [agent] = await db.select({ enabled: agents.enabled }).from(agents).where(eq(agents.id, agentId));
   if (!agent) throw badRequest('Unknown agent');
+  if (!agent.enabled) throw badRequest('This agent is disabled: enable it or choose another');
 }
 
 async function assertNameFree(db: Executor, name: string, exceptId?: string): Promise<void> {
