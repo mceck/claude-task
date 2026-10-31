@@ -38,7 +38,7 @@ class Project {
   /// Task counts per Status category, from the Projects list.
   final Map<String, int> taskCounts;
 
-  /// Sessions running and open Tasks unread by this User, from the Projects list.
+  /// Sessions running and open Tasks with an unread Turn Summary, from the Projects list.
   final int runningAgents, unreadTasks;
   Project.fromJson(Json json)
     : id = json['id'] as String,

@@ -5,7 +5,6 @@ import type { Executor } from '../../db/client';
 import { projects, statuses } from '../../db/schema';
 import { forbidden, notFound } from '../../errors';
 import { UUID } from '../../ids';
-import { latestUnreadPosition } from '../../notifications/preferences';
 
 export type ProjectRow = typeof projects.$inferSelect;
 
@@ -83,13 +82,19 @@ export async function listProjects(db: Executor, userId: string, archived: boole
     if (!entry) byProject.set(c.project_id, (entry = emptyCounts()));
     entry[c.category] = c.n;
   }
+  // The Projects list counts finished Agent Turns, not every Timeline entry: a Task is unread
+  // here when a Turn Summary is newer than the User's read position. A failed Turn closes with
+  // a Turn Summary too, and counts.
   const activity = await db.execute<{ project_id: string; running: number; unread: number }>(sql`
     select t.project_id,
       (select count(*)::int from sessions se where se.task_id = t.id and se.state = 'running') as running,
-      (coalesce(a.latest, 0) > coalesce(p.read_position, 0) and not coalesce(p.muted, false) and s.category <> 'closed') as unread
+      (exists (
+        select 1 from task_activity u
+        join agent_items ai on ai.id = u.item_id
+        where u.task_id = t.id and ai.kind = 'turn_summary' and u.position > coalesce(p.read_position, 0)
+      ) and not coalesce(p.muted, false) and s.category <> 'closed') as unread
     from tasks t join statuses s on s.id = t.status_id
-    left join task_preferences p on p.task_id = t.id and p.user_id = ${userId}::uuid
-    left join lateral (select ${latestUnreadPosition(userId)} as latest) a on true`);
+    left join task_preferences p on p.task_id = t.id and p.user_id = ${userId}::uuid`);
   const activityByProject = new Map<string, ProjectActivity>();
   for (const r of activity.rows) {
     let entry = activityByProject.get(r.project_id);

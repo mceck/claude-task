@@ -48,8 +48,8 @@ export function ProjectNavItem({ project }: { project: ProjectSummary }) {
           )}
           {unreadTasks > 0 && (
             <span
-              title={`${unreadTasks} unread ${unreadTasks === 1 ? 'task' : 'tasks'}`}
-              aria-label={`${unreadTasks} unread ${unreadTasks === 1 ? 'task' : 'tasks'}`}
+              title={`${unreadTasks} ${unreadTasks === 1 ? 'task' : 'tasks'} with unread ${unreadTasks === 1 ? 'turn' : 'turns'}`}
+              aria-label={`${unreadTasks} ${unreadTasks === 1 ? 'task' : 'tasks'} with unread ${unreadTasks === 1 ? 'turn' : 'turns'}`}
               data-testid="sidebar-project-unread"
               className="flex items-center gap-1 text-[10px] font-semibold text-amber-500"
             >

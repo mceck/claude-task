@@ -42,18 +42,63 @@ describe('Project activity', () => {
   const unread = async (client: Awaited<ReturnType<typeof app.admin>>, key: string) =>
     (await client.get('/projects')).body.projects.find((p: { id: string }) => p.id === key).activity;
 
-  it('counts unread open Tasks per User, skipping muted and closed ones', async () => {
+  it('counts open Tasks with unread Turn Summaries per User, skipping muted and closed ones', async () => {
     const { admin, project, task, member } = await setup();
-    const last = await comment(admin, task.id, 'Hello');
+    const { agent, runner } = await createAgent(app, admin);
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text('Ready'), stream.result()]);
+    await app.settle();
     expect(await unread(member.client, project.id)).toEqual({ runningAgents: 0, unreadTasks: 1 });
-    await member.client.put(`/tasks/${task.id}/read-position`, { itemId: last.id });
-    expect((await unread(member.client, project.id)).unreadTasks).toBe(0);
     expect((await unread(admin, project.id)).unreadTasks).toBe(1);
 
-    await comment(admin, task.id, 'Again');
-    expect((await unread(member.client, project.id)).unreadTasks).toBe(1);
     await member.client.patch(`/tasks/${task.id}/preferences`, { muted: true });
     expect((await unread(member.client, project.id)).unreadTasks).toBe(0);
+    await member.client.patch(`/tasks/${task.id}/preferences`, { muted: false });
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(1);
+
+    const bundle = (await admin.get(`/projects/${project.id}`)).body;
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(0);
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Todo').id);
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(1);
+
+    const items = (await member.client.get(`/tasks/${task.id}/timeline`)).body.items;
+    const summary = items.find((i: { type: string; item?: { payload?: { kind?: string } } }) => i.type === 'agent' && i.item?.payload?.kind === 'turn_summary');
+    expect((await member.client.put(`/tasks/${task.id}/read-position`, { itemId: summary.id })).status).toBe(200);
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(0);
+    expect((await unread(admin, project.id)).unreadTasks).toBe(1);
+  });
+
+  it('counts a Turn that finishes after the User read the Task', async () => {
+    const { admin, project, task, member } = await setup();
+    const first = await comment(admin, task.id, 'Before the agent');
+    await member.client.put(`/tasks/${task.id}/read-position`, { itemId: first.id });
+    const { agent, runner } = await createAgent(app, admin);
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.result()]);
+    await app.settle();
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(1);
+  });
+
+  it('counts failed Turns as unread', async () => {
+    const { admin, project, task, member } = await setup();
+    const { agent, runner } = await createAgent(app, admin);
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.result({ isError: true, subtype: 'error_during_execution' })]);
+    await app.settle();
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(1);
+  });
+
+  it('leaves Comments and Revisions out of the Project badge while the Task itself stays unread', async () => {
+    const { admin, project, task, member } = await setup();
+    await comment(admin, task.id, 'Hello');
+    const current = (await admin.get(`/tasks/${task.id}`)).body.task;
+    await admin.patch(`/tasks/${task.id}`, { version: current.version, title: 'Edited title' });
+    expect((await unread(member.client, project.id)).unreadTasks).toBe(0);
+    expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.unread).toBe(true);
   });
 });
 
@@ -117,21 +162,17 @@ describe('Task preferences and read positions', () => {
   it('never makes a Task unread for the User whose own Revision is its newest entry', async () => {
     const { admin, project, task, member } = await setup();
     const bundle = (await admin.get(`/projects/${project.id}`)).body;
-    const projectUnread = async (client: typeof admin) =>
-      (await client.get('/projects')).body.projects.find((p: { id: string }) => p.id === project.id).activity.unreadTasks;
     const last = await comment(admin, task.id, 'Hello');
     await admin.put(`/tasks/${task.id}/read-position`, { itemId: last.id });
 
     // Moving the Task from the Board leaves the mover with nothing to read, and the others with an unread Task.
     await moveToStatus(admin, task.id, statusByName(bundle, 'Done').id);
     expect((await admin.get(`/tasks/${task.id}/preferences`)).body.preference).toMatchObject({ unread: false, unreadComments: 0 });
-    expect(await projectUnread(admin)).toBe(0);
     expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.unread).toBe(true);
-    expect(await projectUnread(member.client)).toBe(1);
 
     // A Comment from someone else still makes it unread.
     await comment(member.client, task.id, 'Thanks');
-    expect(await projectUnread(admin)).toBe(1);
+    expect((await admin.get(`/tasks/${task.id}/preferences`)).body.preference.unread).toBe(true);
   });
   it('reports a closed Task as read and stops counting its unread Comments', async () => {
     const { admin, project, task, member } = await setup();

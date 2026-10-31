@@ -110,7 +110,7 @@ function ProjectCard({ project: p }: { project: ProjectSummary }) {
             )}
             {p.activity.unreadTasks > 0 && (
               <span
-                title={`${p.activity.unreadTasks} unread ${p.activity.unreadTasks === 1 ? 'task' : 'tasks'}`}
+                title={`${p.activity.unreadTasks} ${p.activity.unreadTasks === 1 ? 'task' : 'tasks'} with unread ${p.activity.unreadTasks === 1 ? 'turn' : 'turns'}`}
                 data-testid="project-unread"
                 className="shrink-0 rounded-full bg-primary px-1.5 text-[10px] font-semibold leading-4 text-primary-foreground"
               >

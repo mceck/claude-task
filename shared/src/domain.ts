@@ -57,7 +57,7 @@ export interface Project {
 export interface ProjectActivity {
   /** Sessions with a Turn in progress. */
   runningAgents: number;
-  /** Open Tasks with Timeline entries the User has not read, not muted by them. */
+  /** Open Tasks with an unread Turn Summary, not muted by the User. */
   unreadTasks: number;
 }
 

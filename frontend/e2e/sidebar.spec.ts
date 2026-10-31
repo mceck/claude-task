@@ -1,34 +1,46 @@
 import { expect, test } from '@playwright/test';
-import { HEADERS, createProject, createTask, login, seedAgent, startJob } from './helpers';
+import { Stream } from '../../backend/test/helpers/stream';
+import { HEADERS, createProject, createTask, login, replay, seedAgent, startJob } from './helpers';
 
-test('summarises Task counts and unread Tasks in the sidebar Boards list', async ({ page }) => {
+test('summarises Task counts and unread Turn Summaries in the sidebar Boards list', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request, 'Sidebar summary');
-  const open = await createTask(page.request, project, 'Open task');
+  const task = await createTask(page.request, project, 'Open task');
   await createTask(page.request, project, 'Done task', 'Done');
-  const comment = await page.request.post(`/api/v1/tasks/${open.id}/comments`, { data: { body: 'Hello' }, headers: HEADERS });
-  expect(comment.status()).toBe(201);
+  const agent = await seedAgent(page.request);
+  const start = await startJob(page.request, agent.id, task.id);
+  const stream = new Stream(start.sessionId);
+  await replay(page.request, agent.id, start.jobId, [stream.init(), stream.result()], true);
+  await expect
+    .poll(async () => (await (await page.request.get('/api/v1/projects')).json()).projects.find((p: { id: string }) => p.id === project.id).activity.unreadTasks)
+    .toBe(1);
 
   await page.goto('/');
+  await expect(page.getByTestId('project-unread')).toHaveText('1');
   const entry = page.locator(`nav a[href="/p/${project.key}"]`);
   await expect(entry).toContainText('1/2');
   await expect(entry.locator('[aria-label^="Task counts:"]')).toHaveAttribute('aria-label', 'Task counts: 1 open · 1 done');
   await expect(entry.getByTestId('sidebar-project-unread')).toHaveText('1');
 });
 
-test('updates the sidebar unread badge live, without waiting for a refresh', async ({ page }) => {
+test('updates the sidebar unread badge live when a Turn finishes, without waiting for a refresh', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request, 'Sidebar live');
   const task = await createTask(page.request, project, 'Quiet task');
+  const agent = await seedAgent(page.request);
   await page.goto('/');
   const entry = page.locator(`nav a[href="/p/${project.key}"]`);
   await expect(entry).toBeVisible();
   await expect(entry.getByTestId('sidebar-project-unread')).toHaveCount(0);
-  const posted = await page.request.post(`/api/v1/tasks/${task.id}/comments`, { data: { body: 'News' }, headers: HEADERS });
-  expect(posted.status()).toBe(201);
-  await expect(entry.getByTestId('sidebar-project-unread')).toHaveText('1', { timeout: 5000 });
-  const read = await page.request.put(`/api/v1/tasks/${task.id}/read-position`, { data: { itemId: (await posted.json()).comment.id }, headers: HEADERS });
-  expect(read.ok()).toBe(true);
+
+  const start = await startJob(page.request, agent.id, task.id);
+  const stream = new Stream(start.sessionId);
+  await replay(page.request, agent.id, start.jobId, [stream.init(), stream.result()], true);
+  await expect(entry.getByTestId('sidebar-project-unread')).toHaveText('1', { timeout: 10000 });
+
+  const timeline = (await (await page.request.get(`/api/v1/tasks/${task.id}/timeline`)).json()).items;
+  const summary = timeline.find((i: { type: string; item?: { payload?: { kind?: string } } }) => i.type === 'agent' && i.item?.payload?.kind === 'turn_summary');
+  expect((await page.request.put(`/api/v1/tasks/${task.id}/read-position`, { data: { itemId: summary.id }, headers: HEADERS })).ok()).toBe(true);
   await expect(entry.getByTestId('sidebar-project-unread')).toHaveCount(0, { timeout: 5000 });
 });
 
