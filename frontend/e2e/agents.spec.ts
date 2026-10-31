@@ -260,6 +260,14 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
     .click();
   await page.getByRole('button', { name: /Ran.*npm test/ }).click();
   await expect(page.getByText('Tests passed', { exact: true })).toBeVisible();
+  // The middle level of the Changes filter hides the Agent's activity and tool calls too; the last shows everything again.
+  const filter = page.getByRole('button', { name: /Timeline filter/ });
+  await filter.click();
+  await expect(page.getByLabel('Thinking', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Activity', { exact: true })).toHaveCount(0);
+  await filter.click();
+  await expect(page.getByLabel('Thinking', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Activity', { exact: true })).toBeVisible();
 
   await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please check logout too.');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();

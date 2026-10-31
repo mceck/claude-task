@@ -339,7 +339,7 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
               tags={[]}
               users={users.data ?? []}
               session={session.data}
-              hideChanges
+              filter="changes"
               readOnly={readOnly}
               reserveDockSpace
             />

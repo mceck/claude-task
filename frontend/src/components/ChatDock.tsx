@@ -272,7 +272,7 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
                 tags={[]}
                 users={users.data ?? []}
                 session={session.data}
-                hideChanges
+                filter="changes"
                 readOnly={readOnly}
               />
             </InDockContext.Provider>

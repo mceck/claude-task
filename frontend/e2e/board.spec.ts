@@ -530,9 +530,13 @@ test('edits the description in place where it was clicked and saves it once when
     description: 'First paragraph.\n\n' + 'Filler paragraph.\n\n'.repeat(30) + 'Last paragraph.',
   });
   await page.goto(`/t/${task.key}`);
-  // Changes are hidden from the Timeline by default.
-  await expect(page.getByLabel('Hide changes')).toHaveAttribute('aria-pressed', 'true');
-  await page.getByLabel('Hide changes').click();
+  // Changes are hidden from the Timeline by default; two clicks reach "everything shown".
+  const filter = page.getByRole('button', { name: /Timeline filter/ });
+  await expect(filter).toHaveAccessibleName('Timeline filter: changes hidden');
+  await filter.click();
+  await expect(filter).toHaveAccessibleName('Timeline filter: changes and agent activity hidden');
+  await filter.click();
+  await expect(filter).toHaveAccessibleName('Timeline filter: everything shown');
   const description = page.getByRole('region', { name: 'Description', exact: true });
   const editor = description.getByRole('textbox', { name: 'editable markdown', exact: true });
   const toolbar = description.getByRole('toolbar');
@@ -587,7 +591,8 @@ test('edits the description in place where it was clicked and saves it once when
   await page.reload();
   await expect(description).toContainText('Last paragraph. Twice.');
   await expect(page.getByText('updated the description')).toHaveCount(0);
-  await page.getByLabel('Hide changes').click();
+  await page.getByRole('button', { name: /Timeline filter/ }).click();
+  await page.getByRole('button', { name: /Timeline filter/ }).click();
   await expect(page.getByText('updated the description')).toHaveCount(1);
 });
 

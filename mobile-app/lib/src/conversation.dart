@@ -29,6 +29,24 @@ import 'ui/mention_suggestions.dart';
 /// Within this distance of the bottom, the Timeline follows new content.
 const _followSlack = 80.0;
 
+/// How much of the Timeline to show. One control cycles the three levels, as on the web.
+enum TimelineFilter {
+  /// Hides Revisions (field changes). The default.
+  changes('Changes', Icons.visibility_off_outlined),
+
+  /// Hides Revisions and the Agent's items (Thinking, Activity and tool calls, Runs, Turn Summaries, notices).
+  activity('Changes + Activity', Icons.visibility_off_outlined),
+
+  /// Shows everything.
+  all('Everything', Icons.visibility_outlined);
+
+  const TimelineFilter(this.label, this.icon);
+  final String label;
+  final IconData icon;
+
+  TimelineFilter get next => values[(index + 1) % values.length];
+}
+
 class Conversation extends StatefulWidget {
   final TaskController controller;
   final VoidCallback? onBack;
@@ -47,8 +65,8 @@ class _ConversationState extends State<Conversation> {
   final _scroll = ScrollController();
   bool _atBottom = true, _loadingOlder = false, _readPending = false;
 
-  /// Hides Revisions (field changes), leaving only the conversation.
-  bool _hideChanges = true;
+  /// How much of the Timeline the reader wants to see.
+  TimelineFilter _filter = TimelineFilter.changes;
   String? _readId;
   String _stamp = '';
   bool _contentChanged = false;
@@ -196,10 +214,11 @@ class _ConversationState extends State<Conversation> {
     }
     final rows = _rows(c);
     final live =
-        c.liveThinking.isNotEmpty ||
         c.liveText.isNotEmpty ||
-        c.liveStatus.isNotEmpty ||
-        c.liveSetup != null;
+        (_filter != TimelineFilter.activity &&
+            (c.liveThinking.isNotEmpty ||
+                c.liveStatus.isNotEmpty ||
+                c.liveSetup != null));
     return Column(
       children: [
         _Header(
@@ -261,7 +280,10 @@ class _ConversationState extends State<Conversation> {
                                 },
                                 (context, index) {
                                   if (index == 0) {
-                                    return _LiveTail(controller: c);
+                                    return _LiveTail(
+                                      controller: c,
+                                      filter: _filter,
+                                    );
                                   }
                                   if (index == rows.length + 1) {
                                     if (c.nextCursor == null) {
@@ -348,8 +370,8 @@ class _ConversationState extends State<Conversation> {
                   top: 8,
                   right: 12,
                   child: _ChangesToggle(
-                    hidden: _hideChanges,
-                    onChanged: (v) => setState(() => _hideChanges = v),
+                    filter: _filter,
+                    onChanged: (f) => setState(() => _filter = f),
                   ),
                 ),
               Positioned(
@@ -439,18 +461,25 @@ class _ConversationState extends State<Conversation> {
   }
 
   /// Consecutive Comments by the same author within a few minutes share a header.
-  /// The Timeline as shown: Revisions hidden, or identical consecutive ones
-  /// by the same actor folded into the latest with a count.
+  /// The Timeline as shown: Revisions hidden, the Agent's items hidden too,
+  /// or identical consecutive Revisions by the same actor folded into the
+  /// latest with a count.
   List<({TimelineEntry entry, int count})> _rows(TaskController c) {
     final rows = <({TimelineEntry entry, int count})>[];
     String? lastText;
     for (final e in c.timeline) {
+      if (e.type == 'agent') {
+        if (_filter == TimelineFilter.activity) continue;
+        rows.add((entry: e, count: 1));
+        lastText = null;
+        continue;
+      }
       if (e.type != 'revision') {
         rows.add((entry: e, count: 1));
         lastText = null;
         continue;
       }
-      if (_hideChanges) continue;
+      if (_filter != TimelineFilter.all) continue;
       final text = revisionText(e, c);
       if (lastText == text && rows.last.entry.author == e.author) {
         rows[rows.length - 1] = (entry: e, count: rows.last.count + 1);
@@ -859,15 +888,19 @@ class _DaySeparator extends StatelessWidget {
 /// What the running Turn is writing right now, like the web's live view.
 class _LiveTail extends StatelessWidget {
   final TaskController controller;
-  const _LiveTail({required this.controller});
+  final TimelineFilter filter;
+  const _LiveTail({required this.controller, this.filter = TimelineFilter.all});
   @override
   Widget build(BuildContext context) {
     final c = controller;
-    final setup = c.liveSetup;
+    // At the "activity" level the Agent's work stays hidden; its streaming text
+    // is the Comment being written.
+    final showWork = filter != TimelineFilter.activity;
+    final setup = showWork ? c.liveSetup : null;
+    final thinking = showWork ? c.liveThinking : '';
+    final status = showWork ? c.liveStatus : '';
     final streaming =
-        c.liveThinking.isNotEmpty ||
-        c.liveText.isNotEmpty ||
-        c.liveStatus.isNotEmpty;
+        thinking.isNotEmpty || c.liveText.isNotEmpty || status.isNotEmpty;
     final agent = c.agents.byId(c.task?.agentId);
     // No size or fade transition: the stored entry replaces this in the same
     // frame, so animating here would show a gap or a flicker.
@@ -934,14 +967,14 @@ class _LiveTail extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 6),
-                      if (c.liveThinking.isNotEmpty)
+                      if (thinking.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 6),
                           child: _Collapsible(
                             icon: Icons.psychology_outlined,
                             title: 'Thinking · streaming',
                             child: SelectableText(
-                              c.liveThinking,
+                              thinking,
                               style: const TextStyle(
                                 color: Palette.fgMuted,
                                 fontSize: 13.5,
@@ -980,9 +1013,9 @@ class _LiveTail extends StatelessWidget {
                             ),
                           ),
                         ),
-                      if (c.liveStatus.isNotEmpty)
+                      if (status.isNotEmpty)
                         Notice(
-                          message: c.liveStatus,
+                          message: status,
                           icon: Icons.hourglass_top_rounded,
                         ),
                     ],
@@ -1008,14 +1041,15 @@ String revisionText(TimelineEntry e, TaskController c) {
 }
 
 /// Small overlay badge over the Timeline's top corner; it never takes a band of the chat.
+/// Tapping it cycles: changes hidden → also the Agent's activity hidden → everything shown.
 class _ChangesToggle extends StatelessWidget {
-  final bool hidden;
-  final ValueChanged<bool> onChanged;
-  const _ChangesToggle({required this.hidden, required this.onChanged});
+  final TimelineFilter filter;
+  final ValueChanged<TimelineFilter> onChanged;
+  const _ChangesToggle({required this.filter, required this.onChanged});
   @override
   Widget build(BuildContext context) => Pressable(
-    key: const Key('hide-changes'),
-    onTap: () => onChanged(!hidden),
+    key: const Key('timeline-filter'),
+    onTap: () => onChanged(filter.next),
     color: Palette.raised.withValues(alpha: .92),
     border: Border.all(color: Palette.borderStrong),
     borderRadius: BorderRadius.circular(99),
@@ -1024,16 +1058,20 @@ class _ChangesToggle extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          hidden ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+          filter.icon,
           size: 12,
-          color: hidden ? Palette.fgMuted : Palette.fgSubtle,
+          color: filter == TimelineFilter.all
+              ? Palette.fgSubtle
+              : Palette.fgMuted,
         ),
         const SizedBox(width: 4),
         Text(
-          'Changes',
+          filter.label,
           style: TextStyle(
             fontSize: 11,
-            color: hidden ? Palette.fgMuted : Palette.fgSubtle,
+            color: filter == TimelineFilter.all
+                ? Palette.fgSubtle
+                : Palette.fgMuted,
           ),
         ),
       ],

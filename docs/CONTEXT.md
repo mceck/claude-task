@@ -186,6 +186,10 @@ _Avoid_: chat command, session command, slash comment
 The chronological record of a Task: Comments, Revisions and the Agent's work, interleaved.
 _Avoid_: feed, log, chat
 
+**Timeline Filter**:
+The Timeline control with three levels, cycled by one click: "Changes" hides Revisions (the default), "Changes + Activity" hides Agent Items too, and "Everything" shows all.
+_Avoid_: changes toggle, visibility toggle
+
 **Agent Comment**:
 A Comment an Agent wrote for humans during a Turn: its text, or files, a Question or a Survey it posted.
 
