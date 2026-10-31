@@ -100,8 +100,6 @@ class Agent implements Identified {
   final String? extensionsError;
   final List<SkillCommand> skillCommands;
 
-  /// Free and ready to start a Job.
-  bool get free => enabled && state == 'idle';
   Agent.fromJson(Json json)
     : id = json['id'] as String,
       name = json['name'] as String,

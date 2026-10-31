@@ -187,9 +187,7 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
               agent['id'] as String,
               agent['name'] as String,
               detail: agent['enabled'] == true ? null : 'Disabled',
-              trailing: agentFreeDot(
-                agent['enabled'] == true && agent['state'] == 'idle',
-              ),
+              trailing: agentStateDot(Agent.fromJson(agent)),
             ),
       ],
     );

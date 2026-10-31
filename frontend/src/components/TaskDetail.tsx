@@ -30,7 +30,7 @@ const nextTagColor = (existing: number) => TAG_COLORS[existing % TAG_COLORS.leng
 import { MultiPick } from './MultiPick';
 import { TaskActivity } from './TaskActivity';
 import { TaskAttachments } from './TaskAttachments';
-import { AgentAvatar, AgentFreeDot, SessionChip } from './agents';
+import { AgentAvatar, AgentStateDot, SessionChip } from './agents';
 
 type Fields = Omit<UpdateTaskBody, 'version'>;
 
@@ -468,7 +468,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                       <SelectContent>
                         <SelectItem value="none">No agent</SelectItem>
                         {(agents.data ?? []).filter((a) => a.enabled || a.id === shown.agentId).map((a) => (
-                          <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'} <AgentFreeDot agent={a} /></SelectItem>
+                          <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'} <AgentStateDot agent={a} /></SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
