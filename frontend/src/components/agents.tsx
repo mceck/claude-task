@@ -50,9 +50,8 @@ function StateDot({ state, className }: { state: string; className?: string }) {
   );
 }
 
-/** Next to an Agent in a select: hollow green dot when free and ready to start, pulsing filled green when busy. */
-export function AgentStateDot({ agent }: { agent: { enabled: boolean; state: AgentState } }) {
-  if (!agent.enabled || (agent.state !== 'idle' && agent.state !== 'working')) return null;
+/** Next to an Agent in a select: its state with the same dot as everywhere else (hollow green when free, pulsing green when busy, pulsing blue while building, red when failed or disabled, grey when offline). */
+export function AgentStateDot({ agent }: { agent: { state: AgentState } }) {
   return <StateDot state={agent.state} className="shrink-0 ring-0" />;
 }
 

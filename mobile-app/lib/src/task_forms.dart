@@ -46,21 +46,28 @@ Color priorityColor(String p) => switch (p) {
 Color tagColor(Tag tag) =>
     tag.color == null ? tint(tag.name) : hexColor(tag.color!, tint(tag.name));
 
-/// Next to an Agent in a picker: hollow green dot when it is free and ready
-/// to start, pulsing filled green when it is busy.
-Widget? agentStateDot(Agent agent) => agent.free
-    ? Container(
-        key: const Key('agent-free-dot'),
-        width: 11,
-        height: 11,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: Palette.success, width: 1.5),
-        ),
-      )
-    : agent.busy
-    ? const PulseDot(key: Key('agent-busy-dot'), color: Palette.success, size: 11)
-    : null;
+/// Next to an Agent in a picker: its state with the same dot as the web app
+/// (hollow green when free, pulsing green when busy, pulsing blue while
+/// building, red when the build failed or it is disabled, grey when offline).
+Widget? agentStateDot(Agent agent) {
+  Widget hollow(Color color) => Container(
+    width: 11,
+    height: 11,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(color: color, width: 1.5),
+    ),
+  );
+  return switch (agent.state) {
+    'idle' => hollow(Palette.success),
+    'working' => const PulseDot(color: Palette.success, size: 11),
+    'building' => const PulseDot(color: Palette.info, size: 11),
+    'build_failed' => const Dot(color: Palette.danger, size: 11),
+    'disabled' => hollow(Palette.danger),
+    'offline' => hollow(Palette.fgSubtle),
+    _ => null,
+  };
+}
 
 Widget agentAvatar(TaskApi? api, Agent? agent, {double size = 28}) =>
     agent == null

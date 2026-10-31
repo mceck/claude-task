@@ -423,7 +423,7 @@ function ScheduleForm({ schedule, onSaved }: { schedule?: Schedule; onSaved: () 
             .map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
-                {a.enabled ? '' : ' (disabled)'}{a.enabled && a.state === 'idle' ? ' ○' : a.enabled && a.state === 'working' ? ' ●' : ''}
+                {a.enabled ? '' : ' (disabled)'}{a.enabled && a.state === 'idle' ? ' ○' : a.enabled && a.state === 'working' ? ' ●' : a.state === 'building' ? ' (building)' : a.state === 'build_failed' ? ' (build failed)' : a.state === 'offline' ? ' (offline)' : ''}
               </option>
             ))}
         </select>
