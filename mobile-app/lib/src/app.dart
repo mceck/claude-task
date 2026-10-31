@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:fleather/fleather.dart' show FleatherLocalizations;
 
@@ -17,6 +19,10 @@ class TaskApp extends StatefulWidget {
 }
 
 class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
+  /// Bumped on every return to the foreground, so the connection notice
+  /// starts its delay again instead of flashing while the app reconnects.
+  int _resumeEpoch = 0;
+
   @override
   void initState() {
     super.initState();
@@ -33,6 +39,7 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     widget.controller.appVisible = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.resumed && widget.controller.user != null) {
+      setState(() => _resumeEpoch++);
       widget.controller.reconnect();
     }
   }
@@ -72,8 +79,9 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
           body: SafeArea(
             child: Column(
               children: [
-                _Reveal(
-                  visible: offline && !c.booting,
+                _ConnectionNotice(
+                  lost: offline && !c.booting,
+                  epoch: _resumeEpoch,
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
                     child: Notice(
@@ -127,6 +135,68 @@ class _TaskAppState extends State<TaskApp> with WidgetsBindingObserver {
       },
     ),
   );
+}
+
+/// How long a disconnection must last before the notice appears. Starting the
+/// app or coming back to the foreground reconnects at once, and a quick
+/// reconnection must not flash the notice.
+const connectionNoticeDelay = Duration(seconds: 2);
+
+class _ConnectionNotice extends StatefulWidget {
+  /// Signed in and the live connection isn't up.
+  final bool lost;
+
+  /// Changes when the app returns to the foreground.
+  final int epoch;
+  final Widget child;
+  const _ConnectionNotice({
+    required this.lost,
+    required this.epoch,
+    required this.child,
+  });
+
+  @override
+  State<_ConnectionNotice> createState() => _ConnectionNoticeState();
+}
+
+class _ConnectionNoticeState extends State<_ConnectionNotice> {
+  Timer? _timer;
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _restart();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ConnectionNotice old) {
+    super.didUpdateWidget(old);
+    if (widget.lost != old.lost || widget.epoch != old.epoch) _restart();
+  }
+
+  /// Hides the notice and, while the connection is lost, starts its delay
+  /// again: a reconnection that takes a moment must not flash it.
+  void _restart() {
+    _timer?.cancel();
+    _timer = null;
+    _visible = false;
+    if (widget.lost) {
+      _timer = Timer(connectionNoticeDelay, () {
+        if (mounted) setState(() => _visible = true);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      _Reveal(visible: widget.lost && _visible, child: widget.child);
 }
 
 class _Reveal extends StatelessWidget {

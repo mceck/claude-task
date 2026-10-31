@@ -101,7 +101,7 @@ sequenceDiagram
 ```
 
 - **Web app**: waits 0.5 s, then 1, 2, 4, 8, 16 s, and then 30 s between attempts, resetting after a successful connection. On every reopen after the first, it marks every cached query stale so open views refetch, each subscribe acknowledgement triggers a refetch of that topic's data, and the open Task refetches its Runs.
-- **Native app**: waits 1, 2, 4, 8, 16 and then 32 s between attempts, resetting after a successful connection, with a 15-second timeout on each attempt. Every change of connection state empties its Run store, so a lost connection clears the Active Runs bar until the next snapshot brings back what still runs; on reaching "connected" again it clears Live Turn previews, refreshes its global lists and the open Project and Task, and retries any pending logout (see [Sign-in, Login and profiles](#sign-in-login-and-profiles)). Coming back to the foreground also reconnects and refreshes.
+- **Native app**: waits 1, 2, 4, 8, 16 and then 32 s between attempts, resetting after a successful connection, with a 15-second timeout on each attempt. Every change of connection state empties its Run store, so a lost connection clears the Active Runs bar until the next snapshot brings back what still runs; on reaching "connected" again it clears Live Turn previews, refreshes its global lists and the open Project and Task, and retries any pending logout (see [Sign-in, Login and profiles](#sign-in-login-and-profiles)). Coming back to the foreground also reconnects and refreshes. The connection notice appears only when the disconnection has lasted two seconds, so the reconnect on start and on returning to the foreground doesn't flash it.
 
 #### When a Login ends
 
@@ -361,7 +361,7 @@ The app caches what it has fetched in a file inside the profile's application-su
 
 Live Turn previews and Run transcripts stay in memory only, so the offline cache holds stored Comments and Run rows alone.
 
-On start the app shows the cached data right away and refreshes it. Offline, cached Projects, Tasks and conversations stay readable, Drafts can be written and files attached, and downloaded attachments open; everything that changes data waits for a manual action once the app is back online. The top of the screen shows "Offline · loaded conversations and drafts are available" or "Reconnecting…" with a "Reconnect" button, and errors appear in a dismissible banner.
+On start the app shows the cached data right away and refreshes it. Offline, cached Projects, Tasks and conversations stay readable, Drafts can be written and files attached, and downloaded attachments open; everything that changes data waits for a manual action once the app is back online. The top of the screen shows "Offline · loaded conversations and drafts are available" or "Reconnecting…" with a "Reconnect" button once the disconnection has lasted two seconds: a quick reconnection on start or on returning to the foreground doesn't flash it. Errors appear in a dismissible banner.
 
 #### Sending and unknown outcomes
 
