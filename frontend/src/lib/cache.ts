@@ -1,5 +1,5 @@
 // Applies real-time events to the TanStack Query caches.
-import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
+import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, ScheduledMessage, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
 import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { keys } from '../api/queries';
 import { removeFromDock } from './dock';
@@ -109,6 +109,7 @@ export function removeTask(qc: QueryClient, taskId: string): void {
   qc.removeQueries({ queryKey: keys.timeline(taskId) });
   qc.removeQueries({ queryKey: keys.attachments(taskId) });
   qc.removeQueries({ queryKey: keys.session(taskId) });
+  qc.removeQueries({ queryKey: keys.scheduled(taskId) });
   qc.removeQueries({ queryKey: keys.runs(taskId) });
   qc.removeQueries({ queryKey: ['voice', taskId] });
 }
@@ -152,6 +153,20 @@ export function putTimelineItem(qc: QueryClient, taskId: string, item: TimelineI
     if (last < 0 || data.pages[last]!.nextCursor) return data;
     return insert(last, data.pages[last]!.items.length);
   });
+}
+
+/** Pending messages first by due time, then the finished ones, the latest first: the server's order. */
+function compareScheduled(a: ScheduledMessage, b: ScheduledMessage): number {
+  if ((a.state === 'pending') !== (b.state === 'pending')) return a.state === 'pending' ? -1 : 1;
+  if (a.state === 'pending') return Date.parse(a.dueAt) - Date.parse(b.dueAt) || (a.id < b.id ? -1 : 1);
+  return Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || (a.id < b.id ? -1 : 1);
+}
+
+/** Replaces the message in the Task's scheduled list, or adds it. */
+export function putScheduledMessage(qc: QueryClient, message: ScheduledMessage): void {
+  updateCachedList<ScheduledMessage>(qc, keys.scheduled(message.taskId), (list) =>
+    [...list.filter((m) => m.id !== message.id), message].sort(compareScheduled),
+  );
 }
 
 export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
@@ -227,6 +242,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
         createdAt: event.comment.createdAt,
         comment: event.comment,
       });
+    case 'scheduled_message.updated':
+      return putScheduledMessage(qc, event.message);
     case 'revision.created':
       return putTimelineItem(qc, event.revision.taskId, {
         type: 'revision',
@@ -314,6 +331,7 @@ export function refreshTopic(qc: QueryClient, topic: Topic): void {
     void qc.invalidateQueries({ queryKey: keys.timeline(id) });
     void qc.invalidateQueries({ queryKey: keys.attachments(id) });
     void qc.invalidateQueries({ queryKey: keys.session(id) });
+    void qc.invalidateQueries({ queryKey: keys.scheduled(id) });
     void qc.invalidateQueries({ queryKey: keys.runs(id) });
   }
 }

@@ -20,6 +20,7 @@ import { AgentAvatar, DeliveryBadge } from './agents';
 import { ErrorText, Loading, Time, useConfirm, UserAvatar } from './common';
 import { Markdown } from './Markdown';
 import { QuestionCard, SurveyCard } from './QuestionCards';
+import { LimitResumeCard } from './ScheduledMessages';
 
 interface Row {
   item: TimelineItem;
@@ -244,6 +245,7 @@ function CommentItem({ comment, taskId, agents }: { comment: Comment; taskId: st
           )
         )}
         {comment.attachments.length > 0 && <Attachments files={comment.attachments} />}
+        {comment.limitResume && <LimitResumeCard comment={comment} />}
       </div>
     </li>
   );

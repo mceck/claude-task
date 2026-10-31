@@ -15,6 +15,7 @@ import type {
   RepositoryGroup,
   RepositorySettings,
   RateLimitObservation,
+  ScheduledMessage,
   TaskSession,
   McpServer,
   MeResponse,
@@ -54,6 +55,8 @@ export const keys = {
   /** Every file of a Task: its description's and its Comments'. */
   attachments: (taskId: string) => ['task-attachments', taskId] as const,
   session: (taskId: string) => ['session', taskId] as const,
+  /** The Task's pending Scheduled Messages and its most recent finished ones. */
+  scheduled: (taskId: string) => ['scheduled-messages', taskId] as const,
   /** The Task's active Runs; the transcripts live in the backend's memory only. */
   runs: (taskId: string) => ['runs', taskId] as const,
   run: (taskId: string, runId: string) => ['runs', taskId, runId] as const,
@@ -229,6 +232,14 @@ export function useTaskSession(taskId: string | undefined) {
   return useQuery({
     queryKey: keys.session(taskId ?? ''),
     queryFn: () => get<{ session: TaskSession | null }>(`/tasks/${taskId}/session`).then((r) => r.session),
+    enabled: !!taskId,
+  });
+}
+
+export function useScheduledMessages(taskId: string | undefined) {
+  return useQuery({
+    queryKey: keys.scheduled(taskId ?? ''),
+    queryFn: () => get<{ messages: ScheduledMessage[] }>(`/tasks/${taskId}/scheduled-messages`).then((r) => r.messages),
     enabled: !!taskId,
   });
 }

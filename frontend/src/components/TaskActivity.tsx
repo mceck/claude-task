@@ -5,6 +5,7 @@ import { put } from '../api/client';
 import { useTimeline } from '../api/queries';
 import { ActiveRuns } from './ActiveRuns';
 import { Composer, useCommentDraft } from './Composer';
+import { ScheduledStrip } from './ScheduledMessages';
 import { StopFollowing, Timeline } from './Timeline';
 
 interface Props {
@@ -85,6 +86,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, hid
         <div className="mx-auto max-h-[45dvh] max-w-3xl space-y-3 overflow-y-auto">
           <ActiveRuns taskId={task.id} />
           {notice}
+          <ScheduledStrip taskId={task.id} />
           {readOnly ? (
             <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">{readOnly}</p>
           ) : (

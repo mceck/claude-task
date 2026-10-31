@@ -55,6 +55,7 @@ Json commentData(
   Json? question,
   Json? survey,
   String? answersCommentId,
+  Json? limitResume,
 }) => {
   'type': 'comment',
   'id': id,
@@ -79,6 +80,7 @@ Json commentData(
     'question': question,
     'survey': survey,
     'answersCommentId': answersCommentId,
+    'limitResume': limitResume,
   },
 };
 
@@ -162,6 +164,47 @@ Json responseData(Json user, List<Json> answers, {String position = '4'}) => {
   'answers': answers,
   'updatedAt': at(position),
 };
+/// A Scheduled Message, as the API sends it.
+Json scheduledData(
+  String id, {
+  String body = 'Ship it',
+  String kind = 'user',
+  String state = 'pending',
+  String dueAt = '2099-01-02T10:00:00.000Z',
+  bool internal = false,
+  String? cancelReason,
+  List<Json> attachments = const [],
+}) => {
+  'id': id,
+  'taskId': 'task-1',
+  'kind': kind,
+  'author': kind == 'limit_resume'
+      ? {'id': null, 'displayName': 'System', 'type': 'system'}
+      : ada,
+  'body': body,
+  'internal': internal,
+  'attachments': attachments,
+  'dueAt': dueAt,
+  'state': state,
+  'cancelReason': cancelReason,
+  'commentId': state == 'sent' ? 'comment-1' : null,
+  'createdAt': at('1'),
+  'updatedAt': at('1'),
+};
+
+/// The offer on a usage limit's System Comment.
+Json limitResumeData({
+  String state = 'open',
+  Json? decidedBy,
+  String resetsAt = '2099-01-02T10:00:00.000Z',
+}) => {
+  'resetsAt': resetsAt,
+  'state': state,
+  'decidedBy': decidedBy,
+  'decidedAt': state == 'open' ? null : at('5'),
+  'scheduledMessageId': state == 'scheduled' ? 'scheduled-1' : null,
+};
+
 Json revisionData(String id, List<Json> changes, {String position = '1'}) => {
   'type': 'revision',
   'id': id,
@@ -384,6 +427,13 @@ class FakeApi implements TaskApi {
   /// `/response`, `/close`); it may throw an [ApiException].
   Json Function(String method, String path, Json? body)? conversationTool;
 
+  /// The Task's Scheduled Messages.
+  List<Json> scheduled = [];
+
+  /// Answers `/scheduled-messages/:id` routes and `/comments/:id/limit-resume`;
+  /// it may throw an [ApiException].
+  Json Function(String method, String path, Json? body)? scheduleTool;
+
   /// The last body sent to each `METHOD /path`.
   final bodies = <String, Json?>{};
   @override
@@ -577,6 +627,31 @@ class FakeApi implements TaskApi {
       );
       items.add(entry);
       return {'comment': entry['comment']};
+    }
+    if (path == '/tasks/task-1/scheduled-messages') {
+      if (method == 'GET') return {'messages': scheduled};
+      final message = scheduledData(
+        'scheduled-${scheduled.length + 1}',
+        body: body!['body'] as String,
+        internal: body['internal'] == true,
+        dueAt: body['dueAt'] as String,
+      );
+      scheduled = [...scheduled, message];
+      return {'message': message};
+    }
+    if (path == '/tasks/task-1/auto-resume' && method == 'PUT') {
+      currentTask = {
+        ...currentTask,
+        'autoResume': body!['enabled'],
+        'version': (currentTask['version'] as int) + 1,
+      };
+      return {'task': currentTask};
+    }
+    if (scheduleTool != null &&
+        RegExp(
+          r'^/(scheduled-messages/[^/]+(/send)?|comments/[^/]+/limit-resume)$',
+        ).hasMatch(path)) {
+      return scheduleTool!(method, path, body);
     }
     if (path == '/notifications/status') {
       return {'configured': false, 'provider': 'fcm'};
