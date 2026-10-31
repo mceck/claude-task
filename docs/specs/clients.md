@@ -242,6 +242,10 @@ The web app uses a dark theme by default, with Light and System as alternatives 
 
 Dots showing an Agent's or a Session's state — on the Board cards, in the Agents list and on the Agent page, and in the Session chips of a Task or Wiki Chat — share one palette: green filled for a running Session, green hollow for an idle Agent, blue filled for a starting Session and for a Build in progress, amber filled for a paused Session, red filled for a failed Build, red hollow for a disabled Agent, and grey hollow for an offline Agent or a closed Session. Running and building dots pulse.
 
+#### Toasts
+
+Feedback that isn't tied to a field (a saved setting, a failed action) appears as a toast in the top right. A toast disappears on its own after a few seconds, and at once when it is clicked anywhere or its close button, on its right, is pressed.
+
 #### Consistency under concurrent and out-of-order updates
 
 The web app keeps server data in a query cache that HTTP responses and events both write into. These rules keep it correct when requests, responses and events cross:
