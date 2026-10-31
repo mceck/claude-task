@@ -177,6 +177,10 @@ Merging a Task's Pull Request from the Task view moves the Task like a move to t
 
 Any User deletes a Task, after a confirmation in the web app. Deletion removes the Task with its Comments, attachments (stored files included), Revisions, Session history and preferences, and asks the Agent to remove its Worktree. A Task with an active Agent Job can be deleted once the Agent is stopped or the Task closed; until then the request is answered with `409` "An agent is working on this. Stop it, or close the task, before deleting." The removal is published as `task.deleted` on the Project's topic and `task.removed` on the Task's topic. The Task's number stays used.
 
+### Bulk actions
+
+`POST /projects/:projectId/tasks/bulk` applies one action to up to 200 Tasks of a Project: `move` (with a `statusId`) puts them, in the given order, at the end of that Status, and `delete` removes them. Closing several Tasks is a `move` to a `closed`-category Status. Each Task is handled on its own, with the rules and events of a single move or deletion (Revisions, Session rules, `task.moved`, `task.deleted`), so one refused Task does not stop the others: the answer lists `succeeded` ids and `failed` entries with the Task id and the reason (an unknown Task or one of another Project is "Task not found", a Task with an active Agent Job is the deletion's `409` message). Duplicated ids count once.
+
 ### Revisions
 
 Every change to a Task's fields is recorded as a Revision in the same transaction as the change. A Revision holds the Task version it produced (unique per Task), the Actor, the time, and the list of changed fields with their values before and after. Recorded fields: title, description, Status, priority, Tags, User assignees, Agent, and pull request state.

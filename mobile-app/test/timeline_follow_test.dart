@@ -238,14 +238,13 @@ void main() {
     (tester) async {
       await openConversation(tester, older: true);
       final position = timeline(tester);
-      // The oldest entries, where "Load older entries" sits.
+      // The oldest entries: reaching them loads the older page on its own.
       for (var i = 0; i < 3; i++) {
         position.jumpTo(position.maxScrollExtent);
         await tester.pump();
       }
       final read = reading(tester);
 
-      await tester.tap(find.text('Load older entries'));
       await frame(tester);
 
       expect(find.textContaining('Older page'), findsOneWidget);

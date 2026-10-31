@@ -1,4 +1,4 @@
-import { createTaskBody, listTasksQuery, moveTaskBody, timelineQuery, updateTaskBody } from '@claude-task/shared';
+import { bulkTasksBody, createTaskBody, listTasksQuery, moveTaskBody, timelineQuery, updateTaskBody } from '@claude-task/shared';
 import type { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
 import { jobs, tasks } from '../../db/schema';
@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
-import { notFound, parse } from '../../errors';
+import { HttpError, notFound, parse } from '../../errors';
 import { loadTimeline } from '../comments/service';
 import { assertBoardTask, getBoardProject } from '../projects/service';
 import { ACTIVE_JOB_STATES } from '../agents/service';
@@ -40,6 +40,34 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
       return createTask(tx, after, project.id, body, actor);
     });
     return reply.status(201).send({ task });
+  });
+
+  app.post('/projects/:projectId/tasks/bulk', async (request) => {
+    const { projectId } = parse(projectParams, request.params);
+    const body = parse(bulkTasksBody, request.body);
+    const actor = userActor(currentUser(request));
+    const project = await getBoardProject(ctx.db, projectId);
+    const succeeded: string[] = [];
+    const failed: { taskId: string; message: string }[] = [];
+    for (const taskId of [...new Set(body.taskIds)]) {
+      try {
+        await transact(ctx, async (tx, after) => {
+          const row = await getTaskRow(tx, taskId);
+          if (row.projectId !== project.id) throw notFound('Task');
+          if (body.action === 'move') {
+            await moveTask(tx, after, taskId, { statusId: body.statusId }, actor);
+          } else {
+            const { blobIds } = await deleteTask(tx, after, taskId);
+            for (const blobId of blobIds) after.run(() => ctx.blobs.delete(blobId));
+          }
+        });
+        succeeded.push(taskId);
+      } catch (err) {
+        if (!(err instanceof HttpError)) throw err;
+        failed.push({ taskId, message: err.message });
+      }
+    }
+    return { succeeded, failed };
   });
 
   app.get('/tasks/:id', async (request) => {

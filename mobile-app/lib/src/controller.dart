@@ -23,6 +23,14 @@ const _tagColors = [
   '#14b8a6',
 ];
 
+/// What a bulk action did: how many Tasks it applied to, and the reason for
+/// each one it could not.
+class BulkResult {
+  final int succeeded;
+  final Map<String, String> failed;
+  const BulkResult(this.succeeded, this.failed);
+}
+
 class TaskController extends ChangeNotifier {
   late final VoiceController voice;
   final ProfileStorage storage;
@@ -1265,6 +1273,10 @@ class TaskController extends ChangeNotifier {
     }
   }
 
+  /// True while the open Task's first page of the Timeline is on its way and
+  /// nothing is cached to show meanwhile.
+  bool timelineLoading = false;
+
   Future<void> selectTask(Task value) async {
     unawaited(push.clearTask(value.id));
     task = value;
@@ -1291,12 +1303,14 @@ class TaskController extends ChangeNotifier {
       session = cached['session'] as Json?;
     }
     _subscribe();
+    timelineLoading = timeline.isEmpty;
     notifyListeners();
     try {
       await _fetchTask(value.id);
     } catch (e) {
       _recordError(e);
     }
+    if (task?.id == value.id) timelineLoading = false;
     notifyListeners();
   }
 
@@ -1868,6 +1882,72 @@ class TaskController extends ChangeNotifier {
     } finally {
       notifyListeners();
     }
+  }
+
+  /// Moves a Task to [statusId], below [afterTaskId] or above [beforeTaskId]
+  /// (neither: the end of the column). The list shows the result right away;
+  /// the refresh that follows reconciles it.
+  Future<void> moveTask(
+    Task moving,
+    String statusId, {
+    String? afterTaskId,
+    String? beforeTaskId,
+  }) async {
+    final result = await _request(
+      'POST',
+      '/tasks/${moving.id}/move',
+      body: {
+        'statusId': statusId,
+        'afterTaskId': ?afterTaskId,
+        'beforeTaskId': ?beforeTaskId,
+      },
+    );
+    final moved = Task.fromJson(result['task'] as Json);
+    if (moved.projectId == project?.id) {
+      tasks.removeWhere((t) => t.id == moved.id);
+      var at = tasks.lastIndexWhere((t) => t.statusId == statusId) + 1;
+      final after = tasks.indexWhere((t) => t.id == afterTaskId);
+      final before = tasks.indexWhere((t) => t.id == beforeTaskId);
+      if (after >= 0) {
+        at = after + 1;
+      } else if (before >= 0) {
+        at = before;
+      }
+      tasks.insert(at, moved);
+      if (task?.id == moved.id) task = moved;
+      notifyListeners();
+    }
+    unawaited(refresh().catchError((Object _) {}));
+  }
+
+  /// Moves [ids] to the end of [statusId] ("closing" is a move to a `closed`
+  /// Status), or deletes them. Each Task is handled on its own: the ones the
+  /// backend refused come back with the reason.
+  Future<BulkResult> bulkTasks(
+    String action,
+    List<String> ids, {
+    String? statusId,
+  }) async {
+    final result = await _request(
+      'POST',
+      '/projects/${project!.id}/tasks/bulk',
+      body: {'action': action, 'taskIds': ids, 'statusId': ?statusId},
+    );
+    final done = strings(result['succeeded']).toSet();
+    if (action == 'delete') {
+      for (final id in done) {
+        await storage.write('task:$id', {});
+        await storage.write('draft:$id', const Draft().toJson());
+      }
+      tasks.removeWhere((t) => done.contains(t.id));
+      if (task != null && done.contains(task!.id)) backToTasks();
+      notifyListeners();
+    }
+    unawaited(refresh().catchError((Object _) {}));
+    return BulkResult(done.length, {
+      for (final f in objects(result['failed']))
+        f['taskId'] as String: f['message'] as String? ?? 'Failed',
+    });
   }
 
   Future<void> deleteTask() async {

@@ -43,6 +43,9 @@ class PageHeader extends StatelessWidget {
 
   /// A second line made of widgets (state chips), in place of [subtitle].
   final Widget? meta;
+
+  /// A small widget (a status action) right after the title.
+  final Widget? titleTrailing;
   final Widget? leading;
   final VoidCallback? onBack, onTitleTap;
   final List<Widget> actions;
@@ -51,6 +54,7 @@ class PageHeader extends StatelessWidget {
     required this.title,
     this.subtitle,
     this.meta,
+    this.titleTrailing,
     this.leading,
     this.onBack,
     this.onTitleTap,
@@ -88,16 +92,26 @@ class PageHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    height: 1.3,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -.3,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          height: 1.3,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -.3,
+                        ),
+                      ),
+                    ),
+                    if (titleTrailing != null) ...[
+                      const SizedBox(width: 8),
+                      titleTrailing!,
+                    ],
+                  ],
                 ),
                 if (meta != null)
                   Padding(padding: const EdgeInsets.only(top: 3), child: meta)

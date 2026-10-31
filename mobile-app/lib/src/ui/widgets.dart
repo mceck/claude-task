@@ -1316,6 +1316,10 @@ Future<T?> showActions<T>(
   BuildContext anchor,
   List<ActionItem<T>> items, {
   String? title,
+
+  /// Opens the menu at this global point (a right click) instead of under
+  /// [anchor].
+  Offset? at,
 }) async {
   if (!isCompact(anchor)) {
     final box = anchor.findRenderObject() as RenderBox;
@@ -1324,12 +1328,19 @@ Future<T?> showActions<T>(
     final origin = box.localToGlobal(Offset.zero, ancestor: overlay);
     return showMenu<T>(
       context: anchor,
-      position: RelativeRect.fromLTRB(
-        origin.dx,
-        origin.dy + box.size.height + 6,
-        overlay.size.width - origin.dx - box.size.width,
-        0,
-      ),
+      position: at != null
+          ? RelativeRect.fromLTRB(
+              at.dx,
+              at.dy,
+              overlay.size.width - at.dx,
+              overlay.size.height - at.dy,
+            )
+          : RelativeRect.fromLTRB(
+              origin.dx,
+              origin.dy + box.size.height + 6,
+              overlay.size.width - origin.dx - box.size.width,
+              0,
+            ),
       menuPadding: const EdgeInsets.all(6),
       items: [
         for (final item in items)
