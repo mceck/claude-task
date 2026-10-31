@@ -83,6 +83,68 @@ test('minimizes a Task conversation into the dock, restores it and keeps it acro
   await expect(page.getByRole('region', { name: 'Minimized chats' })).toHaveCount(0);
 });
 
+test('reopening a minimized Task by navigating keeps it in the Dock', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request, 'Dock navigation');
+  const task = await createTask(page.request, project, 'Come back to me');
+  expect((await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers: H, data: { body: 'A note' } })).status()).toBe(201);
+
+  await page.goto(`/p/${project.key}`);
+  await page.getByRole('article', { name: task.key }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Minimize chat' }).click();
+  const dock = page.getByRole('region', { name: 'Minimized chats' });
+  const panel = dock.getByRole('article', { name: 'Minimized chat: Come back to me' });
+  await expect(panel).toBeVisible();
+  await panel.getByRole('button', { name: 'Collapse Come back to me' }).click();
+
+  // Opening the Task again over the Board is not a restore: the panel waits hidden while the dialog is open.
+  await page.getByRole('article', { name: task.key }).click();
+  await expect(page.getByRole('dialog').getByLabel('Task conversation')).toBeVisible();
+  await expect(dock).toHaveCount(0);
+  // Closing the dialog brings it back as it was, collapsed included.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Open Come back to me' })).toHaveAttribute('aria-expanded', 'false');
+
+  // The Task page reached by navigating does the same: the Dock entry survives and the panel comes back on leaving.
+  await page.goto(`/t/${task.key}`);
+  await expect(page.locator('main').getByLabel('Task conversation')).toBeVisible();
+  await expect(dock).toHaveCount(0);
+  await page.goto(`/p/${project.key}`);
+  await expect(panel).toBeVisible();
+
+  // Open full page from the Dock is the explicit restore: it takes the conversation out for good.
+  await panel.getByRole('button', { name: 'Open Come back to me' }).click();
+  await panel.getByRole('button', { name: 'Open full page' }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${task.key}$`));
+  await expect(dock).toHaveCount(0);
+  await page.goto(`/p/${project.key}`);
+  await expect(dock).toHaveCount(0);
+});
+
+test('reopening a minimized Wiki Chat by navigating keeps it in the Dock', async ({ page }) => {
+  await login(page.request);
+  const { wiki, chat, connection } = await seedWiki(page.request, `Dock nav wiki ${Date.now()}`);
+  await page.goto(`/wikis/${wiki.id}/chats/${chat.id}`);
+  await page.getByRole('button', { name: 'Minimize chat' }).click();
+  await expect(page).toHaveURL(/\/wikis$/);
+  const dock = page.getByRole('region', { name: 'Minimized chats' });
+  const panel = dock.getByRole('article', { name: 'Minimized chat: Wiki note to keep' });
+  await expect(panel).toBeVisible();
+
+  // Visiting the Chat again hides the panel while the Chat is on screen, and keeps the entry.
+  await page.goto(`/wikis/${wiki.id}/chats/${chat.id}`);
+  await expect(page.getByLabel('Task conversation')).toBeVisible();
+  await expect(dock).toHaveCount(0);
+  // Leaving the Wiki brings the Chat back to the Dock.
+  await page.goto('/wikis');
+  await expect(panel).toBeVisible();
+
+  expect((await page.request.delete(`/api/v1/wikis/${wiki.id}`, { headers: H })).status()).toBe(204);
+  expect((await page.request.delete(`/api/v1/git/connections/${connection.id}`, { headers: H })).status()).toBe(204);
+});
+
 test('minimizes a Wiki Chat and drops its panel when the Chat is deleted', async ({ page }) => {
   await login(page.request);
   const { wiki, chat, connection } = await seedWiki(page.request, `Dock wiki ${Date.now()}`);

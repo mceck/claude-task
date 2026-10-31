@@ -36,7 +36,9 @@ const keepOnScreen: Modifier = ({ transform, draggingNodeRect }) => {
 
 /** Minimized conversations, right-aligned in a row above the page, one card per conversation. */
 export function ChatDock() {
-  const { entries } = useDock();
+  const { entries, suspended } = useDock();
+  // A conversation whose page is open keeps its entry but draws no panel: the page is its only live copy.
+  const visible = entries.filter((entry) => !suspended.includes(entry.taskId));
   const available = useDockAvailable();
   const viewport = useViewport();
   const [dragging, setDragging] = useState<string | null>(null);
@@ -45,11 +47,11 @@ export function ChatDock() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-  if (!available || entries.length === 0) return null;
+  if (!available || visible.length === 0) return null;
 
   const pageWidth = viewport.width - SIDEBAR_WIDTH - DOCK_INSET * 2;
   const capacity = Math.max(1, Math.min(MAX_DOCK_ENTRIES, Math.floor((pageWidth + PANEL_GAP) / (PANEL_MIN + PANEL_GAP))));
-  const shown = entries.slice(-capacity);
+  const shown = visible.slice(-capacity);
   const width = Math.max(PANEL_MIN, Math.min(PANEL_MAX, Math.floor((pageWidth - PANEL_GAP * (shown.length - 1)) / shown.length)));
   const height = Math.min(470, Math.round(viewport.height * 0.6));
   const dragged = shown.find((entry) => entry.taskId === dragging);

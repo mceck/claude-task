@@ -20,7 +20,7 @@ import { TaskActivity } from '../components/TaskActivity';
 import { SessionChip } from '../components/agents';
 import { useTopic } from '../lib/realtime';
 import { applyEvent } from '../lib/cache';
-import { minimizeInDock, removeFromDock, useDockAvailable } from '../lib/dock';
+import { minimizeInDock, resumeInDock, suspendInDock, useDockAvailable } from '../lib/dock';
 import { applyLiveEvent } from '../lib/live';
 import { applyRunEvent } from '../lib/runs';
 
@@ -133,9 +133,12 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
   // The branch and pull request live on the backing Task, even when another Chat created them.
   useTopic(wikiTask.data ? taskTopic(wikiTask.data.id) : null);
   useTopic(AGENTS_TOPIC);
-  // The open Chat is not also in the Dock: opening it from there (or from anywhere) moves it back to the page.
+  // The open Chat is not also in the Dock: its panel waits, hidden, and comes back when the Wiki is left. Only an
+  // explicit Open full page takes it out of the Dock, so reopening the Chat by navigating does not close it.
   useEffect(() => {
-    if (chat) removeFromDock(chat.id);
+    if (!chat) return;
+    suspendInDock(chat.id);
+    return () => resumeInDock(chat.id);
   }, [chat?.id]);
   // A Wiki without Chats opens an empty composer, which needs a Task to post to.
   useEffect(() => {
