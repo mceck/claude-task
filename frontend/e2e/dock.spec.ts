@@ -114,6 +114,95 @@ test('minimizes a Wiki Chat and drops its panel when the Chat is deleted', async
   expect((await page.request.delete(`/api/v1/git/connections/${connection.id}`, { headers: H })).status()).toBe(204);
 });
 
+test('reorders minimized chats by dragging a bar and keeps the order', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request, 'Dock order');
+  const names = ['Alpha', 'Bravo', 'Charlie'];
+  const tasks = [];
+  for (const name of names) {
+    const task = await createTask(page.request, project, name);
+    expect((await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers: H, data: { body: `${name} note` } })).status()).toBe(201);
+    await page.goto(`/t/${task.key}`);
+    await page.getByRole('button', { name: 'Minimize chat' }).click();
+    await expect(page).toHaveURL(new RegExp(`/p/${project.key}$`));
+    tasks.push(task);
+  }
+
+  const dock = page.getByRole('region', { name: 'Minimized chats' });
+  const order = () => dock.getByRole('article').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label')));
+  const expected = (labels: string[]) => labels.map((label) => `Minimized chat: ${label}`);
+  await expect.poll(order).toEqual(expected(names));
+  // The last Task page's composer is gone: the row has dropped back before a bar is measured for the drag.
+  await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--chat-composer-height'))).toBe('');
+
+  // Dragging a bar with the mouse moves the conversation: Alpha goes from the left end to the corner, where Charlie was.
+  const from = (await dock.getByRole('button', { name: 'Drag Alpha' }).boundingBox())!;
+  const to = (await dock.getByRole('article', { name: 'Minimized chat: Charlie' }).boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2 + 20, from.y + from.height / 2, { steps: 5 });
+  await page.mouse.move(to.x + to.width / 2, from.y + from.height / 2, { steps: 10 });
+  await page.mouse.up();
+  await expect.poll(order).toEqual(expected(['Bravo', 'Charlie', 'Alpha']));
+
+  // The keyboard moves a panel too: Space picks a bar up, the arrow keys move it, Space drops it. Each step waits for
+  // the drag's live region to say it happened, so a slow machine cannot swallow a key.
+  const announced = page.locator('[id^="DndLiveRegion"]').filter({ hasText: /draggable item/i });
+  await dock.getByRole('button', { name: 'Drag Bravo' }).focus();
+  await page.keyboard.press('Space');
+  await expect(announced).toContainText(/moved over droppable area/i);
+  const lifted = await announced.textContent();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => announced.textContent()).not.toBe(lifted);
+  await page.keyboard.press('Space');
+  await expect(announced).toContainText(/was dropped over droppable area/i);
+  await expect.poll(order).toEqual(expected(['Charlie', 'Bravo', 'Alpha']));
+
+  // The order is a per-browser preference like the rest of the Dock, and a click still opens or collapses a panel.
+  await page.reload();
+  await expect.poll(order).toEqual(expected(['Charlie', 'Bravo', 'Alpha']));
+  await dock.getByRole('button', { name: 'Collapse Bravo' }).click();
+  await expect(dock.getByRole('button', { name: 'Open Bravo' })).toHaveAttribute('aria-expanded', 'false');
+
+  // Minimizing a conversation that is already in the Dock still makes it the newest, nearest the corner.
+  await page.goto(`/t/${tasks[1]!.key}`);
+  await page.getByRole('button', { name: 'Minimize chat' }).click();
+  await expect.poll(order).toEqual(expected(['Charlie', 'Alpha', 'Bravo']));
+});
+
+test('pulses the avatar of a collapsed panel with unread activity', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request, 'Dock unread');
+  const task = await createTask(page.request, project, 'Needs me');
+  // Minimized from the Board, not from a Task page: the Board keeps its Project subscription, so the comment's event
+  // reaches a live page instead of racing the connection a fresh navigation opens.
+  await page.goto(`/p/${project.key}`);
+  await page.getByRole('article', { name: task.key }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Task conversation')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Minimize chat' }).click();
+  await expect(dialog).toBeHidden();
+
+  const panel = page.getByRole('region', { name: 'Minimized chats' }).getByRole('article', { name: 'Minimized chat: Needs me' });
+  const halo = panel.locator('.dock-unread-halo');
+  await expect(panel).toBeVisible();
+  await expect(halo).toHaveCount(0);
+
+  // Collapsed, the bar is all there is: a comment that arrives while the panel is shut has to show on the bar itself.
+  await panel.getByRole('button', { name: 'Collapse Needs me' }).click();
+  // Wait for the conversation to be gone: an open panel would read the Comment as it arrives and the test would race it.
+  await expect(panel.getByLabel('Task conversation')).toHaveCount(0);
+  expect((await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers: H, data: { body: 'Look here' } })).status()).toBe(201);
+  // The preference travels over the live connection, which a loaded machine can take a while to deliver.
+  await expect(panel.getByRole('img', { name: 'Unread' })).toBeVisible({ timeout: 15_000 });
+  await expect(halo).toHaveCount(1);
+
+  // Opening the panel reads it, and the halo goes with the dot.
+  await panel.getByRole('button', { name: 'Open Needs me' }).click();
+  await expect(halo).toHaveCount(0, { timeout: 15_000 });
+  await expect(panel.getByRole('img', { name: 'Unread' })).toHaveCount(0, { timeout: 15_000 });
+});
+
 test('a collapsed panel leaves the room above it clickable', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request, 'Dock clicks');

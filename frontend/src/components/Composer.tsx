@@ -156,6 +156,7 @@ export function Composer({
   const empty = !body.trim() && files.length === 0;
 
   const placeholder = internal ? 'Write an internal chat…' : 'Leave a comment…';
+  const submitLabel = internal ? 'Send' : 'Comment';
 
   return (
     <Popover open={count > 0}>
@@ -247,21 +248,30 @@ export function Composer({
                 e.target.value = '';
               }}
             />
-            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => fileInput.current?.click()}>
-              <Paperclip /> Attach
-            </Button>
             <div className="ml-auto flex items-center gap-3">
               {/* Hidden in a narrow Dock panel, where it would push the Comment button out of view. */}
               <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
                 <Kbd>⇧↵</Kbd> new line
               </span>
+              {/* Below a narrow panel's width the label goes and the paperclip stays, so the row does not wrap. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                aria-label="Attach a file"
+                onClick={() => fileInput.current?.click()}
+              >
+                <Paperclip /> <span className="hidden @sm:inline">Attach</span>
+              </Button>
               <Button
                 size="sm"
                 onClick={submit}
                 disabled={busy || empty}
+                aria-label={submitLabel}
                 className={cn(internal && 'bg-slate-600 text-white hover:bg-slate-600/85')}
               >
-                {internal ? 'Send' : 'Comment'}
+                {/* The action keeps its name for screen readers; in a narrow panel only the arrow shows. */}
+                <span className="hidden @sm:inline">{submitLabel}</span>
                 <ArrowUp />
               </Button>
             </div>
