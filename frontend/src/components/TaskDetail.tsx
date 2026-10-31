@@ -350,7 +350,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {dockable && (
+          {dockable && (onClose !== undefined || bundle.data !== undefined) && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon-sm" aria-label="Minimize chat" onClick={minimize}>

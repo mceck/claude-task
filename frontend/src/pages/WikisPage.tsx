@@ -106,12 +106,31 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
   const reserving = useRef(false);
   const dockable = useDockAvailable();
   const list = chats.data;
-  const chat =
-    (chatId && (list?.find((c) => c.id === chatId) ?? (reserved?.id === chatId ? reserved : undefined))) || list?.[0] || reserved || undefined;
+  const urlTask = useTask(chatId);
+  const listed = chatId ? (list?.find((c) => c.id === chatId) ?? (reserved?.id === chatId ? reserved : undefined)) : undefined;
+  // An empty Chat is not listed until its first Comment: accept its Task when the URL names it.
+  const unlisted: WikiChat | undefined =
+    chatId && !listed && urlTask.data?.projectId === wiki.id
+      ? {
+          id: urlTask.data.id,
+          wikiId: wiki.id,
+          title: 'Chat',
+          agentId: urlTask.data.agentId,
+          sessionState: urlTask.data.session?.state ?? null,
+          running: urlTask.data.session?.state === 'running',
+          unread: false,
+          createdAt: urlTask.data.createdAt,
+          lastActivityAt: urlTask.data.updatedAt,
+        }
+      : undefined;
+  // A Chat id in the address is never replaced by another Chat: only the Wiki root picks the latest.
+  const chat = chatId ? (listed ?? unlisted) : (list?.[0] ?? reserved ?? undefined);
   const task = useTask(chat?.id);
   const session = useTaskSession(chat?.id);
   const users = useUsers();
   useTopic(chat ? taskTopic(chat.id) : null);
+  // The branch and pull request live on the backing Task, even when another Chat created them.
+  useTopic(wikiTask.data ? taskTopic(wikiTask.data.id) : null);
   useTopic(AGENTS_TOPIC);
   // The open Chat is not also in the Dock: opening it from there (or from anywhere) moves it back to the page.
   useEffect(() => {

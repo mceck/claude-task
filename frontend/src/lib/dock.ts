@@ -29,14 +29,17 @@ function parse(raw: string | null): DockState {
   if (!raw) return { entries: [], collapsed: [] };
   try {
     const value = JSON.parse(raw) as { entries?: unknown; collapsed?: unknown };
-    const entries = (Array.isArray(value.entries) ? value.entries : []).filter(
+    const valid = (Array.isArray(value.entries) ? value.entries : []).filter(
       (entry): entry is DockEntry =>
         typeof entry === 'object' &&
         entry !== null &&
         typeof (entry as DockEntry).taskId === 'string' &&
+        (entry as DockEntry).taskId.length > 0 &&
         ((entry as DockEntry).wikiId === undefined || typeof (entry as DockEntry).wikiId === 'string') &&
         ((entry as DockEntry).generation === undefined || typeof (entry as DockEntry).generation === 'number'),
     );
+    // One panel per conversation, the newest occurrence winning.
+    const entries = [...new Map(valid.map((entry) => [entry.taskId, entry])).values()];
     const ids = new Set(entries.map((entry) => entry.taskId));
     const collapsed = (Array.isArray(value.collapsed) ? value.collapsed : []).filter(
       (id): id is string => typeof id === 'string' && ids.has(id),
@@ -66,12 +69,18 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-function commit(next: DockState): void {
+function commit(next: DockState, keepOpen?: string): void {
   const ids = new Set(next.entries.map((entry) => entry.taskId));
   const collapsed = next.collapsed.filter((id) => ids.has(id));
-  // Keep the most recent open: a fourth panel collapses the oldest open one.
+  // Keep the most recent open: a fourth panel collapses the oldest open one, but never the one just opened.
   const open = next.entries.map((entry) => entry.taskId).filter((id) => !collapsed.includes(id));
-  for (const id of open.slice(0, Math.max(0, open.length - MAX_OPEN_ENTRIES))) collapsed.push(id);
+  let excess = Math.max(0, open.length - MAX_OPEN_ENTRIES);
+  for (const id of open) {
+    if (excess <= 0) break;
+    if (id === keepOpen) continue;
+    collapsed.push(id);
+    excess--;
+  }
   state = { entries: next.entries, collapsed };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -108,10 +117,10 @@ export function removeFromDock(taskId: string): void {
 /** Shows or hides a Dock panel's conversation. */
 export function toggleInDock(taskId: string): void {
   if (!state.entries.some((entry) => entry.taskId === taskId)) return;
-  const collapsed = state.collapsed.includes(taskId)
-    ? state.collapsed.filter((id) => id !== taskId)
-    : [...state.collapsed, taskId];
-  commit({ entries: state.entries, collapsed });
+  const opening = state.collapsed.includes(taskId);
+  const collapsed = opening ? state.collapsed.filter((id) => id !== taskId) : [...state.collapsed, taskId];
+  // The panel the user just opened stays open: the oldest other one makes room.
+  commit({ entries: state.entries, collapsed }, opening ? taskId : undefined);
 }
 
 /** Another User may log in next in this browser. */

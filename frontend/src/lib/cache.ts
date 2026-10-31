@@ -1,5 +1,5 @@
 // Applies real-time events to the TanStack Query caches.
-import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic } from '@claude-task/shared';
+import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic, WikiChat } from '@claude-task/shared';
 import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { keys } from '../api/queries';
 import { removeFromDock } from './dock';
@@ -208,6 +208,12 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
     case 'task.preference':
       qc.setQueriesData<TaskPreference[]>({ queryKey: ['task-preferences'] }, (list) =>
         list?.map((p) => (p.taskId === event.preference.taskId ? event.preference : p)),
+      );
+      // A Wiki Chat's unread dot comes from its Chat list, which this event must update too.
+      qc.setQueriesData<WikiChat[]>({ queryKey: ['wiki'] }, (list) =>
+        Array.isArray(list) && list.some((c) => c?.id === event.preference.taskId)
+          ? list.map((c) => (c.id === event.preference.taskId ? { ...c, unread: event.preference.unread } : c))
+          : list,
       );
       // Reconcile the whole Project, including new Tasks and concurrent changes to other Tasks.
       refreshTaskPreferences(qc);

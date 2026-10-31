@@ -1,4 +1,4 @@
-import { AGENTS_TOPIC, taskTopic } from '@claude-task/shared';
+import { AGENTS_TOPIC, projectTopic, taskTopic } from '@claude-task/shared';
 import { ArrowUpRight, BookOpen, Bot, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -78,6 +78,8 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
   const preferences = useTaskPreferences(entry.wikiId ? undefined : task.data?.projectId);
   const chat = entry.wikiId ? chats.data?.find((c) => c.id === entry.taskId) : undefined;
   useTopic(taskTopic(entry.taskId));
+  // Comments also reach the Project topic, which is what keeps this panel's unread dot current off the Board.
+  useTopic(!entry.wikiId && task.data ? projectTopic(task.data.projectId) : null);
   useTopic(AGENTS_TOPIC);
   useTopic(entry.wikiId ? 'wikis' : null);
 
