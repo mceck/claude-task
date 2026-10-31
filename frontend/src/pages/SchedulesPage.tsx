@@ -2,9 +2,10 @@ import { AGENTS_TOPIC, describeCron, taskTopic } from '@claude-task/shared';
 import type { Schedule, ScheduleRun } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CalendarClock, Pause, Pencil, Play, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -49,12 +50,20 @@ export function SchedulesPage() {
   const agents = useAgents();
   const admin = useIsAdmin();
   const [creating, setCreating] = useState(false);
+  const [toggling, setToggling] = useState<string[]>([]);
   const qc = useQueryClient();
   useTopic('schedules');
   useTopic(AGENTS_TOPIC);
   const toggle = async (schedule: Schedule, enabled: boolean) => {
-    await patch(`/schedules/${schedule.id}`, { enabled });
-    await qc.invalidateQueries({ queryKey: keys.schedules });
+    setToggling((ids) => [...ids, schedule.id]);
+    try {
+      await patch(`/schedules/${schedule.id}`, { enabled });
+      await qc.invalidateQueries({ queryKey: keys.schedules });
+    } catch (err) {
+      toast.error('Couldn’t update the schedule', { description: errorMessage(err) });
+    } finally {
+      setToggling((ids) => ids.filter((id) => id !== schedule.id));
+    }
   };
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -94,15 +103,17 @@ export function SchedulesPage() {
             <TableBody>
               {query.data.map((s) => (
                 <TableRow key={s.id}>
-                  <TableCell className="font-medium">
-                    <Link to={`/schedules/${s.id}`} className="inline-flex items-center gap-2 hover:underline">
-                      <CalendarClock className="size-4" />
-                      {s.name}
+                  <TableCell className="max-w-[18rem] font-medium">
+                    <Link to={`/schedules/${s.id}`} title={s.name} className="flex min-w-0 items-center gap-2 hover:underline">
+                      <CalendarClock className="size-4 shrink-0" />
+                      <span className="truncate">{s.name}</span>
                     </Link>
                   </TableCell>
-                  <TableCell className="max-w-40 truncate">{agents.data?.find((a) => a.id === s.agentId)?.name ?? '—'}</TableCell>
+                  <TableCell className="max-w-32 truncate" title={agents.data?.find((a) => a.id === s.agentId)?.name}>
+                    {agents.data?.find((a) => a.id === s.agentId)?.name ?? '—'}
+                  </TableCell>
                   <TableCell title={s.timeZone}>{describeCron(s.cron)}</TableCell>
-                  <TableCell>
+                  <TableCell className="max-w-56 truncate" title={s.repository ? `${s.repository.owner}/${s.repository.name}` : 'Global'}>
                     {s.repository ? `${s.repository.owner}/${s.repository.name}` : 'Global'}
                     {s.readOnly && (
                       <Badge variant="outline" className="ml-2">
@@ -114,7 +125,12 @@ export function SchedulesPage() {
                   <TableCell>{s.lastRun ? <RunState run={s.lastRun} /> : '—'}</TableCell>
                   {admin && (
                     <TableCell>
-                      <Switch aria-label={`Enable ${s.name}`} checked={s.enabled} onCheckedChange={(v) => void toggle(s, v)} />
+                      <Switch
+                        aria-label={`Enable ${s.name}`}
+                        checked={s.enabled}
+                        disabled={toggling.includes(s.id)}
+                        onCheckedChange={(v) => void toggle(s, v)}
+                      />
                     </TableCell>
                   )}
                 </TableRow>
@@ -124,7 +140,7 @@ export function SchedulesPage() {
         </div>
       )}
       <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>New schedule</DialogTitle>
           </DialogHeader>
@@ -146,17 +162,26 @@ export function SchedulePage() {
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const acting = useRef(false);
   useTopic('schedules');
   if (query.isPending) return <Loading />;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const schedule = query.data;
   const act = async (fn: () => Promise<unknown>) => {
+    // A double click must not start two runs or flip the pause state twice.
+    if (acting.current) return;
+    acting.current = true;
+    setBusy(true);
     setError('');
     try {
       await fn();
       await qc.invalidateQueries({ queryKey: keys.schedules });
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      acting.current = false;
+      setBusy(false);
     }
   };
   const remove = async () => {
@@ -196,10 +221,14 @@ export function SchedulePage() {
         </div>
         {admin && (
           <>
-            <Button onClick={() => void act(() => post(`/schedules/${schedule.id}/run`))}>
+            <Button disabled={busy} onClick={() => void act(() => post(`/schedules/${schedule.id}/run`))}>
               <Play /> Run now
             </Button>
-            <Button variant="outline" onClick={() => void act(() => patch(`/schedules/${schedule.id}`, { enabled: !schedule.enabled }))}>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void act(() => patch(`/schedules/${schedule.id}`, { enabled: !schedule.enabled }))}
+            >
               {schedule.enabled ? <Pause /> : <Play />} {schedule.enabled ? 'Pause' : 'Resume'}
             </Button>
             <Button variant="ghost" size="icon-sm" aria-label="Edit schedule" onClick={() => setEditing(true)}>
@@ -267,7 +296,7 @@ export function SchedulePage() {
         )}
       </section>
       <Dialog open={editing} onOpenChange={setEditing}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit schedule</DialogTitle>
           </DialogHeader>
@@ -287,6 +316,10 @@ export function ScheduleRunPage() {
   const users = useUsers();
   useTopic(task.data ? taskTopic(task.data.id) : null);
   useTopic(AGENTS_TOPIC);
+  // The Task must be one of this Schedule's runs, not any Task whose key happens to be in the URL.
+  if (schedule.data && task.data && task.data.projectId !== schedule.data.projectId) return <ErrorText>Run not found.</ErrorText>;
+  // Closing the run ends its conversation: it stays readable but takes no more Comments.
+  const closed = session.data?.state === 'closed';
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b p-4">
@@ -306,7 +339,17 @@ export function ScheduleRunPage() {
       ) : task.error ? (
         <ErrorText>{errorMessage(task.error)}</ErrorText>
       ) : (
-        <TaskActivity key={task.data.id} task={task.data} statuses={[]} tags={[]} users={users.data ?? []} session={session.data} hideChanges reserveDockSpace />
+        <TaskActivity
+          key={task.data.id}
+          task={task.data}
+          statuses={[]}
+          tags={[]}
+          users={users.data ?? []}
+          session={session.data}
+          hideChanges
+          reserveDockSpace
+          readOnly={closed ? 'This run is closed: its conversation is read-only.' : undefined}
+        />
       )}
     </div>
   );
@@ -337,10 +380,24 @@ function ScheduleForm({ schedule, onSaved }: { schedule?: Schedule; onSaved: () 
       const choice = repositories.find((r) => `${r.connectionId}:${r.providerRepoId}` === selected);
       const unchanged =
         !!schedule?.repository && `${schedule.repository.connectionId}:${schedule.repository.providerRepoId}` === selected && schedule.repository.baseBranch === baseBranch.trim();
-      const repository = choice
-        ? { connectionId: choice.connectionId, providerRepoId: choice.providerRepoId, ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}) }
-        : null;
-      const body = { name, agentId, cron, timeZone, prompt, readOnly, ...(schedule && unchanged ? {} : { repository }) };
+      // The picker may not list the Repository yet (loading, or its Connection failed): keep the stored one.
+      const chosen = choice
+        ? { connectionId: choice.connectionId, providerRepoId: choice.providerRepoId }
+        : schedule?.repository && `${schedule.repository.connectionId}:${schedule.repository.providerRepoId}` === selected
+          ? { connectionId: schedule.repository.connectionId, providerRepoId: schedule.repository.providerRepoId }
+          : null;
+      const repository = selected && chosen ? { ...chosen, ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}) } : null;
+      // A disabled Agent stays valid while it is not being changed: unrelated edits must still save.
+      const agentChanged = !schedule || schedule.agentId !== agentId;
+      const body = {
+        name,
+        cron,
+        timeZone,
+        prompt,
+        readOnly,
+        ...(agentChanged ? { agentId } : {}),
+        ...(schedule && unchanged ? {} : { repository }),
+      };
       const result = schedule
         ? await patch<{ schedule: Schedule }>(`/schedules/${schedule.id}`, body)
         : await post<{ schedule: Schedule }>('/schedules', body);
@@ -366,6 +423,7 @@ function ScheduleForm({ schedule, onSaved }: { schedule?: Schedule; onSaved: () 
             .map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
+                {a.enabled ? '' : ' (disabled)'}
               </option>
             ))}
         </select>
