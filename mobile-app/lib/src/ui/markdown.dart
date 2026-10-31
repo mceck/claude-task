@@ -76,58 +76,96 @@ class Md extends StatelessWidget {
   }
 
   @override
-  // flutter_markdown_plus still uses the SDK's Material theme and localizations.
-  // Keep its compatibility scope here until the package migrates to material_ui.
-  // ignore: deprecated_member_use
-  Widget build(BuildContext context) => MaterialUiCompatibilityBridge(
-    child: Builder(
-      builder: (context) => MarkdownBody(
-        data: data,
-        selectable: selectable,
-        styleSheet: markdownStyle(context, size: size),
-        onTapLink: (text, href, _) => _open(href, text),
-        imageBuilder: (uri, title, alt) => Semantics(
-          link: true,
-          child: InkWell(
-            onTap: onLink == null && onAttachment == null
-                ? null
-                : () => _open(uri.toString(), alt ?? 'image'),
-            borderRadius: BorderRadius.circular(Radii.sm),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: Palette.sidebar,
-                borderRadius: BorderRadius.circular(Radii.sm),
-                border: Border.all(color: Palette.border),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.image_outlined,
-                    size: 18,
-                    color: Palette.primarySoft,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      alt == null || alt.isEmpty ? 'Linked image' : alt,
-                      style: const TextStyle(
-                        color: Palette.fgMuted,
-                        fontSize: 13,
+  Widget build(BuildContext context) {
+    // flutter_markdown_plus still uses the SDK's Material theme (for its
+    // fallback styles and its code blocks' scrollbars; without selectable text
+    // it needs no SDK localizations): give it the app's theme, mapped once, so
+    // rebuilding a Comment never builds a theme or re-parses its Markdown.
+    final body = legacy.Theme(
+      data: _legacyTheme(context),
+      child: Builder(
+        builder: (context) => MarkdownBody(
+          data: data,
+          // One selection area for the whole text instead of a
+          // SelectableText (an editable text field) per paragraph, which
+          // made long Comments expensive to show while scrolling.
+          selectable: false,
+          styleSheet: _styleSheet(context, size),
+          onTapLink: (text, href, _) => _open(href, text),
+          imageBuilder: (uri, title, alt) => Semantics(
+            link: true,
+            child: InkWell(
+              onTap: onLink == null && onAttachment == null
+                  ? null
+                  : () => _open(uri.toString(), alt ?? 'image'),
+              borderRadius: BorderRadius.circular(Radii.sm),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Palette.sidebar,
+                  borderRadius: BorderRadius.circular(Radii.sm),
+                  border: Border.all(color: Palette.border),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.image_outlined,
+                      size: 18,
+                      color: Palette.primarySoft,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        alt == null || alt.isEmpty ? 'Linked image' : alt,
+                        style: const TextStyle(
+                          color: Palette.fgMuted,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
-                  ),
-                  const Icon(
-                    Icons.open_in_new_rounded,
-                    size: 14,
-                    color: Palette.fgSubtle,
-                  ),
-                ],
+                    const Icon(
+                      Icons.open_in_new_rounded,
+                      size: 14,
+                      color: Palette.fgSubtle,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+    return selectable ? SelectionArea(child: body) : body;
+  }
 }
+
+/// The SDK Material theme mapped from each app theme, as
+/// `MaterialUiCompatibilityBridge` maps it. The bridge builds a new one on
+/// every build, so every rebuild of every Comment built a full theme and
+/// style sheet and compared them field by field with the previous ones.
+final _legacyThemes = Expando<legacy.ThemeData>();
+
+legacy.ThemeData _legacyTheme(BuildContext context) =>
+    _legacyThemes[Theme.of(context)] ??= _bridgedTheme(context);
+
+legacy.ThemeData _bridgedTheme(BuildContext context) {
+  // ignore: deprecated_member_use
+  const bridge = MaterialUiCompatibilityBridge(child: SizedBox.shrink());
+  final built = bridge.build(context);
+  if (built is legacy.Theme) return built.data;
+  throw StateError('MaterialUiCompatibilityBridge no longer builds a Theme');
+}
+
+/// One style sheet per theme and size: an identical style sheet is what lets
+/// [MarkdownBody] keep its parsed tree across rebuilds.
+final _styleSheets = Expando<Map<double, MarkdownStyleSheet>>();
+
+MarkdownStyleSheet _styleSheet(BuildContext context, double size) =>
+    (_styleSheets[legacy.Theme.of(context)] ??= {})[size] ??= markdownStyle(
+      context,
+      size: size,
+    );

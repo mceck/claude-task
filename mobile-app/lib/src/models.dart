@@ -232,13 +232,18 @@ class TaskPreference {
 class TimelineEntry {
   final Json json;
   TimelineEntry(this.json);
-  String get id => json['id'] as String;
-  String get type => json['type'] as String;
-  DateTime get createdAt => DateTime.parse(json['createdAt'] as String);
-  Json get content =>
-      Map<String, dynamic>.from(json[type == 'agent' ? 'item' : type] as Map);
-  Json get payload =>
-      Map<String, dynamic>.from(content['payload'] as Map? ?? {});
+
+  // An Entry's JSON is replaced, never changed, so what is read from it is
+  // read once: the Timeline sorts and renders Entries over and over.
+  late final String id = json['id'] as String;
+  late final String type = json['type'] as String;
+  late final DateTime createdAt = DateTime.parse(json['createdAt'] as String);
+  late final Json content = Map<String, dynamic>.from(
+    json[type == 'agent' ? 'item' : type] as Map,
+  );
+  late final Json payload = Map<String, dynamic>.from(
+    content['payload'] as Map? ?? {},
+  );
   bool get internal => content['internal'] == true;
   bool get deleted => content['deletedAt'] != null;
   String get body => content['body'] as String? ?? '';
@@ -249,15 +254,15 @@ class TimelineEntry {
   String? get authorId => (content['author'] as Map?)?['id'] as String?;
   bool get isOwnCommentEditable =>
       type == 'comment' && content['kind'] == 'user' && !deleted;
-  List<Json> get attachments => objects(content['attachments']);
+  late final List<Json> attachments = objects(content['attachments']);
 
   /// The structured part of an Agent's Question, shown as a card.
-  Question? get question => content['question'] is Map
+  late final Question? question = content['question'] is Map
       ? Question.fromJson(Json.from(content['question'] as Map))
       : null;
 
   /// The structured part of an Agent's Survey, shown as a card.
-  Survey? get survey => content['survey'] is Map
+  late final Survey? survey = content['survey'] is Map
       ? Survey.fromJson(Json.from(content['survey'] as Map))
       : null;
 
@@ -265,7 +270,7 @@ class TimelineEntry {
   String? get answersCommentId => content['answersCommentId'] as String?;
 
   /// On the System Comment of a usage limit: the offer to resume at the reset.
-  LimitResume? get limitResume => content['limitResume'] is Map
+  late final LimitResume? limitResume = content['limitResume'] is Map
       ? LimitResume.fromJson(Json.from(content['limitResume'] as Map))
       : null;
 }

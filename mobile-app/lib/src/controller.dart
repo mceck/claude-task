@@ -97,6 +97,15 @@ class TaskController extends ChangeNotifier {
   final Set<String> liveExpanded = {}, expandedComments = {};
   String liveThinking = '', liveStatus = '';
 
+  /// Notified when only the Live Turn preview changes (streamed text and
+  /// Thinking, the retry status, the preparation output), instead of every
+  /// listener: tokens arrive many times a second, and rebuilding the whole
+  /// app for each made the conversation and its composer stutter. Everything
+  /// else, including the stored Entries that retire the preview, notifies
+  /// everyone as usual.
+  Listenable get live => _live;
+  final _live = ValueNotifier(0);
+
   /// The running Job's worktree preparation output, as on the web: the Job id
   /// it belongs to and the last [setupOutputCap] characters streamed so far.
   /// Not stored in the Timeline, so it is never cached.
@@ -158,14 +167,24 @@ class TaskController extends ChangeNotifier {
   /// from that Job's Timeline items, else the Task's Agent.
   String? deliveryAgentName(Map delivery) {
     final jobId = delivery['jobId'];
-    final fromJob = jobId == null
-        ? null
-        : timeline
-              .where((e) => e.type == 'agent' && e.content['jobId'] == jobId)
-              .map((e) => e.content['agentId'] as String?)
-              .firstOrNull;
+    // Every User Comment asks: index the Timeline once, not once per Comment.
+    if (!identical(_jobAgentsOf, timeline)) {
+      _jobAgentsOf = timeline;
+      _jobAgents = {};
+      for (final e in timeline) {
+        if (e.type != 'agent') continue;
+        _jobAgents.putIfAbsent(
+          e.content['jobId'],
+          () => e.content['agentId'] as String?,
+        );
+      }
+    }
+    final fromJob = jobId == null ? null : _jobAgents[jobId];
     return agents.byId(fromJob ?? task?.agentId)?.name;
   }
+
+  List<TimelineEntry>? _jobAgentsOf;
+  Map<Object?, String?> _jobAgents = {};
 
   /// Whether the User is reading this Task's conversation right now.
   bool watchingTask(String taskId) =>
@@ -357,8 +376,8 @@ class TaskController extends ChangeNotifier {
     if (schedule != null) {
       schedule = schedules.byId(schedule!.id) ?? schedule;
     }
-    agents = objects(cached['agents']).map(Agent.fromJson).toList();
-    users = objects(cached['users']).map(User.fromJson).toList();
+    agents = _unlessSame('agents', agents, cached['agents'], Agent.fromJson);
+    users = _unlessSame('users', users, cached['users'], User.fromJson);
   }
 
   void _connectSocket() {
@@ -1242,10 +1261,38 @@ class TaskController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The lists each kind was last parsed into, with their JSON.
+  final _parsedLists = <String, (Object?, List<Object>)>{};
+
+  /// Keeps [current] when it was parsed from the same JSON: views compare
+  /// these lists by identity to know whether names or pictures changed, and
+  /// every refresh fetches them again.
+  List<T> _unlessSame<T extends Object>(
+    String kind,
+    List<T> current,
+    Object? raw,
+    T Function(Json) parse,
+  ) {
+    final last = _parsedLists[kind];
+    if (last != null &&
+        identical(last.$2, current) &&
+        _sameJson(last.$1, raw)) {
+      return current;
+    }
+    final parsed = objects(raw).map(parse).toList();
+    _parsedLists[kind] = (raw, parsed);
+    return parsed;
+  }
+
   void _hydrateProject(String id) {
     final cache = storage.read('project:$id') ?? {};
-    statuses = objects(cache['statuses']).map(TaskStatus.fromJson).toList();
-    tags = objects(cache['tags']).map(Tag.fromJson).toList();
+    statuses = _unlessSame(
+      'statuses',
+      statuses,
+      cache['statuses'],
+      TaskStatus.fromJson,
+    );
+    tags = _unlessSame('tags', tags, cache['tags'], Tag.fromJson);
     tasks = objects(cache['tasks']).map(Task.fromJson).toList();
     preferences = {
       for (final p in objects(
@@ -1347,25 +1394,50 @@ class TaskController extends ChangeNotifier {
   }
 
   void _mergeTimeline(List<Json> items) {
-    final byId = {for (final item in timeline) item.id: item.json};
+    final byId = {for (final entry in timeline) entry.id: entry};
     for (final item in items) {
-      final id = item['id'] as String, known = byId[id]?['readPosition'];
+      final id = item['id'] as String, known = byId[id];
+      final position = known?.json['readPosition'];
       // Live events carry no position: keep the one already known.
-      byId[id] = item['readPosition'] == null && known != null
-          ? {...item, 'readPosition': known}
+      final json = item['readPosition'] == null && position != null
+          ? {...item, 'readPosition': position}
           : item;
+      // An unchanged Entry stays the same object, so the Timeline keeps what
+      // it built for it instead of rebuilding every row on each refresh.
+      if (known == null || !_sameJson(known.json, json)) {
+        byId[id] = TimelineEntry(json);
+      }
     }
     // Display order is the server's and the web's: creation time, then kind,
     // then id (loadTimeline's `created_at, kind, id`, oldest first). The read
     // position tracks reading only; it can be missing or '0', and sorting by
     // it showed the conversation newest first.
-    timeline = byId.values.map(TimelineEntry.new).toList()
+    timeline = byId.values.toList()
       ..sort((a, b) {
         final time = a.createdAt.compareTo(b.createdAt);
         if (time != 0) return time;
         final kind = a.type.compareTo(b.type);
         return kind != 0 ? kind : a.id.compareTo(b.id);
       });
+  }
+
+  static bool _sameJson(Object? a, Object? b) {
+    if (identical(a, b)) return true;
+    if (a is Map && b is Map) {
+      if (a.length != b.length) return false;
+      for (final MapEntry(:key, :value) in a.entries) {
+        if (!b.containsKey(key) || !_sameJson(value, b[key])) return false;
+      }
+      return true;
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_sameJson(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
   }
 
   Future<void> _cacheTask() async {
@@ -1715,6 +1787,18 @@ class TaskController extends ChangeNotifier {
     if (task != null) {
       await storage.write('draft:${task!.id}', value.toJson());
       notifyListeners();
+    }
+  }
+
+  /// Saves what the User typed. The composer already shows it, and nothing
+  /// else shows the draft's text, so nothing is rebuilt: rebuilding the whole
+  /// app on every keystroke made typing lag.
+  Future<void> setDraftText(String text) async {
+    if (task != null) {
+      await storage.write(
+        'draft:${task!.id}',
+        draft.copyWith(text: text).toJson(),
+      );
     }
   }
 
@@ -2164,12 +2248,12 @@ class TaskController extends ChangeNotifier {
         if (!liveText.containsKey(id)) liveExpanded.remove(id);
         liveText[id] = (liveText[id] ?? '') + (delta['text'] as String);
       }
-      notifyListeners();
+      _live.value++;
       return;
     }
     if (type == 'live.status' && event['taskId'] == task?.id) {
       liveStatus = event['status'] == null ? '' : 'Agent retrying request';
-      notifyListeners();
+      _live.value++;
       return;
     }
     if (type == 'job.setup_output' && event['taskId'] == task?.id) {
@@ -2184,7 +2268,7 @@ class TaskController extends ChangeNotifier {
             ? output.substring(output.length - setupOutputCap)
             : output,
       };
-      notifyListeners();
+      _live.value++;
       return;
     }
     if (type.startsWith('run.') && event['taskId'] == task?.id) {
@@ -2342,6 +2426,7 @@ class TaskController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _live.dispose();
     voice.dispose();
     _socket?.close();
     _refreshTimer?.cancel();
