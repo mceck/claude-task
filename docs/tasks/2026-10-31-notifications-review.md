@@ -166,7 +166,7 @@ The ticks replace the text badge in the Comment header on both clients. The Agen
 - [x] Cards and native rows show the unread Comment count in the orange badge, the total otherwise; native rows have no unread dot.
 - [x] The Projects list and sidebar indicators update live through the `projects` topic, without 15-second polling.
 - [x] Specs and `docs/CONTEXT.md` describe the new behaviour; the "Lock-screen alerts reveal no Task content" decision is replaced with its rationale.
-- [x] `pnpm typecheck`, `pnpm test`, the Playwright suite and the Flutter tests pass.
+- [x] `pnpm typecheck`, `pnpm test`, the Playwright suite and the Flutter tests pass. (Five Flutter golden tests fail in the development container on `main` as well, from font rendering; every other Flutter test passes. Android and iOS builds were not compiled there.)
 
 ## Out of Scope
 

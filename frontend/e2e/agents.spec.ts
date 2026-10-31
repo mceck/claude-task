@@ -267,7 +267,13 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.input')).toBe(true);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.interrupt')).toBe(true);
-  await replay(page.request, agent.id, job.jobId, [s.text('Stopped after checking logout.'), s.result()]);
+  // The Comment reaches the model with the next tool results, so this Turn reads it.
+  await replay(page.request, agent.id, job.jobId, [
+    s.toolUse('tool-2', 'Bash', { command: 'npm test -- logout' }),
+    s.toolResult('tool-2', 'Logout passed'),
+    s.text('Stopped after checking logout.'),
+    s.result(),
+  ]);
   await expect(page.getByLabel('Turn summary')).toContainText('Turn finished');
   await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Handled by Runtime agent/)).toBeVisible();
   await replay(page.request, agent.id, job.jobId, [], true);

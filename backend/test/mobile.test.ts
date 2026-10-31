@@ -376,7 +376,8 @@ describe('Alert content', () => {
     const stream = new Stream();
     await runner.runJob([stream.init(), stream.text('First answer'), stream.result(), stream.result()]);
     await dispatch();
-    expect(push.messages.map((m) => m.alert.text)).toEqual(['First answer', 'finished its turn.']);
+    // Both Alerts leave in the same dispatch, in no particular order.
+    expect(push.messages.map((m) => m.alert.text).sort()).toEqual(['First answer', 'finished its turn.']);
   });
 
   it('previews the error of a failed Turn', async () => {
