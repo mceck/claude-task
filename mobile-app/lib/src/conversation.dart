@@ -79,14 +79,37 @@ class _ConversationState extends State<Conversation> {
 
   /// Entries already shown; anything else arriving later animates in.
   Set<String>? _seen;
+
+  /// The rows the Timeline shows and their position by Entry id, kept until
+  /// the Timeline or the filter changes. Every notification used to rebuild
+  /// and rescan a long Timeline from scratch.
+  List<({TimelineEntry entry, int count})> _rowsCache = const [];
+  List<TimelineEntry>? _rowsTimeline;
+  TimelineFilter? _rowsFilter;
+  Map<String, int> _rowIndex = const {};
+
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_scrolled);
+    widget.controller.live.addListener(_liveChanged);
+  }
+
+  @override
+  void didUpdateWidget(Conversation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.live.removeListener(_liveChanged);
+      widget.controller.live.addListener(_liveChanged);
+      _rowsTimeline = null;
+      _stamp = '';
+      _seen = null;
+    }
   }
 
   @override
   void dispose() {
+    widget.controller.live.removeListener(_liveChanged);
     _scroll.dispose();
     super.dispose();
   }
@@ -181,13 +204,24 @@ class _ConversationState extends State<Conversation> {
   }
 
   void _afterContent() {
-    final c = widget.controller;
-    final stamp =
-        '${c.timeline.isEmpty ? '' : c.timeline.last.id}:${c.liveText.values.join().length}:${c.timeline.length}';
+    final stamp = '${identityHashCode(widget.controller.timeline)}';
     if (stamp != _stamp) {
       _stamp = stamp;
       _contentChanged = true;
     }
+    _settleContent();
+  }
+
+  /// The Agent's live text is not part of the Timeline yet: rebuild only the
+  /// Live Tail, and correct the reader's position once the frame is up.
+  void _liveChanged() {
+    _contentChanged = true;
+    // Without stored Entries the empty state gives way to the Live Tail.
+    if (widget.controller.timeline.isEmpty) setState(() {});
+    _settleContent();
+  }
+
+  void _settleContent() {
     if (_settling) return;
     _settling = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -257,112 +291,122 @@ class _ConversationState extends State<Conversation> {
                             ? 'Comments here are visible to everyone on the Task.'
                             : 'Your first Comment starts the Agent.',
                       )
-                    : CustomScrollView(
-                        key: const Key('timeline'),
-                        controller: _scroll,
-                        reverse: true,
-                        slivers: [
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                            sliver: _ReadingSliverList(
-                              hold: _holdReading,
-                              delegate: SliverChildBuilderDelegate(
-                                childCount: rows.length + 2,
-                                // Entries keep their element (open sections,
-                                // loaded images, measured heights) when newer
-                                // ones arrive.
-                                findChildIndexCallback: (key) {
-                                  if (key is! ValueKey<String>) return null;
-                                  final i = rows.indexWhere(
-                                    (r) => r.entry.id == key.value,
-                                  );
-                                  return i < 0 ? null : rows.length - i;
-                                },
-                                (context, index) {
-                                  if (index == 0) {
-                                    return _LiveTail(
-                                      controller: c,
-                                      filter: _filter,
-                                    );
-                                  }
-                                  if (index == rows.length + 1) {
-                                    if (c.nextCursor == null) {
-                                      return const SizedBox(height: 12);
-                                    }
-                                    return _loadingOlder
-                                        ? const Padding(
-                                            padding: EdgeInsets.only(
-                                              bottom: 16,
-                                            ),
-                                            child: Center(
-                                              child: Spinner(
-                                                key: Key('loading-older'),
-                                                size: 20,
-                                              ),
-                                            ),
-                                          )
-                                        : Center(
-                                            child: Padding(
-                                              padding: const EdgeInsets.only(
-                                                bottom: 12,
-                                              ),
-                                              child: AppButton(
-                                                label: 'Load older entries',
-                                                icon: Icons.history_rounded,
-                                                tone: Tone.secondary,
-                                                compact: true,
-                                                busy: _loadingOlder,
-                                                onPressed: c.online
-                                                    ? _loadOlder
-                                                    : null,
-                                              ),
-                                            ),
-                                          );
-                                  }
-                                  final i = rows.length - index;
-                                  final entry = rows[i].entry;
-                                  final previous = i > 0
-                                      ? rows[i - 1].entry
-                                      : null;
-                                  final newDay =
-                                      previous == null ||
-                                      !_sameDay(
-                                        previous.createdAt,
-                                        entry.createdAt,
-                                      );
-                                  // Agent output was already on screen as the
-                                  // live tail.
-                                  final fresh =
-                                      (_seen?.add(entry.id) ?? false) &&
-                                      entry.type != 'agent' &&
-                                      entry.content['kind'] != 'agent';
-                                  return FadeSlideIn(
-                                    key: ValueKey(entry.id),
-                                    enabled: fresh,
-                                    duration: Motion.fast,
-                                    offset: Offset.zero,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        if (newDay)
-                                          _DaySeparator(date: entry.createdAt),
-                                        TimelineTile(
-                                          entry: entry,
+                    : SelectionArea(
+                        child: MarkdownScope(
+                          child: CustomScrollView(
+                            key: const Key('timeline'),
+                            controller: _scroll,
+                            reverse: true,
+                            slivers: [
+                              SliverPadding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  16,
+                                  16,
+                                  12,
+                                ),
+                                sliver: _ReadingSliverList(
+                                  hold: _holdReading,
+                                  delegate: SliverChildBuilderDelegate(
+                                    childCount: rows.length + 2,
+                                    // Entries keep their element (open sections,
+                                    // loaded images, measured heights) when newer
+                                    // ones arrive.
+                                    findChildIndexCallback: (key) {
+                                      if (key is! ValueKey<String>) return null;
+                                      final i = _rowIndex[key.value];
+                                      return i == null ? null : rows.length - i;
+                                    },
+                                    (context, index) {
+                                      if (index == 0) {
+                                        return _LiveTail(
                                           controller: c,
-                                          count: rows[i].count,
-                                          grouped:
-                                              !newDay &&
-                                              _continues(previous, entry),
+                                          filter: _filter,
+                                        );
+                                      }
+                                      if (index == rows.length + 1) {
+                                        if (c.nextCursor == null) {
+                                          return const SizedBox(height: 12);
+                                        }
+                                        return _loadingOlder
+                                            ? const Padding(
+                                                padding: EdgeInsets.only(
+                                                  bottom: 16,
+                                                ),
+                                                child: Center(
+                                                  child: Spinner(
+                                                    key: Key('loading-older'),
+                                                    size: 20,
+                                                  ),
+                                                ),
+                                              )
+                                            : Center(
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        bottom: 12,
+                                                      ),
+                                                  child: AppButton(
+                                                    label: 'Load older entries',
+                                                    icon: Icons.history_rounded,
+                                                    tone: Tone.secondary,
+                                                    compact: true,
+                                                    busy: _loadingOlder,
+                                                    onPressed: c.online
+                                                        ? _loadOlder
+                                                        : null,
+                                                  ),
+                                                ),
+                                              );
+                                      }
+                                      final i = rows.length - index;
+                                      final entry = rows[i].entry;
+                                      final previous = i > 0
+                                          ? rows[i - 1].entry
+                                          : null;
+                                      final newDay =
+                                          previous == null ||
+                                          !_sameDay(
+                                            previous.createdAt,
+                                            entry.createdAt,
+                                          );
+                                      // Agent output was already on screen as the
+                                      // live tail.
+                                      final fresh =
+                                          (_seen?.add(entry.id) ?? false) &&
+                                          entry.type != 'agent' &&
+                                          entry.content['kind'] != 'agent';
+                                      return FadeSlideIn(
+                                        key: ValueKey(entry.id),
+                                        enabled: fresh,
+                                        duration: Motion.fast,
+                                        offset: Offset.zero,
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            if (newDay)
+                                              _DaySeparator(
+                                                date: entry.createdAt,
+                                              ),
+                                            TimelineTile(
+                                              entry: entry,
+                                              controller: c,
+                                              count: rows[i].count,
+                                              grouped:
+                                                  !newDay &&
+                                                  _continues(previous, entry),
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
-                                  );
-                                },
+                                      );
+                                    },
+                                  ),
+                                ),
                               ),
-                            ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
               ),
               if (c.wiki == null)
@@ -465,6 +509,9 @@ class _ConversationState extends State<Conversation> {
   /// or identical consecutive Revisions by the same actor folded into the
   /// latest with a count.
   List<({TimelineEntry entry, int count})> _rows(TaskController c) {
+    if (identical(c.timeline, _rowsTimeline) && _filter == _rowsFilter) {
+      return _rowsCache;
+    }
     final rows = <({TimelineEntry entry, int count})>[];
     String? lastText;
     for (final e in c.timeline) {
@@ -488,6 +535,10 @@ class _ConversationState extends State<Conversation> {
       }
       lastText = text;
     }
+    _rowsTimeline = c.timeline;
+    _rowsFilter = _filter;
+    _rowsCache = rows;
+    _rowIndex = {for (var i = 0; i < rows.length; i++) rows[i].entry.id: i};
     return rows;
   }
 
@@ -886,16 +937,143 @@ class _DaySeparator extends StatelessWidget {
 }
 
 /// What the running Turn is writing right now, like the web's live view.
-class _LiveTail extends StatelessWidget {
+class _LiveTail extends StatefulWidget {
   final TaskController controller;
   final TimelineFilter filter;
   const _LiveTail({required this.controller, this.filter = TimelineFilter.all});
   @override
+  State<_LiveTail> createState() => _LiveTailState();
+}
+
+class _LiveTailState extends State<_LiveTail> {
+  /// Longer than the 320 px the clamp shows: appending past it changes
+  /// nothing on screen, so the tail does not need to be parsed again.
+  static const _previewChars = 2000;
+
+  /// While an expanded box is longer than that, coalesce the streaming redraws
+  /// instead of parsing the whole answer at every token.
+  static const _expandedInterval = Duration(milliseconds: 100);
+
+  /// What the last build showed, to tell a visible change from a token that
+  /// the clamp hides.
+  List<String> _painted = const [];
+  Timer? _coalesce;
+  bool _pending = false;
+
+  TaskController get _c => widget.controller;
+  bool get _showWork => widget.filter != TimelineFilter.activity;
+
+  @override
+  void initState() {
+    super.initState();
+    _c.live.addListener(_changed);
+  }
+
+  @override
+  void didUpdateWidget(_LiveTail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.live.removeListener(_changed);
+      widget.controller.live.addListener(_changed);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.live.removeListener(_changed);
+    _coalesce?.cancel();
+    super.dispose();
+  }
+
+  String _rendered(String key, String full) {
+    if (_c.liveExpanded.contains(key) || full.length <= _previewChars) {
+      return full;
+    }
+    return full.substring(0, _previewChars);
+  }
+
+  List<String> _signature() {
+    final c = _c;
+    final setup = c.liveSetup;
+    final job = setup?['jobId'], output = setup?['output'];
+    return [
+      '$_showWork',
+      if (_showWork) ...[
+        c.liveThinking,
+        c.liveStatus,
+        job is String ? job : '',
+        output is String ? output : '',
+      ],
+      for (final entry in c.liveText.entries) ...[
+        entry.key,
+        _rendered(entry.key, entry.value),
+      ],
+    ];
+  }
+
+  /// Strings are compared by identity first, so an unchanged Thinking box or
+  /// setup output costs nothing on a text token.
+  bool _sameSignature(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i]) && a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  void _changed() {
+    if (!mounted) return;
+    final signature = _signature();
+    if (_sameSignature(signature, _painted)) return;
+    final c = _c;
+    final setup = c.liveSetup?['output'];
+    var heavy =
+        _showWork &&
+        (c.liveThinking.length > _previewChars ||
+            (setup is String && setup.length > _previewChars));
+    for (final entry in c.liveText.entries) {
+      if (entry.value.length > _previewChars &&
+          c.liveExpanded.contains(entry.key)) {
+        heavy = true;
+        break;
+      }
+    }
+    if (heavy && (_coalesce?.isActive ?? false)) {
+      _pending = true;
+      return;
+    }
+    _paint(signature);
+    if (heavy) {
+      _coalesce = Timer(_expandedInterval, () {
+        _coalesce = null;
+        if (!_pending || !mounted) return;
+        _pending = false;
+        _changed();
+      });
+    }
+  }
+
+  void _paint(List<String> signature) {
+    _coalesce?.cancel();
+    _coalesce = null;
+    _pending = false;
+    _painted = signature;
+    setState(() {});
+  }
+
+  void _setExpanded(String key, bool expanded) {
+    expanded ? _c.liveExpanded.add(key) : _c.liveExpanded.remove(key);
+    _painted = _signature();
+    setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final c = controller;
+    final c = _c;
+    _painted = _signature();
     // At the "activity" level the Agent's work stays hidden; its streaming text
     // is the Comment being written.
-    final showWork = filter != TimelineFilter.activity;
+    final showWork = widget.filter != TimelineFilter.activity;
     final setup = showWork ? c.liveSetup : null;
     final thinking = showWork ? c.liveThinking : '';
     final status = showWork ? c.liveStatus : '';
@@ -921,7 +1099,7 @@ class _LiveTail extends StatelessWidget {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 240),
                   child: SingleChildScrollView(
-                    child: SelectableText(
+                    child: Text(
                       setup['output'] as String? ?? '',
                       style: const TextStyle(
                         fontFamily: mono,
@@ -942,7 +1120,7 @@ class _LiveTail extends StatelessWidget {
                   label: agent?.name ?? 'Agent',
                   emoji: agent?.emoji ?? '🤖',
                   imageUrl: agent?.avatarImageUrl,
-                  api: controller.api,
+                  api: _c.api,
                   size: 32,
                   circle: false,
                 ),
@@ -973,7 +1151,7 @@ class _LiveTail extends StatelessWidget {
                           child: _Collapsible(
                             icon: Icons.psychology_outlined,
                             title: 'Thinking · streaming',
-                            child: SelectableText(
+                            child: Text(
                               thinking,
                               style: const TextStyle(
                                 color: Palette.fgMuted,
@@ -1001,11 +1179,10 @@ class _LiveTail extends StatelessWidget {
                                 key: ValueKey(key),
                                 fade: Palette.bg,
                                 expanded: c.liveExpanded.contains(key),
-                                onExpandedChanged: (expanded) => expanded
-                                    ? c.liveExpanded.add(key)
-                                    : c.liveExpanded.remove(key),
+                                onExpandedChanged: (expanded) =>
+                                    _setExpanded(key, expanded),
                                 child: Md(
-                                  '$text ▍',
+                                  '${_rendered(key, text)} ▍',
                                   selectable: false,
                                   onLink: openLink,
                                 ),
@@ -1128,7 +1305,7 @@ class TimelineTile extends StatelessWidget {
             icon: Icons.psychology_outlined,
             title: 'Thinking',
             color: Palette.agent,
-            child: SelectableText(
+            child: Text(
               payload['text'] as String? ?? '',
               style: const TextStyle(
                 color: Palette.fgMuted,
@@ -1179,7 +1356,7 @@ class TimelineTile extends StatelessWidget {
       }
       return _Meta(
         icon: Icons.info_outline_rounded,
-        child: SelectableText(payload['text'] as String? ?? ''),
+        child: Text(payload['text'] as String? ?? ''),
       );
     }
     final kind = e.content['kind'];
@@ -1447,7 +1624,12 @@ class _CommentView extends StatelessWidget {
           _Clamped(
             fade: Palette.bg,
             expanded: controller.expandedComments.contains(e.id),
-            child: Md(e.body, size: isSystem ? 13.5 : 14.5, onLink: openLink),
+            child: Md(
+              e.body,
+              size: isSystem ? 13.5 : 14.5,
+              selectable: false,
+              onLink: openLink,
+            ),
           ),
         if (limitResume != null)
           Padding(
@@ -2276,7 +2458,7 @@ class _ActivityState extends State<_Activity> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: Palette.border),
             ),
-            child: SelectableText(
+            child: Text(
               '${item['input']}\n${item['output'] ?? ''}',
               style: const TextStyle(
                 fontFamily: mono,
@@ -2407,7 +2589,13 @@ class _ActiveRunsBarState extends State<_ActiveRunsBar> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    // Run events update the bar on their own, without rebuilding the page.
+    listenable: widget.controller.runUpdates,
+    builder: (context, _) => _bar(context),
+  );
+
+  Widget _bar(BuildContext context) {
     final runs = widget.controller.runBar;
     _syncClock(runs.any((run) => run['status'] == 'running'));
     if (runs.isEmpty) return const SizedBox.shrink();
@@ -2626,7 +2814,7 @@ class _RunSheetState extends State<_RunSheet> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: widget.controller,
+    listenable: widget.controller.runUpdates,
     builder: (context, _) {
       final c = widget.controller;
       final transcript = c.runTranscripts[_id];

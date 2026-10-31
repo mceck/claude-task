@@ -97,6 +97,12 @@ class TaskController extends ChangeNotifier {
   final Set<String> liveExpanded = {}, expandedComments = {};
   String liveThinking = '', liveStatus = '';
 
+  /// Notify only the widgets that show them, instead of rebuilding the whole
+  /// conversation on every streamed token or Run update.
+  final ChangeNotifier _live = ChangeNotifier(), _runs = ChangeNotifier();
+  Listenable get live => _live;
+  Listenable get runUpdates => _runs;
+
   /// The running Job's worktree preparation output, as on the web: the Job id
   /// it belongs to and the last [setupOutputCap] characters streamed so far.
   /// Not stored in the Timeline, so it is never cached.
@@ -1146,7 +1152,7 @@ class TaskController extends ChangeNotifier {
     } catch (e) {
       _recordError(e);
     }
-    notifyListeners();
+    _runs.notifyListeners();
   }
 
   /// Numbers make merging exact: a tool result replaces its message, a new one
@@ -1202,7 +1208,7 @@ class TaskController extends ChangeNotifier {
         return;
       }
     }
-    notifyListeners();
+    _runs.notifyListeners();
   }
 
   Future<void> deleteWiki() async {
@@ -2164,12 +2170,12 @@ class TaskController extends ChangeNotifier {
         if (!liveText.containsKey(id)) liveExpanded.remove(id);
         liveText[id] = (liveText[id] ?? '') + (delta['text'] as String);
       }
-      notifyListeners();
+      _live.notifyListeners();
       return;
     }
     if (type == 'live.status' && event['taskId'] == task?.id) {
       liveStatus = event['status'] == null ? '' : 'Agent retrying request';
-      notifyListeners();
+      _live.notifyListeners();
       return;
     }
     if (type == 'job.setup_output' && event['taskId'] == task?.id) {
@@ -2184,7 +2190,7 @@ class TaskController extends ChangeNotifier {
             ? output.substring(output.length - setupOutputCap)
             : output,
       };
-      notifyListeners();
+      _live.notifyListeners();
       return;
     }
     if (type.startsWith('run.') && event['taskId'] == task?.id) {
@@ -2342,6 +2348,8 @@ class TaskController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _live.dispose();
+    _runs.dispose();
     voice.dispose();
     _socket?.close();
     _refreshTimer?.cancel();
