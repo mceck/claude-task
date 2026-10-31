@@ -156,7 +156,7 @@ stateDiagram-v2
 
 The reasons shown with `not delivered` are "no agent assigned", "task closed", "agent unassigned" and "removed from queue". A delivered Comment records the Job that carried it. Every Delivery records when it last changed state.
 
-A Comment becomes `handled` when a Turn of its Task's current Session ends after the Comment was delivered, whatever the Turn's outcome: completed, failed or ended by Stop. In the same transaction that stores the Turn, every `delivered` Comment of the Task moves to `handled`, and each one is published as an updated Comment on the Task topic so clients change its indicator live. A Comment written mid-Turn is read by that same Turn, so the Turn that follows its delivery is the one that worked on it. `handled` is final: recovery, Retry and reassignment leave it as it is, and every rule that treats a Comment as already received by the Agent applies to `handled` as to `delivered`.
+A Comment becomes `handled` when a Turn of its Task's current Session ends after the Comment was delivered, whatever the Turn's outcome: completed, failed or ended by Stop. In the same transaction that stores the Turn, every `delivered` Comment of the Task whose delivering Job belongs to that Session moves to `handled`, and each one is published as an updated Comment on the Task topic so clients change its indicator live. A Comment written mid-Turn is read by that same Turn, so the Turn that follows its delivery is the one that worked on it. `handled` is final: recovery, Retry and reassignment leave it as it is, and every rule that treats a Comment as already received by the Agent applies to `handled` as to `delivered`.
 
 ### The Queue
 

@@ -416,8 +416,8 @@ The native app shows the User's following, mute and unread state per Task, share
 
 Alerts read like chat notifications:
 
-- **Android**: the backend sends data only, and the app draws the notification, from its background handler when it is closed or in the background and from its foreground handler otherwise. Each Task has one conversation notification titled with the Alert's title; every Alert adds a line with its sender and text, and the last 5 lines are kept. The sender's avatar is their initials on the colour the app gives that name. The lines of each Task are kept in a small file of the app, so any handler can rebuild the conversation. Task notifications are grouped under a "Claude Task" summary, on the "Task updates" channel with the default sound, and show their content on the lock screen. The small icon is a solid speech bubble with the spark of the logo cut out of it, drawn as a vector on Android's 24 dp grid, in the system's neutral colour.
-- **iOS**: each Alert is its own notification, with the Alert's title and "sender: text" as body, stacked with the other Alerts of its Task by a thread per Task.
+- **Android**: the backend sends data only, and the app draws the notification, from its background handler when it is closed or in the background and from its foreground handler otherwise. Each Task has one conversation notification titled with the Alert's title; every Alert adds a line with its sender and text, and the last 5 lines are kept. The sender's avatar is their initials on the colour the app gives that name. The lines of each Task are kept in a small file of the app, so any handler can rebuild the conversation. Task notifications are grouped under a "Claude Task" summary, on the "Task updates" channel (high importance, so they appear as a banner with the default sound), and show their content on the lock screen. A Task whose notification was dismissed starts a new conversation with its next Alert. The small icon is a solid speech bubble with the spark of the logo cut out of it, drawn as a vector on Android's 24 dp grid, in the system's neutral colour.
+- **iOS**: each Alert is its own notification, with the Alert's title and "sender: text" as body, stacked with the other Alerts of its Task by a thread per Task. A blocked-Schedule Alert, which has no Task, has a thread of its own.
 - **In the foreground**, an Alert appears with its sound unless its Task's conversation is the open, visible screen; the app then shows it itself, so iOS never presents the remote copy as well.
 - **Removal**: opening a Task's conversation removes that Task's notifications from the phone and clears its stored lines, and so does dismissing them. Otherwise notifications stay until the User dismisses them.
 - **Tapping** a notification opens the app at that Task, after sign-in and any forced password change if needed; a Wiki's conversation opens in the Wiki section.
@@ -434,7 +434,7 @@ Both clients show the Delivery of each User Comment as an icon in its header, wi
 | --- | --- | --- |
 | 🕓 clock, muted | `queued` | "Queued · 12:40" |
 | ✓ one tick, grey | `delivered` | "Delivered to Opus · 12:41" |
-| ✓✓ two ticks, indigo | `handled` | "Handled by Opus · 12:43" |
+| ✓✓ two ticks, in the app's primary colour (indigo on the web, teal in the native app) | `handled` | "Handled by Opus · 12:43" |
 | ⚠ warning sign, amber | `not delivered` | "Not delivered: task closed" |
 
 The icon changes live as the Comment updated events arrive. Rules for each state are in [Agent sessions](agent-sessions.md#message-delivery-states).
