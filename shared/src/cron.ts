@@ -100,13 +100,21 @@ const offsetAt = (instant: number, timeZone: string) => wallClock(instant, timeZ
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
-/** The instant of a wall-clock time: the first one when it happens twice, the end of the gap when it does not exist. */
-function wallToInstant(wall: number, timeZone: string): number {
+/** Every instant whose wall clock is `wall`: two during the autumn overlap, one normally, none in a gap. */
+function wallInstants(wall: number, timeZone: string): number[] {
   const before = offsetAt(wall - 36 * 60 * MINUTE, timeZone);
   const after = offsetAt(wall + 36 * 60 * MINUTE, timeZone);
-  const valid = [...new Set([wall - before, wall - after])].filter((c) => wallClock(c, timeZone) === wall);
-  if (valid.length > 0) return Math.min(...valid);
+  return [...new Set([wall - before, wall - after])]
+    .filter((c) => wallClock(c, timeZone) === wall)
+    .sort((a, b) => a - b);
+}
+
+/** The instant of a wall-clock time: the first one when it happens twice, the end of the gap when it does not exist. */
+function wallToInstant(wall: number, timeZone: string): number {
+  const valid = wallInstants(wall, timeZone);
+  if (valid.length > 0) return valid[0]!;
   // The time falls in a gap: find the minute the offset changes.
+  const before = offsetAt(wall - 36 * 60 * MINUTE, timeZone);
   let lo = wall - 36 * 60 * MINUTE;
   let hi = wall + 36 * 60 * MINUTE;
   while (hi - lo > MINUTE) {
@@ -156,7 +164,9 @@ export function nextCronRun(expression: string, timeZone: string, after: Date): 
     for (let attempt = 0; attempt < 8; attempt++) {
       const wall = nextWall(spec, start);
       if (wall === null) return null;
-      const instant = wallToInstant(wall, timeZone);
+      // A wall time can happen twice around the autumn change: the second occurrence may be the next run.
+      const instants = wallInstants(wall, timeZone);
+      const instant = instants.find((c) => c > after.getTime()) ?? wallToInstant(wall, timeZone);
       if (instant > after.getTime()) return new Date(instant);
       start = wall + MINUTE;
     }

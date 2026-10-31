@@ -52,6 +52,13 @@ describe('cron expressions', () => {
     expect(next('30 2 * * *', 'Europe/Rome', '2026-10-25T00:30:00Z')).toBe('2026-10-26T01:30:00.000Z');
   });
 
+  it('keeps a frequent expression running during the second pass of the autumn overlap', () => {
+    // 01:10Z is 02:10 CET, the second 02:10 of the night. The rest of the repeated hour is still due:
+    // 02:15 local is 01:15Z. The old retry budget ran out here and returned null.
+    expect(next('*/5 * * * *', 'Europe/Rome', '2026-10-25T01:10:00Z')).toBe('2026-10-25T01:15:00.000Z');
+    expect(next('*/5 * * * *', 'Europe/Rome', '2026-10-25T01:50:00Z')).toBe('2026-10-25T01:55:00.000Z');
+  });
+
   it('rejects invalid expressions and time zones', () => {
     for (const bad of ['', '* * * *', '* * * * * *', '60 * * * *', '* 24 * * *', '* * 0 * *', '* * * 13 *', '* * * * 8', '*/0 * * * *', '5-1 * * * *', 'a * * * *', '0 0 31 2 *'])
       expect(parseCron(bad), bad).toBeNull();

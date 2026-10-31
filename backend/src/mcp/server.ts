@@ -223,10 +223,10 @@ async function findTaskInProject(db: Executor, scope: JobScope, key: string | un
   return row;
 }
 
-/** The global tools reach Tasks of ordinary Projects, not the ones of Wikis and Schedules. */
+/** The global tools reach Tasks of ordinary, non-archived Projects, not the ones of Wikis and Schedules. */
 async function assertOrdinaryProject(db: Executor, projectId: string, what: string) {
-  const [project] = await db.select({ kind: projects.kind }).from(projects).where(eq(projects.id, projectId));
-  if (project?.kind !== 'project') throw badRequest(`No task or project ${what}`);
+  const [project] = await db.select({ kind: projects.kind, archivedAt: projects.archivedAt }).from(projects).where(eq(projects.id, projectId));
+  if (project?.kind !== 'project' || project.archivedAt !== null) throw badRequest(`No task or project ${what}`);
 }
 
 async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined, before: string | undefined) {
@@ -297,7 +297,7 @@ async function listTasks(ctx: AppContext, scope: JobScope, args: { project?: str
   let projectId = scope.projectId;
   if (args.project && scope.schedule?.global) {
     const [project] = await ctx.db.select().from(projects).where(eq(projects.key, args.project.trim().toUpperCase()));
-    if (!project || project.kind !== 'project') throw badRequest(`No project ${args.project}`);
+    if (!project || project.kind !== 'project' || project.archivedAt) throw badRequest(`No project ${args.project}`);
     projectId = project.id;
   }
   const statusRows = await ctx.db.select().from(statuses).where(eq(statuses.projectId, projectId));
@@ -589,7 +589,7 @@ async function setAnyStatus(ctx: AppContext, scope: JobScope, key: string, name:
 
 async function createAnyTask(ctx: AppContext, scope: JobScope, args: { project: string; title: string; description?: string; priority?: (typeof PRIORITIES)[number]; tags?: string[] }) {
   const [project] = await ctx.db.select().from(projects).where(eq(projects.key, args.project.toUpperCase()));
-  if (!project || project.kind !== 'project') throw badRequest(`No project ${args.project}`);
+  if (!project || project.kind !== 'project' || project.archivedAt) throw badRequest(`No project ${args.project}`);
   const task = await transact(ctx, async (tx, after) =>
     createTask(
       tx,
