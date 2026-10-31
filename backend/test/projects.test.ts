@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { projectTopic, taskTopic } from '@claude-task/shared';
+import { PROJECTS_TOPIC, projectTopic, taskTopic } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
-import { createAgent, createProject, createTask, createUser, getSession, statusByName } from './helpers/fixtures';
+import { assignAndStart, comment, createAgent, createProject, createTask, createUser, getSession, moveToStatus, statusByName } from './helpers/fixtures';
 import { WsTestClient } from './helpers/ws';
 
 describe('projects', () => {
@@ -355,5 +355,63 @@ describe('statuses', () => {
     expect(moved.version).toBe(r1.version + 1);
     const timeline = (await admin.get(`/tasks/${r1.id}/timeline`)).body.items;
     expect(timeline[0].revision.changes).toEqual([{ field: 'statusId', before: review.id, after: done.id }]);
+  });
+});
+
+describe('Project activity events', () => {
+  const app = useTestApp();
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  async function watch() {
+    const admin = await app.admin();
+    const ws = await WsTestClient.connect(app.url, admin.cookie);
+    await ws.subscribe(PROJECTS_TOPIC);
+    return { admin, ws };
+  }
+  const activity = (ws: WsTestClient) => ws.events('project.activity').map((e) => e.projectId);
+
+  it('announces a Project whose Tasks get a Comment, coalesced to one event per second', async () => {
+    const { admin, ws } = await watch();
+    const { project } = await createProject(admin);
+    const task = await createTask(admin, project.id);
+    await ws.next('project.activity', (e) => e.projectId === project.id);
+    await wait(1100);
+    const before = activity(ws).length;
+    for (const body of ['one', 'two', 'three']) await comment(admin, task.id, body);
+    await ws.next('project.activity', (e) => e.projectId === project.id, 2000);
+    await wait(1100);
+    const burst = activity(ws).slice(before);
+    expect(burst.every((id) => id === project.id)).toBe(true);
+    expect(burst.length).toBeGreaterThanOrEqual(1);
+    expect(burst.length).toBeLessThanOrEqual(2);
+    ws.close();
+  });
+
+  it('announces a Task moving into a closed Status and a Session changing state', async () => {
+    const { admin, ws } = await watch();
+    const bundle = await createProject(admin);
+    const { project } = bundle;
+    const task = await createTask(admin, project.id);
+    const { agent } = await createAgent(app, admin);
+    await wait(1100);
+    let seen = activity(ws).length;
+    await assignAndStart(admin, task.id, agent.id);
+    await ws.next('project.activity', (e) => e.projectId === project.id && activity(ws).length > seen, 2500);
+    await wait(1100);
+    seen = activity(ws).length;
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    await wait(1200);
+    expect(activity(ws).slice(seen)).toContain(project.id);
+    ws.close();
+  });
+
+  it('stays quiet for Wikis', async () => {
+    const { admin, ws } = await watch();
+    const { agent } = await createAgent(app, admin);
+    const created = await admin.post('/wikis', { name: 'Team wiki', agentId: agent.id, repository: { connectionId: 'env-github', providerRepoId: '1' } });
+    await comment(admin, created.body.wiki.taskId, 'Hello');
+    await wait(1200);
+    expect(activity(ws)).not.toContain(created.body.wiki.id);
+    ws.close();
   });
 });

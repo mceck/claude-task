@@ -25,6 +25,7 @@ import { resetInterruptedBuilds } from './modules/agents/builds';
 import { agents } from './db/schema';
 import { bootstrapAdmin } from './modules/users/service';
 import { RealtimeHub } from './realtime/hub';
+import { ProjectActivity } from './realtime/project-activity';
 
 export interface Server {
   app: FastifyInstance;
@@ -56,6 +57,7 @@ export async function createServer(
     } as AppContext;
     ctx.uploads = new UploadRequests(ctx.runners, config.agents.backendUrl, config.agents.uploadTimeoutMs);
     ctx.pushDispatcher = new PushDispatcher(ctx);
+    ctx.projectActivity = new ProjectActivity(ctx.hub, db, (err) => ctx.log.warn({ err }, 'Project activity failed'));
     ctx.scheduler = new Scheduler(ctx);
     ctx.gitSync = new GitSync(ctx);
     const app = await buildApp(ctx, { logger: overrides.logger });
@@ -82,6 +84,7 @@ export async function createServer(
           clearInterval(purge);
           ctx.scheduler.stop();
           ctx.gitSync.stop();
+          ctx.projectActivity.stop();
           ctx.pushDispatcher.stop();
           await ctx.pushDispatcher.settle();
           await ctx.push.close?.();

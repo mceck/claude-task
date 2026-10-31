@@ -5,12 +5,14 @@ import type { VoiceCommand, VoiceServerMessage, VoiceRoom } from './voice';
 import type { Agent, AgentBuild, Job, LiveDelta, QueueEntry, RunMessage, RunSummary, TaskSession } from './agents';
 import type { AgentItem, Comment, Tag, Project, Revision, ScheduledMessage, Status, Task, TaskCard } from './domain';
 
-export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | 'schedules' | `agent:${string}` | `user:${string}`;
+export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | 'schedules' | 'projects' | `agent:${string}` | `user:${string}`;
 
 export const projectTopic = (projectId: string): Topic => `project:${projectId}`;
 export const taskTopic = (taskId: string): Topic => `task:${taskId}`;
 export const userTopic = (userId: string): Topic => `user:${userId}`;
 export const AGENTS_TOPIC: Topic = 'agents';
+/** The Projects list: its unread and running indicators may have changed. */
+export const PROJECTS_TOPIC: Topic = 'projects';
 export const agentTopic = (agentId: string): Topic => `agent:${agentId}`;
 
 /** Events on `project:<id>` (the Board). */
@@ -56,7 +58,7 @@ export type AgentEvent =
   | { type: 'build.log'; agentId: string; buildId: string; chunk: string }
   | { type: 'job.updated'; job: Job };
 
-export type RealtimeEvent = { type: 'voice.room'; room: VoiceRoom } | { type: 'wiki.changed'; wikiId: string } | { type: 'schedule.changed'; scheduleId: string } | BoardEvent | TaskEvent | AgentEvent | UserEvent;
+export type RealtimeEvent = { type: 'voice.room'; room: VoiceRoom } | { type: 'wiki.changed'; wikiId: string } | { type: 'schedule.changed'; scheduleId: string } | { type: 'project.activity'; projectId: string } | BoardEvent | TaskEvent | AgentEvent | UserEvent;
 
 export type ClientMessage =
   | VoiceCommand

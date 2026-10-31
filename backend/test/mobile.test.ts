@@ -347,3 +347,119 @@ describe('User mentions', () => {
     expect(push.messages[0]!.kind).toBe('comment.mentioned');
   });
 });
+
+describe('Alert content', () => {
+  const dispatch = async () => {
+    await app.settle();
+    await app.server.ctx.pushDispatcher.dispatch();
+  };
+
+  it('titles a Turn alert with the Task and previews the last Agent Comment of that Turn', async () => {
+    const { admin, task } = await setup();
+    await register(admin);
+    const { agent, runner } = await createAgent(app, admin, { name: 'Opus' });
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text('Looking into it'), stream.thinking('Checking'), stream.text('I pushed the **fix**, tests are green.'), stream.result()]);
+    await dispatch();
+    expect(push.messages).toHaveLength(1);
+    expect(push.messages[0]!.alert).toEqual({
+      title: `${task.key} · A task`, sender: 'Opus', senderKind: 'agent', text: 'I pushed the fix, tests are green.',
+    });
+  });
+
+  it('says the Agent finished its turn when the Turn wrote no Comment, ignoring earlier Turns', async () => {
+    const { admin, task } = await setup();
+    await register(admin);
+    const { agent, runner } = await createAgent(app, admin, { name: 'Opus' });
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text('First answer'), stream.result(), stream.result()]);
+    await dispatch();
+    expect(push.messages.map((m) => m.alert.text)).toEqual(['First answer', 'finished its turn.']);
+  });
+
+  it('previews the error of a failed Turn', async () => {
+    const { admin, task } = await setup();
+    await register(admin);
+    const { agent, runner } = await createAgent(app, admin, { name: 'Opus' });
+    await assignAndStart(admin, task.id, agent.id);
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text('Trying'), stream.result({ isError: true, subtype: 'error_during_execution', result: 'Boom' })]);
+    await dispatch();
+    expect(push.messages).toHaveLength(1);
+    expect(push.messages[0]).toMatchObject({ kind: 'turn.failed', alert: { sender: 'Opus', senderKind: 'agent' } });
+    expect(push.messages[0]!.alert.text).toMatch(/^turn failed: The turn stopped because of an error\./);
+  });
+
+  it('previews the reason of a Job that needs intervention', async () => {
+    const { admin, task } = await setup();
+    await register(admin);
+    const { agent, runner } = await createAgent(app, admin, { name: 'Opus' });
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.sendJob({ type: 'job.failed', jobId: start.jobId, stage: 'setup', message: 'npm install failed' });
+    await runner.drain();
+    await dispatch();
+    expect(push.messages).toHaveLength(1);
+    expect(push.messages[0]).toMatchObject({ kind: 'session.intervention', alert: { title: `${task.key} · A task`, sender: 'Opus' } });
+    expect(push.messages[0]!.alert.text).toMatch(/^needs your attention: .*setup script.*npm install failed/);
+  });
+
+  it('shows who mentioned the User and an excerpt of their Comment', async () => {
+    const { admin, task, member } = await setup();
+    await register(member.client);
+    const me = (await admin.get('/auth/me')).body.user;
+    await comment(admin, task.id, `[@${member.user.displayName}](/users/${member.user.id}) please review \`auth.ts\``);
+    await dispatch();
+    expect(push.messages[0]!.alert).toEqual({
+      title: `${task.key} · A task`, sender: me.displayName, senderKind: 'user', text: `@${member.user.displayName} please review auth.ts`,
+    });
+  });
+
+  it('counts the files of a mentioning Comment without naming them', async () => {
+    const { admin, task, member } = await setup();
+    await register(member.client);
+    const form = new FormData();
+    form.set('body', `[@User](/users/${member.user.id})`);
+    form.append('files', new Blob(['a']), 'secret-plan.txt');
+    form.append('files', new Blob(['b']), 'other.txt');
+    const response = await fetch(`${app.url}/api/v1/tasks/${task.id}/comments`, { method: 'POST', headers: { cookie: admin.cookie!, 'x-claude-task': '1' }, body: form });
+    expect(response.status).toBe(201);
+    await dispatch();
+    expect(push.messages[0]!.alert.text).toBe('@User 📎 2 files');
+  });
+
+  it('uses the current title and drops the excerpt of a Comment deleted before dispatch', async () => {
+    const { admin, task } = await setup();
+    await register(admin);
+    const { agent, runner } = await createAgent(app, admin, { name: 'Opus' });
+    await assignAndStart(admin, task.id, agent.id);
+    app.server.ctx.pushDispatcher.stop();
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text('Secret reply'), stream.result()]);
+    await app.settle();
+    const current = (await admin.get(`/tasks/${task.id}`)).body.task;
+    expect((await admin.patch(`/tasks/${task.id}`, { title: 'Renamed', version: current.version })).status).toBe(200);
+    const items = (await admin.get(`/tasks/${task.id}/timeline?limit=200`)).body.items as { type: string; comment?: { id: string; kind: string } }[];
+    const reply = items.find((i) => i.comment?.kind === 'agent')!.comment!;
+    expect((await admin.delete(`/comments/${reply.id}`)).status).toBe(204);
+    await app.server.ctx.pushDispatcher.dispatch();
+    expect(push.messages[0]!.alert).toMatchObject({ title: `${task.key} · Renamed`, text: 'finished its turn.' });
+  });
+
+  it("titles a Wiki Chat's alert with the Wiki and the Chat", async () => {
+    const { admin } = await setup();
+    await register(admin);
+    const { agent, runner } = await createAgent(app, admin, { name: 'Scribe' });
+    const created = await admin.post('/wikis', { name: 'Team wiki', agentId: agent.id, repository: { connectionId: 'env-github', providerRepoId: '1' } });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    await comment(admin, created.body.wiki.taskId, 'How do we onboard people?');
+    const stream = new Stream();
+    await runner.runJob([stream.init(), stream.text('Start with the handbook'), stream.result()]);
+    await dispatch();
+    expect(push.messages[0]!.alert).toEqual({
+      title: 'Team wiki · How do we onboard people?', sender: 'Scribe', senderKind: 'agent', text: 'Start with the handbook',
+    });
+  });
+});

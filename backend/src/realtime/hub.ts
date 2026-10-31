@@ -3,7 +3,7 @@ import type { WebSocket } from 'ws';
 import { VoiceRooms } from './voice';
 
 const MAX_BACKLOG_BYTES = 16 * 1024 * 1024;
-const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents|wikis|schedules)$/;
+const TOPIC_PATTERN = /^(?:(?:project|task|agent|user):[0-9a-f-]{36}|agents|wikis|schedules|projects)$/;
 
 export function isTopic(value: unknown): value is Topic {
   return typeof value === 'string' && TOPIC_PATTERN.test(value);
@@ -21,6 +21,12 @@ export class RealtimeHub {
   readonly voice = new VoiceRooms((topic, event) => this.publish(topic, event));
   private readonly connections = new Map<WebSocket, Connection>();
   private readonly byTopic = new Map<Topic, Set<Connection>>();
+  private readonly watchers: ((topic: Topic, event: RealtimeEvent) => void)[] = [];
+
+  /** Sees every published event, e.g. to derive summary events from them. */
+  watch(watcher: (topic: Topic, event: RealtimeEvent) => void): void {
+    this.watchers.push(watcher);
+  }
 
   add(socket: WebSocket, userId: string, loginId: string): void {
     this.connections.set(socket, { socket, userId, loginId, topics: new Set() });
@@ -54,6 +60,7 @@ export class RealtimeHub {
 
   publish(topic: Topic, event: RealtimeEvent): void {
     if (event.type === 'task.removed') this.voice.deleteTask(event.taskId);
+    for (const watcher of this.watchers) watcher(topic, event);
     const set = this.byTopic.get(topic);
     if (!set) return;
     const data = JSON.stringify({ type: 'event', topic, event } satisfies ServerMessage);

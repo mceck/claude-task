@@ -21,6 +21,8 @@ export interface ProjectionState {
   costSoFar: number;
   /** Agent Comment still being written (consecutive text blocks). */
   comment: { id: string; body: string } | null;
+  /** The last Agent Comment of the Turn, which its Alert previews. */
+  turnComment?: string | null;
   thinking: { id: string; text: string } | null;
   /** The open Activity item, which new tool calls join. */
   activity: string | null;
@@ -59,6 +61,8 @@ export interface TurnRecord extends TurnSummary {
   startedAt: string;
   finishedAt: string;
   stopReason: string | null;
+  /** The last Agent Comment of the Turn. */
+  commentId: string | null;
 }
 
 export type Mutation =
@@ -300,6 +304,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
           mutations.push({ op: 'comment.update', id: s.comment.id, body: s.comment.body });
         } else {
           s.comment = { id: newId(), body: text };
+          s.turnComment = s.comment.id;
           mutations.push({ op: 'comment.create', id: s.comment.id, body: text });
         }
       } else if (block?.type === 'thinking') {
@@ -493,6 +498,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
         startedAt: s.turnStartedAt ?? ctx.receivedAt,
         finishedAt: ctx.receivedAt,
         stopReason: typeof e.stop_reason === 'string' ? e.stop_reason : null,
+        commentId: s.turnComment ?? null,
       },
     });
     if (isError) {
@@ -504,6 +510,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       mutations.push({ op: 'system_comment', body: e.result.trim() });
     }
     s.hasVisibleOutput = false;
+    s.turnComment = null;
     s.syntheticText = null;
     s.limitResetsAt = null;
     s.turns++;

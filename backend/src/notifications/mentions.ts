@@ -18,8 +18,8 @@ export async function notifyMentions(db: Executor, taskId: string, commentId: st
   ids.delete(authorId.toLowerCase());
   if (!ids.size) return;
   const eventId = `mention:${commentId}`;
-  await db.execute(sql`insert into notification_events(id, task_id, kind)
-    values (${eventId}, ${taskId}::uuid, 'comment.mentioned') on conflict do nothing`);
+  await db.execute(sql`insert into notification_events(id, task_id, kind, comment_id)
+    values (${eventId}, ${taskId}::uuid, 'comment.mentioned', ${commentId}::uuid) on conflict do nothing`);
   await db.execute(sql`insert into push_deliveries(event_id, user_id, device_id, token_hash)
     select ${eventId}, u.id, d.id, d.token_hash
     from users u join push_devices d on d.user_id = u.id join logins l on l.id = d.login_id

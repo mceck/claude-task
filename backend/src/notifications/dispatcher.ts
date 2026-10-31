@@ -1,6 +1,7 @@
-import type { NotificationKind } from '@claude-task/shared';
+import type { NotificationKind, PushAlert } from '@claude-task/shared';
 import { sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
+import { buildAlert } from './alerts';
 import { PushTransportError } from './transport';
 
 type Delivery = {
@@ -32,10 +33,10 @@ export class PushDispatcher {
     this.running ??= this.batch().finally(() => { this.running = null; });
     return this.running;
   }
-  private async send(d: Delivery): Promise<void> {
+  private async send(d: Delivery, alert: PushAlert): Promise<void> {
     try {
       const outcome = await withTimeout(this.ctx.push.send({ token: this.ctx.config.secrets.decrypt(d.token_ciphertext),
-        eventId: d.event_id, taskId: d.task_id, kind: d.kind }), SEND_TIMEOUT_MS);
+        eventId: d.event_id, taskId: d.task_id, kind: d.kind, alert }), SEND_TIMEOUT_MS);
       if (outcome === 'invalid') await this.ctx.db.execute(sql`delete from push_devices where id = ${d.device_id}::uuid and token_hash = ${d.token_hash}`);
     } catch (err) {
       const attempts = d.attempts + 1;
@@ -87,7 +88,14 @@ export class PushDispatcher {
         taken++;
         if (d.valid) claimed.push(d);
       }
-      await Promise.all(claimed.map((d) => this.send(d)));
+      // Built when sent, so the Alert shows the Task and Comment as they are now.
+      const alerts = new Map<string, Promise<PushAlert | null>>();
+      for (const d of claimed) if (!alerts.has(d.event_id)) alerts.set(d.event_id, buildAlert(this.ctx.db, d.event_id));
+      await Promise.all(claimed.map(async (d) => {
+        const alert = await alerts.get(d.event_id)!.catch(() => null);
+        if (alert) await this.send(d, alert);
+        else this.ctx.log.warn({ eventId: d.event_id }, 'Push alert could not be built');
+      }));
       if (taken < SEND_CONCURRENCY) return;
     }
   }

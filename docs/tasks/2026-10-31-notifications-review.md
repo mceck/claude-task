@@ -1,5 +1,5 @@
 ---
-status: to-do
+status: in-progress
 ---
 
 # Notifications review: chat-style Alerts and read feedback

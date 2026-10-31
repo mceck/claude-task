@@ -200,13 +200,15 @@ export interface AgentUsage {
 
 // Delivery of User Comments to the Agent
 
-export const DELIVERY_STATES = ['none', 'queued', 'delivered', 'not_delivered'] as const;
+export const DELIVERY_STATES = ['none', 'queued', 'delivered', 'handled', 'not_delivered'] as const;
 export type DeliveryState = (typeof DELIVERY_STATES)[number];
 
 export interface Delivery {
   state: Exclude<DeliveryState, 'none'>;
   reason: string | null;
   jobId: string | null;
+  /** When the state last changed (ISO). */
+  at: string | null;
 }
 
 // Agent Timeline items (projected from the stream)

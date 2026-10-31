@@ -243,6 +243,8 @@ export const comments = pgTable(
     deliveryState: deliveryStateEnum('delivery_state').notNull().default('none'),
     deliveryReason: text('delivery_reason'),
     deliveredInJobId: uuid('delivered_in_job_id'),
+    /** Set by a trigger whenever the Delivery state changes. */
+    deliveryChangedAt: timestamp('delivery_changed_at', { withTimezone: true }),
     queueEntryId: uuid('queue_entry_id'),
     /** For Notify agent Comments: the Task version their change list goes up to. */
     noticeTaskVersion: integer('notice_task_version'),
@@ -747,6 +749,8 @@ export const notificationEvents = pgTable('notification_events', {
   taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
   scheduleId: uuid('schedule_id').references((): AnyPgColumn => schedules.id, { onDelete: 'cascade' }),
   kind: text('kind').notNull(),
+  /** The Comment the Alert previews; a plain reference, so a removed Comment only drops the excerpt. */
+  commentId: uuid('comment_id'),
   createdAt: createdAt(),
 });
 

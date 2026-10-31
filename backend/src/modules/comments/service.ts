@@ -88,7 +88,7 @@ function serializeComment(
     editedAt: c.editedAt?.toISOString() ?? null,
     deletedAt: c.deletedAt?.toISOString() ?? null,
     createdAt: c.createdAt.toISOString(),
-    delivery: c.deliveryState === 'none' ? null : { state: c.deliveryState, reason: c.deliveryReason, jobId: c.deliveredInJobId },
+    delivery: c.deliveryState === 'none' ? null : { state: c.deliveryState, reason: c.deliveryReason, jobId: c.deliveredInJobId, at: c.deliveryChangedAt?.toISOString() ?? null },
     question: deleted ? null : structured.question,
     survey: deleted ? null : structured.survey,
     answersCommentId: c.answersCommentId,

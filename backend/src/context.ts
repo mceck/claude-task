@@ -10,6 +10,7 @@ import type { BlobStore } from './blobstore';
 import type { Config } from './config';
 import type { Db, Tx } from './db/client';
 import type { RealtimeHub } from './realtime/hub';
+import type { ProjectActivity } from './realtime/project-activity';
 import type { RunnerHub } from './runner/hub';
 import type { RunRegistry } from './sessions/runs';
 import type { UploadRequests } from './runner/uploads';
@@ -19,6 +20,7 @@ export interface AppContext {
   config: Config;
   push: PushTransport;
   pushDispatcher: PushDispatcher;
+  projectActivity: ProjectActivity;
   db: Db;
   hub: RealtimeHub;
   loginRevocations: LoginRevocations;
