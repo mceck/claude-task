@@ -50,6 +50,12 @@ function StateDot({ state, className }: { state: string; className?: string }) {
   );
 }
 
+/** Hollow green dot for an Agent that is free and ready to start; nothing for any other state. */
+export function AgentFreeDot({ agent }: { agent: { enabled: boolean; state: AgentState } }) {
+  if (!agent.enabled || agent.state !== 'idle') return null;
+  return <span title="Free" aria-label="Free" className="inline-block size-2.5 shrink-0 rounded-full border-[1.5px] border-emerald-400" />;
+}
+
 const AGENT_STATE_LABEL: Record<AgentState, string> = {
   idle: 'Idle',
   working: 'Working',

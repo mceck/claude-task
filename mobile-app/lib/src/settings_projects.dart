@@ -74,7 +74,11 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
       options: [
         const PickerOption('', 'No Agent'),
         for (final agent in widget.controller.agents.where((a) => a.enabled))
-          PickerOption(agent.id, agent.name),
+          PickerOption(
+            agent.id,
+            agent.name,
+            trailing: agentFreeDot(agent.free),
+          ),
       ],
     );
     if (selected != null && mounted) {

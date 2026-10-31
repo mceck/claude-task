@@ -7,7 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'controller.dart';
 import 'models.dart';
 import 'project_env.dart';
-import 'task_forms.dart' show agentAvatar, openLink;
+import 'task_forms.dart' show agentAvatar, agentFreeDot, openLink;
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
 import 'ui/image_upload.dart';
