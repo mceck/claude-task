@@ -53,6 +53,11 @@ These are the terms you will meet while using Claude Task.
 | Base Branch | The branch Task Branches start from and pull requests target. |
 | Task Branch | The branch dedicated to one Task's changes. |
 | Pull Request | A proposal to merge the Task Branch into the Base Branch; called a merge request on GitLab. |
+| Schedule | An Agent's recurring work, set by an Admin with a cron expression, a time zone and a prompt. |
+| Scheduled Run | One execution of a Schedule: a Task that closes as Succeeded or Failed when the Agent's first Job ends. |
+| Skipped run | A due time of a Schedule that started no run, shown in its history with the reason. |
+| Global Schedule | A Schedule without a Repository, whose Agent works on the boards. |
+| Read-only Schedule | A Schedule whose Agent cannot push to the Repository. |
 | Wiki | Shared repository-backed knowledge with Chats open to everyone. |
 | Chat | One of a Wiki's separate Conversations with its Agent. A Wiki can have many, and each can be continued later. |
 | New Chat | Start a clean Chat in a Wiki without losing the others. |
