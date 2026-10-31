@@ -14,7 +14,7 @@ class AvatarApi extends FakeApi {
   final downloads = <String>[];
   bool failDownload = false, failUpload = false;
   Uint8List image = base64Decode(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5YkAAAAASUVORK5CYII=',
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
   );
   List<DraftFile> uploaded = [];
 
@@ -48,10 +48,12 @@ class AvatarApi extends FakeApi {
 }
 
 void main() {
+  setUp(useMemoryImageCache);
   testWidgets(
-    'shares repeated avatar downloads within a Login and isolates API clients',
+    'shares repeated avatar downloads within an Installation and isolates Installations',
     (tester) async {
       final first = AvatarApi(), second = AvatarApi();
+      second.installation = Uri.parse('https://other.example.com');
       const url = '/api/v1/users/user-1/avatar?v=shared';
       await tester.pumpWidget(
         MaterialApp(
@@ -64,7 +66,7 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await settleImages(tester);
       expect(find.byType(Image), findsNWidgets(3));
       expect(first.downloads, [url]);
       expect(second.downloads, [url]);
@@ -87,7 +89,7 @@ void main() {
             ),
           ),
         );
-        await tester.pumpAndSettle();
+        await settleImages(tester);
       }
 
       await show(null);
@@ -161,7 +163,7 @@ void main() {
           const DraftFile('/tmp/photo.png', 'photo.png'),
         );
         await tester.pumpWidget(TaskApp(controller: h.controller));
-        await tester.pumpAndSettle();
+        await settleImages(tester);
         final avatar = find.byKey(const ValueKey('comment-avatar:first'));
         expect(avatar, findsNothing);
         expect(
@@ -196,10 +198,10 @@ void main() {
         ),
       );
       await tester.tap(find.text('Open profile'));
-      await tester.pumpAndSettle();
+      await settleImages(tester);
       expect(find.text('Change photo'), findsOneWidget);
       await tester.tap(find.text('Remove photo'));
-      await tester.pumpAndSettle();
+      await settleImages(tester);
       expect(h.controller.user!.avatarImageUrl, isNull);
       expect(find.text('Remove photo'), findsNothing);
       expect(find.text('A'), findsOneWidget);

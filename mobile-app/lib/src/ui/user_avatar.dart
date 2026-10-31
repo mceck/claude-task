@@ -1,23 +1,9 @@
-import 'dart:typed_data';
-
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../api.dart';
+import 'image_cache.dart';
 import 'widgets.dart';
-
-// Share downloads across Comments and profile controls, scoped to this Login's API.
-final _images = Expando<Map<String, Future<Uint8List>>>();
-
-Future<Uint8List> _download(TaskApi api, String url) {
-  final cache = _images[api] ??= {};
-  return cache[url] ??= () {
-    if (cache.length >= 32) cache.remove(cache.keys.first);
-    return api.download(url).catchError((Object error) {
-      cache.remove(url);
-      throw error;
-    });
-  }();
-}
 
 /// Profile pictures use the authenticated API and its Installation origin check.
 class UserAvatar extends StatefulWidget {
@@ -44,28 +30,6 @@ class UserAvatar extends StatefulWidget {
 }
 
 class _UserAvatarState extends State<UserAvatar> {
-  Future<Uint8List>? _image;
-
-  void _load() {
-    final url = widget.imageUrl;
-    final api = widget.api;
-    _image = url == null || api == null ? null : _download(api, url);
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(UserAvatar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.imageUrl != widget.imageUrl || oldWidget.api != widget.api) {
-      _load();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final fallback = Avatar(
@@ -76,32 +40,33 @@ class _UserAvatarState extends State<UserAvatar> {
       circle: widget.circle,
       selected: widget.selected,
     );
+    final url = widget.imageUrl, api = widget.api;
     return Semantics(
       image: true,
       label: '${widget.label} avatar',
-      child: _image == null
-          ? fallback
-          : FutureBuilder<Uint8List>(
-              key: ValueKey((widget.api, widget.imageUrl)),
-              future: _image,
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return fallback;
-                final image = Image.memory(
-                  snapshot.data!,
-                  width: widget.size,
-                  height: widget.size,
-                  fit: BoxFit.cover,
-                  excludeFromSemantics: true,
-                  errorBuilder: (context, error, stackTrace) => fallback,
-                );
-                return widget.circle
-                    ? ClipOval(child: image)
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(widget.size * .3),
-                        child: image,
-                      );
-              },
-            ),
+      child: url == null || api == null ? fallback : _image(api, url, fallback),
     );
+  }
+
+  Widget _image(TaskApi api, String url, Widget fallback) {
+    final image = CachedNetworkImage(
+      key: ValueKey((api, url)),
+      imageUrl: url,
+      cacheKey: imageCacheKey(api, url),
+      cacheManager: imageCacheManager(api),
+      width: widget.size,
+      height: widget.size,
+      fit: BoxFit.cover,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      placeholder: (context, url) => fallback,
+      errorWidget: (context, url, error) => fallback,
+    );
+    return widget.circle
+        ? ClipOval(child: image)
+        : ClipRRect(
+            borderRadius: BorderRadius.circular(widget.size * .3),
+            child: image,
+          );
   }
 }

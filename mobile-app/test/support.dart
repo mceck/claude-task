@@ -3,11 +3,19 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter_test/flutter_test.dart'
+    show TestWidgetsFlutterBinding, WidgetTester;
+import 'package:flutter/painting.dart' show PaintingBinding;
+
 import 'package:claude_task_mobile/src/api.dart';
 import 'package:claude_task_mobile/src/controller.dart';
 import 'package:claude_task_mobile/src/models.dart';
 import 'package:claude_task_mobile/src/push.dart';
 import 'package:claude_task_mobile/src/storage.dart';
+import 'package:claude_task_mobile/src/ui/image_cache.dart';
+import 'package:file/file.dart' as pkg_file;
+import 'package:file/memory.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
 const userData = <String, dynamic>{
   'id': 'user-1',
@@ -711,3 +719,47 @@ class Harness {
 }
 
 Json clone(Json json) => jsonDecode(jsonEncode(json)) as Json;
+
+/// Stands in for the disk-backed cache: downloads once per key through the
+/// API client and keeps the bytes in memory, with no timers or real IO.
+class MemoryImageCache implements BaseCacheManager {
+  final TaskApi api;
+  final _files = <String, Future<pkg_file.File>>{};
+  final _fs = MemoryFileSystem();
+  MemoryImageCache(this.api);
+
+  @override
+  Stream<FileResponse> getFileStream(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+    bool withProgress = false,
+  }) async* {
+    final file = await (_files[key ?? url] ??= () async {
+      final bytes = await api.download(url);
+      return _fs.file('/${_files.length}')..writeAsBytesSync(bytes);
+    }());
+    yield FileInfo(file, FileSource.Online, DateTime(2100), url);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A fresh in-memory cache per API client, so tests never share downloads.
+void useMemoryImageCache() {
+  createImageCacheManager = MemoryImageCache.new;
+  TestWidgetsFlutterBinding.ensureInitialized();
+  PaintingBinding.instance.imageCache.clear();
+}
+
+/// Lets the image cache read and decode files, which needs real async time.
+Future<void> settleImages(WidgetTester tester) async {
+  for (var i = 0; i < 3; i++) {
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+  }
+  await tester.pumpAndSettle();
+}
