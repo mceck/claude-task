@@ -20,7 +20,7 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities';
 import { useQueryClient } from '@tanstack/react-query';
 import { generateKeyBetween } from 'fractional-indexing';
-import { CircleCheck, Flag, MessageSquare, Plus, Search, Settings, Tag as TagIcon, UserRound, X } from 'lucide-react';
+import { CircleCheck, Flag, MessageSquare, Plus, Search, Settings, Tag as TagIcon, UserRound, Wrench, X } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
@@ -431,6 +431,7 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
   const commentsLabel = unreadComments > 0
     ? `${unreadComments} unread ${unreadComments === 1 ? 'comment' : 'comments'} of ${card.commentCount}`
     : `${card.commentCount} comments`;
+  const toolCallsLabel = `${card.toolCallCount} tool ${card.toolCallCount === 1 ? 'call' : 'calls'}`;
 
   const close = async () => {
     if (!closedStatus) return;
@@ -499,19 +500,28 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
       </div>
       {card.pullRequest && <div className="mb-2"><PullRequestBadge pr={card.pullRequest} /></div>}
       <p className={cn('text-[13px] leading-snug', unread ? 'font-semibold text-foreground' : 'font-medium text-foreground/90 group-hover:text-foreground')}>{card.title}</p>
-      {(cardTags.length > 0 || card.commentCount > 0) && (
+      {(cardTags.length > 0 || card.commentCount > 0 || card.toolCallCount > 0) && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1">
           {cardTags.map((l) => (
             <TagChip key={l.id} name={l.name} color={l.color} />
           ))}
-          {card.commentCount > 0 && (
-            <span
-              data-testid={unreadComments > 0 ? 'task-unread' : undefined}
-              className={cn('ml-auto flex items-center gap-1 text-[11px]', unreadComments > 0 ? 'font-semibold text-amber-500' : 'text-muted-foreground')}
-              title={commentsLabel}
-              aria-label={commentsLabel}
-            >
-              <MessageSquare className={cn('size-3', unreadComments > 0 && 'fill-amber-500/30 drop-shadow-[0_0_4px_var(--color-amber-500)]')} /> {unreadComments > 0 ? unreadComments : card.commentCount}
+          {(card.toolCallCount > 0 || card.commentCount > 0) && (
+            <span className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
+              {card.toolCallCount > 0 && (
+                <span data-testid="task-tool-calls" className="flex items-center gap-1" title={toolCallsLabel} aria-label={toolCallsLabel}>
+                  <Wrench className="size-3" /> {card.toolCallCount}
+                </span>
+              )}
+              {card.commentCount > 0 && (
+                <span
+                  data-testid={unreadComments > 0 ? 'task-unread' : undefined}
+                  className={cn('flex items-center gap-1', unreadComments > 0 ? 'font-semibold text-amber-500' : 'text-muted-foreground')}
+                  title={commentsLabel}
+                  aria-label={commentsLabel}
+                >
+                  <MessageSquare className={cn('size-3', unreadComments > 0 && 'fill-amber-500/30 drop-shadow-[0_0_4px_var(--color-amber-500)]')} /> {unreadComments > 0 ? unreadComments : card.commentCount}
+                </span>
+              )}
             </span>
           )}
         </div>

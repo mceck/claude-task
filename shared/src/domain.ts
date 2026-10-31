@@ -98,6 +98,8 @@ export interface TaskCard {
   tagIds: string[];
   assigneeIds: string[];
   commentCount: number;
+  /** Tool calls made across the Task's Turns, subagent calls included. */
+  toolCallCount: number;
   /** Whether a usage limit with a known reset time resumes the Task without asking. */
   autoResume: boolean;
   /** Incremented when Delete Chat clears the conversation of a Wiki's Chat. */

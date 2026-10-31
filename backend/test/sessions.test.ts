@@ -255,6 +255,8 @@ describe('the Agent on the Timeline', () => {
     });
     const summary = items.find((i) => i.type === 'agent' && i.item.payload.kind === 'turn_summary') as Extract<TimelineItem, { type: 'agent' }>;
     expect(summary.item.payload).toMatchObject({ summary: { durationMs: 65_000, toolCalls: 2, costUsd: 0.42, subtype: 'success', isError: false } });
+    // The Board card sums the Task's Turns: the two calls of this one are on it.
+    expect((await admin.get(`/tasks/${task.id}`)).body.task.toolCallCount).toBe(2);
 
     // Everything also arrived live.
     expect(ws.events('agent_item.created').map((e) => e.item.payload.kind)).toEqual(['thinking', 'activity', 'turn_summary']);
