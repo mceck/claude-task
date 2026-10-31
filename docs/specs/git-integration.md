@@ -237,12 +237,12 @@ sequenceDiagram
 
 #### Authentication
 
-The proxy uses HTTP Basic: any username, the Job token as password. The request is admitted when the token belongs to a Job that is `running` or `finishing`, whose Task belongs to the Project in the URL, and that Project has a Repository. A Job whose output is being discarded (a deleted Chat waiting for its cancellation) is refused too.
+The proxy uses HTTP Basic: any username, the Job token as password. The request is admitted when the token belongs to an active Job (`dispatched`, `running` or `finishing`), whose Task belongs to the Project in the URL, and that Project has a Repository. `dispatched` counts because the Runner sends `job.accepted` and fetches the Worktree without waiting for the backend to process it, so the first fetch regularly arrives while the Job still reads as dispatched. Admitting it gives away nothing: a Job's token is only ever sent to that Job's Runner, in its `job.start`. A Job whose output is being discarded (a deleted Chat waiting for its cancellation) is refused too.
 
 - Missing or malformed credentials, or an unknown token, get `401` with a `Basic realm="claude-task"` challenge, so git asks the credential helper.
 - A known token outside those conditions gets `403` with "no active task for this repository", which git prints.
 
-The check runs once when a request starts: a fetch or push in flight completes even if the Job ends meanwhile. The Job token is invalid for the proxy as soon as its Job leaves `running` and `finishing`. Agents can fetch every ref of their Repository; the Push Policy governs pushes.
+The check runs once when a request starts: a fetch or push in flight completes even if the Job ends meanwhile. The Job token is invalid for the proxy as soon as its Job is no longer active (`dispatched`, `running` or `finishing`). Agents can fetch every ref of their Repository; the Push Policy governs pushes.
 
 #### Push Policy
 
@@ -413,7 +413,7 @@ The shared types package defines the payloads. Secrets are accepted on create an
 
 ## Non-functional requirements
 
-- **Credential isolation**: provider credentials (GitHub private keys and installation tokens, GitLab tokens) live only in the backend. The only git secret in an Agent Container is the Job token, valid while its Job is `running` or `finishing`, for its own Project only.
+- **Credential isolation**: provider credentials (GitHub private keys and installation tokens, GitLab tokens) live only in the backend. The only git secret in an Agent Container is the Job token, valid while its Job is active (`dispatched`, `running` or `finishing`), for its own Project only.
 - **Secrets at rest**: connection secrets are encrypted with `SECRETS_MASTER_KEY`, write-only through the API (GitLab tokens show their last 4 characters), and absent from logs, API responses, raw Session events, error messages and the Agent Containers' environment.
 - **Transport**: the Job token travels over `AGENT_BACKEND_URL`, the backend's internal address, the same way as the Task Tools token. Provider traffic is HTTPS, except GitLab instances explicitly allowed over HTTP for development.
 - **Streaming**: the proxy holds at most the push command section (64 KiB decoded, 1 MiB raw) in memory; packs of any size stream through. Large first clones put their bytes on the backend host; later fetches are incremental.
