@@ -408,7 +408,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
         <Panel id={`${task.key}-details`} main={layout.focus === 'details'} open={layout.sidebarOpen} className={cn(layout.focus === 'details' && 'order-first')}>
           <section aria-label="Task details" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className={cn('@container space-y-6', layout.focus === 'details' ? 'mx-auto w-full max-w-3xl px-6 py-6' : 'p-5')}>
-              <div className="grid grid-cols-[6.5rem_1fr] gap-x-4 gap-y-2.5 rounded-xl border bg-muted/20 p-4 text-sm @2xl:grid-cols-[6.5rem_1fr_6.5rem_1fr]">
+              <div className="grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-2.5 rounded-xl border bg-muted/20 p-4 text-sm @2xl:grid-cols-[4.5rem_1fr_4.5rem_1fr]">
                 <Prop label="Status" className="@2xl:col-start-1 @2xl:row-start-1">
                   <Select value={task.statusId} onValueChange={moveTo}>
                     <SelectTrigger size="sm" aria-label="Status" className="w-fit min-w-40">
@@ -472,13 +472,13 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                 </Prop>
 
                 <Prop label="Agent" className="@2xl:col-start-3 @2xl:row-start-2">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <Select value={shown.agentId ?? 'none'} onValueChange={(id) => void changeAgent(id === 'none' ? null : id)}>
-                      <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit min-w-40"><SelectValue /></SelectTrigger>
+                      <SelectTrigger size="sm" aria-label="Assign agent" className="w-fit max-w-full min-w-40 *:data-[slot=select-value]:min-w-0"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">No agent</SelectItem>
                         {(agents.data ?? []).filter((a) => a.enabled || a.id === shown.agentId).map((a) => (
-                          <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> {a.name}{!a.enabled && ' (disabled)'} <AgentStateDot agent={a} /></SelectItem>
+                          <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> <span className="truncate">{a.name}</span>{!a.enabled && ' (disabled)'} <AgentStateDot agent={a} /></SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
