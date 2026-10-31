@@ -855,6 +855,26 @@ describe('Session lifecycle', () => {
     expect(sessions).toMatchObject({ agent: { id: other.id }, state: 'running' });
   });
 
+  it('switching Agent before the first Job started moves the queued Comments to the new Agent', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const { agent: other, runner: otherRunner } = await createAgent(app, admin, { name: 'Bea Bot' });
+    const busy = await createTask(admin, project.id);
+    await assignAndStart(admin, busy.id, agent.id);
+    await runner.next('job.start');
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id, 'First request.');
+    await comment(admin, task.id, 'Second request.');
+
+    await assignAgent(admin, task.id, other.id);
+    const start = await otherRunner.next('job.start');
+    expect(start.mode).toBe('new');
+    const text = texts(start.initialMessage);
+    expect(text).toContain('First request.');
+    expect(text).toContain('Second request.');
+    const delivered = comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user');
+    expect(delivered.map((c) => c.delivery?.state)).toEqual(['delivered', 'delivered']);
+  });
+
   it('reassigning back to the original Agent resumes its paused Session with what was said meanwhile', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const { agent: other, runner: otherRunner } = await createAgent(app, admin, { name: 'Bea Bot' });

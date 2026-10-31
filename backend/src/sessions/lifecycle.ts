@@ -97,9 +97,24 @@ export async function onStatusClosedChanged(tx: Executor, after: AfterCommit, st
 
 async function reassign(tx: Executor, after: AfterCommit, task: TaskRow, previous: string | null, closed: boolean): Promise<void> {
   await lockAgents(tx, [previous, task.agentId].filter((x): x is string => !!x));
+  // Comments waiting for a previous Agent that never started: nothing to hand over, so they follow the Task.
+  let moved: string[] = [];
   if (previous) {
     const old = await lockSession(tx, task.id, previous);
-    if (old && old.state !== 'closed' && old.state !== 'paused') await pauseSession(tx, after, old, 'agent unassigned');
+    if (old && old.state !== 'closed' && old.state !== 'paused') {
+      if (!old.started && task.agentId && !(await activeJob(tx, old.id))) {
+        const entry = await getEntry(tx, previous, task.id);
+        if (entry) {
+          const queued = await tx
+            .select({ id: comments.id })
+            .from(comments)
+            .where(and(eq(comments.queueEntryId, entry.id), eq(comments.deliveryState, 'queued'), isNull(comments.deletedAt)))
+            .orderBy(asc(comments.createdAt));
+          moved = queued.map((c) => c.id);
+        }
+      }
+      await pauseSession(tx, after, old, 'agent unassigned');
+    }
   }
   if (!task.agentId) {
     publishSession(after, task.id, [previous]);
@@ -137,6 +152,10 @@ async function reassign(tx: Executor, after: AfterCommit, task: TaskRow, previou
       )
       .orderBy(asc(comments.createdAt));
     await attachComments(tx, after, entry.id, since.map((c) => c.id));
+  }
+  if (moved.length > 0 && !session.started && !closed) {
+    const entry = await enqueue(tx, after, { agentId: task.agentId, taskId: task.id, sessionId: session.id, kind: 'start' });
+    await attachComments(tx, after, entry.id, moved);
   }
   await tx.update(tasks).set({ currentSessionId: session.id }).where(eq(tasks.id, task.id));
   publishSession(after, task.id, [previous, task.agentId]);
