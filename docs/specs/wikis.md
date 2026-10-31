@@ -66,7 +66,7 @@ Opening a Wiki shows its most recently active Chat. When the Wiki has no Chat ye
 
 ### The shared conversation
 
-A Chat is a conversation open to every User: Comments, Internal Notes, Attachments, delivery badges, streaming Agent output, Thinking, Activity and Turn Summaries all work as on a Task (see [Conversation](conversation.md) and [Agent sessions](agent-sessions.md)). Read positions, Drafts and the Internal Note flag belong to each Chat.
+A Chat is a conversation open to every User: Comments, Internal Notes, Attachments, Delivery ticks, streaming Agent output, Thinking, Activity and Turn Summaries all work as on a Task (see [Conversation](conversation.md) and [Agent sessions](agent-sessions.md)). Read positions, Drafts and the Internal Note flag belong to each Chat.
 
 - A Wiki's Session stays `idle` between conversations. It keeps the Agent's container running for 30 minutes after the last Job (`AGENT_WIKI_IDLE_MINUTES`); after that the container stops until the next Comment (see [Agents](agents.md)).
 - Assigning an Agent to a Wiki starts nothing. The first User Comment of a Chat starts its Session; later Comments are injected into the running Turn or queued, as on any Task.

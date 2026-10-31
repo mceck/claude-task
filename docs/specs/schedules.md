@@ -96,7 +96,7 @@ Nobody answers an Agent during a Scheduled Run. The Task Tools for Questions and
 
 ### Notifications
 
-A failed run produces a `schedule.run_failed` Notification Event for the run's Task, and the third skipped run in a row produces `schedule.blocked`, which reports no Task. Both are delivered as phone alerts, with the fixed texts "A scheduled run failed." and "A schedule keeps being skipped.", to the creator of the Schedule only. The consecutive skip counter resets when a run starts. A succeeded run and a single skipped run produce no alert. These alerts are not suppressed by the closed Status of the run's Task, since a failed run is always closed. When the creator is deleted or deactivated, nobody is notified. Delivery eligibility (active User, registered phone, valid Login) is the one of [Conversation](conversation.md).
+A failed run produces a `schedule.run_failed` Notification Event for the run's Task, and the third skipped run in a row produces `schedule.blocked`, which reports no Task. Both are delivered as Alerts to the creator of the Schedule only. The run-failed Alert is titled with the run's Task and reads `Schedule "<name>": run failed`; the blocked Alert is titled with the Schedule's name and reads `Schedule "<name>": keeps being skipped` (see [Conversation](conversation.md#alert-content)). The consecutive skip counter resets when a run starts. A succeeded run and a single skipped run produce no alert. These alerts are not suppressed by the closed Status of the run's Task, since a failed run is always closed. When the creator is deleted or deactivated, nobody is notified. Delivery eligibility (active User, registered phone, valid Login) is the one of [Conversation](conversation.md).
 
 ### Where Schedules appear
 
