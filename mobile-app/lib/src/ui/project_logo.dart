@@ -1,12 +1,12 @@
-import 'dart:typed_data';
-
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../api.dart';
 import '../models.dart';
+import 'image_cache.dart';
 import 'widgets.dart';
 
-/// Downloads through the API client so images use the current Login and origin.
+/// Loads through the cached API client so images use the current Login and origin.
 class ProjectLogo extends StatefulWidget {
   final Project project;
   final TaskApi? api;
@@ -26,28 +26,6 @@ class ProjectLogo extends StatefulWidget {
 }
 
 class _ProjectLogoState extends State<ProjectLogo> {
-  Future<Uint8List>? _image;
-
-  void _load() {
-    final url = widget.project.logoUrl;
-    _image = url == null ? null : widget.api?.download(url);
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(ProjectLogo oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.project.logoUrl != widget.project.logoUrl ||
-        oldWidget.api != widget.api) {
-      _load();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final fallback = Avatar(
@@ -58,24 +36,27 @@ class _ProjectLogoState extends State<ProjectLogo> {
       initials: false,
       selected: widget.selected,
     );
-    if (_image == null) return fallback;
-    return FutureBuilder<Uint8List>(
-      key: ValueKey((widget.api, widget.project.logoUrl)),
-      future: _image,
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return fallback;
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(widget.size * .3),
-          child: Image.memory(
-            snapshot.data!,
-            width: widget.size,
-            height: widget.size,
-            fit: BoxFit.contain,
-            semanticLabel: '${widget.project.name} logo',
-            errorBuilder: (context, error, stackTrace) => fallback,
-          ),
-        );
-      },
+    final url = widget.project.logoUrl, api = widget.api;
+    if (url == null || api == null) return fallback;
+    return Semantics(
+      image: true,
+      label: '${widget.project.name} logo',
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(widget.size * .3),
+        child: CachedNetworkImage(
+          key: ValueKey((api, url)),
+          imageUrl: url,
+          cacheKey: imageCacheKey(api, url),
+          cacheManager: imageCacheManager(api),
+          width: widget.size,
+          height: widget.size,
+          fit: BoxFit.contain,
+          fadeInDuration: Duration.zero,
+          fadeOutDuration: Duration.zero,
+          placeholder: (context, url) => fallback,
+          errorWidget: (context, url, error) => fallback,
+        ),
+      ),
     );
   }
 }

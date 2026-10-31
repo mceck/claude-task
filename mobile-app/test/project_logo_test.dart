@@ -12,7 +12,7 @@ class LogoApi extends FakeApi {
   final downloads = <String>[];
   bool failDownload = false;
   Uint8List image = base64Decode(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5YkAAAAASUVORK5CYII=',
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
   );
 
   @override
@@ -24,6 +24,7 @@ class LogoApi extends FakeApi {
 }
 
 void main() {
+  setUp(useMemoryImageCache);
   testWidgets('uses the project key when no logo is set', (tester) async {
     final api = LogoApi();
     await tester.pumpWidget(
@@ -49,7 +50,7 @@ void main() {
             ),
           ),
         );
-        await tester.pumpAndSettle();
+        await settleImages(tester);
       }
 
       await show('/api/v1/projects/project-1/logo?v=one');
@@ -82,7 +83,7 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await settleImages(tester);
       expect(find.text('API'), findsOneWidget);
       expect(tester.takeException(), isNull);
 
@@ -99,7 +100,7 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await settleImages(tester);
       expect(find.text('API'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
