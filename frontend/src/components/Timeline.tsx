@@ -10,7 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import type { TimelineFilter } from '../lib/timeline-filter';
+import type { HiddenTimelineItems } from '../lib/timeline-filter';
+import { useHiddenTimelineItems } from '../lib/timeline-filter';
 import { del, errorMessage, patch } from '../api/client';
 import { withProvider } from './Git';
 import { useAgents, useMe, useTimeline } from '../api/queries';
@@ -39,7 +40,8 @@ interface Lookups {
 }
 
 /** Comments and field changes of a Task, oldest first, with older pages loaded on demand. */
-export function Timeline({ taskId, filter, agentId = null, ...rest }: { taskId: string; filter: TimelineFilter; agentId?: string | null } & Lookups) {
+export function Timeline({ taskId, agentId = null, ...rest }: { taskId: string; agentId?: string | null } & Lookups) {
+  const hidden = useHiddenTimelineItems();
   const timeline = useTimeline(taskId);
   const agents = useAgents();
   const lookups = { ...rest, agents: agents.data ?? [] };
@@ -52,7 +54,7 @@ export function Timeline({ taskId, filter, agentId = null, ...rest }: { taskId: 
     .flatMap((p) => p.items)
     .filter((i) => !seen.has(i.id) && !!seen.add(i.id))
     .reverse();
-  const rows = fold(items, filter, lookups);
+  const rows = fold(items, hidden, lookups);
   // A Delivery names the Agent of the Job that carried it, known from that Job's items, else the Task's Agent.
   const jobAgents = new Map(items.flatMap((i) => (i.type === 'agent' && i.item.jobId ? [[i.item.jobId, i.item.agentId] as const] : [])));
   const agentName = (delivery: Comment['delivery']) => {
@@ -87,18 +89,18 @@ export function Timeline({ taskId, filter, agentId = null, ...rest }: { taskId: 
           <RevisionItem key={item.id} revision={item.revision} count={count} {...lookups} />
         ),
       )}
-      <LiveTurnView taskId={taskId} filter={filter} />
+      <LiveTurnView taskId={taskId} />
     </ol>
   );
 }
 
-/** The Timeline as shown: Revisions hidden, Agent Items hidden too, or identical consecutive Revisions by the same actor folded into the latest. */
-function fold(items: TimelineItem[], filter: TimelineFilter, lookups: Lookups): Row[] {
+/** The Timeline as shown: hidden Revisions and Agent Items left out, and identical consecutive Revisions by the same actor folded into the latest. */
+function fold(items: TimelineItem[], hidden: HiddenTimelineItems, lookups: Lookups): Row[] {
   const rows: Row[] = [];
   let lastText: string | null = null;
   for (const item of items) {
     if (item.type === 'agent') {
-      if (filter === 'activity') continue;
+      if (hidden.activity) continue;
       rows.push({ item, count: 1 });
       lastText = null;
       continue;
@@ -108,7 +110,7 @@ function fold(items: TimelineItem[], filter: TimelineFilter, lookups: Lookups): 
       lastText = null;
       continue;
     }
-    if (filter !== 'all') continue;
+    if (hidden.changes) continue;
     const text = revisionText(item.revision, lookups);
     const last = rows[rows.length - 1];
     if (lastText === text && last?.item.type === 'revision' && last.item.revision.actor.id === item.revision.actor.id) {

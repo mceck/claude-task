@@ -260,12 +260,20 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
     .click();
   await page.getByRole('button', { name: /Ran.*npm test/ }).click();
   await expect(page.getByText('Tests passed', { exact: true })).toBeVisible();
-  // The middle level of the Changes filter hides the Agent's activity and tool calls too; the last shows everything again.
-  const filter = page.getByRole('button', { name: /Timeline filter/ });
-  await filter.click();
+  // Agent activity is its own checkbox in the visibility menu: it hides Thinking and tool calls, and leaving it
+  // unchecked brings them back.
+  const visibility = page.getByRole('button', { name: /Timeline visibility/ });
+  const activity = page.getByRole('menuitemcheckbox', { name: 'Agent activity' });
+  await visibility.click();
+  await expect(activity).not.toBeChecked();
+  await activity.click();
+  await page.keyboard.press('Escape');
+  await expect(visibility).toHaveAccessibleName('Timeline visibility: changes + activity hidden');
   await expect(page.getByLabel('Thinking', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Activity', { exact: true })).toHaveCount(0);
-  await filter.click();
+  await visibility.click();
+  await activity.click();
+  await page.keyboard.press('Escape');
   await expect(page.getByLabel('Thinking', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Activity', { exact: true })).toBeVisible();
 
