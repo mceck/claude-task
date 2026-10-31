@@ -73,8 +73,10 @@ export async function onTaskChanged(
   const closedBefore = await isClosedStatus(tx, before.statusId);
   const closedNow = statusChanged ? await isClosedStatus(tx, task.statusId) : closedBefore;
 
-  if (agentChanged) await cancelLimitResumes(tx, after, task.id, 'The agent was unassigned or replaced');
-  if (agentChanged) await reassign(tx, after, task, before.agentId, closedNow);
+  if (agentChanged) {
+    await cancelLimitResumes(tx, after, task.id, 'The agent was unassigned or replaced');
+    await reassign(tx, after, task, before.agentId, closedNow);
+  }
   if (!closedBefore && closedNow) await closeSessions(tx, after, task);
   else if (closedBefore && !closedNow) await reopenSession(tx, after, task);
 }

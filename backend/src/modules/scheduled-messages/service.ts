@@ -62,7 +62,7 @@ async function loadMessage(db: Executor, id: string): Promise<ScheduledMessage> 
   return (await serializeMessages(db, [row]))[0]!;
 }
 
-function publishMessage(db: Executor, after: AfterCommit, id: string): Promise<ScheduledMessage> {
+function emitMessage(db: Executor, after: AfterCommit, id: string): Promise<ScheduledMessage> {
   return loadMessage(db, id).then((message) => {
     after.emit(taskTopic(message.taskId), { type: 'scheduled_message.updated', message });
     return message;
@@ -102,10 +102,14 @@ export async function createMessage(
   if (input.attachments.length > 0) {
     await tx.insert(attachments).values(input.attachments.map((a, position) => ({ ...a, position, scheduledMessageId: row!.id })));
   }
-  return publishMessage(tx, after, row!.id);
+  return emitMessage(tx, after, row!.id);
 }
 
+/** Locks the message, after its Task: the lifecycle takes locks in that order too. */
 async function lockPending(tx: Executor, id: string): Promise<Row> {
+  const [peek] = await tx.select({ taskId: scheduledMessages.taskId }).from(scheduledMessages).where(eq(scheduledMessages.id, id));
+  if (!peek) throw notFound('Scheduled message');
+  await getTaskRow(tx, peek.taskId, { lock: true });
   const [row] = await tx.select().from(scheduledMessages).where(eq(scheduledMessages.id, id)).for('update');
   if (!row) throw notFound('Scheduled message');
   if (row.state !== 'pending') throw conflict('This message is no longer scheduled');
@@ -130,7 +134,7 @@ export async function updateMessage(
   }
   if (patch.dueAt !== undefined) set.dueAt = assertDueAt(patch.dueAt);
   await tx.update(scheduledMessages).set(set).where(eq(scheduledMessages.id, id));
-  return publishMessage(tx, after, id);
+  return emitMessage(tx, after, id);
 }
 
 /** Cancels a pending message, removes its files and tells whoever watches the Task. */
@@ -139,9 +143,17 @@ async function cancelRow(tx: Executor, after: AfterCommit, row: Row, reason: str
     .update(scheduledMessages)
     .set({ state: 'cancelled', cancelReason: reason, updatedAt: new Date() })
     .where(eq(scheduledMessages.id, row.id));
+  if (row.kind === 'limit_resume') {
+    const offers = await tx
+      .update(limitResumeOffers)
+      .set({ state: 'unneeded', decidedAt: new Date() })
+      .where(and(eq(limitResumeOffers.scheduledMessageId, row.id), eq(limitResumeOffers.state, 'scheduled')))
+      .returning({ id: limitResumeOffers.commentId });
+    if (offers.length > 0) after.effect((ctx) => ctx.scheduler.publishComments(offers.map((o) => o.id)));
+  }
   const removed = await tx.delete(attachments).where(eq(attachments.scheduledMessageId, row.id)).returning();
   for (const a of removed) after.run(() => after.ctx.blobs.delete(a.blobId));
-  await publishMessage(tx, after, row.id);
+  await emitMessage(tx, after, row.id);
 }
 
 export async function cancelMessage(tx: Executor, after: AfterCommit, id: string, reason: string): Promise<ScheduledMessage> {
@@ -190,7 +202,7 @@ async function publishRow(tx: Executor, after: AfterCommit, row: Row): Promise<v
     commentId = comment.id;
   }
   await tx.update(scheduledMessages).set({ state: 'sent', commentId, updatedAt: new Date() }).where(eq(scheduledMessages.id, row.id));
-  await publishMessage(tx, after, row.id);
+  await emitMessage(tx, after, row.id);
 }
 
 export async function sendMessageNow(tx: Executor, after: AfterCommit, id: string): Promise<ScheduledMessage> {
@@ -209,7 +221,10 @@ export async function runDueMessages(ctx: AppContext, now: Date): Promise<void> 
   for (const { id } of due) {
     try {
       await transact(ctx, async (tx, after) => {
-        const [row] = await tx.select().from(scheduledMessages).where(eq(scheduledMessages.id, id)).for('update', { skipLocked: true });
+        const [peek] = await tx.select({ taskId: scheduledMessages.taskId }).from(scheduledMessages).where(eq(scheduledMessages.id, id));
+        if (!peek) return;
+        await getTaskRow(tx, peek.taskId, { lock: true });
+        const [row] = await tx.select().from(scheduledMessages).where(eq(scheduledMessages.id, id)).for('update');
         if (row?.state === 'pending') await publishRow(tx, after, row);
       });
     } catch (err) {
@@ -221,8 +236,13 @@ export async function runDueMessages(ctx: AppContext, now: Date): Promise<void> 
 
 // ---- Limit Resume
 
-/** Cancels the Task's pending Limit Resume, if any. */
+/** The Task's Limit Resume is no longer needed: cancels the pending one and closes the open offers. */
 export async function cancelLimitResumes(tx: Executor, after: AfterCommit, taskId: string, reason: string): Promise<void> {
+  await cancelPendingResumes(tx, after, taskId, reason);
+  await closeOpenOffers(tx, after, taskId);
+}
+
+async function cancelPendingResumes(tx: Executor, after: AfterCommit, taskId: string, reason: string): Promise<void> {
   const rows = await tx
     .select()
     .from(scheduledMessages)
@@ -231,12 +251,12 @@ export async function cancelLimitResumes(tx: Executor, after: AfterCommit, taskI
   for (const row of rows) await cancelRow(tx, after, row, reason);
 }
 
-/** Closes the open offers of the Task, except `exceptCommentId`, as no longer needed. */
-async function closeOpenOffers(tx: Executor, after: AfterCommit, taskId: string, exceptCommentId?: string): Promise<void> {
+/** Closes the open offers of the Task as no longer needed. */
+async function closeOpenOffers(tx: Executor, after: AfterCommit, taskId: string): Promise<void> {
   const open = await tx
     .update(limitResumeOffers)
     .set({ state: 'unneeded', decidedAt: new Date() })
-    .where(and(eq(limitResumeOffers.taskId, taskId), eq(limitResumeOffers.state, 'open'), exceptCommentId ? ne(limitResumeOffers.commentId, exceptCommentId) : undefined))
+    .where(and(eq(limitResumeOffers.taskId, taskId), eq(limitResumeOffers.state, 'open')))
     .returning({ id: limitResumeOffers.commentId });
   if (open.length > 0) after.effect((ctx) => ctx.scheduler.publishComments(open.map((o) => o.id)));
 }
@@ -257,12 +277,12 @@ async function closeExpiredOffers(ctx: AppContext, now: Date): Promise<void> {
 
 /** A Limit Resume for the Task, replacing the pending one. */
 async function createLimitResume(tx: Executor, after: AfterCommit, taskId: string, resetsAt: Date): Promise<string> {
-  await cancelLimitResumes(tx, after, taskId, 'Replaced by a newer usage limit');
+  await cancelPendingResumes(tx, after, taskId, 'Replaced by a newer usage limit');
   const [row] = await tx
     .insert(scheduledMessages)
     .values({ taskId, kind: 'limit_resume', authorId: null, body: LIMIT_RESUME_NOTICE, internal: false, dueAt: new Date(resetsAt.getTime() + RESUME_MARGIN_MS) })
     .returning();
-  await publishMessage(tx, after, row!.id);
+  await emitMessage(tx, after, row!.id);
   return row!.id;
 }
 
@@ -271,8 +291,8 @@ async function createLimitResume(tx: Executor, after: AfterCommit, taskId: strin
  * reports it. Offers the resume, or schedules it right away when the Task resumes automatically.
  */
 export async function offerLimitResume(tx: Executor, after: AfterCommit, taskId: string, commentId: string, resetsAt: Date): Promise<void> {
-  const task = await getTaskRow(tx, taskId, { lock: true });
-  await closeOpenOffers(tx, after, taskId, commentId);
+  // Called from a Job's event transaction: the Task row is read, not locked, to keep the lock order.
+  const task = await getTaskRow(tx, taskId);
   await cancelLimitResumes(tx, after, taskId, 'Replaced by a newer usage limit');
   await tx.insert(limitResumeOffers).values({ commentId, taskId, resetsAt });
   if (task.autoResume && task.agentId && !(await isClosedStatus(tx, task.statusId))) {
@@ -287,7 +307,6 @@ export async function offerLimitResume(tx: Executor, after: AfterCommit, taskId:
 /** A Turn of the Task ended without error: a pending resume and any open offer are no longer needed. */
 export async function onTurnWorked(tx: Executor, after: AfterCommit, taskId: string): Promise<void> {
   await cancelLimitResumes(tx, after, taskId, 'The agent worked again');
-  await closeOpenOffers(tx, after, taskId);
 }
 
 /** The first User to answer the offer decides for everyone. */
@@ -310,6 +329,7 @@ export async function answerLimitResume(tx: Executor, after: AfterCommit, commen
   let scheduledMessageId: string | null = null;
   if (schedule) {
     if (!task.agentId) throw conflict('No agent is assigned to this task');
+    if (await isClosedStatus(tx, task.statusId)) throw conflict('The task is closed');
     scheduledMessageId = await createLimitResume(tx, after, task.id, offer.resetsAt);
   }
   await tx

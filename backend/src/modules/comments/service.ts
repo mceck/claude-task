@@ -132,10 +132,11 @@ export async function loadCommentsById(db: Executor, ids: string[]): Promise<Map
   return new Map(
     rows.map((r) => {
       const q = questionRows.find((f) => f.commentId === r.id);
+      const offer = offerRows.find((o) => o.commentId === r.id);
       const structured = {
         question: q?.kind === 'question' ? serializeQuestion(q, user) : null,
         survey: q?.kind === 'survey' ? serializeSurvey(q, responses.filter((x) => x.commentId === r.id), user) : null,
-        limitResume: offerRows.find((o) => o.commentId === r.id) ? serializeOffer(offerRows.find((o) => o.commentId === r.id)!, user) : null,
+        limitResume: offer ? serializeOffer(offer, user) : null,
       };
       return [r.id, serializeComment(r, resolve({ type: r.authorType, id: r.authorId }), files.filter((f) => f.commentId === r.id), structured)];
     }),

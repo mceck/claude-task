@@ -342,6 +342,25 @@ describe('Limit Resume', () => {
     expect((await list(unassigning.admin, unassigning.task.id))[0]).toMatchObject({ state: 'cancelled' });
   });
 
+  it('retires the offer together with its resume when the Task is closed', async () => {
+    const answered = await limited();
+    await answered.admin.post(`/comments/${answered.offer.id}/limit-resume`, { schedule: true });
+    const open = await limited();
+    for (const c of [answered, open]) await moveToStatus(c.admin, c.task.id, statusByName(c.bundle, 'Closed').id);
+    const stateOf = async (c: typeof open) => commentsOf(await timeline(c.admin, c.task.id)).find((x) => x.id === c.offer.id)!.limitResume!.state;
+    expect(await stateOf(answered)).toBe('unneeded');
+    expect(await stateOf(open)).toBe('unneeded');
+    expect((await list(answered.admin, answered.task.id))[0]).toMatchObject({ state: 'cancelled', cancelReason: 'The task was closed' });
+  });
+
+  it('refuses to schedule the resume of a closed Task', async () => {
+    const { admin, bundle, task, offer } = await limited();
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    // Closing already retired the offer; either way the answer is refused.
+    expect((await admin.post(`/comments/${offer.id}/limit-resume`, { schedule: true })).status).toBe(409);
+    expect(await list(admin, task.id)).toEqual([]);
+  });
+
   it('closes an offer nobody answered once the reset has passed', async () => {
     const { admin, resetsAt, offer } = await limited();
     await tick(app, new Date(resetsAt.getTime() + 2 * MINUTE));

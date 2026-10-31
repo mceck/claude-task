@@ -232,7 +232,7 @@ Tool calls still waiting for a result when a Turn or a Job ends are shown as `in
 
 When a Turn stops with an error and the last `rate_limit_event` of that Turn has `status: rejected` and a `resetsAt` in the future, the System Comment that reports the error also carries the reset time and offers to resume. A limit without a usable reset time produces the System Comment alone.
 
-The offer shows "Schedule resume" and "No", with the reset time in the reader's time zone. The first User who answers decides for everyone, and a later answer is answered with `409` and the name of who answered. "Schedule resume" creates a **Limit Resume**: a Scheduled Message (see [Conversation](conversation.md#scheduled-messages)) due one minute after the reset time. "No" closes the offer and leaves the Session as it is.
+The offer shows "Schedule resume" and "No", with the reset time in the reader's time zone. The first User who answers decides for everyone, and a later answer is answered with `409` and the name of who answered. "Schedule resume" on a Task that is closed or has no Agent is answered with `409`. "Schedule resume" creates a **Limit Resume**: a Scheduled Message (see [Conversation](conversation.md#scheduled-messages)) due one minute after the reset time. "No" closes the offer and leaves the Session as it is.
 
 A Task whose automatic resume setting is on (see [Board](board.md)) gets the Limit Resume in the same transaction as the System Comment, which then shows it as scheduled and asks nothing.
 
@@ -240,7 +240,8 @@ A Task has at most one pending Limit Resume and at most one open offer:
 
 - a new limit that reports a reset time cancels the pending Limit Resume ("replaced") and closes the open offer as no longer needed;
 - a Turn of the Task that ends without error cancels the pending Limit Resume ("the Agent worked again") and closes the open offer as no longer needed;
-- closing the Task, unassigning the Agent or replacing it cancels the pending Limit Resume with that reason;
+- closing the Task, unassigning the Agent or replacing it cancels the pending Limit Resume with that reason and closes the open offer as no longer needed;
+- an offer whose Limit Resume is cancelled for any reason shows as no longer needed;
 - an offer still open one minute after its reset time is closed as no longer needed by the background tick, and answering it gets `409`.
 
 When the Limit Resume is due it is published as a System Comment and delivered like a Notify agent notice: written to the running Turn, or queued and merged into the Task's entry, so the Agent continues in the same Session. Limits shared by several Agents through one Credential are handled per Task: each Task decides on its own, and the resumes go through the Queue in order after the reset.

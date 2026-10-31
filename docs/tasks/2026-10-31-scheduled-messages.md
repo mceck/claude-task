@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Scheduled messages and automatic resume after a usage limit
@@ -64,7 +64,7 @@ When a Turn stops at a usage limit that reports when it resets, the System Comme
 - **Limit detection:** the projection of a Turn remembers the last `rate_limit_event` of the Turn. When the Turn ends in error and that event has `status: rejected` and a `resetsAt` in the future, the system comment that reports the error carries the reset time. A limit without usable `resetsAt` produces the System Comment of today and nothing else.
 - **Limit Resume entity:** the structured part of that System Comment, like Questions: reset time, state (`open`, `scheduled`, `declined`, `unneeded`), who decided and when, and the Scheduled Message created. Clients that know it show "Schedule resume" and "No" with the reset time; older clients show the text. The first answer wins (`409` for a later one with the name of who answered); answering an `unneeded` offer is `409`. An offer becomes `unneeded` when a later Turn of the Task finishes without error, when a later limit makes a new offer, or when the reset time plus one minute has passed (found by the tick and on answer).
 - **Limit Resume message:** kind `limit_resume`, due at the reset time plus one minute, published as a System Comment whose notice is a fixed text telling the Agent the limit was reset and to continue where it stopped. It is delivered like a Notify agent notice. A Task has at most one pending Limit Resume: creating another cancels the old one with the reason "replaced"; a Turn that ends without error, closing the Task, or unassigning/replacing its Agent cancels it with the matching reason. A Limit Resume can be rescheduled or cancelled by Users like any scheduled message, but its text cannot be changed.
-- **Automatic resume setting:** a boolean on Project (default off) and on Task (default off, set from the Project when the Task is created, including Tasks created by Agents and by Schedules). Both are edited through the existing update endpoints and appear in their payloads. When a limit with a reset time ends a Turn on a Task with the setting on, the Limit Resume is created in the same transaction as the System Comment, which then shows state `scheduled` with no author.
+- **Automatic resume setting:** a boolean on Project (default off) and on Task (default off, set from the Project when the Task is created, including Tasks created by Agents and by Schedules). The Project's switch is edited with its Agent settings and the Task's through a dedicated call that is no Revision and leaves the version unchanged; both appear in their payloads. When a limit with a reset time ends a Turn on a Task with the setting on, the Limit Resume is created in the same transaction as the System Comment, which then shows state `scheduled` with no author.
 - **Web:** a schedule control (date and time picker, in the browser's time zone) next to Send in the composer; a "Scheduled" strip above the composer listing pending messages with edit, cancel and send now, and a collapsed history; the limit System Comment shows the actions; the Task's menu gets an "Automatic resume at limit" switch; the Project settings get the same switch. Wiki Chats get the same composer behaviour.
 - **Mobile:** the same capabilities in the conversation screen, the Task menu and the Project settings, kept live by the existing real-time connection. Schedule composing needs the network, so a scheduled message is not queued offline.
 - **Time zones:** due times travel as ISO instants; clients render and pick them in the device time zone.
@@ -79,19 +79,19 @@ When a Turn stops at a usage limit that reports when it resets, the System Comme
 
 ## Acceptance Criteria
 
-- [ ] A User can create a scheduled message (text, files, Internal Note, Native Command) with a future time, and sees it in the Task's list.
-- [ ] Any User can edit the time or text, cancel it, or send it now while it is pending.
-- [ ] A due message is published once as a Comment by its author, with the normal Delivery, and is shown as sent.
-- [ ] A message due on a closed Task, or without an Agent, is published with the matching "not delivered" reason.
-- [ ] A message that came due while the backend was down is published on the next tick.
-- [ ] A Turn that stops at a rejected limit with `resetsAt` yields a System Comment offering "Schedule resume" and "No"; without `resetsAt` it does not.
-- [ ] Choosing "Schedule resume" creates a Limit Resume due one minute after the reset; the first answer decides and a later one gets `409`.
-- [ ] With automatic resume on for the Task, the Limit Resume is created without asking.
-- [ ] A new limit replaces the pending Limit Resume; a successful Turn, closing the Task or unassigning the Agent cancels it; the offer becomes `unneeded` accordingly.
-- [ ] The Limit Resume reaches the Agent as a Message and the Agent continues.
-- [ ] Project and Task have the automatic resume switch (Task menu, Project settings); a new Task copies the Project's value.
-- [ ] Web and mobile clients support scheduling, the list, the offer and the switches, live.
-- [ ] Specs and glossary describe the behaviour; `pnpm typecheck` and `pnpm test` pass.
+- [x] A User can create a scheduled message (text, files, Internal Note, Native Command) with a future time, and sees it in the Task's list.
+- [x] Any User can edit the time or text, cancel it, or send it now while it is pending.
+- [x] A due message is published once as a Comment by its author, with the normal Delivery, and is shown as sent.
+- [x] A message due on a closed Task, or without an Agent, is published with the matching "not delivered" reason.
+- [x] A message that came due while the backend was down is published on the next tick.
+- [x] A Turn that stops at a rejected limit with `resetsAt` yields a System Comment offering "Schedule resume" and "No"; without `resetsAt` it does not.
+- [x] Choosing "Schedule resume" creates a Limit Resume due one minute after the reset; the first answer decides and a later one gets `409`.
+- [x] With automatic resume on for the Task, the Limit Resume is created without asking.
+- [x] A new limit replaces the pending Limit Resume; a successful Turn, closing the Task or unassigning the Agent cancels it; the offer becomes `unneeded` accordingly.
+- [x] The Limit Resume reaches the Agent as a Message and the Agent continues.
+- [x] Project and Task have the automatic resume switch (Task menu, Project settings); a new Task copies the Project's value.
+- [x] Web and mobile clients support scheduling, the list, the offer and the switches, live.
+- [x] Specs and glossary describe the behaviour; `pnpm typecheck` and `pnpm test` pass.
 
 ## Out of Scope
 
