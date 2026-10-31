@@ -285,3 +285,23 @@ div.mdxeditor-popup-container {
   --code-type: oklch(0.82 0.09 200);
   --code-property: oklch(0.85 0.04 275);
 }
+
+/* A collapsed Dock bar with unread activity: the dot sits next to a title that is easy to skim past, so the Agent's
+   avatar breathes a halo until the panel is opened. Without motion it stays as a still ring. */
+@keyframes dock-unread-halo {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 60%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+.dock-unread-halo {
+  animation: dock-unread-halo 1.6s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dock-unread-halo {
+    animation: none;
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 40%, transparent);
+  }
+}

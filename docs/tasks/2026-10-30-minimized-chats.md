@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Minimized Chats: the Chat Dock
@@ -18,7 +18,7 @@ Conversations are pages: reading a Task means leaving the Board, reading a Wiki 
 
 ## Solution
 
-The Chat Dock keeps conversations at the bottom of the window, like a chat app. A **Minimize chat** control in the Task view and in a Wiki Chat moves the conversation into the Dock and leaves its page: the Board dialog closes, a Task page returns to its Board and a Wiki Chat returns to the Wikis list. The Dock shows up to six conversations in cards from the bottom-right corner; the three most recent are open, older ones stay as title bars, and a conversation is either in the Dock or on a page, never both. The whole feature is in the web app: no API, no backend state.
+The Chat Dock keeps conversations at the bottom of the window, like a chat app. A **Minimize chat** control in the Task view and in a Wiki Chat moves the conversation into the Dock and leaves its page: the Board dialog closes, a Task page returns to its Board and a Wiki Chat returns to the Wikis list. The Dock shows up to six conversations in cards from the bottom-right corner; the three nearest the corner are open, the others stay as title bars, and a conversation is either in the Dock or on a page, never both. Dragging a bar by its grip reorders the row, and a collapsed bar with unread activity shows it around the Agent's avatar. The whole feature is in the web app: no API, no backend state.
 
 ## User Stories
 
@@ -35,13 +35,16 @@ The Chat Dock keeps conversations at the bottom of the window, like a chat app. 
 11. As a User on a narrow window, I want the Dock to stay out of the way, so that the page keeps its room.
 12. As a User, I want a deleted Task or Wiki Chat to close its panel, so that no ghost conversation stays on screen.
 13. As a User switching accounts in the same browser, I want the previous User's Dock cleared, so that no conversation leaks.
+14. As a User, I want to drag a minimized chat to another place in the Dock, so that the row follows my own order instead of when I happened to minimize each conversation.
+15. As a User, I want a collapsed chat with something new to say so on its bar, so that I notice it without opening every panel.
+16. As a User, I want the composer of a narrow panel to keep its commands on one row, so that a chat at the bottom of the window still has room to write.
 
 ## Implementation Decisions
 
 ### Clients (web app only)
 
 - The Dock lives in the `Layout`, above the Voice Bar and inside the main column, so it follows navigation and is available on every page except a forced password change.
-- Panels are 300–380 px wide, adapting to the room left by the sidebar; the newest sits nearest the corner. Up to 6 entries are kept; the 3 most recent are open at up to 470 px (60% of the window height), the rest collapse to 50 px bars.
+- Panels are 300–380 px wide, adapting to the room left by the sidebar; new entries arrive nearest the corner. Up to 6 entries are kept; the 3 nearest the corner are open at up to 470 px (60% of the window height), the rest collapse to 50 px bars.
 - Below 768 px the Dock is hidden and **Minimize chat** is not offered; the entries stay stored.
 - Each panel reuses `TaskActivity`, so the conversation, its Drafts, the Live Turn, Active Runs and the read position are the same components as the page. Revisions are hidden, as the Task view hides them by default.
 - A panel subscribes to the conversation's Task topic and to the Agents topic, plus the Wikis topic for a Wiki Chat; it reuses the page's queries. The unread dot comes from the User's Task Preferences for a Task, and from the Chat list for a Wiki Chat.
@@ -50,18 +53,21 @@ The Chat Dock keeps conversations at the bottom of the window, like a chat app. 
 - Deleting the Task closes a Task panel through the Task's `task.removed` event or a `404`. A Wiki Chat is cleared rather than deleted, so a panel stores the Task's Conversation Generation when it is minimized and closes when a Delete Chat raises it; the live `timeline.reset` event closes it at once.
 - The Dock is stored per browser in `localStorage` with the theme and the Task layout: entries, order and which panels are collapsed. It is cleared on sign-in and logout, like Drafts.
 - Toast notifications move to the top right to leave the bottom-right corner to the Dock.
+- **Reordering** uses dnd-kit, already the Board's and the Agent queue's: a `DndContext` and a horizontal `SortableContext` around the row, with the Pointer sensor starting after 5 px so a click on a bar still opens or collapses it, and the Keyboard sensor for Space plus the arrow keys. The drag starts from a grip that appears while the bar is hovered or focused, and is always visible where a tap replaces the pointer; a compact copy of the bar follows the pointer and stays inside the window. A drop rewrites the stored entries; open and collapsed stay as they were; only the entries the row shows move. Minimizing a conversation already in the Dock still makes it the newest.
+- A **collapsed** panel with unread activity shows a halo that pulses around the Agent's avatar, a static ring where the system asks for reduced motion, next to the existing dot.
+- The **composer** drops the Attach and Comment labels for their icons when its container is narrower than 384 px, which is every Dock panel, so the commands stay on one row; the buttons keep their accessible names, and the paperclip sits with the send button on the right.
 - No backend change, no shared type, no native app: the native app already reaches a Task or Chat in one tap.
 
 ## Testing Decisions
 
-- **Web (Playwright)**, at the public seam: minimize a Task from the Board dialog and restore it; the Dock survives a reload; collapse and expand; open the full page and see the Dock empty; minimize from the Task page and land on the Board; remove a panel with **Close**; minimize a Wiki Chat and land on the Wikis list; Delete Chat elsewhere closes its panel; **Minimize chat** is absent below 768 px. Prior art: `frontend/e2e/board.spec.ts`, `frontend/e2e/wikis.spec.ts`.
+- **Web (Playwright)**, at the public seam: minimize a Task from the Board dialog and restore it; the Dock survives a reload; collapse and expand; open the full page and see the Dock empty; minimize from the Task page and land on the Board; remove a panel with **Close**; minimize a Wiki Chat and land on the Wikis list; Delete Chat elsewhere closes its panel; **Minimize chat** is absent below 768 px; drag a bar to another place and see the order survive a reload, reorder from the keyboard, and a collapsed panel with a new Comment show the unread dot and the halo. Prior art: `frontend/e2e/board.spec.ts`, `frontend/e2e/wikis.spec.ts`.
 
 ## Acceptance Criteria
 
 - [x] A Task and a Wiki Chat each offer **Minimize chat** in their header, between the task actions and the close button.
 - [x] Minimizing leaves the conversation's page as described and shows it in the Dock.
 - [x] A conversation is either in the Dock or on a page: opening its page from anywhere takes it out of the Dock.
-- [x] The Dock keeps up to six conversations, shows the three most recent open and the older ones as bars, with the newest nearest the bottom-right corner.
+- [x] The Dock keeps up to six conversations, shows the three nearest the corner open and the others as bars, with newly minimized conversations arriving nearest the bottom-right corner.
 - [x] A bar shows the Agent's state, the title, the Project and Task Key (the Wiki name and Chat Key) even while collapsed, and an unread dot; clicking it opens or collapses the panel.
 - [x] The empty space around the bars, above a collapsed one included, takes no clicks away from the page.
 - [x] An open panel is the same conversation as the page, advances the read position while at the bottom, and its composer works; a collapsed panel does not mark anything read.
@@ -70,17 +76,20 @@ The Chat Dock keeps conversations at the bottom of the window, like a chat app. 
 - [x] Entries, order and open/collapsed state survive a reload and are cleared on sign-in and logout.
 - [x] Deleting a Task or a Wiki Chat (or its Wiki) closes its panel, live and after a reload.
 - [x] Toasts appear in the top right.
+- [x] Dragging a bar by its grip reorders the Dock, with the pointer and from the keyboard, and the order survives a reload; a click on the bar still opens or collapses it.
+- [x] A collapsed panel with unread activity shows a halo around the Agent's avatar, still under reduced motion.
+- [x] In a Dock panel's width, Attach and Comment are icons with their accessible names, on one row, the paperclip on the right.
 - [x] `docs/specs/clients.md`, `docs/CONTEXT.md` and the manual describe the Dock.
 
 ## Out of Scope
 
 - A Dock in the native app.
 - Sharing the Dock across devices, browsers or Users, or putting it in the address.
-- Dragging or resizing panels, and reordering them by hand.
+- Resizing panels, and dropping one outside the Dock, onto the page or another window.
 - Minimizing from the Projects list or the Agents pages (only Task and Wiki Chat conversations exist).
 - Notifications or sounds for unread activity in the Dock.
 
 ## Further Notes
 
-- The per-browser list is capped at the six most recent; a seventh closes the oldest rather than silently overcrowding the row.
-- The Dock shows the conversations that fit at the current width; the oldest stored ones come back when the window widens.
+- The per-browser list is capped at the six nearest the corner; a seventh closes the one furthest from it rather than silently overcrowding the row.
+- The Dock shows the conversations that fit at the current width; the stored entries furthest from the corner come back when the window widens.

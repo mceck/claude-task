@@ -75,6 +75,17 @@ An Internal Note never reaches the Agent. Editing an already delivered Comment a
 | Pull request merged on the code host but Task still in the same Status | Only the in-app **Merge** action advances the Task. Move the Task to the intended Status yourself. |
 | Agent disconnected or backend restarted | Allow recovery to complete and look for a recovery notice before posting duplicate work. |
 
+## Schedule issues
+
+| Problem | Next action |
+| --- | --- |
+| A Schedule starts no runs | Check that it is not paused and that its Agent is enabled. The history shows **Skipped** rows with the reason. |
+| **previous run still active** | The last run has not finished. Open its Task to see what the Agent is doing, or wait for it to end. |
+| **missed** | The backend was down for longer than the Schedule's period. The next due time runs normally. |
+| **Run now** says the agent is disabled or missing | Enable the Agent or choose another one in the Schedule's settings. |
+| A Schedule cannot be deleted | An Agent is still working on one of its runs. Wait for it to finish, then retry. |
+| **claude-task: this schedule is read-only** | The Schedule forbids pushes. Turn off **Read-only** in its settings if the Agent should push. |
+
 ## Native app and Wiki issues
 
 | Problem | Next action |
