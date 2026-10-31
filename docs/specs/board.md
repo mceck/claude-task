@@ -118,6 +118,7 @@ A full Task carries:
 - the assigned Agent and a summary of its Session (state and Queue position, see [Agent Sessions](agent-sessions.md));
 - Task Branch name and link, and pull request state (see [Git integration](git-integration.md));
 - the number of Comments (every Comment not deleted, Internal Notes and Agent and System Comments included);
+- the number of tool calls across its Turns (subagent calls included, see [Agent Sessions](agent-sessions.md));
 - version, creator, created and updated times.
 
 A card is the same without the description and the creator.
@@ -213,7 +214,7 @@ The web Board of a Project shows:
 - a "Show closed" switch, kept in the URL, which adds the `closed`-category columns and their Tasks;
 - one column per shown Status in Status order, each with its color dot, name, number of visible cards, and an "Add task" box.
 
-A card shows the priority icon, the Task Key, the assigned Agent's avatar with its Session state and Queue position (`#2`), up to three assignee avatars, the pull request badge, the title, the Tags, and the Comment count.
+A card shows the priority icon, the Task Key, the assigned Agent's avatar with its Session state and Queue position (`#2`), up to three assignee avatars, the pull request badge, the title, the Tags, the tool call count (a wrench icon) and the Comment count (a message icon). The tool call count is always muted and never marks unread work; only unread Comments highlight, in amber.
 
 A card also carries the same **Close** action as the Task view (accessible name "Close task"), next to the Task Key: it moves the Task to the first `closed`-category Status in Status order, which ends its Session. It appears while the Task is in a Status of another Category, and a tooltip names the target Status. While the Agent is working on the Task (Session running or queued) it asks for confirmation first, since closing cancels that work; otherwise it closes at once. Clicking it does not open the Task and does not start a drag.
 

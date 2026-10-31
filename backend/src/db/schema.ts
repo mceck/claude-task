@@ -644,7 +644,12 @@ export const turns = pgTable(
     costUsd: doublePrecision('cost_usd'),
     usage: jsonb('usage').$type<Usage>(),
   },
-  (t) => [uniqueIndex('turns_job_index_unique').on(t.jobId, t.index), index('turns_agent_idx').on(t.agentId, t.finishedAt)],
+  (t) => [
+    uniqueIndex('turns_job_index_unique').on(t.jobId, t.index),
+    index('turns_agent_idx').on(t.agentId, t.finishedAt),
+    // The Board's card projection sums a Task's Turns.
+    index('turns_task_idx').on(t.taskId),
+  ],
 );
 
 /** The raw stream, kept for audit and re-projection. */

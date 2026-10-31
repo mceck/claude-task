@@ -46,6 +46,7 @@ interface CardRow extends Record<string, unknown> {
   tag_ids: string[];
   assignee_ids: string[];
   comment_count: number;
+  tool_call_count: number;
   chat_generation: number;
   auto_resume: boolean;
   agent_id: string | null;
@@ -109,6 +110,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
       coalesce((select array_agg(ta.user_id::text order by ta.user_id)
         from task_assignees ta where ta.task_id = t.id), '{}') as assignee_ids,
       (select count(*)::int from comments c where c.task_id = t.id and c.deleted_at is null) as comment_count,
+      (select coalesce(sum(tr.num_tool_calls), 0)::int from turns tr where tr.task_id = t.id) as tool_call_count,
       t.branch_name, t.branch_url, t.pull_request, t.agent_id, ss.agent_id as session_agent_id, ss.state as session_state,
       (select count(*)::int from queue_entries q join queue_entries q2 on q2.agent_id = q.agent_id and q2.position <= q.position
         where q.task_id = t.id and q.agent_id = ss.agent_id) as queue_position
@@ -131,6 +133,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     tagIds: r.tag_ids,
     assigneeIds: r.assignee_ids,
     commentCount: r.comment_count,
+    toolCallCount: r.tool_call_count,
     chatGeneration: r.chat_generation,
     autoResume: r.auto_resume,
     branchName: r.branch_name,

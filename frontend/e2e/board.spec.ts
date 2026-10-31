@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import pg from 'pg';
-import { ADMIN, cardTitles, column, createProject, createTask, drag, loggedInContext, login } from './helpers';
+import { Stream } from '../../backend/test/helpers/stream';
+import { ADMIN, cardTitles, column, createProject, createTask, drag, loggedInContext, login, replay, seedAgent, startJob } from './helpers';
 
 // A 1×1 PNG.
 const PNG = Buffer.from(
@@ -35,6 +36,28 @@ test('creates a task from the board', async ({ page }) => {
 
   await page.reload();
   await expect(column(page, 'Todo').getByRole('article', { name: `${project.key}-1` })).toBeVisible();
+});
+
+test('shows the tool call count next to the comment count on the card', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Checked the release');
+  const agent = await seedAgent(page.request, 'Counting agent');
+  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id);
+  const s = new Stream(sessionId);
+  await replay(page.request, agent.id, jobId, [
+    s.init(),
+    s.toolUse('toolu_bash', 'Bash', { command: 'npm test' }),
+    s.toolResult('toolu_bash', 'ok'),
+    s.toolUse('toolu_read', 'Read', { file_path: 'src/a.ts' }),
+    s.toolResult('toolu_read', 'export const a = 1;'),
+    s.result(),
+  ], true);
+
+  await page.goto(`/p/${project.key}`);
+  const card = page.getByRole('article', { name: task.key });
+  await expect(card.getByTestId('task-tool-calls')).toHaveAccessibleName('2 tool calls');
+  await expect(card.getByTestId('task-tool-calls')).toHaveText('2');
 });
 
 test('marks cards with unread comments and clears them once the task is read', async ({ page }) => {

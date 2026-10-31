@@ -142,6 +142,8 @@ export async function applyProjection(
           })
           .onConflictDoNothing();
         if (m.turn.commentId) await setAlertComment(tx, turnEventId(job.id, m.turn.index), m.turn.commentId);
+        // The card's tool call count is the sum of the Task's Turns: publish it as each one lands.
+        after.effect((ctx) => ctx.scheduler.publishTask(job.taskId));
         {
           // The Turn read the Comments delivered to its Session before its last model call: they
           // are handled. One written while it was finishing waits for the Turn that reads it.
