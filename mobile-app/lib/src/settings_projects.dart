@@ -77,7 +77,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
           PickerOption(
             agent.id,
             agent.name,
-            trailing: agentFreeDot(agent.free),
+            trailing: agentStateDot(agent),
           ),
       ],
     );

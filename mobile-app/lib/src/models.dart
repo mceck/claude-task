@@ -102,6 +102,9 @@ class Agent implements Identified {
 
   /// Free and ready to start a Job.
   bool get free => enabled && state == 'idle';
+
+  /// Working on a Job.
+  bool get busy => enabled && state == 'working';
   Agent.fromJson(Json json)
     : id = json['id'] as String,
       name = json['name'] as String,

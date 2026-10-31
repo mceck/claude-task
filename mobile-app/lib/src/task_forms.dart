@@ -46,8 +46,9 @@ Color priorityColor(String p) => switch (p) {
 Color tagColor(Tag tag) =>
     tag.color == null ? tint(tag.name) : hexColor(tag.color!, tint(tag.name));
 
-/// Hollow green dot marking an Agent that is free and ready to start.
-Widget? agentFreeDot(bool free) => free
+/// Next to an Agent in a picker: hollow green dot when it is free and ready
+/// to start, pulsing filled green when it is busy.
+Widget? agentStateDot(Agent agent) => agent.free
     ? Container(
         key: const Key('agent-free-dot'),
         width: 11,
@@ -57,6 +58,8 @@ Widget? agentFreeDot(bool free) => free
           border: Border.all(color: Palette.success, width: 1.5),
         ),
       )
+    : agent.busy
+    ? const PulseDot(key: Key('agent-busy-dot'), color: Palette.success, size: 11)
     : null;
 
 Widget agentAvatar(TaskApi? api, Agent? agent, {double size = 28}) =>
@@ -100,7 +103,7 @@ Future<String?> _pickAgent(
         a.name,
         detail: a.enabled ? null : 'Disabled',
         leading: agentAvatar(api, a),
-        trailing: agentFreeDot(a.free),
+        trailing: agentStateDot(a),
       ),
   ],
 );
