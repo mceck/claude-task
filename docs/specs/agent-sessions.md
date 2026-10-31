@@ -125,7 +125,7 @@ When a non-internal User Comment (or a Notify agent notice) is posted on a Task 
 | The Task has no Agent, or its current Session is `paused` | `not delivered`, "no agent assigned" |
 | The current Session is `closed` | `not delivered`, "task closed" |
 | The Session's Job is `running`, the Runner is connected, the Task has no Queue Entry waiting, and the Comment is not a native command | `delivered` right away: the Message is written to the running process's stdin |
-| Anything else (Agent busy on another Task, Job still being dispatched or finishing, Runner disconnected, an entry already waiting, a native command) | `queued`: merged into the Task's Queue Entry, or into a new one at the end of the Queue |
+| Anything else (Agent busy on another Task, Job still being dispatched or finishing, Runner disconnected, an entry already waiting, a native command) | `queued`: merged into the Task's Queue Entry, or into a new one. An entry for the Task the Agent is working on goes to the **front** of the Queue, so it runs before the other Tasks once the current Job ends; an entry for any other Task goes to the end |
 
 Comments on a Task that was never assigned an Agent carry no Delivery at all, like Internal Notes, Agent Comments and System Comments.
 
@@ -162,9 +162,9 @@ Each Agent has one Queue, ordered by a fractional position. It holds at most one
 - **`messages`**: pending Messages for a Session that exists.
 - **`resume_interrupted`**: a Turn cut off by a container restart or a lost Runner, to be resumed.
 
-New entries go to the end of the Queue, except recovery entries, which go to the front. A Comment for a Task that already has an entry joins it and the entry keeps its position. When two kinds meet in one entry, `start` wins over `resume_interrupted`, which wins over `messages`.
+New entries go to the end of the Queue, except recovery entries and entries for the Task whose Job the Agent has active (a Comment that could not be written into its stream), which go to the front: the Task the Agent is working on keeps priority over the Tasks waiting behind it. A Comment for a Task that already has an entry joins it and the entry keeps its position, unless the Task is the one being worked on, in which case the entry moves to the front. When two kinds meet in one entry, `start` wins over `resume_interrupted`, which wins over `messages`.
 
-What waits in the Queue: Comments for Tasks other than the one the Agent is running, Comments posted while a Job is being dispatched or is finishing (they go to the back), every Comment for a Task that already has an entry, native commands, and everything while the Agent is disabled, offline, rebuilding its container or synchronizing its Extensions.
+What waits in the Queue: Comments for Tasks other than the one the Agent is running (at the end), Comments for the Task the Agent is running that could not be written to its stream (at the front), every Comment for a Task that already has an entry, native commands, and everything while the Agent is disabled, offline, rebuilding its container or synchronizing its Extensions.
 
 Any User can manage an Agent's Queue from the Agent's page:
 
