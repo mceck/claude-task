@@ -3,6 +3,9 @@ import { inArray } from 'drizzle-orm';
 import type { Executor } from '../db/client';
 import { agents, users } from '../db/schema';
 
+/** The Actor behind what the platform does on its own, such as the Tasks and prompt Comments of Scheduled Runs. */
+export const SYSTEM_ACTOR: Actor = { type: 'system', id: null, displayName: 'System' };
+
 export interface ActorRef {
   type: ActorType;
   id: string | null;

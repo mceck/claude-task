@@ -1,3 +1,4 @@
+import { scheduleRoutes } from './modules/schedules/routes';
 import { wikiRoutes } from './modules/wikis/routes';
 import { notificationRoutes } from './notifications/routes';
 import { gitRoutes } from './git/routes';
@@ -102,6 +103,7 @@ export async function buildApp(
       tagRoutes(api, ctx);
       taskRoutes(api, ctx);
       wikiRoutes(api, ctx);
+      scheduleRoutes(api, ctx);
       commentRoutes(api, ctx);
       questionRoutes(api, ctx);
       credentialRoutes(api, ctx);

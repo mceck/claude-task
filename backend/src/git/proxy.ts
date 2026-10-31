@@ -9,7 +9,7 @@ import type { ProjectRepository } from '@claude-task/shared';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppContext } from '../context';
-import { jobs, projects, tasks } from '../db/schema';
+import { jobs, projects, schedules, tasks } from '../db/schema';
 import { gitOwnerTask } from './owner';
 import { hashToken } from '../secrets';
 
@@ -35,6 +35,8 @@ interface Grant {
   projectId: string;
   repository: ProjectRepository;
   branchName: string | null;
+  /** The Job belongs to a read-only Schedule: fetches work, every push is refused. */
+  readOnly: boolean;
 }
 interface Command {
   oldId: string;
@@ -75,6 +77,7 @@ export function gitProxyRoutes(app: FastifyInstance, ctx: AppContext): void {
     }
     const allowed = `refs/heads/${grant.branchName}`;
     const refused =
+      grant.readOnly ||
       !grant.branchName ||
       head.commands.length === 0 ||
       head.commands.some((c) => c.ref !== allowed || !OBJECT_ID.test(c.oldId) || !OBJECT_ID.test(c.newId) || ZERO.test(c.newId));
@@ -82,7 +85,9 @@ export function gitProxyRoutes(app: FastifyInstance, ctx: AppContext): void {
       // Push Policy: the whole push is rejected and upstream is never contacted.
       // Drain the pack (git sends it all before reading the answer); it may already be read.
       if (!request.raw.readableEnded) await new Promise((resolve) => request.raw.once('end', resolve).once('error', resolve).resume());
-      const reason = grant.branchName ? `claude-task: only ${grant.branchName} can be pushed` : 'claude-task: this task has no branch yet';
+      const reason = grant.readOnly
+        ? 'claude-task: this schedule is read-only'
+        : grant.branchName ? `claude-task: only ${grant.branchName} can be pushed` : 'claude-task: this task has no branch yet';
       ctx.log.info({ ...logScope(grant), service: 'git-receive-pack', refs: head.commands.map((c) => c.ref), refused: true }, 'git proxy push refused');
       return reply
         .header('content-type', 'application/x-git-receive-pack-result')
@@ -115,10 +120,11 @@ async function authorize(ctx: AppContext, request: FastifyRequest, reply: Fastif
     return null;
   }
   const [row] = await ctx.db
-    .select({ jobId: jobs.id, agentId: jobs.agentId, state: jobs.state, discardOutput: jobs.discardOutput, taskId: tasks.id, number: tasks.number, projectId: tasks.projectId, repository: projects.repository })
+    .select({ jobId: jobs.id, agentId: jobs.agentId, state: jobs.state, discardOutput: jobs.discardOutput, taskId: tasks.id, number: tasks.number, projectId: tasks.projectId, repository: projects.repository, readOnly: schedules.readOnly })
     .from(jobs)
     .innerJoin(tasks, eq(tasks.id, jobs.taskId))
     .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .leftJoin(schedules, eq(schedules.projectId, tasks.projectId))
     .where(eq(jobs.tokenHash, hashToken(token)));
   if (!row) {
     await deny(reply, 401, 'Authentication required');
@@ -131,7 +137,7 @@ async function authorize(ctx: AppContext, request: FastifyRequest, reply: Fastif
   }
   // A Wiki's Chats push the branch of the Wiki's first Task.
   const owner = await gitOwnerTask(ctx.db, { id: row.taskId, projectId: row.projectId, number: row.number });
-  return { jobId: row.jobId, agentId: row.agentId, projectId: row.projectId, repository: row.repository, branchName: owner.branchName };
+  return { jobId: row.jobId, agentId: row.agentId, projectId: row.projectId, repository: row.repository, branchName: owner.branchName, readOnly: row.readOnly ?? false };
 }
 
 async function forward(

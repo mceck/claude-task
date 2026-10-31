@@ -162,6 +162,10 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
     return;
   }
   switch (event.type) {
+    case 'schedule.changed':
+      // Everything under the schedules key: the list, the Schedule and its run history.
+      void qc.invalidateQueries({ queryKey: keys.schedules });
+      return;
     case 'wiki.changed':
       void qc.invalidateQueries({ queryKey: keys.wikis });
       void qc.invalidateQueries({ queryKey: keys.wiki(event.wikiId) });
@@ -282,6 +286,10 @@ function upsertAgent(qc: QueryClient, agent: Agent): void {
 
 /** Refetches the queries a topic's events keep up to date. */
 export function refreshTopic(qc: QueryClient, topic: Topic): void {
+  if (topic === 'schedules') {
+    void qc.invalidateQueries({ queryKey: keys.schedules });
+    return;
+  }
   if (topic === 'wikis') {
     void qc.invalidateQueries({ queryKey: keys.wikis });
     void qc.invalidateQueries({ queryKey: ['wiki'] });

@@ -243,6 +243,8 @@ export interface PromptInput {
   projectInstructions: string;
   agentPrompt: string;
   services: AgentService[];
+  /** The Task is a Scheduled Run: nobody answers, and a global Schedule's Agent also has the global tools. */
+  schedule?: { global: boolean; readOnly: boolean } | null;
 }
 
 /** `--append-system-prompt`: the platform section, then Project and Agent instructions. */
@@ -254,7 +256,9 @@ export function systemPrompt(p: PromptInput): string {
     'How this works:',
     '- Everything you write as text is posted as a comment on the task, for humans: write clearly and use markdown.',
     '- New messages from humans can arrive while you work. Take them into account as soon as you see them.',
-    '- If you need a decision with clear options, ask it with `ask_question`; otherwise ask in text. Then end your turn: the answer will arrive as a new message.',
+    p.schedule
+      ? '- This is a scheduled run and you work unattended: no human will answer you. Decide on your own, or finish with an explanation of what blocks you. When your work is done, end your turn: the run closes by itself.'
+      : '- If you need a decision with clear options, ask it with `ask_question`; otherwise ask in text. Then end your turn: the answer will arrive as a new message.',
     '- To show humans screenshots, charts, logs or other files, post them with `send_files`.',
     '- Files attached to comments, and files linked in the task description, are saved under `.claude-task/attachments/` in your working directory.',
     '',
@@ -265,9 +269,24 @@ export function systemPrompt(p: PromptInput): string {
     '- `list_tasks`: list the project\'s tasks.',
     '- `create_task`: report an out-of-scope issue as a new, unassigned task.',
     '- `send_files`: post files from your container (screenshots, reports) to the conversation.',
-    '- `ask_question`: ask a multiple-choice question; the first answer decides.',
-    '- `create_survey`: collect answers from every assignee. Only when a human explicitly asks for a survey or for several people\'s opinions.',
+    ...(p.schedule
+      ? []
+      : [
+          '- `ask_question`: ask a multiple-choice question; the first answer decides.',
+          '- `create_survey`: collect answers from every assignee. Only when a human explicitly asks for a survey or for several people\'s opinions.',
+        ]),
   ];
+  if (p.schedule?.global) {
+    platform.push(
+      '',
+      'Global task tools, for acting on the boards of every project:',
+      '- `list_projects`: the projects with their task counts; `list_tasks` takes a `project` key and `get_task` any task key.',
+      '- `update_task_by_key` and `set_task_status`: edit or move any task. Closed statuses are for humans.',
+      '- `create_task_in_project`: create a new, unassigned task in any project.',
+      '- `assign_task_to_me`: assign a task to yourself; it starts no work. `start_task` then sends it your prompt, and you work on it in a session of its own after this one.',
+    );
+  }
+  if (p.schedule?.readOnly) platform.push('', 'This schedule is read-only for git: you can fetch and read the repository, and every push is refused.');
   if (p.branch) {
     platform.push(
       '',

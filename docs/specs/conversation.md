@@ -238,6 +238,8 @@ Notifications are phone alerts sent to Task followers for Agent outcomes and to 
 | Turn failed | A Turn ends with an error. |
 | Needs intervention | A Job fails (for example at Worktree, setup or start) without a failed Turn already reporting it. |
 | User mentioned | A User posts a Comment or Internal Note containing a selected User mention. |
+| Scheduled run failed | A Scheduled Run ends as `Failed`. |
+| Schedule blocked | A Schedule is skipped for the third time in a row. |
 
 Each event is identified by the Turn, Job or Comment it reports, so the same fact is recorded once. Streaming fragments, individual Agent Comments, and the wording of the Agent's text never produce a notification.
 
@@ -245,7 +247,9 @@ The recipients of an Agent outcome are the Users who, at that moment, follow the
 
 Mention recipients are determined from the stored User Comment in its posting transaction. Before dispatch, eligibility is checked again and only Comments still present on the Timeline qualify. Muting between posting and dispatch suppresses the alert. Mentioned Users keep their existing following preference.
 
-A Task in a `closed` Status produces no phone alert. Planned deliveries for Agent outcomes and mentions are discarded at dispatch time while the Task is closed, so closing a Task with alerts still pending suppresses them. Moving it back out of a `closed` Status before dispatch makes an unexpired alert eligible again, exactly as the other checks re-evaluate the Task's current state.
+The two Schedule events go to the creator of the Schedule only, whether or not they follow the Task, and show the fixed texts "A scheduled run failed." and "A schedule keeps being skipped." (see [Schedules](schedules.md)). They are not suppressed by the closed Status of the run's Task.
+
+A Task in a `closed` Status produces no phone alert for Agent outcomes and mentions. Planned deliveries for Agent outcomes and mentions are discarded at dispatch time while the Task is closed, so closing a Task with alerts still pending suppresses them. Moving it back out of a `closed` Status before dispatch makes an unexpired alert eligible again, exactly as the other checks re-evaluate the Task's current state.
 
 The alert shows a fixed text, "You were mentioned in a Comment." for mentions and "A Task you follow has an update." for Agent outcomes, with no Task title, Project or generated text, and carries the Task's id so the app opens its conversation after sign-in; for a Wiki's Task the app opens the Wiki's Chat that the Task holds. Alerts for the same Task collapse into one on the phone. Device registration, the push provider, retries and the unconfigured state are described in [Clients](clients.md).
 
@@ -287,7 +291,7 @@ sequenceDiagram
 - **Blob**: the stored bytes, identified by a random UUID, with file name, content type and size in a sidecar.
 - **Task Preference**: User and Task, following, muted, whether following was set explicitly, read position.
 - **Timeline position**: Task, entry id, position; one per persisted Timeline entry.
-- **Notification Event**: id derived from the Turn, Job or Comment it reports, Task, kind (`turn.completed`, `turn.failed`, `session.intervention`, `comment.mentioned`), created at.
+- **Notification Event**: id derived from the Turn, Job or Comment it reports, Task, kind (`turn.completed`, `turn.failed`, `session.intervention`, `comment.mentioned`, `schedule.run_failed`, `schedule.blocked`), created at.
 - **Push delivery**: event, User, phone, attempts, next attempt time, finished time. Unique per event, User and phone.
 
 ## Non-functional requirements

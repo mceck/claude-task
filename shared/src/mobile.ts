@@ -21,6 +21,6 @@ export const deviceRegistrationBody = z.strictObject({
   platform: z.enum(['ios', 'android']),
   token: z.string().trim().min(16).max(4096),
 });
-export type NotificationKind = 'turn.completed' | 'turn.failed' | 'session.intervention' | 'comment.mentioned';
+export type NotificationKind = 'turn.completed' | 'turn.failed' | 'session.intervention' | 'comment.mentioned' | 'schedule.run_failed' | 'schedule.blocked';
 export interface PushStatus { configured: boolean; provider: 'fcm'; }
 export type UserEvent = { type: 'task.preference'; preference: TaskPreference };

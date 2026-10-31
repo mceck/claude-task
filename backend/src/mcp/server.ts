@@ -12,13 +12,13 @@ import { z } from 'zod';
 import { transact } from '../context';
 import type { AppContext } from '../context';
 import type { Executor } from '../db/client';
-import { agents, comments, jobs, tags, projects, sessions, statuses, tasks } from '../db/schema';
+import { agents, comments, jobs, tags, projects, schedules, sessions, statuses, tasks } from '../db/schema';
 import { badRequest, fromDatabaseError, HttpError, unauthorized } from '../errors';
-import { actorResolver } from '../modules/actors';
+import { actorResolver, SYSTEM_ACTOR } from '../modules/actors';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import { createTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from '../modules/tasks/service';
 import { assertBoardTask } from '../modules/projects/service';
-import { createAgentComment } from '../modules/comments/service';
+import { createAgentComment, createUserComment } from '../modules/comments/service';
 import type { NewAttachment, NewQuestion } from '../modules/comments/service';
 import { expectedRespondents, questionBody, validateItems } from '../modules/questions/service';
 import { discardBlobs } from '../blobstore';
@@ -31,6 +31,8 @@ interface JobScope {
   sessionId: string;
   projectId: string;
   actor: Actor;
+  /** The Job belongs to a Scheduled Run: `global` when its Schedule has no Repository. */
+  schedule: { global: boolean } | null;
 }
 
 const COMMENT_PAGE = 50;
@@ -63,11 +65,13 @@ async function jobScope(ctx: AppContext, request: FastifyRequest): Promise<JobSc
   const token = /^Bearer (.+)$/.exec(request.headers.authorization ?? '')?.[1];
   if (!token) throw unauthorized('Missing job token');
   const [row] = await ctx.db
-    .select({ job: jobs, agentName: agents.name, projectId: tasks.projectId })
+    .select({ job: jobs, agentName: agents.name, projectId: tasks.projectId, scheduleId: schedules.id, repository: projects.repository })
     .from(jobs)
     .innerJoin(agents, eq(agents.id, jobs.agentId))
     .innerJoin(tasks, eq(tasks.id, jobs.taskId))
     .innerJoin(sessions, eq(sessions.id, jobs.sessionId))
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .leftJoin(schedules, eq(schedules.projectId, tasks.projectId))
     .where(
       and(eq(jobs.tokenHash, hashToken(token)), activeJobCondition),
     );
@@ -79,6 +83,7 @@ async function jobScope(ctx: AppContext, request: FastifyRequest): Promise<JobSc
     sessionId: row.job.sessionId,
     projectId: row.projectId,
     actor: { type: 'agent', id: row.job.agentId, displayName: row.agentName },
+    schedule: row.scheduleId ? { global: !row.repository } : null,
   };
 }
 
@@ -104,7 +109,7 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
     'get_task',
     {
       description:
-        'Read a task: its fields, the statuses (with categories) you can move it to, the tags, assignees and non-internal comments (newest 50; pass `comments_before` from the previous answer for older ones). Without `key` it reads your own task.',
+        (scope.schedule?.global ? 'Read any task of any project by key. ' : '') + 'Read a task: its fields, the statuses (with categories) you can move it to, the tags, assignees and non-internal comments (newest 50; pass `comments_before` from the previous answer for older ones). Without `key` it reads your own task.',
       inputSchema: { key: z.string().optional().describe('Task key like API-42; defaults to your task'), comments_before: z.string().optional() },
     },
     ({ key, comments_before }) => run(() => getTask(ctx, scope, key, comments_before)),
@@ -115,13 +120,14 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
     {
       description: "List tasks of your project (summary fields only). Closed tasks are left out unless you ask for status_category 'closed'.",
       inputSchema: {
+        ...(scope.schedule?.global ? { project: z.string().optional().describe('Project key; defaults to the project of your own task') } : {}),
         status_category: z.enum(CATEGORIES).optional(),
         tag: z.string().optional().describe('Label name'),
         text: z.string().optional().describe('Matches title or key'),
         limit: z.number().int().min(1).max(200).optional(),
       },
     },
-    (args) => run(() => listTasks(ctx, scope, args)),
+    (args) => run(() => listTasks(ctx, scope, args as Parameters<typeof listTasks>[2])),
   );
 
   server.registerTool(
@@ -174,6 +180,8 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
     ({ paths, caption }) => run(() => sendFiles(ctx, scope, paths, caption ?? '')),
   );
 
+  // Nobody answers during a Scheduled Run.
+  if (!scope.schedule) {
   server.registerTool(
     'ask_question',
     {
@@ -193,6 +201,8 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
     },
     ({ questions, paths }) => run(() => postQuestion(ctx, scope, 'survey', questions, paths ?? [])),
   );
+  }
+  if (scope.schedule?.global) registerGlobalTools(server, ctx, scope);
 
   server.registerTool('open_pull_request', {
     description: 'Open or update a pull request (a merge request on GitLab) from your task branch. Commit and push the branch first. Never changes the task status.',
@@ -204,15 +214,26 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
 async function findTaskInProject(db: Executor, scope: JobScope, key: string | undefined) {
   if (!key) return getTaskRow(db, scope.taskId);
   const row = await getTaskRow(db, key).catch(() => null);
+  if (scope.schedule?.global) {
+    if (!row) throw badRequest(`No task ${key}`);
+    await assertOrdinaryProject(db, row.projectId, key);
+    return row;
+  }
   if (!row || row.projectId !== scope.projectId) throw badRequest(`No task ${key} in your project`);
   return row;
+}
+
+/** The global tools reach Tasks of ordinary Projects, not the ones of Wikis and Schedules. */
+async function assertOrdinaryProject(db: Executor, projectId: string, what: string) {
+  const [project] = await db.select({ kind: projects.kind }).from(projects).where(eq(projects.id, projectId));
+  if (project?.kind !== 'project') throw badRequest(`No task or project ${what}`);
 }
 
 async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined, before: string | undefined) {
   const row = await findTaskInProject(ctx.db, scope, key);
   const task = await loadTask(ctx.db, row.id);
-  const statusRows = await ctx.db.select().from(statuses).where(eq(statuses.projectId, scope.projectId)).orderBy(asc(statuses.position));
-  const tagRows = await ctx.db.select().from(tags).where(eq(tags.projectId, scope.projectId)).orderBy(asc(tags.name));
+  const statusRows = await ctx.db.select().from(statuses).where(eq(statuses.projectId, row.projectId)).orderBy(asc(statuses.position));
+  const tagRows = await ctx.db.select().from(tags).where(eq(tags.projectId, row.projectId)).orderBy(asc(tags.name));
   const assignees = await actorResolver(ctx.db, task.assigneeIds.map((id) => ({ type: 'user' as const, id })));
 
   let cursor: { t: string; id: string } | null = null;
@@ -272,13 +293,19 @@ async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined
   };
 }
 
-async function listTasks(ctx: AppContext, scope: JobScope, args: { status_category?: string; tag?: string; text?: string; limit?: number }) {
-  const statusRows = await ctx.db.select().from(statuses).where(eq(statuses.projectId, scope.projectId));
-  const tagRows = await ctx.db.select().from(tags).where(eq(tags.projectId, scope.projectId));
+async function listTasks(ctx: AppContext, scope: JobScope, args: { project?: string; status_category?: string; tag?: string; text?: string; limit?: number }) {
+  let projectId = scope.projectId;
+  if (args.project && scope.schedule?.global) {
+    const [project] = await ctx.db.select().from(projects).where(eq(projects.key, args.project.trim().toUpperCase()));
+    if (!project || project.kind !== 'project') throw badRequest(`No project ${args.project}`);
+    projectId = project.id;
+  }
+  const statusRows = await ctx.db.select().from(statuses).where(eq(statuses.projectId, projectId));
+  const tagRows = await ctx.db.select().from(tags).where(eq(tags.projectId, projectId));
   const tag = args.tag ? tagRows.find((l) => l.name.toLowerCase() === args.tag!.toLowerCase()) : undefined;
   if (args.tag && !tag) throw badRequest(`No tag named "${args.tag}" in the project`);
   const cards = await loadCards(ctx.db, {
-    projectId: scope.projectId,
+    projectId,
     includeClosed: args.status_category === 'closed',
     filter: { assignees: [], tags: tag ? [tag.id] : [], priorities: [], text: args.text ?? '' },
   });
@@ -449,4 +476,159 @@ export function mcpRoutes(app: FastifyInstance, ctx: AppContext): void {
     reply.status(405).header('allow', 'POST').send({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   app.get('/mcp', { config }, notAllowed);
   app.delete('/mcp', { config }, notAllowed);
+}
+
+// Global Task Tools: the Jobs of a global Schedule act on the Tasks of every ordinary Project (docs/specs/schedules.md).
+
+const projectKey = z.string().trim().min(1).max(10).describe('Project key like API');
+
+function registerGlobalTools(server: McpServer, ctx: AppContext, scope: JobScope): void {
+  server.registerTool(
+    'list_projects',
+    { description: 'List the projects (key, name, and how many tasks each has per status category).', inputSchema: {} },
+    () => run(() => listProjectsTool(ctx)),
+  );
+  server.registerTool(
+    'update_task_by_key',
+    {
+      description: "Update any task's title, description, priority or tags (tag names must exist in its project; the list replaces the current tags).",
+      inputSchema: {
+        key: z.string().min(1),
+        title: z.string().trim().min(1).max(500).optional(),
+        description: z.string().max(100_000).optional(),
+        priority: z.enum(PRIORITIES).optional(),
+        tags: z.array(z.string()).max(50).optional(),
+      },
+    },
+    (args) => run(() => updateAnyTask(ctx, scope, args)),
+  );
+  server.registerTool(
+    'set_task_status',
+    {
+      description: 'Move any task to another status of its project by name. Statuses in the closed category are reserved for humans.',
+      inputSchema: { key: z.string().min(1), status_name: z.string().min(1) },
+    },
+    ({ key, status_name }) => run(() => setAnyStatus(ctx, scope, key, status_name)),
+  );
+  server.registerTool(
+    'create_task_in_project',
+    {
+      description: 'Create a new, unassigned task in any project.',
+      inputSchema: {
+        project: projectKey,
+        title: z.string().trim().min(1).max(500),
+        description: z.string().max(100_000).optional(),
+        priority: z.enum(PRIORITIES).optional(),
+        tags: z.array(z.string()).max(50).optional(),
+      },
+    },
+    (args) => run(() => createAnyTask(ctx, scope, args)),
+  );
+  server.registerTool(
+    'assign_task_to_me',
+    {
+      description: 'Assign a task to yourself. This starts no work: call start_task when you want to begin. A task that another agent works on is refused.',
+      inputSchema: { key: z.string().min(1) },
+    },
+    ({ key }) => run(() => assignToMe(ctx, scope, key)),
+  );
+  server.registerTool(
+    'start_task',
+    {
+      description: 'Start a task that is assigned to you: your prompt becomes its first message, and you work on it in a session of its own after your current job.',
+      inputSchema: { key: z.string().min(1), prompt: z.string().trim().min(1).max(100_000).describe('What to do on the task') },
+    },
+    ({ key, prompt }) => run(() => startAnyTask(ctx, scope, key, prompt)),
+  );
+}
+
+async function listProjectsTool(ctx: AppContext) {
+  const rows = await ctx.db.select().from(projects).where(and(eq(projects.kind, 'project'), isNull(projects.archivedAt))).orderBy(asc(projects.name));
+  const counts = await ctx.db.execute<{ project_id: string; category: string; n: number }>(sql`
+    select t.project_id, s.category, count(*)::int as n from tasks t join statuses s on s.id = t.status_id group by t.project_id, s.category`);
+  return {
+    projects: rows.map((p) => ({
+      key: p.key,
+      name: p.name,
+      description: p.description,
+      tasks: Object.fromEntries(counts.rows.filter((c) => c.project_id === p.id).map((c) => [c.category, c.n])),
+    })),
+  };
+}
+
+async function updateAnyTask(ctx: AppContext, scope: JobScope, args: { key: string; title?: string; description?: string; priority?: (typeof PRIORITIES)[number]; tags?: string[] }) {
+  const row = await findTaskInProject(ctx.db, scope, args.key);
+  const task = await transact(ctx, async (tx, after) => {
+    const current = await getTaskRow(tx, row.id);
+    return updateTask(
+      tx,
+      after,
+      row.id,
+      {
+        version: current.version,
+        title: args.title,
+        description: args.description,
+        priority: args.priority,
+        tagIds: args.tags ? await tagIds(tx, row.projectId, args.tags) : undefined,
+      },
+      scope.actor,
+    );
+  });
+  return { updated: task.key, version: task.version };
+}
+
+async function setAnyStatus(ctx: AppContext, scope: JobScope, key: string, name: string) {
+  const row = await findTaskInProject(ctx.db, scope, key);
+  const all = await ctx.db.select().from(statuses).where(eq(statuses.projectId, row.projectId));
+  const status = all.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
+  if (!status) throw badRequest(`No status named "${name}". Available: ${all.map((s) => s.name).join(', ')}`);
+  if (status.category === 'closed') throw badRequest(`"${status.name}" is a closed status; only humans can close tasks.`);
+  const task = await transact(ctx, (tx, after) => moveTask(tx, after, row.id, { statusId: status.id }, scope.actor));
+  return { moved: task.key, status: status.name };
+}
+
+async function createAnyTask(ctx: AppContext, scope: JobScope, args: { project: string; title: string; description?: string; priority?: (typeof PRIORITIES)[number]; tags?: string[] }) {
+  const [project] = await ctx.db.select().from(projects).where(eq(projects.key, args.project.toUpperCase()));
+  if (!project || project.kind !== 'project') throw badRequest(`No project ${args.project}`);
+  const task = await transact(ctx, async (tx, after) =>
+    createTask(
+      tx,
+      after,
+      project.id,
+      {
+        title: args.title,
+        description: args.description ?? '',
+        priority: args.priority ?? 'none',
+        tagIds: args.tags ? await tagIds(tx, project.id, args.tags) : [],
+        assigneeIds: [],
+      },
+      scope.actor,
+      { assignDefaultAgent: false },
+    ),
+  );
+  return { created: taskKey(project.key, task.number), title: task.title };
+}
+
+async function assignToMe(ctx: AppContext, scope: JobScope, key: string) {
+  const row = await findTaskInProject(ctx.db, scope, key);
+  if (row.id === scope.taskId) throw badRequest('This is your own task.');
+  if (row.agentId && row.agentId !== scope.agentId) {
+    const [other] = await ctx.db.select({ name: agents.name }).from(agents).where(eq(agents.id, row.agentId));
+    throw badRequest(`${key} is assigned to ${other?.name ?? 'another agent'}.`);
+  }
+  const task = await transact(ctx, async (tx, after) => {
+    const current = await getTaskRow(tx, row.id);
+    return updateTask(tx, after, row.id, { version: current.version, agentId: scope.agentId }, scope.actor);
+  });
+  return { assigned: task.key, next: 'Call start_task to begin the work.' };
+}
+
+async function startAnyTask(ctx: AppContext, scope: JobScope, key: string, prompt: string) {
+  const row = await findTaskInProject(ctx.db, scope, key);
+  if (row.agentId !== scope.agentId) throw badRequest(`${key} is not assigned to you: call assign_task_to_me first.`);
+  const comment = await transact(ctx, async (tx, after) => {
+    const current = await getTaskRow(tx, row.id, { lock: true });
+    return createUserComment(tx, after, current, { body: prompt, internal: false, attachments: [] }, SYSTEM_ACTOR);
+  });
+  return { started: key, comment: comment.id, next: 'The task runs in its own session once you are free; read it later with get_task.' };
 }

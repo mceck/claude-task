@@ -283,7 +283,7 @@ The appended system prompt is the same for every Job of a Session; it holds no T
    - its working directory (the Worktree in the Agent's home) and, when the Project has a Repository, that it is a git worktree on the Task Branch;
    - that everything it writes as text is posted as a Comment on the Task for humans, so it should write clearly in Markdown;
    - that new messages from humans can arrive while it works and should be taken into account as soon as it sees them;
-   - that for a decision with clear options it asks with `ask_question`, otherwise in text, and then ends its Turn, since the answer arrives as a new Message;
+   - that for a decision with clear options it asks with `ask_question`, otherwise in text, and then ends its Turn, since the answer arrives as a new Message; in a Scheduled Run it is told instead that it works unattended, that no human will answer and that it should decide on its own or finish with an explanation;
    - that `send_files` shows screenshots and other files to humans, and that `create_survey` is only for when a human explicitly asks to collect several people's answers;
    - that files attached to Comments and linked in the description are saved under `.claude-task/attachments/` in its working directory;
    - the Task Tools on the `claude-task` server and what each is for;
@@ -366,6 +366,8 @@ Every tool acts as the Agent: mutations are Revisions attributed to it and appea
 An item of `ask_question` and `create_survey` mirrors Claude Code's own question tool: `header` (1 to 12 characters), `question` (1 to 2,000 characters), `options` (2 to 4, each a `label` of 1 to 60 characters, unique within the item ignoring case, and a `description` of up to 300 characters) and `multiSelect` (default false). "Other" is added by the clients, so an option labelled "Other" is refused. How Users answer is described in [Conversation](conversation.md).
 
 **Files from the container.** `paths` are relative to the Worktree or absolute, and name regular files of up to 25 MB that the `agent` user can read. Before posting anything, the backend asks the Agent's Runner for the files over its connection and waits up to 60 seconds for the Runner to upload them (see [Runner](runner.md)). The tool answers with an error naming each path that failed and why, and posts nothing, when any file is missing, not a regular file or too large; it fails at once when the Runner is not connected, and when the upload hasn't finished 60 seconds after the request. When the Job ended meanwhile (the Task was closed, the Agent unassigned or the Job cancelled), nothing is posted and the files are discarded.
+
+In a Scheduled Run (see [Schedules](schedules.md)), `ask_question` and `create_survey` are not offered, `set_status` is refused because the scheduler moves the Task, and the other tools work as on any Task. The Jobs of a global Schedule also get the global Task Tools described there; their calls are Revisions attributed to the Agent like any other.
 
 In a Wiki's Session, the Task Tools act on the Task of the Job, which is the Chat the Agent is working in; `get_task` and `list_tasks` read the Wiki and its Project as usual, `send_files`, `ask_question` and `create_survey` work as on any Task, while `update_task`, `set_status` and `create_task` answer with an error that a Wiki changes through the conversation and its Git Repository (see [Wikis](wikis.md)).
 | `open_pull_request` | `title`, `body`, `draft` | Opens or updates the pull request of the Task Branch. See [Git integration](git-integration.md). |
@@ -464,7 +466,7 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 - **Message size:** a Message inlines at most 20 images and 16 MB of images, so a Job start stays well within the Runner connection's frame limit.
 - **Display limits:** tool output and long tool inputs are cut at 20 KB on the Timeline; the raw stream keeps them whole. Setup output and stderr keep the last 64 KB per Job. A Run transcript keeps at most 2 MB over 500 messages, so a Job holds at most 60 MB of live transcripts.
 - **Secrets:** the Credential and Project secrets are decrypted only to build a Job's start and go only to the Runner of that Job's Agent. The Job token is stored as a hash and is valid only while its Job is active.
-- **Isolation:** Task Tools write only the Agent's own Task (reads and new Tasks stay within its Project); the Runner downloads only attachments of Tasks its Agent is working on, and only those visible to the Agent; an upload is accepted only from the Runner the backend asked, while the Job's tool call waits for it.
+- **Isolation:** Task Tools write only the Agent's own Task (reads and new Tasks stay within its Project), except the global Task Tools of a global Schedule; the Runner downloads only attachments of Tasks its Agent is working on, and only those visible to the Agent; an upload is accepted only from the Runner the backend asked, while the Job's tool call waits for it.
 - **Live updates** are coalesced and flushed once per event loop turn; a browser whose backlog grows past 16 MB is disconnected and refetches on reconnect.
 
 ## Decisions
@@ -495,6 +497,7 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 - [Conversation](conversation.md): Comments, Internal Notes, attachments, mentions, the composer and notifications from the User's side.
 - [Agents](agents.md): Agent configuration, Credentials, Project secrets, the Base Image, Agent Containers, Extensions and the `claude` version.
 - [Runner](runner.md): the Runner binary, Worktree preparation and Setup Script, and the Runner Protocol (sequence numbers, acknowledgements, reconnection, message types).
+- [Schedules](schedules.md): Scheduled Runs, which create Tasks and Sessions on a timetable, and the global Task Tools.
 - [Git integration](git-integration.md): Task Branches, the Git Proxy and Push Policy with the Job token, and `open_pull_request`.
 - [Wikis](wikis.md): Wiki Chats, each a Task with its own Session, and Delete Chat.
 - [Clients](clients.md): how the web and mobile apps show Sessions, Deliveries and the live Timeline.

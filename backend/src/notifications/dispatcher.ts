@@ -4,7 +4,7 @@ import type { AppContext } from '../context';
 import { PushTransportError } from './transport';
 
 type Delivery = {
-  event_id: string; user_id: string; device_id: string; attempts: number; task_id: string;
+  event_id: string; user_id: string; device_id: string; attempts: number; task_id: string | null;
   kind: NotificationKind; token_ciphertext: string; token_hash: string; valid: boolean;
 };
 const SEND_TIMEOUT_MS = 15_000;
@@ -61,15 +61,16 @@ export class PushDispatcher {
       for (let i = 0; i < SEND_CONCURRENCY; i++) {
         const d = await this.ctx.db.transaction(async (tx) => {
           const rows = await tx.execute<Delivery>(sql`select d.event_id, d.user_id, d.device_id, d.attempts, d.token_hash, e.task_id, e.kind, v.token_ciphertext,
-            ((case when e.kind = 'comment.mentioned' then not coalesce(p.muted, false)
-                else p.following and not p.muted end) and u.active and not u.must_change_password
+            ((case when e.kind like 'schedule.%' then true
+                when e.kind = 'comment.mentioned' then not coalesce(p.muted, false)
+                else coalesce(p.following, false) and not coalesce(p.muted, false) end) and u.active and not u.must_change_password
               and (e.kind <> 'comment.mentioned' or exists (select 1 from comments c
                 where c.id::text = substring(e.id from 9) and c.deleted_at is null))
-              and st.category <> 'closed'
+              and (e.kind like 'schedule.%' or st.category <> 'closed')
               and l.expires_at > now() and v.user_id = d.user_id and v.token_hash = d.token_hash
               and e.created_at > now() - interval '24 hours') as valid
             from push_deliveries d join notification_events e on e.id = d.event_id
-            join tasks t on t.id = e.task_id join statuses st on st.id = t.status_id
+            left join tasks t on t.id = e.task_id left join statuses st on st.id = t.status_id
             join push_devices v on v.id = d.device_id join users u on u.id = d.user_id
             join logins l on l.id = v.login_id
             left join task_preferences p on p.task_id = e.task_id and p.user_id = d.user_id

@@ -7,6 +7,7 @@ import type { ContainerInfo } from './runtime';
 import { agentBuilds, agents, jobs, queueEntries, sessions } from '../db/schema';
 import { ACTIVE_JOB_STATES, agentNeedsContainer, desiredContainerSpec, getAgentRow, loadJobs, publishAgent, serializeBuild } from '../modules/agents/service';
 import { loadCommentsById } from '../modules/comments/service';
+import { runDueSchedules } from '../modules/schedules/service';
 import { agentExtensions } from '../modules/extensions/service';
 import { loadCard } from '../modules/tasks/service';
 import { recoverAbandonedJobs } from '../runner/handlers';
@@ -89,9 +90,25 @@ export class Scheduler {
 
   private async tick(): Promise<void> {
     await this.reconcileAll();
+    await this.runSchedules();
     await recoverAbandonedJobs(this.ctx);
     const waiting = await this.ctx.db.selectDistinct({ agentId: queueEntries.agentId }).from(queueEntries);
     for (const { agentId } of waiting) this.kick(agentId);
+  }
+
+  /** Starts or skips the Schedules due at `now` (the scheduler's clock, a parameter so tests can move time). */
+  async runSchedules(now = new Date()): Promise<void> {
+    if (this.stopping) return;
+    await runDueSchedules(this.ctx, now);
+    this.kickWaiting();
+  }
+
+  private kickWaiting(): void {
+    void this.ctx.db
+      .selectDistinct({ agentId: queueEntries.agentId })
+      .from(queueEntries)
+      .then((waiting) => waiting.forEach(({ agentId }) => this.kick(agentId)))
+      .catch((err) => this.ctx.log.error(err, 'could not dispatch after schedules'));
   }
 
   // Dispatching
