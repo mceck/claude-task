@@ -42,6 +42,8 @@ export interface ProjectionState {
   hasVisibleOutput?: boolean;
   /** What the CLI's own `<synthetic>` message said this Turn, which its `result` repeats. */
   syntheticText?: string | null;
+  /** The reset time (epoch seconds) of a rejected rate limit seen this Turn, until a System Comment offers the resume. */
+  limitResetsAt?: number | null;
   nextId: number;
 }
 
@@ -69,7 +71,8 @@ export type Mutation =
   | { op: 'run.message'; runId: string; message: RunMessageDraft }
   | { op: 'run.tool_result'; runId: string; toolUseId: string; status: 'ok' | 'error' | 'interrupted'; outcome: string | null; output: string | null }
   | { op: 'run.end'; runId: string; run: RunInfo; usage: Usage | null }
-  | { op: 'system_comment'; body: string }
+  /** `limitResetsAt` (ISO) is set when the Comment reports a usage limit that says when it resets. */
+  | { op: 'system_comment'; body: string; limitResetsAt?: string }
   | { op: 'turn'; turn: TurnRecord }
   | { op: 'rate_limit'; info: Record<string, unknown> }
   | { op: 'init'; claudeVersion: string | null; mcpServers: unknown[]; slashCommands: string[] | null };
@@ -169,11 +172,21 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       break;
     case 'rate_limit_event':
       if (e.rate_limit_info && typeof e.rate_limit_info === 'object') {
-        mutations.push({ op: 'rate_limit', info: e.rate_limit_info as Record<string, unknown> });
+        const info = e.rate_limit_info as Record<string, unknown>;
+        mutations.push({ op: 'rate_limit', info });
+        s.limitResetsAt = info.status === 'rejected' && typeof info.resetsAt === 'number' ? info.resetsAt : null;
       }
       break;
   }
   return out;
+
+  /** Offers the resume once per Turn, and only for a reset time that is still ahead. */
+  function limitOffer(): { limitResetsAt?: string } {
+    const at = s.limitResetsAt;
+    if (typeof at !== 'number' || at * 1000 <= Date.parse(ctx.receivedAt)) return {};
+    s.limitResetsAt = null;
+    return { limitResetsAt: new Date(at * 1000).toISOString() };
+  }
 
   function handleSystem() {
     if (e.subtype === 'init') {
@@ -271,7 +284,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     // Messages the CLI makes up itself (spend limits, API errors) aren't the Agent talking.
     if (e.message?.model === '<synthetic>') {
       const text = content.filter((b) => b?.type === 'text').map((b) => String(b.text)).join('\n').trim();
-      if (text) mutations.push({ op: 'system_comment', body: text });
+      if (text) mutations.push({ op: 'system_comment', body: text, ...limitOffer() });
       s.syntheticText = text || null;
       closeText();
       return;
@@ -486,12 +499,13 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       const detail = typeof e.result === 'string' && e.result.trim() ? e.result.trim() : null;
       const errors = Array.isArray(e.errors) ? e.errors.filter((x: unknown) => typeof x === 'string') : [];
       // The synthetic message already said it (spend limits, API errors).
-      if (!detail || detail !== s.syntheticText) mutations.push({ op: 'system_comment', body: resultMessage(subtype, detail ?? errors.join('\n')) });
+      if (!detail || detail !== s.syntheticText) mutations.push({ op: 'system_comment', body: resultMessage(subtype, detail ?? errors.join('\n')), ...limitOffer() });
     } else if (!s.hasVisibleOutput && s.toolCalls === 0 && typeof e.result === 'string' && e.result.trim()) {
       mutations.push({ op: 'system_comment', body: e.result.trim() });
     }
     s.hasVisibleOutput = false;
     s.syntheticText = null;
+    s.limitResetsAt = null;
     s.turns++;
     s.turnStartedAt = null;
     s.toolCalls = 0;

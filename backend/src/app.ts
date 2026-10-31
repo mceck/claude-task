@@ -18,6 +18,7 @@ import { authRoutes } from './auth/routes';
 import type { AppContext } from './context';
 import { fromDatabaseError, HttpError } from './errors';
 import { commentRoutes } from './modules/comments/routes';
+import { scheduledMessageRoutes } from './modules/scheduled-messages/routes';
 import { questionRoutes } from './modules/questions/routes';
 import { tagRoutes } from './modules/tags/routes';
 import { projectRoutes } from './modules/projects/routes';
@@ -105,6 +106,7 @@ export async function buildApp(
       wikiRoutes(api, ctx);
       scheduleRoutes(api, ctx);
       commentRoutes(api, ctx);
+      scheduledMessageRoutes(api, ctx);
       questionRoutes(api, ctx);
       credentialRoutes(api, ctx);
       gitRoutes(api, ctx);

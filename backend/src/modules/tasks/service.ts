@@ -47,6 +47,7 @@ interface CardRow extends Record<string, unknown> {
   assignee_ids: string[];
   comment_count: number;
   chat_generation: number;
+  auto_resume: boolean;
   agent_id: string | null;
   session_agent_id: string | null;
   session_state: SessionState | null;
@@ -102,7 +103,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
 
   const result = await db.execute<CardRow>(sql`
     select t.id, t.project_id, p.key as project_key, t.number, t.title, t.status_id, t.priority,
-      t.position, t.version, t.chat_generation, t.created_at, t.updated_at,
+      t.position, t.version, t.chat_generation, t.auto_resume, t.created_at, t.updated_at,
       coalesce((select array_agg(tl.tag_id::text order by l.name, l.id)
         from task_tags tl join tags l on l.id = tl.tag_id where tl.task_id = t.id), '{}') as tag_ids,
       coalesce((select array_agg(ta.user_id::text order by ta.user_id)
@@ -131,6 +132,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     assigneeIds: r.assignee_ids,
     commentCount: r.comment_count,
     chatGeneration: r.chat_generation,
+    autoResume: r.auto_resume,
     branchName: r.branch_name,
     branchUrl: r.branch_url,
     pullRequest: r.pull_request,
@@ -233,7 +235,7 @@ export async function createTask(
     .update(projects)
     .set({ nextTaskNumber: sql`${projects.nextTaskNumber} + 1` })
     .where(eq(projects.id, projectId))
-    .returning({ number: sql<number>`${projects.nextTaskNumber} - 1` });
+    .returning({ number: sql<number>`${projects.nextTaskNumber} - 1`, autoResume: projects.autoResume });
   if (!numbered) throw notFound('Project');
 
   const statusId = input.statusId ?? (await firstOpenStatus(tx, projectId));
@@ -253,6 +255,7 @@ export async function createTask(
       position: await endOfColumn(tx, statusId),
       createdByType: actor.type,
       createdById: actor.id,
+      autoResume: numbered.autoResume,
     })
     .returning();
   await setTags(tx, task!.id, tagIds);
@@ -458,7 +461,8 @@ export async function deleteTask(tx: Executor, after: AfterCommit, taskId: strin
   await assertNoActiveJobs(tx, eq(tasks.id, row.id));
   await removeDeletedWorktrees(tx, after, [row.id]);
   const blobs = await tx.execute<{ blob_id: string }>(sql`
-    select a.blob_id from attachments a left join comments c on c.id = a.comment_id where coalesce(a.task_id, c.task_id) = ${row.id}`);
+    select a.blob_id from attachments a left join comments c on c.id = a.comment_id left join scheduled_messages m on m.id = a.scheduled_message_id
+    where coalesce(a.task_id, c.task_id, m.task_id) = ${row.id}`);
   await tx.delete(tasks).where(eq(tasks.id, row.id));
   after.emit(projectTopic(row.projectId), { type: 'task.deleted', projectId: row.projectId, taskId: row.id });
   after.emit(taskTopic(row.id), { type: 'task.removed', taskId: row.id });

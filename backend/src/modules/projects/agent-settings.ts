@@ -26,7 +26,7 @@ function serializeEnvVar(r: typeof projectEnvVars.$inferSelect): ProjectEnvVar {
 async function loadSettings(db: Executor, projectId: string): Promise<ProjectAgentSettings> {
   const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
   const env = await db.select().from(projectEnvVars).where(eq(projectEnvVars.projectId, projectId)).orderBy(asc(projectEnvVars.name));
-  return { setupScript: p!.setupScript, agentInstructions: p!.agentInstructions, defaultAgentId: p!.defaultAgentId, env: env.map(serializeEnvVar) };
+  return { setupScript: p!.setupScript, agentInstructions: p!.agentInstructions, defaultAgentId: p!.defaultAgentId, autoResume: p!.autoResume, env: env.map(serializeEnvVar) };
 }
 
 /** The Project's "Agents" settings: Setup Script, Agent Instructions (members), env vars and secrets (admins). */

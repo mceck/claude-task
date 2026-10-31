@@ -2,11 +2,11 @@ import { notifyMentions } from '../../notifications/mentions';
 import { ensureChatAgent } from '../wikis/service';
 import { autoFollow } from '../../notifications/preferences';
 import { API_PREFIX, projectTopic, taskTopic } from '@claude-task/shared';
-import type { Actor, Attachment, Comment, Question, QuestionItem, QuestionKind, Survey, TaskAttachment, TimelineItem, TimelinePage } from '@claude-task/shared';
+import type { Actor, Attachment, Comment, LimitResumeOffer, Question, QuestionItem, QuestionKind, Survey, TaskAttachment, TimelineItem, TimelinePage } from '@claude-task/shared';
 import { and, asc, desc, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentItems, attachments, comments, projects, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
+import { agentItems, attachments, comments, limitResumeOffers, projects, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
 import { lockAgents } from '../agents/service';
 import { dropIfEmpty } from '../../sessions/queue';
 import { serializeAgentItem } from '../../projection/apply';
@@ -21,6 +21,7 @@ type CommentRow = typeof comments.$inferSelect;
 type AttachmentRow = typeof attachments.$inferSelect;
 type QuestionRow = typeof questions.$inferSelect;
 type ResponseRow = typeof surveyResponses.$inferSelect;
+type OfferRow = typeof limitResumeOffers.$inferSelect;
 
 /** The structured part of a new Question or Survey. */
 export interface NewQuestion {
@@ -37,7 +38,7 @@ export interface NewAttachment {
   size: number;
 }
 
-function serializeAttachment(a: AttachmentRow): Attachment {
+export function serializeAttachment(a: AttachmentRow): Attachment {
   return {
     id: a.id,
     commentId: a.commentId,
@@ -73,7 +74,7 @@ function serializeComment(
   c: CommentRow,
   author: Actor,
   files: AttachmentRow[],
-  structured: { question: Question | null; survey: Survey | null } = { question: null, survey: null },
+  structured: { question: Question | null; survey: Survey | null; limitResume: LimitResumeOffer | null } = { question: null, survey: null, limitResume: null },
 ): Comment {
   const deleted = c.deletedAt !== null;
   return {
@@ -91,6 +92,17 @@ function serializeComment(
     question: deleted ? null : structured.question,
     survey: deleted ? null : structured.survey,
     answersCommentId: c.answersCommentId,
+    limitResume: deleted ? null : structured.limitResume,
+  };
+}
+
+function serializeOffer(o: OfferRow, user: (id: string | null) => Actor | null): LimitResumeOffer {
+  return {
+    resetsAt: o.resetsAt.toISOString(),
+    state: o.state,
+    decidedBy: user(o.decidedBy),
+    decidedAt: o.decidedAt?.toISOString() ?? null,
+    scheduledMessageId: o.scheduledMessageId,
   };
 }
 
@@ -110,7 +122,8 @@ export async function loadCommentsById(db: Executor, ids: string[]): Promise<Map
         .where(inArray(surveyResponses.commentId, questionRows.map((q) => q.commentId)))
         .orderBy(asc(surveyResponses.createdAt), asc(surveyResponses.userId))
     : [];
-  const userIds = questionRows.flatMap((q) => [q.answeredBy, q.closedBy, ...q.expectedRespondentIds]).concat(responses.map((r) => r.userId));
+  const offerRows = await db.select().from(limitResumeOffers).where(inArray(limitResumeOffers.commentId, ids));
+  const userIds = offerRows.map((o) => o.decidedBy).concat(questionRows.flatMap((q) => [q.answeredBy, q.closedBy, ...q.expectedRespondentIds])).concat(responses.map((r) => r.userId));
   const resolve = await actorResolver(db, [
     ...rows.map((r) => ({ type: r.authorType, id: r.authorId })),
     ...userIds.filter((id): id is string => !!id).map((id) => ({ type: 'user' as const, id })),
@@ -122,6 +135,7 @@ export async function loadCommentsById(db: Executor, ids: string[]): Promise<Map
       const structured = {
         question: q?.kind === 'question' ? serializeQuestion(q, user) : null,
         survey: q?.kind === 'survey' ? serializeSurvey(q, responses.filter((x) => x.commentId === r.id), user) : null,
+        limitResume: offerRows.find((o) => o.commentId === r.id) ? serializeOffer(offerRows.find((o) => o.commentId === r.id)!, user) : null,
       };
       return [r.id, serializeComment(r, resolve({ type: r.authorType, id: r.authorId }), files.filter((f) => f.commentId === r.id), structured)];
     }),

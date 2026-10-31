@@ -343,12 +343,37 @@ export const moveQueueEntryBody = z.strictObject({
 });
 export type MoveQueueEntryBody = z.infer<typeof moveQueueEntryBody>;
 
+// Scheduled messages
+
+export const createScheduledMessageBody = z.strictObject({
+  body: z.string().max(100_000),
+  internal: z.boolean().default(false),
+  /** ISO 8601 instant. */
+  dueAt: z.iso.datetime({ offset: true }),
+});
+export type CreateScheduledMessageBody = z.input<typeof createScheduledMessageBody>;
+
+export const updateScheduledMessageBody = z
+  .strictObject({
+    body: z.string().max(100_000).optional(),
+    dueAt: z.iso.datetime({ offset: true }).optional(),
+  })
+  .refine((b) => b.body !== undefined || b.dueAt !== undefined, 'Nothing to change');
+export type UpdateScheduledMessageBody = z.infer<typeof updateScheduledMessageBody>;
+
+export const answerLimitResumeBody = z.strictObject({ schedule: z.boolean() });
+export type AnswerLimitResumeBody = z.infer<typeof answerLimitResumeBody>;
+
+export const setTaskAutoResumeBody = z.strictObject({ enabled: z.boolean() });
+export type SetTaskAutoResumeBody = z.infer<typeof setTaskAutoResumeBody>;
+
 // Project settings for Agents
 
 export const updateAgentSettingsBody = z.strictObject({
   setupScript: z.string().max(100_000).optional(),
   agentInstructions: z.string().max(100_000).optional(),
   defaultAgentId: id.nullable().optional(),
+  autoResume: z.boolean().optional(),
 });
 export type UpdateAgentSettingsBody = z.infer<typeof updateAgentSettingsBody>;
 

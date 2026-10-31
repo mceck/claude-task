@@ -1,5 +1,5 @@
 ---
-status: to-do
+status: in-progress
 ---
 
 # Scheduled messages and automatic resume after a usage limit
