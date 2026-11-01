@@ -3,13 +3,13 @@ import { BranchLink, PullRequestBadge, capitalize, withProvider } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, projectTopic, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { CircleCheck, Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelBottomClose, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, Bot, ChevronDown, CircleCheck, Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelBottomClose, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -17,8 +17,7 @@ import { ApiError, del, errorMessage, patch, post, put } from '../api/client';
 import { keys, useAgents, useProject, useTask, useTaskSession, useUsers } from '../api/queries';
 import { removeCard, removeTask, setTask, toCard, upsertCard } from '../lib/cache';
 import { minimizeInDock, resumeInDock, suspendInDock, useDockAvailable } from '../lib/dock';
-import { nextTimelineFilter, timelineFilterOption } from '../lib/timeline-filter';
-import type { TimelineFilter } from '../lib/timeline-filter';
+import { hiddenTimelineLabel, setTimelineHidden, showEverythingInTimeline, useHiddenTimelineItems } from '../lib/timeline-filter';
 import { useTopic } from '../lib/realtime';
 import { TagChip, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, Time, useConfirm, UserAvatar } from './common';
 import { RichMarkdownView } from './Markdown';
@@ -49,7 +48,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const confirm = useConfirm();
   const [merging, setMerging] = useState(false);
   const layout = useTaskLayout();
-  const [filter, setFilter] = useState<TimelineFilter>('changes');
+  const hidden = useHiddenTimelineItems();
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
   const dockable = useDockAvailable();
   const saves = useRef({ queue: Promise.resolve<unknown>(undefined), version: -1, count: 0, owners: new Map<string, number>() });
@@ -250,7 +249,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   };
 
   const asideName = layout.focus === 'activity' ? 'details' : 'activity';
-  const filterOption = timelineFilterOption(filter);
+  const anythingHidden = hidden.changes || hidden.activity;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -287,20 +286,29 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                 <TooltipContent>Move to “{closedStatus.name}” and end the agent session</TooltipContent>
               </Tooltip>
             )}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  className="text-muted-foreground"
-                  aria-label={filterOption.name}
-                  onClick={() => setFilter(nextTimelineFilter)}
-                >
-                  {filter === 'all' ? <Eye /> : <EyeOff />} {filterOption.label}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="xs" variant="ghost" className="text-muted-foreground" aria-label={`Timeline visibility: ${hiddenTimelineLabel(hidden).toLowerCase()}`}>
+                  {anythingHidden ? <EyeOff /> : <Eye />}
+                  <span className="max-sm:hidden">{hiddenTimelineLabel(hidden)}</span>
+                  <ChevronDown className="size-3 opacity-60" />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>{filterOption.hint}</TooltipContent>
-            </Tooltip>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Hide from the Timeline</DropdownMenuLabel>
+                <DropdownMenuCheckboxItem checked={hidden.changes} onCheckedChange={(on) => setTimelineHidden('changes', on === true)}>
+                  <ArrowRightLeft className="text-muted-foreground" /> Task changes
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem checked={hidden.activity} onCheckedChange={(on) => setTimelineHidden('activity', on === true)}>
+                  <Bot className="text-muted-foreground" /> Agent activity
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem disabled={!anythingHidden} onSelect={showEverythingInTimeline}>
+                  <Eye /> Show everything
+                </DropdownMenuItem>
+                <p className="px-1.5 pt-1 text-[11px] leading-snug text-muted-foreground">Applies to every task, on every board.</p>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {session.data && <>
               <SessionChip session={session.data} />
               {session.data.context && <ContextBadge context={session.data.context} />}
@@ -402,7 +410,6 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
             tags={tags}
             users={people}
             session={session.data}
-            filter={filter}
             reserveDockSpace={layout.focus === 'activity' || layout.sidebarOpen}
           />
         </Panel>

@@ -83,7 +83,7 @@ Choose **Delete** from Comment actions and confirm to remove your Comment and it
 
 ## Read activity and tell the Agent about edits
 
-The Timeline combines Comments, the Agent's work and recorded field changes called Revisions. The **Changes** control cycles through three levels: **Changes** hides Revisions (the default), **Changes + Activity** hides the Agent's work and tool calls as well, and **Everything** shows all of it. Use **Load older activity** for earlier entries. Expand **Thinking** or an Activity group to inspect the Agent's work.
+The Timeline combines Comments, the Agent's work and recorded field changes called Revisions. The **Timeline visibility** menu (the eye in the Task header) has a checkbox for each thing you can hide: **Task changes** hides Revisions and is checked at first, and **Agent activity** hides the Agent's work and tool calls. Choose either, both or neither; **Show everything** clears both. The menu names what is hidden now. The choice is yours, not the Task's: it applies to every Task in every Board, to the Chat Dock and to your other browser tabs, and it is remembered after a reload. Use **Load older activity** for earlier entries. Expand **Thinking** or an Activity group to inspect the Agent's work.
 
 New output stays in view while you are at the bottom. Scroll up to read older activity without being pulled back down. Reaching the latest entry in a visible browser tab marks it read across your clients.
 

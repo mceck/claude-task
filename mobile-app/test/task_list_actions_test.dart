@@ -147,6 +147,8 @@ void main() {
           .fontWeight,
       FontWeight.w500,
     );
+    // Let the Projects refresh that follows the read run out.
+    await tester.pump(const Duration(milliseconds: 300));
   });
 
   testWidgets('Mark all as read is hidden when every Task is read', (

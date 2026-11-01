@@ -530,13 +530,15 @@ test('edits the description in place where it was clicked and saves it once when
     description: 'First paragraph.\n\n' + 'Filler paragraph.\n\n'.repeat(30) + 'Last paragraph.',
   });
   await page.goto(`/t/${task.key}`);
-  // Changes are hidden from the Timeline by default; two clicks reach "everything shown".
-  const filter = page.getByRole('button', { name: /Timeline filter/ });
-  await expect(filter).toHaveAccessibleName('Timeline filter: changes hidden');
-  await filter.click();
-  await expect(filter).toHaveAccessibleName('Timeline filter: changes and agent activity hidden');
-  await filter.click();
-  await expect(filter).toHaveAccessibleName('Timeline filter: everything shown');
+  // Task changes are hidden from the Timeline by default; the visibility menu shows them again.
+  const visibility = page.getByRole('button', { name: /Timeline visibility/ });
+  await expect(visibility).toHaveAccessibleName('Timeline visibility: changes hidden');
+  await visibility.click();
+  const changes = page.getByRole('menuitemcheckbox', { name: 'Task changes' });
+  await expect(changes).toBeChecked();
+  await changes.click();
+  await page.keyboard.press('Escape');
+  await expect(visibility).toHaveAccessibleName('Timeline visibility: everything shown');
   const description = page.getByRole('region', { name: 'Description', exact: true });
   const editor = description.getByRole('textbox', { name: 'editable markdown', exact: true });
   const toolbar = description.getByRole('toolbar');
@@ -590,10 +592,41 @@ test('edits the description in place where it was clicked and saves it once when
   await expect(toolbar).toBeHidden();
   await page.reload();
   await expect(description).toContainText('Last paragraph. Twice.');
-  await expect(page.getByText('updated the description')).toHaveCount(0);
-  await page.getByRole('button', { name: /Timeline filter/ }).click();
-  await page.getByRole('button', { name: /Timeline filter/ }).click();
+  // The choice is a viewer preference, global and stored: it survives the reload.
+  await expect(visibility).toHaveAccessibleName('Timeline visibility: everything shown');
   await expect(page.getByText('updated the description')).toHaveCount(1);
+  // Putting the default back hides the Revision again.
+  await visibility.click();
+  await page.getByRole('menuitemcheckbox', { name: 'Task changes' }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('updated the description')).toHaveCount(0);
+});
+
+test('keeps the hidden Timeline kinds across tasks and boards, and resets them', async ({ page }) => {
+  await login(page.request);
+  const first = await createProject(page.request);
+  const second = await createProject(page.request);
+  const taskA = await createTask(page.request, first, 'Hide activity here');
+  const taskB = await createTask(page.request, second, 'Still hidden here');
+
+  await page.goto(`/t/${taskA.key}`);
+  const visibility = page.getByRole('button', { name: /Timeline visibility/ });
+  await expect(visibility).toHaveAccessibleName('Timeline visibility: changes hidden');
+  await visibility.click();
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Task changes' })).toBeChecked();
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Agent activity' })).not.toBeChecked();
+  await page.getByRole('menuitemcheckbox', { name: 'Agent activity' }).click();
+  await expect(visibility).toHaveAccessibleName('Timeline visibility: changes + activity hidden');
+  await page.keyboard.press('Escape');
+
+  // The choice belongs to the viewer, not to the Task or the Board it is on.
+  await page.goto(`/p/${second.key}?task=${taskB.key}`);
+  const other = page.getByRole('button', { name: /Timeline visibility/ });
+  await expect(other).toHaveAccessibleName('Timeline visibility: changes + activity hidden');
+
+  await other.click();
+  await page.getByRole('menuitem', { name: 'Show everything' }).click();
+  await expect(other).toHaveAccessibleName('Timeline visibility: everything shown');
 });
 
 test('inserts an image into the description from a dialog above the board’s task dialog', async ({ page }) => {

@@ -1065,9 +1065,13 @@ class TaskList extends StatefulWidget {
   State<TaskList> createState() => _TaskListState();
 }
 
-class _TaskListState extends State<TaskList> {
+class _TaskListState extends State<TaskList> with TickerProviderStateMixin {
   final _searchField = TextEditingController();
   final _collapsed = <String>{};
+
+  /// How open each Status group is (1 open, 0 folded), for the groups that
+  /// were ever folded: their rows fold together, then leave the list.
+  final _folds = <String, AnimationController>{};
   String _search = '', _priority = '', _tag = '', _assignee = '';
   int get _filterCount =>
       [_priority, _tag, _assignee].where((v) => v.isNotEmpty).length +
@@ -1114,11 +1118,35 @@ class _TaskListState extends State<TaskList> {
 
   @override
   void dispose() {
+    for (final fold in _folds.values) {
+      fold.dispose();
+    }
     _scrollTimer?.cancel();
     _scroll.dispose();
     _searchField.dispose();
     super.dispose();
   }
+
+  void _toggleGroup(String statusId) {
+    final fold = _folds[statusId] ??=
+        AnimationController(vsync: this, duration: Motion.medium, value: 1)
+          ..addStatusListener((status) {
+            // Folded away: its rows leave the list.
+            if (status == AnimationStatus.dismissed && mounted) setState(() {});
+          });
+    final instant = MediaQuery.disableAnimationsOf(context);
+    if (_collapsed.contains(statusId)) {
+      setState(() => _collapsed.remove(statusId));
+      instant ? fold.value = 1 : fold.forward();
+    } else {
+      setState(() => _collapsed.add(statusId));
+      instant ? fold.value = 0 : fold.reverse();
+    }
+  }
+
+  /// Whether a group's rows are in the list: open, or still folding away.
+  bool _listed(String statusId) =>
+      !_collapsed.contains(statusId) || (_folds[statusId]?.value ?? 0) > 0;
 
   TaskStatus? get _closedStatus => widget.controller.statuses
       .where((s) => s.category == 'closed')
@@ -1511,6 +1539,20 @@ class _TaskListState extends State<TaskList> {
         if (_selected.contains(t.id)) t,
     ];
     final hasUnread = c.tasks.any((t) => c.preferences[t.id]?.unread == true);
+    final items = <_ListItem>[
+      for (final (status, tasks) in groups) ...[
+        _ListItem.header(status, tasks.length),
+        if (_listed(status.id)) ...[
+          for (final task in tasks) _ListItem.row(status, task, row++),
+          _ListItem.end(status),
+        ],
+      ],
+      if (c.tasks.isEmpty) const _ListItem.empty(),
+    ];
+    final rowIndex = {
+      for (var i = 0; i < items.length; i++)
+        if (items[i].task case final task?) 'row:${task.id}': i,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1662,84 +1704,76 @@ class _TaskListState extends State<TaskList> {
                 )
               : AppRefresh(
                   onRefresh: () => perform(context, c.refresh),
-                  child: ListView(
+                  child: ListView.builder(
                     key: _listKey,
                     controller: _scroll,
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(8, 2, 8, 24),
-                    children: [
-                      for (final (status, tasks) in groups) ...[
-                        DragTarget<Task>(
-                          onWillAcceptWithDetails: (d) {
-                            _hover(_DropSpot(null, statusId: status.id));
-                            return true;
-                          },
-                          onMove: (_) =>
-                              _hover(_DropSpot(null, statusId: status.id)),
-                          onLeave: (_) => _hoverLeft(),
-                          onAcceptWithDetails: (d) => _dropOn(d.data, status),
-                          builder: (context, candidate, _) => AnimatedContainer(
-                            duration: Motion.fast,
-                            decoration: BoxDecoration(
-                              color: candidate.isEmpty
-                                  ? null
-                                  : Palette.primary.withValues(alpha: .14),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: _GroupHeader(
-                              status: status,
-                              count: tasks.length,
-                              collapsed: _collapsed.contains(status.id),
-                              onTap: () => setState(() {
-                                if (!_collapsed.remove(status.id)) {
-                                  _collapsed.add(status.id);
-                                }
-                              }),
-                            ),
-                          ),
-                        ),
-                        AnimatedSize(
-                          duration: Motion.medium,
-                          curve: Motion.enter,
-                          alignment: Alignment.topCenter,
-                          child: _collapsed.contains(status.id)
-                              ? const SizedBox(width: double.infinity)
-                              : Column(
-                                  children: [
-                                    for (final task in tasks)
-                                      FadeSlideIn.staggered(
-                                        key: ValueKey('row:${task.id}'),
-                                        enabled: _intro,
-                                        index: row++,
-                                        child: _row(
-                                          task,
-                                          status,
-                                          reorder: !filtering,
-                                        ),
-                                      ),
-                                    _slot(
-                                      _DropSpot(null, statusId: status.id),
-                                      status,
-                                    ),
-                                  ],
-                                ),
-                        ),
-                      ],
-                      if (c.tasks.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 40),
-                          child: EmptyState(
-                            icon: Icons.task_alt_rounded,
-                            title: 'No Tasks yet',
-                            message: 'Create the first Task with the + button.',
-                          ),
-                        ),
-                    ],
+                    // Only the rows on screen are built: a long list rebuilt
+                    // every row on every update and stuttered while scrolling.
+                    itemCount: items.length,
+                    findChildIndexCallback: (key) =>
+                        key is ValueKey<String> ? rowIndex[key.value] : null,
+                    itemBuilder: (context, index) =>
+                        _item(items[index], filtering: filtering),
                   ),
                 ),
         ),
       ],
     );
+  }
+
+  Widget _item(_ListItem item, {required bool filtering}) {
+    final status = item.status;
+    if (status == null) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 40),
+        child: EmptyState(
+          icon: Icons.task_alt_rounded,
+          title: 'No Tasks yet',
+          message: 'Create the first Task with the + button.',
+        ),
+      );
+    }
+    final task = item.task;
+    if (item.header) {
+      return DragTarget<Task>(
+        onWillAcceptWithDetails: (d) {
+          _hover(_DropSpot(null, statusId: status.id));
+          return true;
+        },
+        onMove: (_) => _hover(_DropSpot(null, statusId: status.id)),
+        onLeave: (_) => _hoverLeft(),
+        onAcceptWithDetails: (d) => _dropOn(d.data, status),
+        builder: (context, candidate, _) => AnimatedContainer(
+          duration: Motion.fast,
+          decoration: BoxDecoration(
+            color: candidate.isEmpty
+                ? null
+                : Palette.primary.withValues(alpha: .14),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: _GroupHeader(
+            status: status,
+            count: item.count,
+            collapsed: _collapsed.contains(status.id),
+            onTap: () => _toggleGroup(status.id),
+          ),
+        ),
+      );
+    }
+    final child = task == null
+        ? _slot(_DropSpot(null, statusId: status.id), status)
+        : FadeSlideIn.staggered(
+            key: ValueKey('row:${task.id}'),
+            enabled: _intro,
+            index: item.count,
+            child: _row(task, status, reorder: !filtering),
+          );
+    final fold = _folds[status.id];
+    return fold == null
+        ? child
+        : _Folding(key: child.key, open: fold, child: child);
   }
 
   Future<void> _openFilters(BuildContext context) async {
@@ -1834,6 +1868,56 @@ class _TaskListState extends State<TaskList> {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// One entry of the Task list: a Status group's header, one of its Task
+/// rows, the drop slot closing the group, or the empty-Project hint.
+class _ListItem {
+  final TaskStatus? status;
+  final Task? task;
+  final bool header;
+
+  /// The header's Task count, or the row's position for its entrance.
+  final int count;
+  const _ListItem.header(TaskStatus this.status, this.count)
+    : task = null,
+      header = true;
+  const _ListItem.row(TaskStatus this.status, Task this.task, this.count)
+    : header = false;
+  const _ListItem.end(TaskStatus this.status)
+    : task = null,
+      header = false,
+      count = 0;
+  const _ListItem.empty()
+    : status = null,
+      task = null,
+      header = false,
+      count = 0;
+}
+
+/// A row of a Status group that folds and unfolds with it, from the bottom.
+class _Folding extends AnimatedWidget {
+  final Widget child;
+  const _Folding({
+    super.key,
+    required Animation<double> open,
+    required this.child,
+  }) : super(listenable: open);
+
+  @override
+  Widget build(BuildContext context) {
+    final open = Motion.enter.transform(
+      (listenable as Animation<double>).value,
+    );
+    return ClipRect(
+      clipBehavior: open < 1 ? Clip.hardEdge : Clip.none,
+      child: Align(
+        alignment: Alignment.topCenter,
+        heightFactor: open,
+        child: child,
       ),
     );
   }

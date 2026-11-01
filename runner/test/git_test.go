@@ -395,3 +395,83 @@ func TestRunnerGitCommandsKeepTheRunnerTokenFromHooks(t *testing.T) {
 		t.Fatalf("a hook saw the runner token: %q", out)
 	}
 }
+
+// A Worktree preparation that fails transiently (here: the origin not there yet, like a Git Proxy
+// that hasn't settled the Job) is retried instead of failing the Job.
+func TestWorktreePreparationRetriesATransientFailure(t *testing.T) {
+	o := newOrigin(t)
+	b := newBackend(t)
+	home := startRunner(t, b)
+	later := filepath.Join(t.TempDir(), "origin.git")
+	spec := o.spec("task/t-9-existing")
+	spec["cloneUrl"] = "file://" + later
+	spec["branchExists"] = true
+
+	b.send(jobStart(jobOpts{id: "j1", session: "s-j1", worktree: "worktrees/proj/T-9", git: spec, text: "go"}))
+	waitUntil(t, 10*time.Second, "the first attempt to fail", func() bool {
+		return strings.Contains(b.setupOutput("j1"), "preparing the worktree failed")
+	})
+	if err := os.Rename(o.bare, later); err != nil {
+		t.Fatal(err)
+	}
+	b.waitEvent("j1", "result", isResult)
+	b.send(msg{"type": "job.end", "jobId": "j1"})
+	b.waitType("j1", "job.exited")
+
+	if out := b.setupOutput("j1"); !strings.Contains(out, "(attempt 1/3)") {
+		t.Fatalf("the retry isn't in the setup output: %q", out)
+	}
+	if ready := b.waitType("j1", "job.worktree_ready"); ready["created"] != true {
+		t.Fatalf("worktree_ready: %v", ready)
+	}
+	wt := filepath.Join(home, "worktrees/proj/T-9")
+	if gitIn(t, home, wt, "rev-parse", "--abbrev-ref", "HEAD") != "task/t-9-existing" {
+		t.Fatal("the retry didn't create the Worktree on the task branch")
+	}
+}
+
+// The retries are bounded: a preparation that never succeeds fails the Job after the last attempt.
+func TestWorktreePreparationGivesUpAfterThreeRetries(t *testing.T) {
+	b := newBackend(t)
+	startRunner(t, b)
+	spec := msg{
+		"cloneUrl": "file://" + filepath.Join(t.TempDir(), "missing.git"), "baseBranch": "main", "taskBranch": "task/t-1",
+		"branchExists": false, "repoPath": "repos/proj.git", "commitName": "Ada (claude-task)", "commitEmail": "ada@agents.claude-task.local",
+	}
+	b.send(jobStart(jobOpts{id: "j1", text: "go", git: spec}))
+	failed := b.waitType("j1", "job.failed")
+	if failed.str("stage") != "worktree" || !strings.Contains(failed.str("message"), "exit status 128") {
+		t.Fatalf("failure: %v", failed)
+	}
+	out := b.setupOutput("j1")
+	for _, attempt := range []string{"(attempt 1/3)", "(attempt 2/3)", "(attempt 3/3)"} {
+		if !strings.Contains(out, attempt) {
+			t.Fatalf("%s missing from the setup output: %q", attempt, out)
+		}
+	}
+}
+
+// Cancelling while a retry waits ends the Job at once instead of after the delay.
+func TestCancelDuringAWorktreeRetryWaitEndsTheJob(t *testing.T) {
+	b := newBackend(t)
+	startRunner(t, b)
+	spec := msg{
+		"cloneUrl": "file://" + filepath.Join(t.TempDir(), "missing.git"), "baseBranch": "main", "taskBranch": "task/t-1",
+		"branchExists": false, "repoPath": "repos/proj.git", "commitName": "Ada (claude-task)", "commitEmail": "ada@agents.claude-task.local",
+	}
+	b.send(jobStart(jobOpts{id: "j1", text: "go", git: spec}))
+	waitUntil(t, 10*time.Second, "the retry to be announced", func() bool {
+		return strings.Contains(b.setupOutput("j1"), "retrying in")
+	})
+	start := time.Now()
+	b.send(msg{"type": "job.cancel", "jobId": "j1"})
+	if failed := b.waitType("j1", "job.failed"); failed.str("stage") != "worktree" {
+		t.Fatalf("failed %v", failed)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("a cancelled Job waited %s for its retry", elapsed)
+	}
+	if b.processedIndex("j1", "job.worktree_ready") >= 0 {
+		t.Fatal("a cancelled Job announced its Worktree as ready")
+	}
+}

@@ -139,19 +139,37 @@ class _DashedPainter extends CustomPainter {
     this.gap,
     this.width,
   );
-  @override
-  void paint(Canvas canvas, Size size) {
+
+  /// Dashes of recent outlines, by shape. Measuring the outline and drawing
+  /// each dash on its own, on every paint, was costly for long dashed boxes
+  /// like the Agent's growing live text.
+  static final _dashes = <(Size, BorderRadius, double, double, double), Path>{};
+
+  Path _outline(Size size) {
+    final key = (size, radius, dash, gap, width);
+    final known = _dashes.remove(key);
+    if (known != null) return _dashes[key] = known;
     final rect = (Offset.zero & size).deflate(width / 2);
     final path = Path()..addRRect(radius.toRRect(rect));
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = width
-      ..style = PaintingStyle.stroke;
+    final dashes = Path();
     for (final metric in path.computeMetrics()) {
       for (var d = 0.0; d < metric.length; d += dash + gap) {
-        canvas.drawPath(metric.extractPath(d, d + dash), paint);
+        dashes.addPath(metric.extractPath(d, d + dash), Offset.zero);
       }
     }
+    if (_dashes.length >= 64) _dashes.remove(_dashes.keys.first);
+    return _dashes[key] = dashes;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawPath(
+      _outline(size),
+      Paint()
+        ..color = color
+        ..strokeWidth = width
+        ..style = PaintingStyle.stroke,
+    );
   }
 
   @override
@@ -179,33 +197,37 @@ class _TypingDotsState extends State<TypingDots>
     super.dispose();
   }
 
+  // Animates for as long as an Agent writes: repaint the dots alone, not the
+  // text around them.
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: _controller,
-    builder: (context, _) => Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < 3; i++)
-          Builder(
-            builder: (context) {
-              final phase = ((_controller.value - i * .16) % 1 + 1) % 1;
-              final lift = phase < .5
-                  ? Curves.easeInOut.transform(phase * 2)
-                  : 0.0;
-              final up = phase < .25 ? lift : (phase < .5 ? 1 - lift : 0.0);
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 1.5),
-                child: Transform.translate(
-                  offset: Offset(0, -3 * up),
-                  child: Dot(
-                    color: widget.color.withValues(alpha: .45 + .55 * up),
-                    size: 5,
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < 3; i++)
+            Builder(
+              builder: (context) {
+                final phase = ((_controller.value - i * .16) % 1 + 1) % 1;
+                final lift = phase < .5
+                    ? Curves.easeInOut.transform(phase * 2)
+                    : 0.0;
+                final up = phase < .25 ? lift : (phase < .5 ? 1 - lift : 0.0);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                  child: Transform.translate(
+                    offset: Offset(0, -3 * up),
+                    child: Dot(
+                      color: widget.color.withValues(alpha: .45 + .55 * up),
+                      size: 5,
+                    ),
                   ),
-                ),
-              );
-            },
-          ),
-      ],
+                );
+              },
+            ),
+        ],
+      ),
     ),
   );
 }
@@ -521,13 +543,16 @@ class Spinner extends StatelessWidget {
   final double size;
   final Color color;
   const Spinner({super.key, this.size = 18, this.color = Palette.primary});
+  // Spins every frame: repaint it alone.
   @override
-  Widget build(BuildContext context) => SizedBox.square(
-    dimension: size,
-    child: CircularProgressIndicator(
-      strokeWidth: size < 16 ? 1.8 : 2.2,
-      color: color,
-      strokeCap: StrokeCap.round,
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: SizedBox.square(
+      dimension: size,
+      child: CircularProgressIndicator(
+        strokeWidth: size < 16 ? 1.8 : 2.2,
+        color: color,
+        strokeCap: StrokeCap.round,
+      ),
     ),
   );
 }

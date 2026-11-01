@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppContext } from '../context';
 import { jobs, projects, schedules, tasks } from '../db/schema';
+import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import { gitOwnerTask } from './owner';
 import { hashToken } from '../secrets';
 
@@ -130,8 +131,10 @@ async function authorize(ctx: AppContext, request: FastifyRequest, reply: Fastif
     await deny(reply, 401, 'Authentication required');
     return null;
   }
-  // Only an accepted Job, still running or finishing its Turn.
-  if (row.discardOutput || !['running', 'finishing'].includes(row.state) || row.projectId !== projectId.toLowerCase() || !row.repository) {
+  // A live Job: dispatched, running or finishing its Turn. `dispatched` matters because the Runner
+  // sends `job.accepted` and fetches the Worktree without waiting for the backend to process it, so
+  // the first fetch can arrive while the Job still reads as dispatched.
+  if (row.discardOutput || !(ACTIVE_JOB_STATES as readonly string[]).includes(row.state) || row.projectId !== projectId.toLowerCase() || !row.repository) {
     await deny(reply, 403, 'no active task for this repository');
     return null;
   }
