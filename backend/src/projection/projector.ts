@@ -2,7 +2,7 @@
 // (state, event) to (state, mutations, broadcasts), so it can be tested over recorded streams
 // and replayed when the display rules change. Applying the mutations is someone else's job.
 import { createHash } from 'node:crypto';
-import type { ActivityEntry, AgentItemPayload, ContextUsage, LiveDelta, RunInfo, RunMessageDraft, TurnSummary, Usage } from '@claude-task/shared';
+import { THINKING_ENTRY, type ActivityEntry, type AgentItemPayload, type ContextUsage, type LiveDelta, type RunInfo, type RunMessageDraft, type TurnSummary, type Usage } from '@claude-task/shared';
 
 /** A Run while it is open: its item payload plus what the projection needs to route its output. */
 export interface RunState {
@@ -27,7 +27,6 @@ export interface ProjectionState {
   turnComment?: string | null;
   /** When the Turn last handed input to the model (its start, then each batch of tool results). */
   lastInputAt?: string | null;
-  thinking: { id: string; text: string } | null;
   /** The open Activity item, which new tool calls join. */
   activity: string | null;
   /** Where each tool call lives: its Activity item and the index of its entry. */
@@ -110,7 +109,6 @@ export function initialProjection(): ProjectionState {
     costSoFar: 0,
     lastUsage: null,
     comment: null,
-    thinking: null,
     activity: null,
     tools: {},
     groups: {},
@@ -159,7 +157,6 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
   };
   const closeText = () => {
     s.comment = null;
-    s.thinking = null;
   };
   const updateGroup = (itemId: string) => {
     const entries = s.groups[itemId];
@@ -321,7 +318,6 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
         const text = String(block.text ?? '');
         if (text.trim() === '') continue;
         s.activity = null;
-        s.thinking = null;
         if (s.comment) {
           s.comment.body = `${s.comment.body}\n\n${text}`;
           mutations.push({ op: 'comment.update', id: s.comment.id, body: s.comment.body });
@@ -334,13 +330,21 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
         const text = String(block.thinking ?? '').trim();
         if (text === '') continue;
         s.comment = null;
-        s.activity = null;
-        if (s.thinking) {
-          s.thinking.text = `${s.thinking.text}\n\n${text}`;
-          mutations.push({ op: 'item.update', id: s.thinking.id, payload: { kind: 'thinking', text: s.thinking.text } });
+        const open = s.activity ? s.groups[s.activity] : undefined;
+        const last = open?.[open.length - 1];
+        if (s.activity && open && last?.name === THINKING_ENTRY) {
+          last.output = `${last.output}\n\n${text}`;
+          updateGroup(s.activity);
+          continue;
+        }
+        const entry: ActivityEntry = { toolUseId: newId(), name: THINKING_ENTRY, summary: 'Thinking', status: 'ok', outcome: null, input: null, output: text };
+        if (s.activity && open) {
+          open.push(entry);
+          updateGroup(s.activity);
         } else {
-          s.thinking = { id: newId(), text };
-          mutations.push({ op: 'item.create', id: s.thinking.id, payload: { kind: 'thinking', text } });
+          s.activity = newId();
+          s.groups[s.activity] = [entry];
+          mutations.push({ op: 'item.create', id: s.activity, payload: { kind: 'activity', entries: [entry] } });
         }
       } else if (block?.type === 'tool_use') {
         closeText();

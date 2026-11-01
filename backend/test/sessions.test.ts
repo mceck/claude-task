@@ -310,13 +310,13 @@ describe('the Agent on the Timeline', () => {
     const shape = items
       .filter((i) => i.type !== 'revision')
       .map((i) => (i.type === 'comment' ? `comment:${i.comment.kind}` : i.type === 'agent' ? i.item.payload.kind : 'revision'));
-    expect(shape).toEqual(['comment:user', 'thinking', 'comment:agent', 'activity', 'comment:agent', 'turn_summary']);
+    expect(shape).toEqual(['comment:user', 'activity', 'comment:agent', 'activity', 'comment:agent', 'turn_summary']);
 
     const [first, second] = comments(items).filter((c) => c.kind === 'agent');
     expect(first).toMatchObject({ body: 'Looking into it.', author: { type: 'agent', id: agent.id, displayName: 'Ada Bot' } });
     expect(second!.body).toBe('Fixed: the middleware ignored `next`.\n\nTests pass now.');
 
-    const activity = items.find((i) => i.type === 'agent' && i.item.payload.kind === 'activity') as Extract<TimelineItem, { type: 'agent' }>;
+    const activity = items.filter((i) => i.type === 'agent' && i.item.payload.kind === 'activity')[1] as Extract<TimelineItem, { type: 'agent' }>;
     expect(activity.item.payload).toMatchObject({
       entries: [
         { name: 'Bash', summary: 'Ran `npm test -- auth`', status: 'error', outcome: 'exit 1' },
@@ -329,7 +329,7 @@ describe('the Agent on the Timeline', () => {
     expect((await admin.get(`/tasks/${task.id}`)).body.task.toolCallCount).toBe(2);
 
     // Everything also arrived live.
-    expect(ws.events('agent_item.created').map((e) => e.item.payload.kind)).toEqual(['thinking', 'activity', 'turn_summary']);
+    expect(ws.events('agent_item.created').map((e) => e.item.payload.kind)).toEqual(['activity', 'activity', 'turn_summary']);
     expect(ws.events('comment.created').filter((e) => e.comment.kind === 'agent')).toHaveLength(2);
     ws.close();
   });

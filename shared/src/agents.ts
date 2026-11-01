@@ -223,6 +223,9 @@ export interface Delivery {
 
 // Agent Timeline items (projected from the stream)
 
+/** The `name` of an Activity entry holding the Agent's reasoning rather than a tool call; `output` is its text. */
+export const THINKING_ENTRY = 'Thinking';
+
 export interface ActivityEntry {
   toolUseId: string;
   name: string;
