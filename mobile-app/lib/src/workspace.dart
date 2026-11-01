@@ -2200,9 +2200,20 @@ class _TaskRow extends StatelessWidget {
                             size: 18,
                           ),
                         ],
-                        if (task.sessionContext != null) ...[
+                        if (c.contextOf(
+                              task.id,
+                              task.sessionState,
+                              task.sessionContext,
+                            ) !=
+                            null) ...[
                           const SizedBox(width: 8),
-                          ContextLabel(context: task.sessionContext),
+                          ContextLabel(
+                            context: c.contextOf(
+                              task.id,
+                              task.sessionState,
+                              task.sessionContext,
+                            ),
+                          ),
                         ],
                         if (task.commentCount > 0) ...[
                           const SizedBox(width: 8),

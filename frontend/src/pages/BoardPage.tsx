@@ -433,6 +433,8 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
     : `${card.commentCount} comments`;
   const toolCallsLabel = `${card.toolCallCount} tool ${card.toolCallCount === 1 ? 'call' : 'calls'}`;
   const context = card.session?.context ?? null;
+  // A running Session can show a live figure before its first Turn has stored one.
+  const mayHaveContext = context !== null || card.session?.state === 'running';
 
   const close = async () => {
     if (!closedStatus) return;
@@ -501,14 +503,14 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
       </div>
       {card.pullRequest && <div className="mb-2"><PullRequestBadge pr={card.pullRequest} /></div>}
       <p className={cn('text-[13px] leading-snug', unread ? 'font-semibold text-foreground' : 'font-medium text-foreground/90 group-hover:text-foreground')}>{card.title}</p>
-      {(cardTags.length > 0 || card.commentCount > 0 || card.toolCallCount > 0 || context) && (
+      {(cardTags.length > 0 || card.commentCount > 0 || card.toolCallCount > 0 || mayHaveContext) && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1">
           {cardTags.map((l) => (
             <TagChip key={l.id} name={l.name} color={l.color} />
           ))}
-          {(card.toolCallCount > 0 || card.commentCount > 0 || context) && (
+          {(card.toolCallCount > 0 || card.commentCount > 0 || mayHaveContext) && (
             <span className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
-              {context && <ContextUsageLabel context={context} />}
+              <ContextUsageLabel taskId={card.id} context={context} running={card.session?.state === 'running'} />
               {card.toolCallCount > 0 && (
                 <span data-testid="task-tool-calls" className="flex items-center gap-1" title={toolCallsLabel} aria-label={toolCallsLabel}>
                   <Wrench className="size-3" /> {card.toolCallCount}
