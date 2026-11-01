@@ -14,6 +14,9 @@ test('shows how full the conversation context is beside the Session chip', async
   const stream = new Stream(start.sessionId);
   await replay(page.request, agent.id, start.jobId, [
     stream.init(),
+    // A tool call, so the Board card shows the tool count beside the context.
+    stream.toolUse('toolu_1', 'Bash', { command: 'ls' }),
+    stream.toolResult('toolu_1', 'ok'),
     {
       type: 'assistant',
       message: {
@@ -39,4 +42,14 @@ test('shows how full the conversation context is beside the Session chip', async
   await expect(chips.first()).toBeVisible();
   await expect(chips.first()).toContainText('120.3K (60%)');
   await expect(page.getByText('Context', { exact: true })).toBeVisible();
+
+  // The Board card repeats the figure just left of its tool call count.
+  await page.goto(`/p/${project.key}`);
+  const card = page.getByRole('article', { name: task.key });
+  const context = card.getByTestId('task-context');
+  const tools = card.getByTestId('task-tool-calls');
+  await expect(context).toContainText('120.3K (60%)');
+  await expect(tools).toBeVisible();
+  const [contextBox, toolsBox] = await Promise.all([context.boundingBox(), tools.boundingBox()]);
+  expect(contextBox!.x).toBeLessThan(toolsBox!.x);
 });

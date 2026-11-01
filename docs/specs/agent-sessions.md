@@ -79,7 +79,7 @@ stateDiagram-v2
 
 A Session is marked **started** as soon as the first stdout event of any of its Jobs is stored. From then on, every Job resumes it with `--resume`; before that, Jobs create it with `--session-id`.
 
-The Task view shows the current Session as a chip: `queued #N` while the Task has a Queue Entry (N is its 1-based position in the Agent's Queue), `waiting for retry` while that entry is held, and otherwise `starting` (pending), `running`, `waiting for messages` (idle), `paused` or `closed`. The Board card shows the Agent's avatar with the Session state and the queue position.
+The Task view shows the current Session as a chip: `queued #N` while the Task has a Queue Entry (N is its 1-based position in the Agent's Queue), `waiting for retry` while that entry is held, and otherwise `starting` (pending), `running`, `waiting for messages` (idle), `paused` or `closed`. The Board card shows the Agent's avatar with the Session state and the queue position, and, once a Turn has measured it, the Session's Context Usage.
 
 Beside the Session chip, the current Session shows its **Context Usage** once a Turn has finished: the conversation's tokens followed by the percentage of the model's window, such as `120.2K (53%)`. Counts below a thousand are shown whole, thousands with one decimal and a `K`, and a million or more with one decimal and an `M`, so `1.2M` replaces `1,200,000`. The percentage is rounded to a whole number and capped at 100%; when the CLI reports no window the count is shown alone. Before the Session's first Turn, or when the stream says nothing about the context, no chip appears. The Task details, in the web panel and in the native sheet, repeat the same chip as a read-only property.
 

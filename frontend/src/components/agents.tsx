@@ -118,12 +118,45 @@ export function formatContextTokens(n: number): string {
   return n >= 1000 ? `${one(n / 1000)}K` : String(Math.round(n));
 }
 
-/** How full the conversation's context is, beside the Session chip: `120.2K (53%)`. */
-export function ContextBadge({ context }: { context: ContextUsage }) {
-  const pct = context.window ? Math.min(100, Math.round((context.tokens / context.window) * 100)) : null;
-  const title = pct === null
+function contextPercent(context: ContextUsage): number | null {
+  return context.window && context.window > 0 ? Math.min(100, Math.round((context.tokens / context.window) * 100)) : null;
+}
+
+function contextTitle(context: ContextUsage): string {
+  const pct = contextPercent(context);
+  return pct === null
     ? `Context: ${formatContextTokens(context.tokens)} tokens`
     : `Context: ${formatContextTokens(context.tokens)} of ${formatContextTokens(context.window!)} tokens (${pct}%)`;
+}
+
+/** The warning and error text tones shared by the chip and the board card. */
+function contextTone(pct: number | null): string {
+  return pct !== null && pct >= 90 ? 'text-red-400' : pct !== null && pct >= 70 ? 'text-amber-400' : 'text-muted-foreground';
+}
+
+/** A small ring filled to the percentage, in the current text colour. */
+function ContextRing({ pct }: { pct: number | null }) {
+  return (
+    <span
+      aria-hidden
+      className="size-3 shrink-0 rounded-full"
+      style={
+        pct === null
+          ? { background: 'color-mix(in oklch, currentColor 25%, transparent)' }
+          : {
+              background: `conic-gradient(currentColor ${pct}%, color-mix(in oklch, currentColor 20%, transparent) 0)`,
+              maskImage: 'radial-gradient(circle, transparent 38%, black 40%)',
+              WebkitMaskImage: 'radial-gradient(circle, transparent 38%, black 40%)',
+            }
+      }
+    />
+  );
+}
+
+/** How full the conversation's context is, beside the Session chip: `120.2K (53%)`. */
+export function ContextBadge({ context }: { context: ContextUsage }) {
+  const pct = contextPercent(context);
+  const title = contextTitle(context);
   // Neutral until it fills up, then the usual warning and error tones.
   const tone =
     pct === null || pct < 70
@@ -135,25 +168,26 @@ export function ContextBadge({ context }: { context: ContextUsage }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <span aria-label={title} className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', tone)}>
-          <span
-            aria-hidden
-            className="size-3 shrink-0 rounded-full"
-            style={
-              pct === null
-                ? { background: 'color-mix(in oklch, currentColor 25%, transparent)' }
-                : {
-                    background: `conic-gradient(currentColor ${pct}%, color-mix(in oklch, currentColor 20%, transparent) 0)`,
-                    maskImage: 'radial-gradient(circle, transparent 38%, black 40%)',
-                    WebkitMaskImage: 'radial-gradient(circle, transparent 38%, black 40%)',
-                  }
-            }
-          />
+          <ContextRing pct={pct} />
           {formatContextTokens(context.tokens)}
           {pct !== null && ` (${pct}%)`}
         </span>
       </TooltipTrigger>
       <TooltipContent>{title}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/** The same figure as plain inline text, for a Board card's footer. */
+export function ContextUsageLabel({ context }: { context: ContextUsage }) {
+  const pct = contextPercent(context);
+  const title = contextTitle(context);
+  return (
+    <span data-testid="task-context" className={cn('flex items-center gap-1', contextTone(pct))} title={title} aria-label={title}>
+      <ContextRing pct={pct} />
+      {formatContextTokens(context.tokens)}
+      {pct !== null && ` (${pct}%)`}
+    </span>
   );
 }
 

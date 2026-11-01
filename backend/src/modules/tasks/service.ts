@@ -53,6 +53,7 @@ interface CardRow extends Record<string, unknown> {
   session_agent_id: string | null;
   session_state: SessionState | null;
   queue_position: number | null;
+  context: { tokens: number; window: number | null } | null;
   branch_name: string | null;
   branch_url: string | null;
   pull_request: TaskCard['pullRequest'];
@@ -113,7 +114,11 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
       (select coalesce(sum(tr.num_tool_calls), 0)::int from turns tr where tr.task_id = t.id) as tool_call_count,
       t.branch_name, t.branch_url, t.pull_request, t.agent_id, ss.agent_id as session_agent_id, ss.state as session_state,
       (select count(*)::int from queue_entries q join queue_entries q2 on q2.agent_id = q.agent_id and q2.position <= q.position
-        where q.task_id = t.id and q.agent_id = ss.agent_id) as queue_position
+        where q.task_id = t.id and q.agent_id = ss.agent_id) as queue_position,
+      (select jsonb_build_object('tokens', tr.context_tokens, 'window', tr.context_window)
+        from turns tr
+        where tr.task_id = t.id and tr.agent_id = ss.agent_id and tr.context_tokens > 0
+        order by tr.finished_at desc, tr.index desc limit 1) as context
     from tasks t
     join projects p on p.id = t.project_id
     join statuses s on s.id = t.status_id
@@ -142,7 +147,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     agentId: r.agent_id,
     session:
       r.agent_id && r.session_agent_id === r.agent_id && r.session_state
-        ? { agentId: r.agent_id, state: r.session_state, queuePosition: r.queue_position || null }
+        ? { agentId: r.agent_id, state: r.session_state, queuePosition: r.queue_position || null, context: r.context ?? null }
         : null,
     version: r.version,
     createdAt: new Date(r.created_at).toISOString(),

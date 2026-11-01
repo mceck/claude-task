@@ -176,6 +176,9 @@ class Task {
   /// The Agent Session as the board card shows it.
   final String? sessionState;
   final int? queuePosition;
+
+  /// The Session's Context Usage, once a Turn has measured it.
+  final Json? sessionContext;
   final List<String> tagIds, assigneeIds;
   final int version, commentCount, chatGeneration;
 
@@ -199,6 +202,9 @@ class Task {
       sessionState = (json['session'] as Map?)?['state'] as String?,
       queuePosition = ((json['session'] as Map?)?['queuePosition'] as num?)
           ?.toInt(),
+      sessionContext = (json['session'] as Map?)?['context'] == null
+          ? null
+          : Json.from((json['session'] as Map)['context'] as Map),
       branchName = json['branchName'] as String?,
       branchUrl = json['branchUrl'] as String?,
       pullRequest = json['pullRequest'] == null
