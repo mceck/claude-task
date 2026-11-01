@@ -56,7 +56,7 @@ flowchart LR
 
 Click **Stop** on a running Task to interrupt the current Turn. Its Session remains available. Post another Comment to continue from it.
 
-When starting work fails, the Task may show **waiting for retry** and a System Comment explaining the failure. Common causes include Repository access, a failing Setup Script or a process startup problem. Ask an Admin to fix configuration or Credential problems. Then click **Retry**, or post a new regular Comment, to release the waiting entry. Other Tasks in the Queue can proceed while this one waits for retry.
+When starting work fails, the Task may show **waiting for retry** and a System Comment explaining the failure. Common causes include Repository access, a failing Setup Script or a process startup problem. Preparing the worktree is retried a few times on its own first, so a one-off problem there often clears by itself; the retries appear in the Job's setup output. Ask an Admin to fix configuration or Credential problems, then click **Retry**, or post a new regular Comment, to release the waiting entry. Other Tasks in the Queue can proceed while this one waits for retry.
 
 ## Close, reopen or change Agent
 

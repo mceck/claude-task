@@ -335,7 +335,7 @@ func TestSetupRunsAfterAFailedPreparationOfANewGitWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.send(jobStart(jobOpts{id: "j1", worktree: "worktrees/proj/T-1", git: o.spec("task/t-1"), setup: "touch setup-ran", text: "go"}))
-	if failed := b.waitType("j1", "job.failed"); failed.str("stage") != "worktree" || !strings.Contains(failed.str("message"), "config") {
+	if failed := b.waitType("j1", "job.failed"); failed.str("stage") != "worktree" || !strings.Contains(b.setupOutput("j1"), "could not lock config file") {
 		t.Fatalf("failed %v", failed)
 	}
 	os.Remove(hook)

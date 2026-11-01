@@ -266,6 +266,23 @@ describe('Git Proxy', () => {
     expect(await after.text()).toContain('no active task for this repository');
   });
 
+  it('serves the Job token while the Job is still only dispatched', async () => {
+    const admin = await app.admin();
+    const { project } = await createProject(admin);
+    expect((await admin.put(`/projects/${project.id}/repository`, { connectionId: 'env-github', providerRepoId: '1' })).status).toBe(200);
+    const { agent, runner } = await createAgent(app, admin);
+    const task = await createTask(admin, project.id, { title: 'Fetching at once' });
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    // The Runner sends `job.accepted` and fetches the Worktree without waiting for the backend to
+    // process it, so the first fetch can reach the proxy while the Job still reads as dispatched.
+    const res = await fetch(`${app.url}/git/${project.id}.git/info/refs?service=git-upload-pack`, {
+      headers: { authorization: `Basic ${Buffer.from(`claude-task:${start.git!.token}`).toString('base64')}` },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('refs/heads/main');
+  });
+
   it('reports upstream credential failures without leaking anything', async () => {
     const { project, authed } = await running();
     app.git.upstream = { baseUrl: upstream.baseUrl, username: upstream.username, password: 'wrong' };

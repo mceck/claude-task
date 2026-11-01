@@ -187,7 +187,7 @@ The chronological record of a Task: Comments, Revisions and the Agent's work, in
 _Avoid_: feed, log, chat
 
 **Timeline Filter**:
-The Timeline control with three levels, cycled by one click: "Changes" hides Revisions (the default), "Changes + Activity" hides Agent Items too, and "Everything" shows all.
+The viewer's choice of which Timeline entries to hide: Revisions and Agent Items. Each kind can be hidden on its own; hiding Agent Items keeps the Agent's streaming text, which is the Comment being written.
 _Avoid_: changes toggle, visibility toggle
 
 **Agent Comment**:
@@ -378,6 +378,10 @@ _Avoid_: execution, process
 
 **Job Token**:
 The per-Job secret an Agent uses for Task Tools and the Git Proxy, valid only while its Job is active.
+
+**Preparation Retry**:
+The Runner's automatic second attempt at preparing a Worktree after a failure, at most three per Job, a few seconds apart. The Job, its Comments and its Queue Entry are the same: only the preparation repeats.
+_Avoid_: retry (a Retry releases a Held Queue Entry)
 
 **Turn**:
 One cycle in which the Agent works on the Messages it has received until it stops and hands control back. A Job contains one or more Turns.
