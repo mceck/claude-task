@@ -287,7 +287,10 @@ void main() {
             'agentId': 'agent-1',
             'createdAt': '2026-10-26T10:06:00.000Z',
             'updatedAt': '2026-10-26T10:06:00.000Z',
-            'payload': {'kind': 'activity', 'entries': <Map<String, dynamic>>[]},
+            'payload': {
+              'kind': 'activity',
+              'entries': <Map<String, dynamic>>[],
+            },
           },
           'readPosition': '5',
         },
@@ -302,22 +305,32 @@ void main() {
       await h.openTask();
       await tester.pumpWidget(TaskApp(controller: h.controller));
       await tester.pumpAndSettle();
-      // Changes are hidden by default, the Agent's activity shown.
+      // Task changes are hidden by default, the Agent's activity shown.
       expect(find.textContaining('moved it from Open to Closed'), findsNothing);
       expect(find.text('Activity'), findsOneWidget);
-      // The second level hides the Agent's activity and tool calls too.
-      await tester.tap(find.byKey(const Key('timeline-filter')));
+      // One checkbox per kind: hiding the Agent's activity keeps the changes hidden.
+      await tester.tap(find.byKey(const Key('timeline-visibility')));
+      await tester.pumpAndSettle();
+      expect(find.text('Hide from the Timeline'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('hide-activity')));
       await tester.pumpAndSettle();
       expect(find.textContaining('moved it from Open to Closed'), findsNothing);
       expect(find.text('Activity'), findsNothing);
-      // The third level shows everything.
-      await tester.tap(find.byKey(const Key('timeline-filter')));
+      expect(h.controller.timelineVisibility.value.activity, isTrue);
+      // Show everything brings both kinds back; the choice is the viewer's.
+      await tester.tap(find.byKey(const Key('show-everything')));
       await tester.pumpAndSettle();
       expect(
         find.textContaining('moved it from Open to Closed'),
         findsOneWidget,
       );
       expect(find.text('Activity'), findsOneWidget);
+      expect(h.controller.timelineVisibility.value.changes, isFalse);
+      expect(h.controller.timelineVisibility.value.activity, isFalse);
+      // Dismiss the sheet before touching the conversation under it.
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(find.text('Hide from the Timeline'), findsNothing);
       // Identical consecutive changes fold into one line.
       expect(find.textContaining('updated the description'), findsOneWidget);
       expect(find.textContaining('×2'), findsOneWidget);

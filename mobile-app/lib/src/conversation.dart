@@ -17,6 +17,7 @@ import 'models.dart';
 import 'questions.dart';
 import 'scheduled.dart';
 import 'task_forms.dart';
+import 'timeline_visibility.dart';
 import 'wiki.dart';
 import 'uploads.dart';
 import 'ui/markdown.dart';
@@ -28,24 +29,6 @@ import 'ui/mention_suggestions.dart';
 
 /// Within this distance of the bottom, the Timeline follows new content.
 const _followSlack = 80.0;
-
-/// How much of the Timeline to show. One control cycles the three levels, as on the web.
-enum TimelineFilter {
-  /// Hides Revisions (field changes). The default.
-  changes('Changes', Icons.visibility_off_outlined),
-
-  /// Hides Revisions and the Agent's items (Thinking, Activity and tool calls, Runs, Turn Summaries, notices).
-  activity('Changes + Activity', Icons.visibility_off_outlined),
-
-  /// Shows everything.
-  all('Everything', Icons.visibility_outlined);
-
-  const TimelineFilter(this.label, this.icon);
-  final String label;
-  final IconData icon;
-
-  TimelineFilter get next => values[(index + 1) % values.length];
-}
 
 class Conversation extends StatefulWidget {
   final TaskController controller;
@@ -65,8 +48,6 @@ class _ConversationState extends State<Conversation> {
   final _scroll = ScrollController();
   bool _atBottom = true, _loadingOlder = false, _readPending = false;
 
-  /// How much of the Timeline the reader wants to see.
-  TimelineFilter _filter = TimelineFilter.changes;
   String? _readId;
   String _stamp = '';
   bool _contentChanged = false;
@@ -84,7 +65,7 @@ class _ConversationState extends State<Conversation> {
   /// and filter they were made from.
   _Rows _shown = const _Rows([], {});
   List<TimelineEntry>? _shownTimeline;
-  TimelineFilter? _shownFilter;
+  TimelineVisibility? _shownFilter;
 
   /// Each row's widget, reused while its Entry, the Entry above it and
   /// [_RowContext] stay the same. The conversation rebuilds on every
@@ -96,13 +77,27 @@ class _ConversationState extends State<Conversation> {
   void initState() {
     super.initState();
     _scroll.addListener(_scrolled);
+    widget.controller.timelineVisibility.addListener(_visibilityChanged);
   }
 
   @override
   void dispose() {
+    widget.controller.timelineVisibility.removeListener(_visibilityChanged);
     _scroll.dispose();
     super.dispose();
   }
+
+  /// The Timeline filter is shared by every Task: a change elsewhere reaches this one too.
+  void _visibilityChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The Timeline filter as a menu of checkboxes; it applies while it stays open.
+  void _openTimelineMenu() => showAppSheet<void>(
+    context,
+    maxWidth: 400,
+    builder: (_) => _TimelineVisibilitySheet(controller: widget.controller),
+  );
 
   void _scrolled() {
     final bottom = _scroll.position.pixels < _followSlack;
@@ -293,9 +288,10 @@ class _ConversationState extends State<Conversation> {
       _tiles.clear();
       _shownTimeline = null;
     }
-    if (!identical(_shownTimeline, c.timeline) || _shownFilter != _filter) {
+    final visibility = c.timelineVisibility.value;
+    if (!identical(_shownTimeline, c.timeline) || _shownFilter != visibility) {
       _shownTimeline = c.timeline;
-      _shownFilter = _filter;
+      _shownFilter = visibility;
       final rows = _rows(c);
       _shown = _Rows(rows, {
         for (var i = 0; i < rows.length; i++) rows[i].entry.id: i,
@@ -305,7 +301,7 @@ class _ConversationState extends State<Conversation> {
     final rows = _shown.rows;
     final live =
         c.liveText.isNotEmpty ||
-        (_filter != TimelineFilter.activity &&
+        (!visibility.activity &&
             (c.liveThinking.isNotEmpty ||
                 c.liveStatus.isNotEmpty ||
                 c.liveSetup != null));
@@ -345,7 +341,10 @@ class _ConversationState extends State<Conversation> {
                           },
                           (context, index) {
                             if (index == 0) {
-                              return _LiveTail(controller: c, filter: _filter);
+                              return _LiveTail(
+                                controller: c,
+                                visibility: visibility,
+                              );
                             }
                             if (index == rows.length + 1) {
                               if (c.nextCursor == null) {
@@ -443,9 +442,9 @@ class _ConversationState extends State<Conversation> {
           Positioned(
             top: 8,
             right: 12,
-            child: _ChangesToggle(
-              filter: _filter,
-              onChanged: (f) => setState(() => _filter = f),
+            child: _TimelineVisibilityTrigger(
+              visibility: visibility,
+              onTap: _openTimelineMenu,
             ),
           ),
         Positioned(
@@ -509,15 +508,16 @@ class _ConversationState extends State<Conversation> {
   }
 
   /// Consecutive Comments by the same author within a few minutes share a header.
-  /// The Timeline as shown: Revisions hidden, the Agent's items hidden too,
-  /// or identical consecutive Revisions by the same actor folded into the
-  /// latest with a count.
+  /// The Timeline as shown: hidden Revisions and Agent Items left out, and
+  /// identical consecutive Revisions by the same actor folded into the latest
+  /// with a count.
   List<_Row> _rows(TaskController c) {
+    final visibility = c.timelineVisibility.value;
     final rows = <_Row>[];
     String? lastText;
     for (final e in c.timeline) {
       if (e.type == 'agent') {
-        if (_filter == TimelineFilter.activity) continue;
+        if (visibility.activity) continue;
         rows.add((entry: e, count: 1));
         lastText = null;
         continue;
@@ -527,7 +527,7 @@ class _ConversationState extends State<Conversation> {
         lastText = null;
         continue;
       }
-      if (_filter != TimelineFilter.all) continue;
+      if (visibility.changes) continue;
       final text = revisionText(e, c);
       if (lastText == text && rows.last.entry.author == e.author) {
         rows[rows.length - 1] = (entry: e, count: rows.last.count + 1);
@@ -1091,14 +1091,17 @@ class _DaySeparator extends StatelessWidget {
 /// What the running Turn is writing right now, like the web's live view.
 class _LiveTail extends StatelessWidget {
   final TaskController controller;
-  final TimelineFilter filter;
-  const _LiveTail({required this.controller, this.filter = TimelineFilter.all});
+  final TimelineVisibility visibility;
+  const _LiveTail({
+    required this.controller,
+    this.visibility = TimelineVisibility.defaults,
+  });
   @override
   Widget build(BuildContext context) {
     final c = controller;
-    // At the "activity" level the Agent's work stays hidden; its streaming text
-    // is the Comment being written.
-    final showWork = filter != TimelineFilter.activity;
+    // With Agent activity hidden the Agent's work stays hidden; its streaming
+    // text is the Comment being written.
+    final showWork = !visibility.activity;
     final setup = showWork ? c.liveSetup : null;
     final thinking = showWork ? c.liveThinking : '';
     final status = showWork ? c.liveStatus : '';
@@ -1244,16 +1247,21 @@ String revisionText(TimelineEntry e, TaskController c) {
       : '${described.take(described.length - 1).join(', ')} and ${described.last}';
 }
 
-/// Small overlay badge over the Timeline's top corner; it never takes a band of the chat.
-/// Tapping it cycles: changes hidden → also the Agent's activity hidden → everything shown.
-class _ChangesToggle extends StatelessWidget {
-  final TimelineFilter filter;
-  final ValueChanged<TimelineFilter> onChanged;
-  const _ChangesToggle({required this.filter, required this.onChanged});
+/// Small overlay badge over the Timeline's top corner; it never takes a band of
+/// the chat. Tapping it opens the menu of entries to hide.
+class _TimelineVisibilityTrigger extends StatelessWidget {
+  final TimelineVisibility visibility;
+  final VoidCallback onTap;
+  const _TimelineVisibilityTrigger({
+    required this.visibility,
+    required this.onTap,
+  });
+
   @override
   Widget build(BuildContext context) => Pressable(
-    key: const Key('timeline-filter'),
-    onTap: () => onChanged(filter.next),
+    key: const Key('timeline-visibility'),
+    onTap: onTap,
+    semanticLabel: 'Timeline visibility: ${visibility.label.toLowerCase()}',
     color: Palette.raised.withValues(alpha: .92),
     border: Border.all(color: Palette.borderStrong),
     borderRadius: BorderRadius.circular(99),
@@ -1262,25 +1270,160 @@ class _ChangesToggle extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          filter.icon,
+          visibility.anythingHidden
+              ? Icons.visibility_off_outlined
+              : Icons.visibility_outlined,
           size: 12,
-          color: filter == TimelineFilter.all
-              ? Palette.fgSubtle
-              : Palette.fgMuted,
+          color: visibility.anythingHidden ? Palette.fgMuted : Palette.fgSubtle,
         ),
         const SizedBox(width: 4),
         Text(
-          filter.label,
+          visibility.label,
           style: TextStyle(
             fontSize: 11,
-            color: filter == TimelineFilter.all
-                ? Palette.fgSubtle
-                : Palette.fgMuted,
+            color: visibility.anythingHidden
+                ? Palette.fgMuted
+                : Palette.fgSubtle,
           ),
+        ),
+        const SizedBox(width: 2),
+        const Icon(
+          Icons.expand_more_rounded,
+          size: 12,
+          color: Palette.fgSubtle,
         ),
       ],
     ),
   );
+}
+
+/// The Timeline filter as a sheet: one checkbox per kind of entry to hide. The
+/// choice is the viewer's, shared by every Task of every Project.
+class _TimelineVisibilitySheet extends StatelessWidget {
+  final TaskController controller;
+  const _TimelineVisibilitySheet({required this.controller});
+
+  @override
+  Widget build(BuildContext context) =>
+      ValueListenableBuilder<TimelineVisibility>(
+        valueListenable: controller.timelineVisibility,
+        builder: (context, visibility, _) => SheetScaffold(
+          title: 'Hide from the Timeline',
+          subtitle: 'Applies to every task, on every board.',
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _VisibilityRow(
+                key: const Key('hide-changes'),
+                icon: Icons.swap_horiz_rounded,
+                label: 'Task changes',
+                hint: 'Field changes recorded as Revisions',
+                value: visibility.changes,
+                onTap: () => controller.timelineVisibility.set(
+                  changes: !visibility.changes,
+                ),
+              ),
+              const SizedBox(height: 4),
+              _VisibilityRow(
+                key: const Key('hide-activity'),
+                icon: Icons.smart_toy_outlined,
+                label: 'Agent activity',
+                hint: 'Thinking, tool calls, runs and turn summaries',
+                value: visibility.activity,
+                onTap: () => controller.timelineVisibility.set(
+                  activity: !visibility.activity,
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: Divider(height: 1, color: Palette.border),
+              ),
+              _VisibilityRow(
+                key: const Key('show-everything'),
+                icon: Icons.visibility_outlined,
+                label: 'Show everything',
+                enabled: visibility.anythingHidden,
+                onTap: controller.timelineVisibility.showEverything,
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+/// A row of the Timeline menu: a checkbox when [value] is set, an action otherwise.
+class _VisibilityRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String? hint;
+  final bool? value;
+  final bool enabled;
+  final VoidCallback? onTap;
+  const _VisibilityRow({
+    super.key,
+    required this.icon,
+    required this.label,
+    this.hint,
+    this.value,
+    this.enabled = true,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final checked = value == true;
+    final tint = checked ? Palette.primarySoft : Palette.fgMuted;
+    return Pressable(
+      onTap: enabled ? onTap : null,
+      semanticLabel: label,
+      pressedScale: .99,
+      color: checked
+          ? Palette.primary.withValues(alpha: .12)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(Radii.sm),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: enabled ? tint : Palette.fgSubtle),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w500,
+                    color: enabled ? Palette.fg : Palette.fgSubtle,
+                  ),
+                ),
+                if (hint != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    hint!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Palette.fgSubtle,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (value != null)
+            Icon(
+              checked
+                  ? Icons.check_box_rounded
+                  : Icons.check_box_outline_blank_rounded,
+              size: 20,
+              color: checked ? Palette.primarySoft : Palette.fgSubtle,
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class TimelineTile extends StatelessWidget {

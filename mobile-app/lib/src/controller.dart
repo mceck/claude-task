@@ -8,6 +8,7 @@ import 'api.dart';
 import 'models.dart';
 import 'push.dart';
 import 'storage.dart';
+import 'timeline_visibility.dart';
 import 'voice.dart';
 
 /// Colors handed to Tags created inline, cycling so neighbours differ (the
@@ -33,6 +34,11 @@ class BulkResult {
 
 class TaskController extends ChangeNotifier {
   late final VoiceController voice;
+
+  /// The viewer's Timeline choice, shared by every Task of every Project.
+  late final TimelineVisibilityStore timelineVisibility =
+      TimelineVisibilityStore(storage);
+
   final ProfileStorage storage;
   final TaskApi Function(Uri, String?) apiFactory;
   final LiveConnection Function(TaskApi) socketFactory;
@@ -323,6 +329,7 @@ class TaskController extends ChangeNotifier {
   /// Drops everything that belongs to the previous User or Login before another one is activated.
   void _resetProfileState() {
     _timelineEpoch++;
+    timelineVisibility.reload();
     _socket?.close();
     _socket = null;
     unawaited(_events?.cancel());
@@ -559,6 +566,7 @@ class TaskController extends ChangeNotifier {
       await push.disable();
     } catch (_) {}
     await storage.clear();
+    timelineVisibility.reload();
     api?.close();
     api = null;
     user = null;
