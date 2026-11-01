@@ -49,6 +49,10 @@ The repository branch a Project's Task Branches start from and its pull requests
 **Board**:
 The kanban view of a Project, with one column per Status. Columns of `closed`-category Statuses are shown on request.
 
+**Board Write Access**:
+A Project setting that lets its Agents act on every Task of the Project: editing and moving them, writing in their Conversations and starting other Agents. It never lets an Agent close a Task or make a User an Assignee.
+_Avoid_: agent permissions, agent mode, autonomy
+
 **Status**:
 A named step in a Project's workflow. Each Status belongs to one Category.
 _Avoid_: column (that's how a Status looks on the Board), state
@@ -346,6 +350,10 @@ An entry of the platform's shared catalog that Admins assign to Agents: a Skill,
 **Skill**:
 A Claude Code skill whose files the platform's catalog stores and installs for the Agents it's assigned to.
 
+**Platform Skill**:
+A Skill the platform ships itself, carrying the guidance on how an Agent works its Task and its workspace. Every Agent has it by default: it can be unassigned but not deleted, and its content follows the platform version.
+_Avoid_: built-in skill, system skill
+
 **Project Skill**:
 A skill or command the repository itself carries in its `.claude/` directory, which `claude` loads in the Worktree next to the Agent's Skills. The platform only reads it to suggest it in the composer.
 _Avoid_: local skill, repository skill
@@ -357,12 +365,12 @@ An external tool server in the platform's catalog, made available to the Agents 
 A Claude Code plugin from a marketplace, kept in the platform's catalog and installed into the Agent Containers of the Agents it's assigned to. Unlike a catalog Skill, the platform stores only where to install it from, not its files.
 
 **Task Tools**:
-The actions an Agent can take from inside its Session: reading, editing and moving its own Task, reading other Tasks in the Project, creating new ones, opening a pull request, and posting files, Questions and Surveys to its Task's Conversation. A global Schedule's Agent also gets the global Task Tools, which act on the Tasks of every Project.
+The actions an Agent can take from inside its Session: reading and searching Tasks and Conversations, editing and moving its own Task, creating new ones, opening a pull request, and posting files, Questions and Surveys to its Task's Conversation. A global Schedule's Agent also gets the global Task Tools, which act on the Tasks of every Project.
 
 ### Execution
 
 **Assignment**:
-Linking an Agent to a Task. It doesn't start any work by itself: the Session stays `pending` until the first User Comment on the Task, whatever the Task's Status.
+Linking an Agent to a Task. It doesn't start any work by itself: the Session stays `pending` until the first Comment is delivered to it, whatever the Task's Status. That is normally a User Comment; with Board Write Access it can be an Agent Comment written by another Agent.
 _Avoid_: dispatch, scheduling
 
 **Session**:
