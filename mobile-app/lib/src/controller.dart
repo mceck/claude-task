@@ -1985,31 +1985,71 @@ class TaskController extends ChangeNotifier {
     String? afterTaskId,
     String? beforeTaskId,
   }) async {
-    final result = await _request(
-      'POST',
-      '/tasks/${moving.id}/move',
-      body: {
-        'statusId': statusId,
-        'afterTaskId': ?afterTaskId,
-        'beforeTaskId': ?beforeTaskId,
-      },
-    );
+    final before = List<Task>.of(tasks);
+    final previousOpen = task;
+    final local = _inProject(moving)
+        ? _placeTask(
+            Task.movedTo(moving, statusId),
+            statusId,
+            afterTaskId,
+            beforeTaskId,
+          )
+        : null;
+    if (local != null) notifyListeners();
+    final Json result;
+    try {
+      result = await _request(
+        'POST',
+        '/tasks/${moving.id}/move',
+        body: {
+          'statusId': statusId,
+          'afterTaskId': ?afterTaskId,
+          'beforeTaskId': ?beforeTaskId,
+        },
+      );
+    } catch (_) {
+      if (local != null) {
+        _restoreTask(moving, before.indexWhere((t) => t.id == moving.id));
+        if (task?.id == moving.id) task = previousOpen;
+        notifyListeners();
+      }
+      rethrow;
+    }
     final moved = Task.fromJson(result['task'] as Json);
     if (moved.projectId == project?.id) {
-      tasks.removeWhere((t) => t.id == moved.id);
-      var at = tasks.lastIndexWhere((t) => t.statusId == statusId) + 1;
-      final after = tasks.indexWhere((t) => t.id == afterTaskId);
-      final before = tasks.indexWhere((t) => t.id == beforeTaskId);
-      if (after >= 0) {
-        at = after + 1;
-      } else if (before >= 0) {
-        at = before;
-      }
-      tasks.insert(at, moved);
-      if (task?.id == moved.id) task = moved;
+      _placeTask(moved, statusId, afterTaskId, beforeTaskId);
       notifyListeners();
     }
     unawaited(refresh().catchError((Object _) {}));
+  }
+
+  bool _inProject(Task t) => t.projectId == project?.id;
+
+  /// Puts back a Task shown elsewhere, leaving the changes of others alone.
+  void _restoreTask(Task original, int index) {
+    tasks.removeWhere((t) => t.id == original.id);
+    tasks.insert(index.clamp(0, tasks.length), original);
+  }
+
+  /// Puts [moved] in the list at its new place; null when it isn't there.
+  Task? _placeTask(
+    Task moved,
+    String statusId,
+    String? afterTaskId,
+    String? beforeTaskId,
+  ) {
+    tasks.removeWhere((t) => t.id == moved.id);
+    var at = tasks.lastIndexWhere((t) => t.statusId == statusId) + 1;
+    final after = tasks.indexWhere((t) => t.id == afterTaskId);
+    final before = tasks.indexWhere((t) => t.id == beforeTaskId);
+    if (after >= 0) {
+      at = after + 1;
+    } else if (before >= 0) {
+      at = before;
+    }
+    tasks.insert(at, moved);
+    if (task?.id == moved.id) task = moved;
+    return moved;
   }
 
   /// Moves [ids] to the end of [statusId] ("closing" is a move to a `closed`
@@ -2020,12 +2060,44 @@ class TaskController extends ChangeNotifier {
     List<String> ids, {
     String? statusId,
   }) async {
-    final result = await _request(
-      'POST',
-      '/projects/${project!.id}/tasks/bulk',
-      body: {'action': action, 'taskIds': ids, 'statusId': ?statusId},
-    );
+    final before = List<Task>.of(tasks);
+    final shown = <String>{};
+    if (action == 'move' && statusId != null) {
+      for (final id in ids) {
+        final t = tasks.where((t) => t.id == id).firstOrNull;
+        if (t == null) continue;
+        _placeTask(Task.movedTo(t, statusId), statusId, null, null);
+        shown.add(id);
+      }
+      if (shown.isNotEmpty) notifyListeners();
+    }
+    final Json result;
+    try {
+      result = await _request(
+        'POST',
+        '/projects/${project!.id}/tasks/bulk',
+        body: {'action': action, 'taskIds': ids, 'statusId': ?statusId},
+      );
+    } catch (_) {
+      if (shown.isNotEmpty) {
+        for (final t in before.where((t) => shown.contains(t.id))) {
+          _restoreTask(t, before.indexOf(t));
+        }
+        notifyListeners();
+      }
+      rethrow;
+    }
     final done = strings(result['succeeded']).toSet();
+    final refused = {
+      for (final f in objects(result['failed'])) f['taskId'] as String,
+    };
+    if (shown.isNotEmpty && refused.isNotEmpty) {
+      for (final t in before.where((t) => refused.contains(t.id))) {
+        final i = tasks.indexWhere((x) => x.id == t.id);
+        if (i >= 0) tasks[i] = t;
+      }
+      notifyListeners();
+    }
     if (action == 'delete') {
       for (final id in done) {
         await storage.write('task:$id', {});

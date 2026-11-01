@@ -206,6 +206,29 @@ class Task {
           : Json.from(json['pullRequest'] as Map),
       pullRequestUrl = (json['pullRequest'] as Map?)?['url'] as String?;
 
+  /// The same Task in another Status, for showing a move before the backend
+  /// confirms it.
+  Task.movedTo(Task o, this.statusId)
+    : id = o.id,
+      projectId = o.projectId,
+      key = o.key,
+      title = o.title,
+      description = o.description,
+      priority = o.priority,
+      agentId = o.agentId,
+      tagIds = o.tagIds,
+      assigneeIds = o.assigneeIds,
+      chatGeneration = o.chatGeneration,
+      autoResume = o.autoResume,
+      version = o.version,
+      commentCount = o.commentCount,
+      sessionState = o.sessionState,
+      queuePosition = o.queuePosition,
+      branchName = o.branchName,
+      branchUrl = o.branchUrl,
+      pullRequest = o.pullRequest,
+      pullRequestUrl = o.pullRequestUrl;
+
   /// Merging works on open Pull Requests that aren't drafts.
   bool get canMergePullRequest =>
       pullRequest?['state'] == 'open' && pullRequest?['draft'] != true;
