@@ -8,6 +8,7 @@ import 'api.dart';
 import 'models.dart';
 import 'push.dart';
 import 'storage.dart';
+import 'timeline_visibility.dart';
 import 'voice.dart';
 
 /// Colors handed to Tags created inline, cycling so neighbours differ (the
@@ -33,6 +34,11 @@ class BulkResult {
 
 class TaskController extends ChangeNotifier {
   late final VoiceController voice;
+
+  /// The viewer's Timeline choice, shared by every Task of every Project.
+  late final TimelineVisibilityStore timelineVisibility =
+      TimelineVisibilityStore(storage);
+
   final ProfileStorage storage;
   final TaskApi Function(Uri, String?) apiFactory;
   final LiveConnection Function(TaskApi) socketFactory;
@@ -97,11 +103,37 @@ class TaskController extends ChangeNotifier {
   final Set<String> liveExpanded = {}, expandedComments = {};
   String liveThinking = '', liveStatus = '';
 
-  /// Notify only the widgets that show them, instead of rebuilding the whole
-  /// conversation on every streamed token or Run update.
-  final ChangeNotifier _live = ChangeNotifier(), _runs = ChangeNotifier();
+  /// Context size after the latest model call of each running Turn, by Task
+  /// (`tokens` only). A Session's stored `context` moves only when a Turn ends.
+  final Map<String, Json> liveContexts = {};
+
+  /// The context of a Task: its running Turn's measurement over the stored one
+  /// (keeping the stored window). Only a running Session trusts the live
+  /// figure; a list row isn't told when its Session stops.
+  Json? contextOf(String taskId, String? state, Json? stored) {
+    final live = liveContexts[taskId];
+    if (live == null || state != 'running') return stored;
+    return {
+      'tokens': live['tokens'],
+      'window': live['window'] ?? stored?['window'],
+    };
+  }
+
+  /// The open Task's context.
+  Json? get sessionContext => contextOf(
+    task?.id ?? '',
+    session?['state'] as String?,
+    session?['context'] as Json?,
+  );
+
+  /// Notified when only the Live Turn preview changes (streamed text and
+  /// Thinking, the retry status, the preparation output), instead of every
+  /// listener: tokens arrive many times a second, and rebuilding the whole
+  /// app for each made the conversation and its composer stutter. Everything
+  /// else, including the stored Entries that retire the preview, notifies
+  /// everyone as usual.
   Listenable get live => _live;
-  Listenable get runUpdates => _runs;
+  final _live = ValueNotifier(0);
 
   /// The running Job's worktree preparation output, as on the web: the Job id
   /// it belongs to and the last [setupOutputCap] characters streamed so far.
@@ -164,14 +196,24 @@ class TaskController extends ChangeNotifier {
   /// from that Job's Timeline items, else the Task's Agent.
   String? deliveryAgentName(Map delivery) {
     final jobId = delivery['jobId'];
-    final fromJob = jobId == null
-        ? null
-        : timeline
-              .where((e) => e.type == 'agent' && e.content['jobId'] == jobId)
-              .map((e) => e.content['agentId'] as String?)
-              .firstOrNull;
+    // Every User Comment asks: index the Timeline once, not once per Comment.
+    if (!identical(_jobAgentsOf, timeline)) {
+      _jobAgentsOf = timeline;
+      _jobAgents = {};
+      for (final e in timeline) {
+        if (e.type != 'agent') continue;
+        _jobAgents.putIfAbsent(
+          e.content['jobId'],
+          () => e.content['agentId'] as String?,
+        );
+      }
+    }
+    final fromJob = jobId == null ? null : _jobAgents[jobId];
     return agents.byId(fromJob ?? task?.agentId)?.name;
   }
+
+  List<TimelineEntry>? _jobAgentsOf;
+  Map<Object?, String?> _jobAgents = {};
 
   /// Whether the User is reading this Task's conversation right now.
   bool watchingTask(String taskId) =>
@@ -310,6 +352,7 @@ class TaskController extends ChangeNotifier {
   /// Drops everything that belongs to the previous User or Login before another one is activated.
   void _resetProfileState() {
     _timelineEpoch++;
+    timelineVisibility.reload();
     _socket?.close();
     _socket = null;
     unawaited(_events?.cancel());
@@ -345,6 +388,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    liveContexts.clear();
     liveSetup = null;
     conversationVisible = false;
     assignmentRetryId = null;
@@ -363,8 +407,8 @@ class TaskController extends ChangeNotifier {
     if (schedule != null) {
       schedule = schedules.byId(schedule!.id) ?? schedule;
     }
-    agents = objects(cached['agents']).map(Agent.fromJson).toList();
-    users = objects(cached['users']).map(User.fromJson).toList();
+    agents = _unlessSame('agents', agents, cached['agents'], Agent.fromJson);
+    users = _unlessSame('users', users, cached['users'], User.fromJson);
   }
 
   void _connectSocket() {
@@ -546,6 +590,7 @@ class TaskController extends ChangeNotifier {
       await push.disable();
     } catch (_) {}
     await storage.clear();
+    timelineVisibility.reload();
     api?.close();
     api = null;
     user = null;
@@ -1152,7 +1197,7 @@ class TaskController extends ChangeNotifier {
     } catch (e) {
       _recordError(e);
     }
-    _runs.notifyListeners();
+    notifyListeners();
   }
 
   /// Numbers make merging exact: a tool result replaces its message, a new one
@@ -1208,7 +1253,7 @@ class TaskController extends ChangeNotifier {
         return;
       }
     }
-    _runs.notifyListeners();
+    notifyListeners();
   }
 
   Future<void> deleteWiki() async {
@@ -1248,10 +1293,38 @@ class TaskController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The lists each kind was last parsed into, with their JSON.
+  final _parsedLists = <String, (Object?, List<Object>)>{};
+
+  /// Keeps [current] when it was parsed from the same JSON: views compare
+  /// these lists by identity to know whether names or pictures changed, and
+  /// every refresh fetches them again.
+  List<T> _unlessSame<T extends Object>(
+    String kind,
+    List<T> current,
+    Object? raw,
+    T Function(Json) parse,
+  ) {
+    final last = _parsedLists[kind];
+    if (last != null &&
+        identical(last.$2, current) &&
+        _sameJson(last.$1, raw)) {
+      return current;
+    }
+    final parsed = objects(raw).map(parse).toList();
+    _parsedLists[kind] = (raw, parsed);
+    return parsed;
+  }
+
   void _hydrateProject(String id) {
     final cache = storage.read('project:$id') ?? {};
-    statuses = objects(cache['statuses']).map(TaskStatus.fromJson).toList();
-    tags = objects(cache['tags']).map(Tag.fromJson).toList();
+    statuses = _unlessSame(
+      'statuses',
+      statuses,
+      cache['statuses'],
+      TaskStatus.fromJson,
+    );
+    tags = _unlessSame('tags', tags, cache['tags'], Tag.fromJson);
     tasks = objects(cache['tasks']).map(Task.fromJson).toList();
     preferences = {
       for (final p in objects(
@@ -1353,25 +1426,50 @@ class TaskController extends ChangeNotifier {
   }
 
   void _mergeTimeline(List<Json> items) {
-    final byId = {for (final item in timeline) item.id: item.json};
+    final byId = {for (final entry in timeline) entry.id: entry};
     for (final item in items) {
-      final id = item['id'] as String, known = byId[id]?['readPosition'];
+      final id = item['id'] as String, known = byId[id];
+      final position = known?.json['readPosition'];
       // Live events carry no position: keep the one already known.
-      byId[id] = item['readPosition'] == null && known != null
-          ? {...item, 'readPosition': known}
+      final json = item['readPosition'] == null && position != null
+          ? {...item, 'readPosition': position}
           : item;
+      // An unchanged Entry stays the same object, so the Timeline keeps what
+      // it built for it instead of rebuilding every row on each refresh.
+      if (known == null || !_sameJson(known.json, json)) {
+        byId[id] = TimelineEntry(json);
+      }
     }
     // Display order is the server's and the web's: creation time, then kind,
     // then id (loadTimeline's `created_at, kind, id`, oldest first). The read
     // position tracks reading only; it can be missing or '0', and sorting by
     // it showed the conversation newest first.
-    timeline = byId.values.map(TimelineEntry.new).toList()
+    timeline = byId.values.toList()
       ..sort((a, b) {
         final time = a.createdAt.compareTo(b.createdAt);
         if (time != 0) return time;
         final kind = a.type.compareTo(b.type);
         return kind != 0 ? kind : a.id.compareTo(b.id);
       });
+  }
+
+  static bool _sameJson(Object? a, Object? b) {
+    if (identical(a, b)) return true;
+    if (a is Map && b is Map) {
+      if (a.length != b.length) return false;
+      for (final MapEntry(:key, :value) in a.entries) {
+        if (!b.containsKey(key) || !_sameJson(value, b[key])) return false;
+      }
+      return true;
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_sameJson(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
   }
 
   Future<void> _cacheTask() async {
@@ -1724,6 +1822,18 @@ class TaskController extends ChangeNotifier {
     }
   }
 
+  /// Saves what the User typed. The composer already shows it, and nothing
+  /// else shows the draft's text, so nothing is rebuilt: rebuilding the whole
+  /// app on every keystroke made typing lag.
+  Future<void> setDraftText(String text) async {
+    if (task != null) {
+      await storage.write(
+        'draft:${task!.id}',
+        draft.copyWith(text: text).toJson(),
+      );
+    }
+  }
+
   Future<void> send() async {
     if (sending ||
         task == null ||
@@ -1899,31 +2009,71 @@ class TaskController extends ChangeNotifier {
     String? afterTaskId,
     String? beforeTaskId,
   }) async {
-    final result = await _request(
-      'POST',
-      '/tasks/${moving.id}/move',
-      body: {
-        'statusId': statusId,
-        'afterTaskId': ?afterTaskId,
-        'beforeTaskId': ?beforeTaskId,
-      },
-    );
+    final before = List<Task>.of(tasks);
+    final previousOpen = task;
+    final local = _inProject(moving)
+        ? _placeTask(
+            Task.movedTo(moving, statusId),
+            statusId,
+            afterTaskId,
+            beforeTaskId,
+          )
+        : null;
+    if (local != null) notifyListeners();
+    final Json result;
+    try {
+      result = await _request(
+        'POST',
+        '/tasks/${moving.id}/move',
+        body: {
+          'statusId': statusId,
+          'afterTaskId': ?afterTaskId,
+          'beforeTaskId': ?beforeTaskId,
+        },
+      );
+    } catch (_) {
+      if (local != null) {
+        _restoreTask(moving, before.indexWhere((t) => t.id == moving.id));
+        if (task?.id == moving.id) task = previousOpen;
+        notifyListeners();
+      }
+      rethrow;
+    }
     final moved = Task.fromJson(result['task'] as Json);
     if (moved.projectId == project?.id) {
-      tasks.removeWhere((t) => t.id == moved.id);
-      var at = tasks.lastIndexWhere((t) => t.statusId == statusId) + 1;
-      final after = tasks.indexWhere((t) => t.id == afterTaskId);
-      final before = tasks.indexWhere((t) => t.id == beforeTaskId);
-      if (after >= 0) {
-        at = after + 1;
-      } else if (before >= 0) {
-        at = before;
-      }
-      tasks.insert(at, moved);
-      if (task?.id == moved.id) task = moved;
+      _placeTask(moved, statusId, afterTaskId, beforeTaskId);
       notifyListeners();
     }
     unawaited(refresh().catchError((Object _) {}));
+  }
+
+  bool _inProject(Task t) => t.projectId == project?.id;
+
+  /// Puts back a Task shown elsewhere, leaving the changes of others alone.
+  void _restoreTask(Task original, int index) {
+    tasks.removeWhere((t) => t.id == original.id);
+    tasks.insert(index.clamp(0, tasks.length), original);
+  }
+
+  /// Puts [moved] in the list at its new place; null when it isn't there.
+  Task? _placeTask(
+    Task moved,
+    String statusId,
+    String? afterTaskId,
+    String? beforeTaskId,
+  ) {
+    tasks.removeWhere((t) => t.id == moved.id);
+    var at = tasks.lastIndexWhere((t) => t.statusId == statusId) + 1;
+    final after = tasks.indexWhere((t) => t.id == afterTaskId);
+    final before = tasks.indexWhere((t) => t.id == beforeTaskId);
+    if (after >= 0) {
+      at = after + 1;
+    } else if (before >= 0) {
+      at = before;
+    }
+    tasks.insert(at, moved);
+    if (task?.id == moved.id) task = moved;
+    return moved;
   }
 
   /// Moves [ids] to the end of [statusId] ("closing" is a move to a `closed`
@@ -1934,12 +2084,44 @@ class TaskController extends ChangeNotifier {
     List<String> ids, {
     String? statusId,
   }) async {
-    final result = await _request(
-      'POST',
-      '/projects/${project!.id}/tasks/bulk',
-      body: {'action': action, 'taskIds': ids, 'statusId': ?statusId},
-    );
+    final before = List<Task>.of(tasks);
+    final shown = <String>{};
+    if (action == 'move' && statusId != null) {
+      for (final id in ids) {
+        final t = tasks.where((t) => t.id == id).firstOrNull;
+        if (t == null) continue;
+        _placeTask(Task.movedTo(t, statusId), statusId, null, null);
+        shown.add(id);
+      }
+      if (shown.isNotEmpty) notifyListeners();
+    }
+    final Json result;
+    try {
+      result = await _request(
+        'POST',
+        '/projects/${project!.id}/tasks/bulk',
+        body: {'action': action, 'taskIds': ids, 'statusId': ?statusId},
+      );
+    } catch (_) {
+      if (shown.isNotEmpty) {
+        for (final t in before.where((t) => shown.contains(t.id))) {
+          _restoreTask(t, before.indexOf(t));
+        }
+        notifyListeners();
+      }
+      rethrow;
+    }
     final done = strings(result['succeeded']).toSet();
+    final refused = {
+      for (final f in objects(result['failed'])) f['taskId'] as String,
+    };
+    if (shown.isNotEmpty && refused.isNotEmpty) {
+      for (final t in before.where((t) => refused.contains(t.id))) {
+        final i = tasks.indexWhere((x) => x.id == t.id);
+        if (i >= 0) tasks[i] = t;
+      }
+      notifyListeners();
+    }
     if (action == 'delete') {
       for (final id in done) {
         await storage.write('task:$id', {});
@@ -2170,12 +2352,20 @@ class TaskController extends ChangeNotifier {
         if (!liveText.containsKey(id)) liveExpanded.remove(id);
         liveText[id] = (liveText[id] ?? '') + (delta['text'] as String);
       }
-      _live.notifyListeners();
+      _live.value++;
+      return;
+    }
+    if (type == 'live.context') {
+      // Also from the Project's topic, so the Task list follows every running Task.
+      liveContexts[event['taskId'] as String] = Json.from(
+        event['context'] as Map,
+      );
+      notifyListeners();
       return;
     }
     if (type == 'live.status' && event['taskId'] == task?.id) {
       liveStatus = event['status'] == null ? '' : 'Agent retrying request';
-      _live.notifyListeners();
+      _live.value++;
       return;
     }
     if (type == 'job.setup_output' && event['taskId'] == task?.id) {
@@ -2190,7 +2380,7 @@ class TaskController extends ChangeNotifier {
             ? output.substring(output.length - setupOutputCap)
             : output,
       };
-      _live.notifyListeners();
+      _live.value++;
       return;
     }
     if (type.startsWith('run.') && event['taskId'] == task?.id) {
@@ -2200,6 +2390,7 @@ class TaskController extends ChangeNotifier {
     if (type == 'timeline.reset') {
       final id = event['taskId'] as String;
       if (id == task?.id) {
+        liveContexts.remove(event['taskId']);
         _timelineEpoch++;
         _clearConversation();
         unawaited(_cacheTask());
@@ -2226,6 +2417,7 @@ class TaskController extends ChangeNotifier {
     if (type == 'session.changed' && event['taskId'] == task?.id) {
       session = event['session'] as Json?;
       if (session?['state'] != 'running') {
+        liveContexts.remove(task!.id);
         liveText.clear();
         liveThinking = '';
         liveStatus = '';
@@ -2349,7 +2541,6 @@ class TaskController extends ChangeNotifier {
   @override
   void dispose() {
     _live.dispose();
-    _runs.dispose();
     voice.dispose();
     _socket?.close();
     _refreshTimer?.cancel();

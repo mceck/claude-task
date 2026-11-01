@@ -1,4 +1,5 @@
 import 'package:claude_task_mobile/src/app.dart';
+import 'package:claude_task_mobile/src/ui/context_badge.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -38,6 +39,25 @@ Future<void> _rightClick(WidgetTester tester, Finder target) async {
 }
 
 void main() {
+  testWidgets('a Task row shows the Session context when it is measured', (
+    tester,
+  ) async {
+    final api = FakeApi()
+      ..currentTask = {
+        ...taskData(),
+        'agentId': 'agent-1',
+        'session': {
+          'agentId': 'agent-1',
+          'state': 'idle',
+          'queuePosition': null,
+          'context': {'tokens': 120252, 'window': 200000},
+        },
+      };
+    await _open(tester, api: api);
+    expect(find.byType(ContextLabel), findsOneWidget);
+    expect(find.text('120.3K (60%)'), findsOneWidget);
+  });
+
   testWidgets(
     'right click opens the Task menu; Select starts multi-selection',
     (tester) async {
@@ -147,6 +167,8 @@ void main() {
           .fontWeight,
       FontWeight.w500,
     );
+    // Let the Projects refresh that follows the read run out.
+    await tester.pump(const Duration(milliseconds: 300));
   });
 
   testWidgets('Mark all as read is hidden when every Task is read', (

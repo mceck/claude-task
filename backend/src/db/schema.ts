@@ -643,6 +643,10 @@ export const turns = pgTable(
     numToolCalls: integer('num_tool_calls').notNull(),
     costUsd: doublePrecision('cost_usd'),
     usage: jsonb('usage').$type<Usage>(),
+    /** Tokens the conversation's context held after the Turn's last model call. */
+    contextTokens: integer('context_tokens'),
+    /** The model's context window, as the CLI reported it. */
+    contextWindow: integer('context_window'),
   },
   (t) => [
     uniqueIndex('turns_job_index_unique').on(t.jobId, t.index),

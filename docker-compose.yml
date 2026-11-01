@@ -1,13 +1,18 @@
-# Postgres and the application; enable the optional relay with --profile turn.
+# Application, bundled Postgres (profile `db`) and optional relay (profile `turn`).
+# Persistent state lives in host directories under CLAUDE_TASK_HOME, not Docker volumes.
+# Plain `docker compose up` needs COMPOSE_PROFILES=db for the bundled database; scripts/deploy.sh sets it.
 services:
   db:
+    # Bundled Postgres; skipped when using an external database (COMPOSE_PROFILES without `db`).
     image: postgres:17
+    profiles: [db]
+    restart: unless-stopped
     environment:
       POSTGRES_USER: claude_task
       POSTGRES_PASSWORD: claude_task
       POSTGRES_DB: claude_task
     volumes:
-      - db:/var/lib/postgresql/data
+      - ${CLAUDE_TASK_HOME:-./.claude-task}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U claude_task -d claude_task']
       interval: 5s
@@ -42,13 +47,15 @@ services:
     security_opt: ['no-new-privileges:true']
   app:
     build: .
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+        required: false
     ports: ['3000:3000']
     environment:
-      DATABASE_URL: postgres://claude_task:claude_task@db:5432/claude_task
-      # Attachment storage: the `data` volume by default, or an S3-compatible bucket.
+      DATABASE_URL: ${DATABASE_URL:-postgres://claude_task:claude_task@db:5432/claude_task}
+      # Attachment storage: the `${CLAUDE_TASK_HOME}/data` host directory by default, or an S3-compatible bucket.
       STORAGE_TYPE: ${STORAGE_TYPE:-disk}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-us-east-1}
@@ -80,16 +87,20 @@ services:
       AGENT_STOP_WHEN_UNUSED: ${AGENT_STOP_WHEN_UNUSED:-true}
       AGENT_WIKI_IDLE_MINUTES: ${AGENT_WIKI_IDLE_MINUTES:-30}
     stop_grace_period: 30s
+    healthcheck:
+      # The backend answers 503 while its database is unreachable.
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:3000/health >/dev/null || exit 1']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
     group_add:
       - ${DOCKER_GID:-0}
     networks: [default, agents]
     volumes:
-      - data:/data
+      - ${CLAUDE_TASK_HOME:-./.claude-task}/data:/data
       - /var/run/docker.sock:/var/run/docker.sock
 networks:
   voice-relay:
   agents:
     name: claude-task-agents
-volumes:
-  db:
-  data:

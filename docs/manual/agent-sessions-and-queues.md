@@ -52,11 +52,15 @@ flowchart LR
   F -->|Reopen and post a Comment| C
 ```
 
+## Watch the context
+
+Once the Agent has finished a Turn, a chip beside the Session indicator shows how full the conversation's context is, for example **120.2K (53%)**: the tokens the Task's conversation carries and the percentage of the model's context window. It stays neutral as the context starts to fill, turns amber from 70% and red from 90%; hover it on the web or long-press it in the app for the exact counts. The same value appears on the Task's Board card (left of the tool call count on the web, beside the Agent badge in the app) whenever it is not zero. Before the first Turn there is no chip. When the context fills up the Agent compacts the conversation, and the chip drops after its next Turn.
+
 ## Stop or retry
 
 Click **Stop** on a running Task to interrupt the current Turn. Its Session remains available. Post another Comment to continue from it.
 
-When starting work fails, the Task may show **waiting for retry** and a System Comment explaining the failure. Common causes include Repository access, a failing Setup Script or a process startup problem. Ask an Admin to fix configuration or Credential problems. Then click **Retry**, or post a new regular Comment, to release the waiting entry. Other Tasks in the Queue can proceed while this one waits for retry.
+When starting work fails, the Task may show **waiting for retry** and a System Comment explaining the failure. Common causes include Repository access, a failing Setup Script or a process startup problem. Preparing the worktree is retried a few times on its own first, so a one-off problem there often clears by itself; the retries appear in the Job's setup output. Ask an Admin to fix configuration or Credential problems, then click **Retry**, or post a new regular Comment, to release the waiting entry. Other Tasks in the Queue can proceed while this one waits for retry.
 
 ## Close, reopen or change Agent
 

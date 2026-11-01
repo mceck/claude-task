@@ -386,7 +386,7 @@ void main() {
       (h.api as _UploadApi).failUpload = true;
       showEditTask(tester.element(find.byType(Scaffold).first), h.controller);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Upload images or files'));
+      await tester.tap(find.byTooltip('Attach images or files'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Files'));
       await tester.pumpAndSettle();
@@ -432,7 +432,7 @@ void main() {
     showEditTask(tester.element(find.byType(Scaffold).first), h.controller);
     await tester.pumpAndSettle();
     picker.files = [_PickedFile('diagram.png'), _PickedFile('notes.pdf')];
-    await tester.tap(find.text('Upload images or files'));
+    await tester.tap(find.byTooltip('Attach images or files'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Images'));
     await tester.pumpAndSettle();

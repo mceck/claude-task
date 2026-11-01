@@ -1,6 +1,6 @@
 import type { ProjectRepository, PullRequest } from './git';
 // Entity shapes returned by the API. Terms follow docs/CONTEXT.md.
-import type { AgentItemPayload, Delivery, SessionState } from './agents';
+import type { AgentItemPayload, ContextUsage, Delivery, SessionState } from './agents';
 
 export const ROLES = ['admin', 'member'] as const;
 export type Role = (typeof ROLES)[number];
@@ -106,8 +106,8 @@ export interface TaskCard {
   chatGeneration?: number;
   /** The assigned Agent, if any. */
   agentId: string | null;
-  /** The current Session's state on the card (agent avatar + state dot). */
-  session: { agentId: string; state: SessionState; queuePosition: number | null } | null;
+  /** The current Session's state on the card (agent avatar + state dot) and, once measured, its Context Usage. */
+  session: { agentId: string; state: SessionState; queuePosition: number | null; context: ContextUsage | null } | null;
   version: number;
   createdAt: string;
   updatedAt: string;

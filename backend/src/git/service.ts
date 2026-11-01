@@ -9,7 +9,7 @@ import { badRequest, conflict } from '../errors';
 import { GitProviderError } from './provider';
 import { gitOwnerTask } from './owner';
 import { getProject, serializeProject } from '../modules/projects/service';
-import { advanceTaskStatus, emitTasksChanged, getTaskRow } from '../modules/tasks/service';
+import { emitTasksChanged, getTaskRow } from '../modules/tasks/service';
 import type { TaskRow } from '../modules/tasks/service';
 
 export async function repositorySettings(db: Executor, projectId: string): Promise<RepositorySettings> {
@@ -214,7 +214,6 @@ export async function mergePullRequest(ctx: AppContext, taskId: string, actor: A
       })
       .returning();
     after.effect((c) => c.scheduler.publishComments([notice!.id], 'created'));
-    await advanceTaskStatus(tx, after, taskId, actor);
   });
 }
 

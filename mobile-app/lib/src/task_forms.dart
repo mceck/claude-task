@@ -8,6 +8,7 @@ import 'controller.dart';
 import 'ui/user_avatar.dart';
 import 'models.dart';
 import 'uploads.dart';
+import 'ui/context_badge.dart';
 import 'ui/markdown.dart';
 import 'ui/markdown_editor.dart';
 import 'ui/theme.dart';
@@ -443,7 +444,7 @@ class TaskDetails extends StatelessWidget {
                                 context,
                                 title: 'Assign Agent?',
                                 message:
-                                    'Assigning an Agent moves ${t.key} out of “${status!.name}” to “${todo!.name}”.',
+                                    'Assigning an Agent moves ${t.key} out of “${status!.name}” to “${todo.name}”.',
                                 confirmLabel: 'Assign and move',
                                 destructive: false,
                               )) {
@@ -454,12 +455,18 @@ class TaskDetails extends StatelessWidget {
                             context,
                             () => c.updateTask({
                               'agentId': v.isEmpty ? null : v,
-                              if (fromBacklog) 'statusId': todo!.id,
+                              if (fromBacklog) 'statusId': todo.id,
                             }),
                           );
                         }
                       : null,
                 ),
+                if (c.sessionContext != null)
+                  _Property(
+                    label: 'Context',
+                    icon: Icons.donut_large_outlined,
+                    value: ContextBadge(context: c.sessionContext),
+                  ),
                 _Property(
                   label: 'Assignees',
                   icon: Icons.person_outline_rounded,
@@ -935,55 +942,21 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  AppButton(
-                    label: 'Upload images or files',
-                    icon: Icons.attach_file_rounded,
-                    tone: Tone.secondary,
-                    busy: uploading,
-                    onPressed: saving || uploading || !c.online
+                  MarkdownEditor(
+                    controller: description,
+                    enabled: !saving && !uploading,
+                    onAttach: !c.online
                         ? null
                         : () async {
-                            set(() => error = null);
+                            final files = await pickAppAttachments(sheet);
+                            if (files.isEmpty) return [];
+                            set(() => uploading = true);
                             try {
-                              final files = await pickAppAttachments(sheet);
-                              if (files.isEmpty || !sheet.mounted) return;
-                              set(() => uploading = true);
-                              final uploaded = await c.uploadTaskFiles(
-                                task.id,
-                                files,
-                              );
-                              if (!sheet.mounted) return;
-                              final links = uploaded
-                                  .map(attachmentMarkdown)
-                                  .join('\n\n');
-                              final text = description.text;
-                              final selection = description.selection;
-                              final start = selection.isValid
-                                  ? selection.start
-                                  : text.length;
-                              final end = selection.isValid
-                                  ? selection.end
-                                  : text.length;
-                              final insertion = '\n\n$links\n\n';
-                              description.value = TextEditingValue(
-                                text: text.replaceRange(start, end, insertion),
-                                selection: TextSelection.collapsed(
-                                  offset: start + insertion.length,
-                                ),
-                              );
-                            } catch (e) {
-                              if (sheet.mounted) {
-                                set(() => error = e.toString());
-                              }
+                              return await c.uploadTaskFiles(task.id, files);
                             } finally {
                               if (sheet.mounted) set(() => uploading = false);
                             }
                           },
-                  ),
-                  const SizedBox(height: 8),
-                  MarkdownEditor(
-                    controller: description,
-                    enabled: !saving && !uploading,
                   ),
                 ],
               ),
@@ -1034,7 +1007,7 @@ Future<void> confirmMergePullRequest(
   final accepted = await confirm(
     context,
     title: 'Merge $noun?',
-    message: 'It is merged into the base branch with the provider\'s default merge method. If there is a later Status, the Task advances to it.',
+    message: 'It is merged into the base branch with the provider\'s default merge method. The Task keeps its Status.',
     confirmLabel: 'Merge',
   );
   if (accepted && context.mounted) {

@@ -17,7 +17,7 @@ import { keys, useAgents, useRepositoryGroups, useTask, useTaskSession, useUsers
 import { ErrorText, Field, Loading, Time, useConfirm } from '../components/common';
 import { BranchLink, PullRequestBadge } from '../components/Git';
 import { TaskActivity } from '../components/TaskActivity';
-import { SessionChip } from '../components/agents';
+import { ContextBadge, SessionChip } from '../components/agents';
 import { useTopic } from '../lib/realtime';
 import { applyEvent } from '../lib/cache';
 import { minimizeInDock, resumeInDock, suspendInDock, useDockAvailable } from '../lib/dock';
@@ -279,6 +279,7 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
             <div className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
               <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{list?.find((c) => c.id === chat.id)?.title ?? 'New chat'}</h2>
               {session.data && <SessionChip session={session.data} />}
+              {chat && <ContextBadge taskId={chat.id} context={session.data?.context} />}
               {session.data?.state === 'running' && (
                 <Button
                   variant="outline"
@@ -339,7 +340,6 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
               tags={[]}
               users={users.data ?? []}
               session={session.data}
-              filter="changes"
               readOnly={readOnly}
               reserveDockSpace
             />

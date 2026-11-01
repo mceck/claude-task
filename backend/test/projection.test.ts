@@ -48,6 +48,7 @@ function timeline(mutations: Mutation[]) {
 }
 
 function entryText(e: ActivityEntry): string {
+  if (e.name === 'Thinking') return `thinking: ${e.output}`;
   return `${e.summary} (${e.status}${e.outcome ? `, ${e.outcome}` : ''})`;
 }
 
@@ -89,7 +90,7 @@ describe('stream projection', () => {
     {
       name: 'thinking comes before the reply it led to, merged while consecutive',
       events: [s.thinking('Hmm.'), s.thinking('Got it.'), s.text('Answer.'), s.result()],
-      expected: ['thinking: Hmm.\n\nGot it.', 'agent: Answer.', 'summary: success 0 tools'],
+      expected: ['activity: thinking: Hmm.\n\nGot it.', 'agent: Answer.', 'summary: success 0 tools'],
     },
     {
       name: 'Bash outcomes: exit codes and failures',
@@ -192,9 +193,21 @@ describe('stream projection', () => {
       expected: ['activity: Task tool `set_status` (interrupted, interrupted) | github: `create_issue` (interrupted, interrupted)', 'summary: success 2 tools'],
     },
     {
-      name: 'thinking between tool calls closes the Activity group, keeping the order',
+      name: 'a 21st action starts a new Activity group',
+      events: [
+        ...Array.from({ length: 21 }, (_, i) => [s.toolUse(`t${i}`, 'Read', { file_path: `f${i}` }), s.toolResult(`t${i}`, 'x')]).flat(),
+        s.result(),
+      ],
+      expected: [
+        `activity: ${Array.from({ length: 20 }, (_, i) => `Read \`f${i}\` (ok)`).join(' | ')}`,
+        'activity: Read `f20` (ok)',
+        'summary: success 21 tools',
+      ],
+    },
+    {
+      name: 'thinking between tool calls joins the Activity group, keeping the order',
       events: [s.thinking('First.'), s.toolUse('a', 'Read', { file_path: 'a' }), s.toolResult('a', 'x'), s.thinking('Second.'), s.toolUse('b', 'Read', { file_path: 'b' }), s.toolResult('b', 'y'), s.result()],
-      expected: ['thinking: First.', 'activity: Read `a` (ok)', 'thinking: Second.', 'activity: Read `b` (ok)', 'summary: success 2 tools'],
+      expected: ['activity: thinking: First. | Read `a` (ok) | thinking: Second. | Read `b` (ok)', 'summary: success 2 tools'],
     },
     {
       name: 'compaction leaves a notice',
@@ -257,6 +270,61 @@ describe('stream projection', () => {
   it('starts a new agent Comment in each Turn', () => {
     const { mutations } = replay([s.text('Turn one.'), s.result(), s.text('Turn two.'), s.result()]);
     expect(mutations.filter((m) => m.op === 'comment.create')).toHaveLength(2);
+  });
+
+  describe('context usage', () => {
+    const message = (usage: Record<string, number>, model = s.model, parent: string | null = null) => ({
+      type: 'assistant',
+      message: { model, content: [{ type: 'text', text: 'x' }], usage },
+      parent_tool_use_id: parent,
+    });
+    const turnOf = (mutations: Mutation[]) => mutations.find((m) => m.op === 'turn') as Extract<Mutation, { op: 'turn' }>;
+
+    it('is the last model call of the Turn, not the summed usage the result reports', () => {
+      const { mutations } = replay([
+        message({ input_tokens: 2, cache_read_input_tokens: 30_000, cache_creation_input_tokens: 100, output_tokens: 10 }),
+        message({ input_tokens: 2, cache_read_input_tokens: 31_000, cache_creation_input_tokens: 120, output_tokens: 20 }),
+        s.result({ modelUsage: { [s.model]: { contextWindow: 200_000 } } }),
+      ]);
+      expect(turnOf(mutations).turn.context).toEqual({ tokens: 31_142, window: 200_000 });
+    });
+
+    it('is broadcast after every top-level model call, so clients follow it while the Turn runs', () => {
+      const { broadcasts } = replay([
+        message({ input_tokens: 2, cache_read_input_tokens: 30_000, output_tokens: 10 }),
+        message({ input_tokens: 5, output_tokens: 5 }, s.model, 'toolu_sub'),
+        message({ input_tokens: 2, cache_read_input_tokens: 31_000, output_tokens: 20 }),
+      ]);
+      expect(broadcasts.filter((b) => b.type === 'live.context').map((b) => b.context)).toEqual([
+        { tokens: 30_012, window: null },
+        { tokens: 31_022, window: null },
+      ]);
+    });
+
+    it('follows the model the last message used', () => {
+      const { mutations } = replay([
+        message({ input_tokens: 1, output_tokens: 1 }, 'claude-sonnet-5-5'),
+        message({ input_tokens: 1, output_tokens: 1 }, 'claude-haiku-4-5'),
+        s.result({ modelUsage: { 'claude-sonnet-5-5': { contextWindow: 1_000_000 }, 'claude-haiku-4-5': { contextWindow: 200_000 } } }),
+      ]);
+      expect(turnOf(mutations).turn.context).toEqual({ tokens: 2, window: 200_000 });
+    });
+
+    it('keeps the tokens but no percentage when the CLI reports no window', () => {
+      const { mutations } = replay([s.text('hi'), s.result({ modelUsage: null })]);
+      expect(turnOf(mutations).turn.context).toEqual({ tokens: 15, window: null });
+    });
+
+    it('is empty when the Turn made no model call, and a Subagent message does not count', () => {
+      const empty = replay([s.result()]);
+      expect(turnOf(empty.mutations).turn.context).toBeNull();
+      const nested = replay([
+        s.text('top'),
+        message({ input_tokens: 90_000, output_tokens: 1 }, s.model, 'task1'),
+        s.result({ modelUsage: { [s.model]: { contextWindow: 1_000_000 } } }),
+      ]);
+      expect(turnOf(nested.mutations).turn.context).toEqual({ tokens: 15, window: 1_000_000 });
+    });
   });
 
   it('is deterministic, so a replay produces the same ids', () => {
@@ -417,12 +485,19 @@ describe('recorded streams (real CLI spike)', () => {
 
   it('empty thinking blocks produce no Timeline item', () => {
     const { mutations } = replay(load('thinking-redacted'));
-    expect(timeline(mutations).some((l) => l.startsWith('thinking:'))).toBe(false);
+    expect(timeline(mutations).some((l) => l.includes('thinking:'))).toBe(false);
   });
 
   it('a message consumed mid-turn belongs to the same Turn', () => {
     const { mutations } = replay(load('mid-turn-message'));
     expect(timeline(mutations).filter((l) => l.startsWith('summary:'))).toEqual(['summary: success 3 tools']);
+  });
+
+  it('reads Context Usage from the real stream: last assistant message and modelUsage window', () => {
+    // The two model calls report cache reads of 29,312 each; the Turn sum would say 58,624.
+    const { mutations } = replay(load('mcp-http-tool'));
+    const turn = mutations.find((m) => m.op === 'turn') as Extract<Mutation, { op: 'turn' }>;
+    expect(turn.turn.context).toEqual({ tokens: 29_403, window: 1_000_000 });
   });
 
   it('queued messages drained after stdin closes are one Turn each', () => {

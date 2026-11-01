@@ -18,7 +18,7 @@ import { keys, useAgents, useMe, useRepositoryGroups, useSchedule, useScheduleRu
 import { Combobox } from '../components/Combobox';
 import { ErrorText, Field, Loading, Time, useConfirm } from '../components/common';
 import { TaskActivity } from '../components/TaskActivity';
-import { SessionChip } from '../components/agents';
+import { ContextBadge, SessionChip } from '../components/agents';
 import { useTopic } from '../lib/realtime';
 
 const STATE_LABEL: Record<ScheduleRun['state'], string> = { running: 'Running', succeeded: 'Succeeded', failed: 'Failed', skipped: 'Skipped' };
@@ -333,6 +333,7 @@ export function ScheduleRunPage() {
           <p className="text-xs text-muted-foreground">{schedule.data?.name}</p>
         </div>
         {session.data && <SessionChip session={session.data} />}
+        {task.data && <ContextBadge taskId={task.data.id} context={session.data?.context} />}
       </header>
       {task.isPending ? (
         <Loading />
@@ -346,7 +347,6 @@ export function ScheduleRunPage() {
           tags={[]}
           users={users.data ?? []}
           session={session.data}
-          filter="changes"
           reserveDockSpace
           readOnly={closed ? 'This run is closed: its conversation is read-only.' : undefined}
         />

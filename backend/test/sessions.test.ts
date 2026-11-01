@@ -1,5 +1,5 @@
-import { sql } from 'drizzle-orm';
-import { taskTopic } from '@claude-task/shared';
+import { asc, sql } from 'drizzle-orm';
+import { projectTopic, taskTopic } from '@claude-task/shared';
 import type { Comment, InputBlock, TimelineItem } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
@@ -19,6 +19,8 @@ import {
   statusByName,
   timeline,
 } from './helpers/fixtures';
+import { turns } from '../src/db/schema';
+import { backfillTurnContexts } from '../src/projection/backfill';
 import { recoverAbandonedJobs } from '../src/runner/handlers';
 import { FakeRunner } from './helpers/runner';
 import { Stream, typicalTurn } from './helpers/stream';
@@ -164,7 +166,7 @@ describe('assignment and the first Job', () => {
     expect(runner.messages('job.start')).toHaveLength(1);
     expect(await getSession(admin, second.id)).toMatchObject({ state: 'pending', queuePosition: 1 });
     const card = (await admin.get(`/projects/${project.id}/tasks`)).body.tasks.find((t: { id: string }) => t.id === second.id);
-    expect(card.session).toEqual({ agentId: agent.id, state: 'pending', queuePosition: 1 });
+    expect(card.session).toEqual({ agentId: agent.id, state: 'pending', queuePosition: 1, context: null });
 
     const start = runner.messages('job.start')[0]!;
     runner.accept(start.jobId);
@@ -204,6 +206,74 @@ describe('assignment and the first Job', () => {
     await admin.patch(`/agents/${agent.id}`, { enabled: true });
     await runner.next('job.start');
   });
+
+  it('carries the context the latest Turn left, and none before the first', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const start = await startAndFinish(admin, runner, task.id, agent.id);
+    const session = await getSession(admin, task.id);
+    // The Stream's assistant message reports 10 input and 5 output tokens; the result names a 1M window.
+    expect(session).toMatchObject({ id: start.sessionId, state: 'idle', context: { tokens: 15, window: 1_000_000 } });
+    // The Board card carries the same figure for its footer.
+    const card = (await admin.get(`/projects/${project.id}/tasks`)).body.tasks.find((t: { id: string }) => t.id === task.id);
+    expect(card.session).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
+
+    // A Session that has not run a Turn yet has no context to show.
+    const other = await createTask(admin, project.id);
+    await assignAndStart(admin, other.id, agent.id);
+    await app.settle();
+    expect(await getSession(admin, other.id)).toMatchObject({ state: 'running', context: null });
+  });
+
+  it('keeps the last measured context when a later Turn reports none', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const start = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Continue.');
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    runner.accept(next.jobId);
+    // A result with no assistant message before it says nothing about the context.
+    await runner.play(next.jobId, [new Stream(next.sessionId).result({ subtype: 'error_during_execution', isError: true })]);
+    await runner.next('job.end', (m) => m.jobId === next.jobId);
+    await runner.exit(next.jobId);
+    expect(await getSession(admin, task.id)).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
+  });
+
+  it('backfills Context Usage for Turns recorded before it existed', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await startAndFinish(admin, runner, task.id, agent.id);
+    const { db } = app.server.ctx;
+    await db.update(turns).set({ contextTokens: null, contextWindow: null });
+    expect(await getSession(admin, task.id)).toMatchObject({ context: null });
+
+    expect(await backfillTurnContexts(db)).toBe(1);
+    expect(await getSession(admin, task.id)).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
+    // Nothing is left to replay, so a restart does not walk the history again.
+    expect(await backfillTurnContexts(db)).toBe(0);
+  });
+
+  it('marks a Turn it cannot measure as checked, keeping the previous context', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const start = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Continue.');
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    runner.accept(next.jobId);
+    await runner.play(next.jobId, [new Stream(next.sessionId).result({ subtype: 'error_during_execution', isError: true })]);
+    await runner.next('job.end', (m) => m.jobId === next.jobId);
+    await runner.exit(next.jobId);
+
+    const { db } = app.server.ctx;
+    await db.update(turns).set({ contextTokens: null, contextWindow: null });
+    expect(await backfillTurnContexts(db)).toBe(1);
+    // Indexes restart in each Job; what matters is that the measured Turn kept its size and the
+    // result-only Turn carries the 0 mark.
+    expect((await db.select({ tokens: turns.contextTokens }).from(turns).orderBy(asc(turns.contextTokens))).map((r) => r.tokens))
+      .toEqual([0, 15]);
+    expect(await getSession(admin, task.id)).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
+    expect(await backfillTurnContexts(db)).toBe(0);
+  });
 });
 
 describe('the Agent on the Timeline', () => {
@@ -214,6 +284,7 @@ describe('the Agent on the Timeline', () => {
     const task = await createTask(admin, project.id);
     const ws = await WsTestClient.connect(app.url, admin.cookie);
     await ws.subscribe(taskTopic(task.id));
+    await ws.subscribe(projectTopic(project.id));
     await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
@@ -235,18 +306,20 @@ describe('the Agent on the Timeline', () => {
 
     const deltas = ws.events('live.delta').map((e) => e.delta.text).join('');
     expect(deltas).toBe('Looking');
+    // The context follows the Turn (also published on the Project's topic, for the Board's cards).
+    expect(ws.events('live.context').length).toBeGreaterThan(0);
 
     const items = await timeline(admin, task.id);
     const shape = items
       .filter((i) => i.type !== 'revision')
       .map((i) => (i.type === 'comment' ? `comment:${i.comment.kind}` : i.type === 'agent' ? i.item.payload.kind : 'revision'));
-    expect(shape).toEqual(['comment:user', 'thinking', 'comment:agent', 'activity', 'comment:agent', 'turn_summary']);
+    expect(shape).toEqual(['comment:user', 'activity', 'comment:agent', 'activity', 'comment:agent', 'turn_summary']);
 
     const [first, second] = comments(items).filter((c) => c.kind === 'agent');
     expect(first).toMatchObject({ body: 'Looking into it.', author: { type: 'agent', id: agent.id, displayName: 'Ada Bot' } });
     expect(second!.body).toBe('Fixed: the middleware ignored `next`.\n\nTests pass now.');
 
-    const activity = items.find((i) => i.type === 'agent' && i.item.payload.kind === 'activity') as Extract<TimelineItem, { type: 'agent' }>;
+    const activity = items.filter((i) => i.type === 'agent' && i.item.payload.kind === 'activity')[1] as Extract<TimelineItem, { type: 'agent' }>;
     expect(activity.item.payload).toMatchObject({
       entries: [
         { name: 'Bash', summary: 'Ran `npm test -- auth`', status: 'error', outcome: 'exit 1' },
@@ -259,7 +332,7 @@ describe('the Agent on the Timeline', () => {
     expect((await admin.get(`/tasks/${task.id}`)).body.task.toolCallCount).toBe(2);
 
     // Everything also arrived live.
-    expect(ws.events('agent_item.created').map((e) => e.item.payload.kind)).toEqual(['thinking', 'activity', 'turn_summary']);
+    expect(ws.events('agent_item.created').map((e) => e.item.payload.kind)).toEqual(['activity', 'activity', 'turn_summary']);
     expect(ws.events('comment.created').filter((e) => e.comment.kind === 'agent')).toHaveLength(2);
     ws.close();
   });

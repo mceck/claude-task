@@ -1,6 +1,6 @@
 // The Agent's work on the Timeline: Thinking, Activity groups, Turn Summaries, notices, and the
 // live preview of the running Turn.
-import type { ActivityEntry, AgentItem, RunStatus, RunSummary, TurnSummary } from '@claude-task/shared';
+import { THINKING_ENTRY, type ActivityEntry, type AgentItem, type RunStatus, type RunSummary, type TurnSummary } from '@claude-task/shared';
 import {
   Brain,
   ChevronRight,
@@ -24,7 +24,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import type { TimelineFilter } from '../lib/timeline-filter';
+import { useHiddenTimelineItems } from '../lib/timeline-filter';
 import { useTaskSession } from '../api/queries';
 import { setLiveExpanded, useLiveTurn } from '../lib/live';
 import { openRun } from '../lib/runs';
@@ -169,7 +169,7 @@ function ActivityView({ entries }: { entries: ActivityEntry[] }) {
   const [open, setOpen] = useState(false);
   const { total, errors } = countEntries(entries);
   const running = entries.some((e) => e.status === 'pending');
-  const icons = [...new Set(entries.map((e) => toolIcon(e.name)))].slice(0, 6);
+  const icons = [...new Set(entries.map((e) => (e.name === THINKING_ENTRY ? Brain : toolIcon(e.name))))].slice(0, 6);
   return (
     <li aria-label="Activity" className="relative flex items-start gap-3 pl-1.5 text-xs">
       <Rail icon={running ? Loader2 : Wrench} className={cn(running && '[&_svg]:animate-spin', errors > 0 && 'border-red-500/50 text-red-400')} />
@@ -210,7 +210,8 @@ function ActivityView({ entries }: { entries: ActivityEntry[] }) {
 
 function EntryView({ entry }: { entry: ActivityEntry }) {
   const [open, setOpen] = useState(false);
-  const Icon = toolIcon(entry.name);
+  const thinking = entry.name === THINKING_ENTRY;
+  const Icon = thinking ? Brain : toolIcon(entry.name);
   return (
     <li>
       <button
@@ -234,7 +235,12 @@ function EntryView({ entry }: { entry: ActivityEntry }) {
           <CircleCheck aria-label="succeeded" className="size-3 shrink-0 text-emerald-500/80" />
         )}
       </button>
-      {open && (
+      {open && thinking && (
+        <div className="mt-1 mb-2 ml-6 rounded-lg border-l-2 border-violet-500/40 bg-muted/30 px-3 py-2 text-muted-foreground italic">
+          <Markdown source={entry.output ?? ''} />
+        </div>
+      )}
+      {open && !thinking && (
         <div className="mt-1 mb-2 ml-6 space-y-2">
           <Block title="Input">{JSON.stringify(entry.input, null, 2)}</Block>
           {entry.output !== null && <Block title="Output">{entry.output || '(empty)'}</Block>}
@@ -277,12 +283,13 @@ function TurnSummaryView({ summary, at }: { summary: TurnSummary; at: string }) 
 }
 
 /** What the running Turn is writing right now (not stored yet), retries and setup output. */
-export function LiveTurnView({ taskId, filter = 'all' }: { taskId: string; filter?: TimelineFilter }) {
+export function LiveTurnView({ taskId }: { taskId: string }) {
+  const hidden = useHiddenTimelineItems();
   const live = useLiveTurn(taskId);
   const session = useTaskSession(taskId);
   const [showSetup, setShowSetup] = useState(false);
-  // At the "activity" level the Agent's work stays hidden; its streaming text is the Comment being written.
-  const showWork = filter !== 'activity';
+  // With Agent activity hidden the Agent's work stays hidden; its streaming text is the Comment being written.
+  const showWork = !hidden.activity;
   return (
     <>
       {showWork && live.setup && (

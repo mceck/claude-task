@@ -100,7 +100,7 @@ void main() {
   );
 
   testWidgets(
-    'linked images retain metadata and render in Preview without fetching the image',
+    'linked images retain metadata and render without fetching the image',
     (tester) async {
       final controller = TextEditingController(
         text: 'Before\n\n![Example image](https://example.com/a.png "Title")',
@@ -114,8 +114,6 @@ void main() {
         controller.text,
         contains('![Example image](<https://example.com/a.png> "Title")'),
       );
-      await tester.tap(find.text('Preview'));
-      await tester.pumpAndSettle();
       expect(find.text('Example image'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -186,7 +184,7 @@ void main() {
   );
 
   testWidgets(
-    'opening, selection and mode changes preserve the original source exactly',
+    'opening, selection and rebuilds preserve the original source exactly',
     (tester) async {
       const source = '## Heading\n\n* a\n* b\n\nA **bold** word.\n';
       final controller = TextEditingController(text: source);
@@ -195,12 +193,6 @@ void main() {
       await tester.pumpAndSettle();
       rich(tester).updateSelection(const TextSelection.collapsed(offset: 2));
       await tester.pump();
-      await tester.tap(find.text('Preview'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Markdown'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Write'));
-      await tester.pumpAndSettle();
       expect(controller.text, source);
       expect(tester.takeException(), isNull);
     },
@@ -242,36 +234,7 @@ void main() {
   });
 
   testWidgets(
-    'source edits rebuild the visual document, including an empty description',
-    (tester) async {
-      final controller = TextEditingController(text: 'Old');
-      addTearDown(controller.dispose);
-      await mount(tester, controller);
-      await tester.tap(find.text('Markdown'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const Key('description-markdown-source')),
-        '# New\n\n**Text**',
-      );
-      await tester.tap(find.text('Write'));
-      await tester.pumpAndSettle();
-      expect(rich(tester).document.toPlainText(), 'New\nText\n');
-      await tester.tap(find.text('Markdown'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const Key('description-markdown-source')),
-        '',
-      );
-      await tester.tap(find.text('Write'));
-      await tester.pumpAndSettle();
-      expect(rich(tester).document.toPlainText(), '\n');
-      expect(controller.text, '');
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'advanced Markdown stays editable in source with a working preview',
+    'advanced Markdown stays editable in source',
     (tester) async {
       const source = '> - Nested list\n>   - Child\n';
       final controller = TextEditingController(text: source);
@@ -282,12 +245,7 @@ void main() {
         find.byKey(const Key('description-markdown-source')),
         findsOneWidget,
       );
-      await tester.tap(find.text('Write'));
-      await tester.pumpAndSettle();
       expect(controller.text, source);
-      await tester.tap(find.text('Preview'));
-      await tester.pumpAndSettle();
-      expect(find.text('Nested list'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

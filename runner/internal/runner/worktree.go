@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,17 @@ const (
 	// setupPendingMarker marks a new Worktree whose setup hasn't succeeded yet.
 	setupPendingMarker = ".claude-task/setup-pending"
 )
+
+// worktreeRetryDelays pace the retries of a failed Worktree preparation. Its failures are mostly
+// transient: the Git Proxy can still see the Job as not started when the first fetch arrives, and
+// provider or network blips clear on their own. Three retries cover both within a few seconds.
+var worktreeRetryDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
+// retryDelay spreads a retry delay over [d, 1.5d): Runners retrying together (a backend or provider
+// blip) don't come back in lockstep.
+func retryDelay(d time.Duration) time.Duration {
+	return d + time.Duration(rand.Int64N(int64(d)/2+1))
+}
 
 // prepareWorktree makes the Task's Worktree ready (docs/specs/runner.md) and reports whether it was just created.
 // A new Worktree is marked setup-pending as soon as it exists.
@@ -53,9 +65,29 @@ func (j *job) prepareWorktree() (string, bool, error) {
 	}
 	out := j.setupWriter()
 	defer out.Flush()
-	created, err := prepareGitWorktree(out, repo, wt, g, j.isCancelled)
+	created, err := j.prepareGitWorktreeWithRetry(out, repo, wt, g)
 	j.remoteBranchMissing = !refExists(repo, "refs/remotes/origin/"+g.TaskBranch)
 	return wt, created, err
+}
+
+// prepareGitWorktreeWithRetry prepares the Worktree again after a failure, up to len(worktreeRetryDelays)
+// times. Every attempt starts from whatever the previous one left: the steps are idempotent, and a
+// Worktree created halfway is recreated by createWorktree. Each retry is announced in the setup output,
+// where the failure's System Comment shows it; a cancel stops the wait and fails the Job as cancelled.
+func (j *job) prepareGitWorktreeWithRetry(out *utf8Chunks, repo, wt string, g *protocol.GitSpec) (bool, error) {
+	created, err := prepareGitWorktree(out, repo, wt, g, j.isCancelled)
+	for attempt := 1; err != nil && !errors.Is(err, errCancelled) && attempt <= len(worktreeRetryDelays); attempt++ {
+		wait := retryDelay(worktreeRetryDelays[attempt-1])
+		fmt.Fprintf(out, "[runner] preparing the worktree failed (%v); retrying in %s (attempt %d/%d)\n", err, wait.Round(10*time.Millisecond), attempt, len(worktreeRetryDelays))
+		out.Flush()
+		select {
+		case <-time.After(wait):
+		case <-j.cancelled:
+			return created, errCancelled
+		}
+		created, err = prepareGitWorktree(out, repo, wt, g, j.isCancelled)
+	}
+	return created, err
 }
 
 func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec, cancelled func() bool) (bool, error) {

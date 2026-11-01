@@ -1,4 +1,5 @@
-import type { AgentRef, AgentState, Delivery, SessionState, TaskSession } from '@claude-task/shared';
+import { useLiveContext } from '../lib/live';
+import type { AgentRef, AgentState, ContextUsage, Delivery, SessionState, TaskSession } from '@claude-task/shared';
 import { Check, CheckCheck, Clock, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -105,6 +106,93 @@ export function SessionChip({ session }: { session: TaskSession }) {
     <span aria-label={`Session: ${label}`} className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', tone)}>
       <StateDot state={session.state} className="size-1.5 ring-0" />
       {label}
+    </span>
+  );
+}
+
+/** Compact token counts: `120.2K`, `1.2M`, `940`. */
+export function formatContextTokens(n: number): string {
+  // Round first, so 119.96K reads 120K and not 120.0K.
+  const one = (v: number) => String(Math.round(v * 10) / 10);
+  if (n >= 1_000_000) return `${one(n / 1_000_000)}M`;
+  // Just below a million would read "1000K".
+  if (n >= 999_950) return '1M';
+  return n >= 1000 ? `${one(n / 1000)}K` : String(Math.round(n));
+}
+
+function contextPercent(context: ContextUsage): number | null {
+  return context.window && context.window > 0 ? Math.min(100, Math.round((context.tokens / context.window) * 100)) : null;
+}
+
+function contextTitle(context: ContextUsage): string {
+  const pct = contextPercent(context);
+  return pct === null
+    ? `Context: ${formatContextTokens(context.tokens)} tokens`
+    : `Context: ${formatContextTokens(context.tokens)} of ${formatContextTokens(context.window!)} tokens (${pct}%)`;
+}
+
+/** The warning and error text tones shared by the chip and the board card. */
+function contextTone(pct: number | null): string {
+  return pct !== null && pct >= 90 ? 'text-red-400' : pct !== null && pct >= 70 ? 'text-amber-400' : 'text-muted-foreground';
+}
+
+/** A small ring filled to the percentage, in the current text colour. */
+function ContextRing({ pct }: { pct: number | null }) {
+  return (
+    <span
+      aria-hidden
+      className="size-3 shrink-0 rounded-full"
+      style={
+        pct === null
+          ? { background: 'color-mix(in oklch, currentColor 25%, transparent)' }
+          : {
+              background: `conic-gradient(currentColor ${pct}%, color-mix(in oklch, currentColor 20%, transparent) 0)`,
+              maskImage: 'radial-gradient(circle, transparent 38%, black 40%)',
+              WebkitMaskImage: 'radial-gradient(circle, transparent 38%, black 40%)',
+            }
+      }
+    />
+  );
+}
+
+/** How full the conversation's context is, beside the Session chip: `120.2K (53%)`. */
+export function ContextBadge({ taskId, context: stored }: { taskId: string; context: ContextUsage | null | undefined }) {
+  const context = useLiveContext(taskId, stored);
+  if (!context) return null;
+  const pct = contextPercent(context);
+  const title = contextTitle(context);
+  // Neutral until it fills up, then the usual warning and error tones.
+  const tone =
+    pct === null || pct < 70
+      ? 'border-border bg-muted/40 text-muted-foreground'
+      : pct < 90
+        ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+        : 'border-red-500/30 bg-red-500/10 text-red-400';
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span aria-label={title} className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', tone)}>
+          <ContextRing pct={pct} />
+          {formatContextTokens(context.tokens)}
+          {pct !== null && ` (${pct}%)`}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{title}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** The same figure as plain inline text, for a Board card's footer. */
+export function ContextUsageLabel({ taskId, context: stored, running }: { taskId: string; context: ContextUsage | null | undefined; running: boolean }) {
+  const context = useLiveContext(taskId, stored, running);
+  if (!context) return null;
+  const pct = contextPercent(context);
+  const title = contextTitle(context);
+  return (
+    <span data-testid="task-context" className={cn('flex items-center gap-1', contextTone(pct))} title={title} aria-label={title}>
+      <ContextRing pct={pct} />
+      {formatContextTokens(context.tokens)}
+      {pct !== null && ` (${pct}%)`}
     </span>
   );
 }

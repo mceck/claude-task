@@ -25,7 +25,7 @@ ENV NODE_ENV=production \
     STATIC_DIR=/app/public
 WORKDIR /app
 COPY --from=build /out ./
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends git curl openssh-client ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /data && chown node:node /data
 USER node

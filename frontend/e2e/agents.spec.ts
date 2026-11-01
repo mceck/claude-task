@@ -252,22 +252,27 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
     s.toolResult('tool-1', 'Tests passed'),
   ]);
   await expect(page.getByLabel('Agent is writing')).toHaveCount(0);
-  await page.getByLabel('Thinking', { exact: true }).getByRole('button').click();
+  // Thinking is an entry of an Activity group.
+  await page.getByLabel('Activity', { exact: true }).first().getByRole('button', { name: /1 action/ }).click();
+  await page.getByRole('button', { name: 'Thinking', exact: true }).click();
   await expect(page.getByText('Inspect the failing case.')).toBeVisible();
-  await page
-    .getByLabel('Activity', { exact: true })
-    .getByRole('button', { name: /1 action/ })
-    .click();
+  await page.getByLabel('Activity', { exact: true }).last().getByRole('button', { name: /1 action/ }).click();
   await page.getByRole('button', { name: /Ran.*npm test/ }).click();
   await expect(page.getByText('Tests passed', { exact: true })).toBeVisible();
-  // The middle level of the Changes filter hides the Agent's activity and tool calls too; the last shows everything again.
-  const filter = page.getByRole('button', { name: /Timeline filter/ });
-  await filter.click();
-  await expect(page.getByLabel('Thinking', { exact: true })).toHaveCount(0);
+  // Agent activity is its own checkbox in the visibility menu: it hides Thinking and tool calls, and leaving it
+  // unchecked brings them back.
+  const visibility = page.getByRole('button', { name: /Timeline visibility/ });
+  const activity = page.getByRole('menuitemcheckbox', { name: 'Agent activity' });
+  await visibility.click();
+  await expect(activity).not.toBeChecked();
+  await activity.click();
+  await page.keyboard.press('Escape');
+  await expect(visibility).toHaveAccessibleName('Timeline visibility: changes + activity hidden');
   await expect(page.getByLabel('Activity', { exact: true })).toHaveCount(0);
-  await filter.click();
-  await expect(page.getByLabel('Thinking', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Activity', { exact: true })).toBeVisible();
+  await visibility.click();
+  await activity.click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByLabel('Activity', { exact: true })).toHaveCount(2);
 
   await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please check logout too.');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();

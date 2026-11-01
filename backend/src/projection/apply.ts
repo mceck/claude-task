@@ -1,11 +1,11 @@
-import { taskTopic } from '@claude-task/shared';
+import { projectTopic, taskTopic } from '@claude-task/shared';
 import type { AgentItem } from '@claude-task/shared';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../context';
 import type { Executor } from '../db/client';
 import { offerLimitResume, onTurnWorked } from '../modules/scheduled-messages/service';
 import { setAlertComment, turnEventId } from '../notifications/alerts';
-import { agentItems, comments, jobs, rateLimitObservations, turns } from '../db/schema';
+import { agentItems, comments, jobs, rateLimitObservations, tasks, turns } from '../db/schema';
 import type { JobRow } from '../modules/agents/service';
 import type { Broadcast, Mutation } from './projector';
 
@@ -139,6 +139,8 @@ export async function applyProjection(
             numToolCalls: m.turn.toolCalls,
             costUsd: m.turn.costUsd,
             usage: m.turn.usage,
+            contextTokens: m.turn.context?.tokens ?? null,
+            contextWindow: m.turn.context?.window ?? null,
           })
           .onConflictDoNothing();
         if (m.turn.commentId) await setAlertComment(tx, turnEventId(job.id, m.turn.index), m.turn.commentId);
@@ -168,8 +170,15 @@ export async function applyProjection(
         break;
     }
   }
+  // The Board's cards follow the context too, from the Project's topic.
+  const liveContext = broadcasts.findLast((b) => b.type === 'live.context');
+  if (liveContext?.type === 'live.context') {
+    const [row] = await tx.select({ projectId: tasks.projectId }).from(tasks).where(eq(tasks.id, job.taskId));
+    if (row) after.emit(projectTopic(row.projectId), { type: 'live.context', taskId: job.taskId, context: liveContext.context });
+  }
   for (const b of broadcasts) {
     if (b.type === 'live.delta') after.emit(topic, { type: 'live.delta', taskId: job.taskId, delta: b.delta });
+    else if (b.type === 'live.context') after.emit(topic, { type: 'live.context', taskId: job.taskId, context: b.context });
     else after.emit(topic, { type: 'live.status', taskId: job.taskId, status: b.status });
   }
   if (created.length > 0) after.effect((ctx) => ctx.scheduler.publishComments(created, 'created'));
