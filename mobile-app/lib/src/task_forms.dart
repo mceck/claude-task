@@ -942,55 +942,21 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  AppButton(
-                    label: 'Upload images or files',
-                    icon: Icons.attach_file_rounded,
-                    tone: Tone.secondary,
-                    busy: uploading,
-                    onPressed: saving || uploading || !c.online
+                  MarkdownEditor(
+                    controller: description,
+                    enabled: !saving && !uploading,
+                    onAttach: !c.online
                         ? null
                         : () async {
-                            set(() => error = null);
+                            final files = await pickAppAttachments(sheet);
+                            if (files.isEmpty) return [];
+                            set(() => uploading = true);
                             try {
-                              final files = await pickAppAttachments(sheet);
-                              if (files.isEmpty || !sheet.mounted) return;
-                              set(() => uploading = true);
-                              final uploaded = await c.uploadTaskFiles(
-                                task.id,
-                                files,
-                              );
-                              if (!sheet.mounted) return;
-                              final links = uploaded
-                                  .map(attachmentMarkdown)
-                                  .join('\n\n');
-                              final text = description.text;
-                              final selection = description.selection;
-                              final start = selection.isValid
-                                  ? selection.start
-                                  : text.length;
-                              final end = selection.isValid
-                                  ? selection.end
-                                  : text.length;
-                              final insertion = '\n\n$links\n\n';
-                              description.value = TextEditingValue(
-                                text: text.replaceRange(start, end, insertion),
-                                selection: TextSelection.collapsed(
-                                  offset: start + insertion.length,
-                                ),
-                              );
-                            } catch (e) {
-                              if (sheet.mounted) {
-                                set(() => error = e.toString());
-                              }
+                              return await c.uploadTaskFiles(task.id, files);
                             } finally {
                               if (sheet.mounted) set(() => uploading = false);
                             }
                           },
-                  ),
-                  const SizedBox(height: 8),
-                  MarkdownEditor(
-                    controller: description,
-                    enabled: !saving && !uploading,
                   ),
                 ],
               ),
