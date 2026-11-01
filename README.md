@@ -40,8 +40,10 @@ pnpm --filter @claude-task/backend cli create-admin --email you@example.com
 ## Running with Docker
 
 ```bash
-docker compose up
+COMPOSE_PROFILES=db docker compose up
 ```
+
+On a fresh Amazon Linux EC2 instance, clone the repo and run `scripts/deploy.sh`: it installs Docker, asks for the settings (bundled or external Postgres, S3, TURN), writes `.env` and starts everything. Persistent data lives in host directories under `~/claude-task` (`data/`, `postgres/`), not Docker volumes.
 
 A single production image serves the API, the WebSocket and the built frontend; Postgres runs alongside. An optional voice relay (TURN) can be added with `docker compose --profile turn up` by setting `VOICE_TURN_HOST`, `VOICE_TURN_SECRET` and `VOICE_TURN_EXTERNAL_IP`.
 
