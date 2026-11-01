@@ -233,9 +233,8 @@ class TimelineEntry {
   final Json json;
   TimelineEntry(this.json);
 
-  // The JSON of an Entry is replaced, never mutated, so everything derived
-  // from it is computed once. A long Timeline rebuilds its Entries on every
-  // notification; re-reading and copying their maps made scrolling janky.
+  // An Entry's JSON is replaced, never changed, so what is read from it is
+  // read once: the Timeline sorts and renders Entries over and over.
   late final String id = json['id'] as String;
   late final String type = json['type'] as String;
   late final DateTime createdAt = DateTime.parse(json['createdAt'] as String);
@@ -245,15 +244,15 @@ class TimelineEntry {
   late final Json payload = Map<String, dynamic>.from(
     content['payload'] as Map? ?? {},
   );
-  late final bool internal = content['internal'] == true;
-  late final bool deleted = content['deletedAt'] != null;
-  late final String body = content['body'] as String? ?? '';
-  late final String author =
+  bool get internal => content['internal'] == true;
+  bool get deleted => content['deletedAt'] != null;
+  String get body => content['body'] as String? ?? '';
+  String get author =>
       (content[type == 'revision' ? 'actor' : 'author'] as Map?)?['displayName']
           as String? ??
       'Agent';
-  late final String? authorId = (content['author'] as Map?)?['id'] as String?;
-  late final bool isOwnCommentEditable =
+  String? get authorId => (content['author'] as Map?)?['id'] as String?;
+  bool get isOwnCommentEditable =>
       type == 'comment' && content['kind'] == 'user' && !deleted;
   late final List<Json> attachments = objects(content['attachments']);
 
@@ -268,7 +267,7 @@ class TimelineEntry {
       : null;
 
   /// On the User Comment that answers a Question: the Question's Comment id.
-  late final String? answersCommentId = content['answersCommentId'] as String?;
+  String? get answersCommentId => content['answersCommentId'] as String?;
 
   /// On the System Comment of a usage limit: the offer to resume at the reset.
   late final LimitResume? limitResume = content['limitResume'] is Map

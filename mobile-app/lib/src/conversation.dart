@@ -80,36 +80,26 @@ class _ConversationState extends State<Conversation> {
   /// Entries already shown; anything else arriving later animates in.
   Set<String>? _seen;
 
-  /// The rows the Timeline shows and their position by Entry id, kept until
-  /// the Timeline or the filter changes. Every notification used to rebuild
-  /// and rescan a long Timeline from scratch.
-  List<({TimelineEntry entry, int count})> _rowsCache = const [];
-  List<TimelineEntry>? _rowsTimeline;
-  TimelineFilter? _rowsFilter;
-  Map<String, int> _rowIndex = const {};
+  /// The rows as shown, and where each Entry is among them, for the Timeline
+  /// and filter they were made from.
+  _Rows _shown = const _Rows([], {});
+  List<TimelineEntry>? _shownTimeline;
+  TimelineFilter? _shownFilter;
 
+  /// Each row's widget, reused while its Entry, the Entry above it and
+  /// [_RowContext] stay the same. The conversation rebuilds on every
+  /// notification, as often as every frame while an Agent streams; returning
+  /// the same widget skips the row, so only what changed is rebuilt.
+  final _tiles = <String, _Tile>{};
+  _RowContext? _tilesContext;
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_scrolled);
-    widget.controller.live.addListener(_liveChanged);
-  }
-
-  @override
-  void didUpdateWidget(Conversation oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.live.removeListener(_liveChanged);
-      widget.controller.live.addListener(_liveChanged);
-      _rowsTimeline = null;
-      _stamp = '';
-      _seen = null;
-    }
   }
 
   @override
   void dispose() {
-    widget.controller.live.removeListener(_liveChanged);
     _scroll.dispose();
     super.dispose();
   }
@@ -204,24 +194,17 @@ class _ConversationState extends State<Conversation> {
   }
 
   void _afterContent() {
-    final stamp = '${identityHashCode(widget.controller.timeline)}';
+    final c = widget.controller;
+    var live = 0;
+    for (final text in c.liveText.values) {
+      live += text.length;
+    }
+    final stamp =
+        '${c.timeline.isEmpty ? '' : c.timeline.last.id}:$live:${c.timeline.length}';
     if (stamp != _stamp) {
       _stamp = stamp;
       _contentChanged = true;
     }
-    _settleContent();
-  }
-
-  /// The Agent's live text is not part of the Timeline yet: rebuild only the
-  /// Live Tail, and correct the reader's position once the frame is up.
-  void _liveChanged() {
-    _contentChanged = true;
-    // Without stored Entries the empty state gives way to the Live Tail.
-    if (widget.controller.timeline.isEmpty) setState(() {});
-    _settleContent();
-  }
-
-  void _settleContent() {
     if (_settling) return;
     _settling = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -242,17 +225,6 @@ class _ConversationState extends State<Conversation> {
     final c = widget.controller, t = widget.controller.task;
     // The outgoing page of a transition may outlive the selected Task.
     if (t == null) return const SizedBox.shrink();
-    _afterContent();
-    if (_seen == null && c.timeline.isNotEmpty) {
-      _seen = {for (final e in c.timeline) e.id};
-    }
-    final rows = _rows(c);
-    final live =
-        c.liveText.isNotEmpty ||
-        (_filter != TimelineFilter.activity &&
-            (c.liveThinking.isNotEmpty ||
-                c.liveStatus.isNotEmpty ||
-                c.liveSetup != null));
     return Column(
       children: [
         _Header(
@@ -276,200 +248,11 @@ class _ConversationState extends State<Conversation> {
             ),
           ),
         Expanded(
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: c.timeline.isEmpty && !live && c.timelineLoading
-                    ? const Center(
-                        child: Spinner(key: Key('loading-timeline'), size: 26),
-                      )
-                    : c.timeline.isEmpty && !live
-                    ? EmptyState(
-                        icon: Icons.chat_bubble_outline_rounded,
-                        title: 'Start the conversation with a Comment.',
-                        message: t.agentId == null
-                            ? 'Comments here are visible to everyone on the Task.'
-                            : 'Your first Comment starts the Agent.',
-                      )
-                    : SelectionArea(
-                        child: MarkdownScope(
-                          child: CustomScrollView(
-                            key: const Key('timeline'),
-                            controller: _scroll,
-                            reverse: true,
-                            slivers: [
-                              SliverPadding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  16,
-                                  16,
-                                  12,
-                                ),
-                                sliver: _ReadingSliverList(
-                                  hold: _holdReading,
-                                  delegate: SliverChildBuilderDelegate(
-                                    childCount: rows.length + 2,
-                                    // Entries keep their element (open sections,
-                                    // loaded images, measured heights) when newer
-                                    // ones arrive.
-                                    findChildIndexCallback: (key) {
-                                      if (key is! ValueKey<String>) return null;
-                                      final i = _rowIndex[key.value];
-                                      return i == null ? null : rows.length - i;
-                                    },
-                                    (context, index) {
-                                      if (index == 0) {
-                                        return _LiveTail(
-                                          controller: c,
-                                          filter: _filter,
-                                        );
-                                      }
-                                      if (index == rows.length + 1) {
-                                        if (c.nextCursor == null) {
-                                          return const SizedBox(height: 12);
-                                        }
-                                        return _loadingOlder
-                                            ? const Padding(
-                                                padding: EdgeInsets.only(
-                                                  bottom: 16,
-                                                ),
-                                                child: Center(
-                                                  child: Spinner(
-                                                    key: Key('loading-older'),
-                                                    size: 20,
-                                                  ),
-                                                ),
-                                              )
-                                            : Center(
-                                                child: Padding(
-                                                  padding:
-                                                      const EdgeInsets.only(
-                                                        bottom: 12,
-                                                      ),
-                                                  child: AppButton(
-                                                    label: 'Load older entries',
-                                                    icon: Icons.history_rounded,
-                                                    tone: Tone.secondary,
-                                                    compact: true,
-                                                    busy: _loadingOlder,
-                                                    onPressed: c.online
-                                                        ? _loadOlder
-                                                        : null,
-                                                  ),
-                                                ),
-                                              );
-                                      }
-                                      final i = rows.length - index;
-                                      final entry = rows[i].entry;
-                                      final previous = i > 0
-                                          ? rows[i - 1].entry
-                                          : null;
-                                      final newDay =
-                                          previous == null ||
-                                          !_sameDay(
-                                            previous.createdAt,
-                                            entry.createdAt,
-                                          );
-                                      // Agent output was already on screen as the
-                                      // live tail.
-                                      final fresh =
-                                          (_seen?.add(entry.id) ?? false) &&
-                                          entry.type != 'agent' &&
-                                          entry.content['kind'] != 'agent';
-                                      return FadeSlideIn(
-                                        key: ValueKey(entry.id),
-                                        enabled: fresh,
-                                        duration: Motion.fast,
-                                        offset: Offset.zero,
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.stretch,
-                                          children: [
-                                            if (newDay)
-                                              _DaySeparator(
-                                                date: entry.createdAt,
-                                              ),
-                                            TimelineTile(
-                                              entry: entry,
-                                              controller: c,
-                                              count: rows[i].count,
-                                              grouped:
-                                                  !newDay &&
-                                                  _continues(previous, entry),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-              ),
-              if (c.wiki == null)
-                Positioned(
-                  top: 8,
-                  right: 12,
-                  child: _ChangesToggle(
-                    filter: _filter,
-                    onChanged: (f) => setState(() => _filter = f),
-                  ),
-                ),
-              Positioned(
-                bottom: 14,
-                right: 16,
-                child: AnimatedSlide(
-                  offset: _atBottom ? const Offset(0, .4) : Offset.zero,
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                  child: AnimatedOpacity(
-                    opacity: _atBottom ? 0 : 1,
-                    duration: const Duration(milliseconds: 200),
-                    child: IgnorePointer(
-                      ignoring: _atBottom,
-                      child: _atBottom
-                          ? const SizedBox.shrink()
-                          : Pressable(
-                              key: const Key('jump-latest'),
-                              onTap: () => _scroll.animateTo(
-                                0,
-                                duration: const Duration(milliseconds: 260),
-                                curve: Curves.easeOutCubic,
-                              ),
-                              color: Palette.raised,
-                              border: Border.all(color: Palette.borderStrong),
-                              borderRadius: BorderRadius.circular(99),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 9,
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.arrow_downward_rounded,
-                                    size: 16,
-                                    color: Palette.primarySoft,
-                                  ),
-                                  SizedBox(width: 6),
-                                  Text(
-                                    'Jump to latest',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+          // Streamed text notifies only this part: the header, composer and
+          // everything around the conversation stay as they are.
+          child: ListenableBuilder(
+            listenable: c.live,
+            builder: (context, _) => _timeline(c, t),
           ),
         ),
         _ActiveRunsBar(controller: c),
@@ -499,6 +282,227 @@ class _ConversationState extends State<Conversation> {
     );
   }
 
+  Widget _timeline(TaskController c, Task t) {
+    _afterContent();
+    if (_seen == null && c.timeline.isNotEmpty) {
+      _seen = {for (final e in c.timeline) e.id};
+    }
+    final rowContext = _RowContext.of(c);
+    if (_tilesContext == null || !_tilesContext!.same(rowContext)) {
+      _tilesContext = rowContext;
+      _tiles.clear();
+      _shownTimeline = null;
+    }
+    if (!identical(_shownTimeline, c.timeline) || _shownFilter != _filter) {
+      _shownTimeline = c.timeline;
+      _shownFilter = _filter;
+      final rows = _rows(c);
+      _shown = _Rows(rows, {
+        for (var i = 0; i < rows.length; i++) rows[i].entry.id: i,
+      });
+      _tiles.removeWhere((id, _) => !_shown.index.containsKey(id));
+    }
+    final rows = _shown.rows;
+    final live =
+        c.liveText.isNotEmpty ||
+        (_filter != TimelineFilter.activity &&
+            (c.liveThinking.isNotEmpty ||
+                c.liveStatus.isNotEmpty ||
+                c.liveSetup != null));
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: c.timeline.isEmpty && !live && c.timelineLoading
+              ? const Center(
+                  child: Spinner(key: Key('loading-timeline'), size: 26),
+                )
+              : c.timeline.isEmpty && !live
+              ? EmptyState(
+                  icon: Icons.chat_bubble_outline_rounded,
+                  title: 'Start the conversation with a Comment.',
+                  message: t.agentId == null
+                      ? 'Comments here are visible to everyone on the Task.'
+                      : 'Your first Comment starts the Agent.',
+                )
+              : CustomScrollView(
+                  key: const Key('timeline'),
+                  controller: _scroll,
+                  reverse: true,
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                      sliver: _ReadingSliverList(
+                        hold: _holdReading,
+                        delegate: SliverChildBuilderDelegate(
+                          childCount: rows.length + 2,
+                          // Entries keep their element (open sections,
+                          // loaded images, measured heights) when newer
+                          // ones arrive.
+                          findChildIndexCallback: (key) {
+                            if (key is! ValueKey<String>) return null;
+                            final i = _shown.index[key.value];
+                            return i == null ? null : rows.length - i;
+                          },
+                          (context, index) {
+                            if (index == 0) {
+                              return _LiveTail(controller: c, filter: _filter);
+                            }
+                            if (index == rows.length + 1) {
+                              if (c.nextCursor == null) {
+                                return const SizedBox(height: 12);
+                              }
+                              return _loadingOlder
+                                  ? const Padding(
+                                      padding: EdgeInsets.only(bottom: 16),
+                                      child: Center(
+                                        child: Spinner(
+                                          key: Key('loading-older'),
+                                          size: 20,
+                                        ),
+                                      ),
+                                    )
+                                  : Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 12,
+                                        ),
+                                        child: AppButton(
+                                          label: 'Load older entries',
+                                          icon: Icons.history_rounded,
+                                          tone: Tone.secondary,
+                                          compact: true,
+                                          busy: _loadingOlder,
+                                          onPressed: c.online
+                                              ? _loadOlder
+                                              : null,
+                                        ),
+                                      ),
+                                    );
+                            }
+                            final i = rows.length - index;
+                            final entry = rows[i].entry;
+                            final previous = i > 0 ? rows[i - 1].entry : null;
+                            final cached = _tiles[entry.id];
+                            if (cached != null &&
+                                cached.shows(
+                                  entry,
+                                  previous,
+                                  rows[i].count,
+                                  c,
+                                )) {
+                              return cached.widget;
+                            }
+                            final newDay =
+                                previous == null ||
+                                !_sameDay(previous.createdAt, entry.createdAt);
+                            // Agent output was already on screen as the
+                            // live tail.
+                            final fresh =
+                                (_seen?.add(entry.id) ?? false) &&
+                                entry.type != 'agent' &&
+                                entry.content['kind'] != 'agent';
+                            final tile = FadeSlideIn(
+                              key: ValueKey(entry.id),
+                              enabled: fresh,
+                              duration: Motion.fast,
+                              offset: Offset.zero,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (newDay)
+                                    _DaySeparator(date: entry.createdAt),
+                                  TimelineTile(
+                                    entry: entry,
+                                    controller: c,
+                                    count: rows[i].count,
+                                    grouped:
+                                        !newDay && _continues(previous, entry),
+                                  ),
+                                ],
+                              ),
+                            );
+                            // A Run's duration counts while it runs.
+                            if (entry.payload['kind'] != 'run') {
+                              _tiles[entry.id] = _Tile(
+                                tile,
+                                entry,
+                                previous,
+                                rows[i].count,
+                                _Tile.deliveryOf(entry, c),
+                              );
+                            }
+                            return tile;
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        if (c.wiki == null)
+          Positioned(
+            top: 8,
+            right: 12,
+            child: _ChangesToggle(
+              filter: _filter,
+              onChanged: (f) => setState(() => _filter = f),
+            ),
+          ),
+        Positioned(
+          bottom: 14,
+          right: 16,
+          child: AnimatedSlide(
+            offset: _atBottom ? const Offset(0, .4) : Offset.zero,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            child: AnimatedOpacity(
+              opacity: _atBottom ? 0 : 1,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: _atBottom,
+                child: _atBottom
+                    ? const SizedBox.shrink()
+                    : Pressable(
+                        key: const Key('jump-latest'),
+                        onTap: () => _scroll.animateTo(
+                          0,
+                          duration: const Duration(milliseconds: 260),
+                          curve: Curves.easeOutCubic,
+                        ),
+                        color: Palette.raised,
+                        border: Border.all(color: Palette.borderStrong),
+                        borderRadius: BorderRadius.circular(99),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 9,
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.arrow_downward_rounded,
+                              size: 16,
+                              color: Palette.primarySoft,
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'Jump to latest',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   static bool _sameDay(DateTime a, DateTime b) {
     final x = a.toLocal(), y = b.toLocal();
     return x.year == y.year && x.month == y.month && x.day == y.day;
@@ -508,11 +512,8 @@ class _ConversationState extends State<Conversation> {
   /// The Timeline as shown: Revisions hidden, the Agent's items hidden too,
   /// or identical consecutive Revisions by the same actor folded into the
   /// latest with a count.
-  List<({TimelineEntry entry, int count})> _rows(TaskController c) {
-    if (identical(c.timeline, _rowsTimeline) && _filter == _rowsFilter) {
-      return _rowsCache;
-    }
-    final rows = <({TimelineEntry entry, int count})>[];
+  List<_Row> _rows(TaskController c) {
+    final rows = <_Row>[];
     String? lastText;
     for (final e in c.timeline) {
       if (e.type == 'agent') {
@@ -535,10 +536,6 @@ class _ConversationState extends State<Conversation> {
       }
       lastText = text;
     }
-    _rowsTimeline = c.timeline;
-    _rowsFilter = _filter;
-    _rowsCache = rows;
-    _rowIndex = {for (var i = 0; i < rows.length; i++) rows[i].entry.id: i};
     return rows;
   }
 
@@ -550,6 +547,92 @@ class _ConversationState extends State<Conversation> {
       previous.authorId == entry.authorId &&
       previous.internal == entry.internal &&
       entry.createdAt.difference(previous.createdAt).inMinutes < 5;
+}
+
+typedef _Row = ({TimelineEntry entry, int count});
+
+class _Rows {
+  final List<_Row> rows;
+
+  /// Each Entry's position in [rows].
+  final Map<String, int> index;
+  const _Rows(this.rows, this.index);
+}
+
+/// What rows show besides their Entries: whose Comments are "own" and
+/// editable, and the names and pictures of people, Agents, Statuses and Tags.
+class _RowContext {
+  final String? userId, agentId;
+  final bool online;
+  final Object? api;
+  final List<Object> agents, users, statuses, tags;
+  const _RowContext(
+    this.userId,
+    this.agentId,
+    this.online,
+    this.api,
+    this.agents,
+    this.users,
+    this.statuses,
+    this.tags,
+  );
+
+  factory _RowContext.of(TaskController c) => _RowContext(
+    c.user?.id,
+    c.task?.agentId,
+    c.online,
+    c.api,
+    c.agents,
+    c.users,
+    c.statuses,
+    c.tags,
+  );
+
+  /// The lists are replaced, never changed, when they are fetched again.
+  bool same(_RowContext other) =>
+      userId == other.userId &&
+      agentId == other.agentId &&
+      online == other.online &&
+      identical(api, other.api) &&
+      identical(agents, other.agents) &&
+      identical(users, other.users) &&
+      identical(statuses, other.statuses) &&
+      identical(tags, other.tags);
+}
+
+/// A row's widget and what it was built from.
+class _Tile {
+  final Widget widget;
+  final TimelineEntry entry;
+  final TimelineEntry? previous;
+  final int count;
+
+  /// The Agent named on a User Comment's Delivery, found among the Timeline's
+  /// other Entries.
+  final String? deliveredBy;
+  const _Tile(
+    this.widget,
+    this.entry,
+    this.previous,
+    this.count,
+    this.deliveredBy,
+  );
+
+  static String? deliveryOf(TimelineEntry entry, TaskController c) {
+    final delivery = entry.content['delivery'];
+    return delivery is Map ? c.deliveryAgentName(delivery) : null;
+  }
+
+  bool shows(
+    TimelineEntry entry,
+    TimelineEntry? previous,
+    int count,
+    TaskController c,
+  ) =>
+      identical(this.entry, entry) &&
+      identical(this.previous, previous) &&
+      this.count == count &&
+      deliveredBy == _Tile.deliveryOf(entry, c);
 }
 
 class _Header extends StatelessWidget {
@@ -937,143 +1020,16 @@ class _DaySeparator extends StatelessWidget {
 }
 
 /// What the running Turn is writing right now, like the web's live view.
-class _LiveTail extends StatefulWidget {
+class _LiveTail extends StatelessWidget {
   final TaskController controller;
   final TimelineFilter filter;
   const _LiveTail({required this.controller, this.filter = TimelineFilter.all});
   @override
-  State<_LiveTail> createState() => _LiveTailState();
-}
-
-class _LiveTailState extends State<_LiveTail> {
-  /// Longer than the 320 px the clamp shows: appending past it changes
-  /// nothing on screen, so the tail does not need to be parsed again.
-  static const _previewChars = 2000;
-
-  /// While an expanded box is longer than that, coalesce the streaming redraws
-  /// instead of parsing the whole answer at every token.
-  static const _expandedInterval = Duration(milliseconds: 100);
-
-  /// What the last build showed, to tell a visible change from a token that
-  /// the clamp hides.
-  List<String> _painted = const [];
-  Timer? _coalesce;
-  bool _pending = false;
-
-  TaskController get _c => widget.controller;
-  bool get _showWork => widget.filter != TimelineFilter.activity;
-
-  @override
-  void initState() {
-    super.initState();
-    _c.live.addListener(_changed);
-  }
-
-  @override
-  void didUpdateWidget(_LiveTail oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.live.removeListener(_changed);
-      widget.controller.live.addListener(_changed);
-    }
-  }
-
-  @override
-  void dispose() {
-    _c.live.removeListener(_changed);
-    _coalesce?.cancel();
-    super.dispose();
-  }
-
-  String _rendered(String key, String full) {
-    if (_c.liveExpanded.contains(key) || full.length <= _previewChars) {
-      return full;
-    }
-    return full.substring(0, _previewChars);
-  }
-
-  List<String> _signature() {
-    final c = _c;
-    final setup = c.liveSetup;
-    final job = setup?['jobId'], output = setup?['output'];
-    return [
-      '$_showWork',
-      if (_showWork) ...[
-        c.liveThinking,
-        c.liveStatus,
-        job is String ? job : '',
-        output is String ? output : '',
-      ],
-      for (final entry in c.liveText.entries) ...[
-        entry.key,
-        _rendered(entry.key, entry.value),
-      ],
-    ];
-  }
-
-  /// Strings are compared by identity first, so an unchanged Thinking box or
-  /// setup output costs nothing on a text token.
-  bool _sameSignature(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (!identical(a[i], b[i]) && a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
-  void _changed() {
-    if (!mounted) return;
-    final signature = _signature();
-    if (_sameSignature(signature, _painted)) return;
-    final c = _c;
-    final setup = c.liveSetup?['output'];
-    var heavy =
-        _showWork &&
-        (c.liveThinking.length > _previewChars ||
-            (setup is String && setup.length > _previewChars));
-    for (final entry in c.liveText.entries) {
-      if (entry.value.length > _previewChars &&
-          c.liveExpanded.contains(entry.key)) {
-        heavy = true;
-        break;
-      }
-    }
-    if (heavy && (_coalesce?.isActive ?? false)) {
-      _pending = true;
-      return;
-    }
-    _paint(signature);
-    if (heavy) {
-      _coalesce = Timer(_expandedInterval, () {
-        _coalesce = null;
-        if (!_pending || !mounted) return;
-        _pending = false;
-        _changed();
-      });
-    }
-  }
-
-  void _paint(List<String> signature) {
-    _coalesce?.cancel();
-    _coalesce = null;
-    _pending = false;
-    _painted = signature;
-    setState(() {});
-  }
-
-  void _setExpanded(String key, bool expanded) {
-    expanded ? _c.liveExpanded.add(key) : _c.liveExpanded.remove(key);
-    _painted = _signature();
-    setState(() {});
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final c = _c;
-    _painted = _signature();
+    final c = controller;
     // At the "activity" level the Agent's work stays hidden; its streaming text
     // is the Comment being written.
-    final showWork = widget.filter != TimelineFilter.activity;
+    final showWork = filter != TimelineFilter.activity;
     final setup = showWork ? c.liveSetup : null;
     final thinking = showWork ? c.liveThinking : '';
     final status = showWork ? c.liveStatus : '';
@@ -1099,7 +1055,7 @@ class _LiveTailState extends State<_LiveTail> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 240),
                   child: SingleChildScrollView(
-                    child: Text(
+                    child: SelectableText(
                       setup['output'] as String? ?? '',
                       style: const TextStyle(
                         fontFamily: mono,
@@ -1120,7 +1076,7 @@ class _LiveTailState extends State<_LiveTail> {
                   label: agent?.name ?? 'Agent',
                   emoji: agent?.emoji ?? '🤖',
                   imageUrl: agent?.avatarImageUrl,
-                  api: _c.api,
+                  api: controller.api,
                   size: 32,
                   circle: false,
                 ),
@@ -1151,7 +1107,7 @@ class _LiveTailState extends State<_LiveTail> {
                           child: _Collapsible(
                             icon: Icons.psychology_outlined,
                             title: 'Thinking · streaming',
-                            child: Text(
+                            child: SelectableText(
                               thinking,
                               style: const TextStyle(
                                 color: Palette.fgMuted,
@@ -1178,11 +1134,13 @@ class _LiveTailState extends State<_LiveTail> {
                               child: _Clamped(
                                 key: ValueKey(key),
                                 fade: Palette.bg,
+                                holdWhileClamped: true,
                                 expanded: c.liveExpanded.contains(key),
-                                onExpandedChanged: (expanded) =>
-                                    _setExpanded(key, expanded),
+                                onExpandedChanged: (expanded) => expanded
+                                    ? c.liveExpanded.add(key)
+                                    : c.liveExpanded.remove(key),
                                 child: Md(
-                                  '${_rendered(key, text)} ▍',
+                                  '$text ▍',
                                   selectable: false,
                                   onLink: openLink,
                                 ),
@@ -1305,7 +1263,7 @@ class TimelineTile extends StatelessWidget {
             icon: Icons.psychology_outlined,
             title: 'Thinking',
             color: Palette.agent,
-            child: Text(
+            child: SelectableText(
               payload['text'] as String? ?? '',
               style: const TextStyle(
                 color: Palette.fgMuted,
@@ -1356,7 +1314,7 @@ class TimelineTile extends StatelessWidget {
       }
       return _Meta(
         icon: Icons.info_outline_rounded,
-        child: Text(payload['text'] as String? ?? ''),
+        child: SelectableText(payload['text'] as String? ?? ''),
       );
     }
     final kind = e.content['kind'];
@@ -1624,12 +1582,7 @@ class _CommentView extends StatelessWidget {
           _Clamped(
             fade: Palette.bg,
             expanded: controller.expandedComments.contains(e.id),
-            child: Md(
-              e.body,
-              size: isSystem ? 13.5 : 14.5,
-              selectable: false,
-              onLink: openLink,
-            ),
+            child: Md(e.body, size: isSystem ? 13.5 : 14.5, onLink: openLink),
           ),
         if (limitResume != null)
           Padding(
@@ -1887,12 +1840,19 @@ class _Clamped extends StatefulWidget {
   /// had expanded.
   final bool expanded;
   final ValueChanged<bool>? onExpandedChanged;
+
+  /// For text that only grows at the end, like the Agent's live text: while
+  /// the box is closed and already clamped, more text can't change what it
+  /// shows, so the child shown stays the one already laid out instead of
+  /// parsing and laying out the whole answer again for every token.
+  final bool holdWhileClamped;
   const _Clamped({
     super.key,
     required this.child,
     required this.fade,
     this.expanded = false,
     this.onExpandedChanged,
+    this.holdWhileClamped = false,
   });
   @override
   State<_Clamped> createState() => _ClampedState();
@@ -1911,6 +1871,10 @@ class _ClampedState extends State<_Clamped>
     curve: Motion.enter,
   );
   late double _shown = _progress.value;
+
+  /// Whether the content overflowed at the last layout, and the child shown.
+  bool _overflowing = false;
+  Widget? _content;
 
   @override
   void didUpdateWidget(_Clamped oldWidget) {
@@ -1968,12 +1932,23 @@ class _ClampedState extends State<_Clamped>
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
+  Widget build(BuildContext context) {
+    final held =
+        widget.holdWhileClamped &&
+        !_expanded &&
+        _overflowing &&
+        _content != null;
+    if (!held) _content = widget.child;
+    return _buildClamp(_content!);
+  }
+
+  Widget _buildClamp(Widget content) => AnimatedBuilder(
     animation: _progress,
     builder: (context, _) => _ClampLayout(
       progress: _progress.value,
       fade: widget.fade,
-      content: widget.child,
+      onLayout: (overflowing) => _overflowing = overflowing,
+      content: content,
       toggle: Padding(
         padding: const EdgeInsets.only(top: 4),
         child: Pressable(
@@ -2011,20 +1986,25 @@ class _ClampedState extends State<_Clamped>
 class _ClampLayout extends MultiChildRenderObjectWidget {
   final double progress;
   final Color fade;
+
+  /// Told after each layout whether the content overflows the clamp.
+  final ValueSetter<bool> onLayout;
   _ClampLayout({
     required this.progress,
     required this.fade,
+    required this.onLayout,
     required Widget content,
     required Widget toggle,
   }) : super(children: [content, toggle]);
   @override
   _RenderClamp createRenderObject(BuildContext context) =>
-      _RenderClamp(progress, fade);
+      _RenderClamp(progress, fade)..onLayout = onLayout;
   @override
   void updateRenderObject(BuildContext context, _RenderClamp renderObject) {
     renderObject
       ..progress = progress
-      ..fade = fade;
+      ..fade = fade
+      ..onLayout = onLayout;
   }
 }
 
@@ -2056,6 +2036,7 @@ class _RenderClamp extends RenderBox
 
   bool _overflowing = false;
   double _contentHeight = 0;
+  ValueSetter<bool>? onLayout;
 
   /// What the clamp hides when closed.
   double get hiddenHeight => _overflowing ? _contentHeight - max : 0;
@@ -2102,6 +2083,7 @@ class _RenderClamp extends RenderBox
   @override
   void performLayout() {
     size = _measure(constraints, dry: false);
+    onLayout?.call(_overflowing);
   }
 
   @override
@@ -2458,7 +2440,7 @@ class _ActivityState extends State<_Activity> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: Palette.border),
             ),
-            child: Text(
+            child: SelectableText(
               '${item['input']}\n${item['output'] ?? ''}',
               style: const TextStyle(
                 fontFamily: mono,
@@ -2589,13 +2571,7 @@ class _ActiveRunsBarState extends State<_ActiveRunsBar> {
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    // Run events update the bar on their own, without rebuilding the page.
-    listenable: widget.controller.runUpdates,
-    builder: (context, _) => _bar(context),
-  );
-
-  Widget _bar(BuildContext context) {
+  Widget build(BuildContext context) {
     final runs = widget.controller.runBar;
     _syncClock(runs.any((run) => run['status'] == 'running'));
     if (runs.isEmpty) return const SizedBox.shrink();
@@ -2814,7 +2790,7 @@ class _RunSheetState extends State<_RunSheet> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: widget.controller.runUpdates,
+    listenable: widget.controller,
     builder: (context, _) {
       final c = widget.controller;
       final transcript = c.runTranscripts[_id];
@@ -3469,6 +3445,19 @@ class _ComposerState extends State<Composer> {
     super.dispose();
   }
 
+  ThemeData? _theme, _standardDensity;
+
+  /// The theme with standard density, made once: a new theme on every build
+  /// sent the whole text field through theme lookups again.
+  ThemeData _fieldTheme(BuildContext context) {
+    final theme = Theme.of(context);
+    if (!identical(theme, _theme)) {
+      _theme = theme;
+      _standardDensity = theme.copyWith(visualDensity: VisualDensity.standard);
+    }
+    return _standardDensity!;
+  }
+
   bool get _canSend {
     final c = widget.controller;
     return !c.sending && c.online && !c.draft.ambiguous;
@@ -3725,8 +3714,7 @@ class _ComposerState extends State<Composer> {
                   // Desktop's compact density would trim the field's padding
                   // and lift the text off the buttons' center line.
                   child: Theme(
-                    data: Theme.of(context)
-                        .copyWith(visualDensity: VisualDensity.standard),
+                    data: _fieldTheme(context),
                     child: Focus(
                       onKeyEvent: _handleComposerKey,
                       child: TextField(
@@ -3775,7 +3763,7 @@ class _ComposerState extends State<Composer> {
                             vertical: (_composerLine - 15 * 1.4) / 2,
                           ),
                         ),
-                        onChanged: (v) => c.setDraft(c.draft.copyWith(text: v)),
+                        onChanged: c.setDraftText,
                       ),
                     ),
                   ),
