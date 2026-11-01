@@ -522,6 +522,14 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                     }
                   />
                 </Prop>
+
+                {session.data?.context && (
+                  <Prop label="Context" className="@2xl:col-start-1 @2xl:row-start-4">
+                    <div className="px-1.5">
+                      <ContextBadge context={session.data.context} />
+                    </div>
+                  </Prop>
+                )}
               </div>
 
               {(task.branchName || task.pullRequest) && <section aria-label="Task code" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">

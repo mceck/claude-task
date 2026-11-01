@@ -34,7 +34,9 @@ test('shows how full the conversation context is beside the Session chip', async
   ], true);
 
   await page.goto(`/t/${task.key}`);
-  const chip = page.getByLabel('Context: 120.3K of 200K tokens (60%)');
-  await expect(chip).toBeVisible();
-  await expect(chip).toContainText('120.3K (60%)');
+  // The header chip and, in the open details panel, the same value as a property.
+  const chips = page.getByLabel('Context: 120.3K of 200K tokens (60%)');
+  await expect(chips.first()).toBeVisible();
+  await expect(chips.first()).toContainText('120.3K (60%)');
+  await expect(page.getByText('Context', { exact: true })).toBeVisible();
 });
