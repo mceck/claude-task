@@ -1,7 +1,7 @@
 // Fills Context Usage for Turns recorded before the projection stored it. Replaying each Job's raw
 // stream with the same projection clients see live keeps the backfill and the live rules identical.
 import type { ContextUsage } from '@claude-task/shared';
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Executor } from '../db/client';
 import { sessionEvents, turns } from '../db/schema';
 import { initialProjection, project } from './projector';
@@ -18,7 +18,11 @@ export interface BackfillLog {
  * that says "checked": the Session view ignores it, and the next start does not replay the Job again.
  */
 export async function backfillTurnContexts(db: Executor, log?: BackfillLog): Promise<number> {
-  const gaps = await db.select({ jobId: turns.jobId }).from(turns).where(isNull(turns.contextTokens)).groupBy(turns.jobId);
+  // Newest conversations first: the ones someone is likely to open while the backfill runs.
+  const gaps = await db.select({ jobId: turns.jobId }).from(turns)
+    .where(isNull(turns.contextTokens))
+    .groupBy(turns.jobId)
+    .orderBy(desc(sql`max(${turns.finishedAt})`));
   let filled = 0;
   for (const { jobId } of gaps) {
     const events = await db
