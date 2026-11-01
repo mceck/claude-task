@@ -4,6 +4,9 @@
 import { createHash } from 'node:crypto';
 import { THINKING_ENTRY, type ActivityEntry, type AgentItemPayload, type ContextUsage, type LiveDelta, type RunInfo, type RunMessageDraft, type TurnSummary, type Usage } from '@claude-task/shared';
 
+/** Entries per Activity item; the next one starts a new group so a long Turn doesn't grow one without bound. */
+const MAX_ACTIVITY_ENTRIES = 20;
+
 /** A Run while it is open: its item payload plus what the projection needs to route its output. */
 export interface RunState {
   id: string;
@@ -157,6 +160,20 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
   };
   const closeText = () => {
     s.comment = null;
+  };
+  /** Joins the open Activity item, or opens a new one once it holds `MAX_ACTIVITY_ENTRIES`. */
+  const addEntry = (entry: ActivityEntry, isTool = false) => {
+    const open = s.activity ? s.groups[s.activity] : undefined;
+    if (s.activity && open && open.length < MAX_ACTIVITY_ENTRIES) {
+      open.push(entry);
+      if (isTool) s.tools[entry.toolUseId] = { itemId: s.activity, index: open.length - 1 };
+      updateGroup(s.activity);
+      return;
+    }
+    s.activity = newId();
+    s.groups[s.activity] = [entry];
+    if (isTool) s.tools[entry.toolUseId] = { itemId: s.activity, index: 0 };
+    mutations.push({ op: 'item.create', id: s.activity, payload: { kind: 'activity', entries: [entry] } });
   };
   const updateGroup = (itemId: string) => {
     const entries = s.groups[itemId];
@@ -337,15 +354,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
           updateGroup(s.activity);
           continue;
         }
-        const entry: ActivityEntry = { toolUseId: newId(), name: THINKING_ENTRY, summary: 'Thinking', status: 'ok', outcome: null, input: null, output: text };
-        if (s.activity && open) {
-          open.push(entry);
-          updateGroup(s.activity);
-        } else {
-          s.activity = newId();
-          s.groups[s.activity] = [entry];
-          mutations.push({ op: 'item.create', id: s.activity, payload: { kind: 'activity', entries: [entry] } });
-        }
+        addEntry({ toolUseId: newId(), name: THINKING_ENTRY, summary: 'Thinking', status: 'ok', outcome: null, input: null, output: text });
       } else if (block?.type === 'tool_use') {
         closeText();
         s.toolCalls++;
@@ -354,17 +363,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
           continue;
         }
         const entry = toolEntry(block);
-        const open = s.activity ? s.groups[s.activity] : undefined;
-        if (s.activity && open) {
-          open.push(entry);
-          s.tools[entry.toolUseId] = { itemId: s.activity, index: open.length - 1 };
-          updateGroup(s.activity);
-        } else {
-          s.activity = newId();
-          s.groups[s.activity] = [entry];
-          s.tools[entry.toolUseId] = { itemId: s.activity, index: 0 };
-          mutations.push({ op: 'item.create', id: s.activity, payload: { kind: 'activity', entries: [entry] } });
-        }
+        addEntry(entry, true);
       }
     }
   }

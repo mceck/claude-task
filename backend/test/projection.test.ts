@@ -193,6 +193,18 @@ describe('stream projection', () => {
       expected: ['activity: Task tool `set_status` (interrupted, interrupted) | github: `create_issue` (interrupted, interrupted)', 'summary: success 2 tools'],
     },
     {
+      name: 'a 21st action starts a new Activity group',
+      events: [
+        ...Array.from({ length: 21 }, (_, i) => [s.toolUse(`t${i}`, 'Read', { file_path: `f${i}` }), s.toolResult(`t${i}`, 'x')]).flat(),
+        s.result(),
+      ],
+      expected: [
+        `activity: ${Array.from({ length: 20 }, (_, i) => `Read \`f${i}\` (ok)`).join(' | ')}`,
+        'activity: Read `f20` (ok)',
+        'summary: success 21 tools',
+      ],
+    },
+    {
       name: 'thinking between tool calls joins the Activity group, keeping the order',
       events: [s.thinking('First.'), s.toolUse('a', 'Read', { file_path: 'a' }), s.toolResult('a', 'x'), s.thinking('Second.'), s.toolUse('b', 'Read', { file_path: 'b' }), s.toolResult('b', 'y'), s.result()],
       expected: ['activity: thinking: First. | Read `a` (ok) | thinking: Second. | Read `b` (ok)', 'summary: success 2 tools'],
