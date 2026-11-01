@@ -8,6 +8,7 @@ import 'controller.dart';
 import 'ui/user_avatar.dart';
 import 'models.dart';
 import 'uploads.dart';
+import 'ui/context_badge.dart';
 import 'ui/markdown.dart';
 import 'ui/markdown_editor.dart';
 import 'ui/theme.dart';
@@ -460,6 +461,12 @@ class TaskDetails extends StatelessWidget {
                         }
                       : null,
                 ),
+                if (c.session?['context'] != null)
+                  _Property(
+                    label: 'Context',
+                    icon: Icons.donut_large_outlined,
+                    value: ContextBadge(session: c.session),
+                  ),
                 _Property(
                   label: 'Assignees',
                   icon: Icons.person_outline_rounded,

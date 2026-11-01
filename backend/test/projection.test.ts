@@ -468,6 +468,13 @@ describe('recorded streams (real CLI spike)', () => {
     expect(timeline(mutations).filter((l) => l.startsWith('summary:'))).toEqual(['summary: success 3 tools']);
   });
 
+  it('reads Context Usage from the real stream: last assistant message and modelUsage window', () => {
+    // The two model calls report cache reads of 29,312 each; the Turn sum would say 58,624.
+    const { mutations } = replay(load('mcp-http-tool'));
+    const turn = mutations.find((m) => m.op === 'turn') as Extract<Mutation, { op: 'turn' }>;
+    expect(turn.turn.context).toEqual({ tokens: 29_403, window: 1_000_000 });
+  });
+
   it('queued messages drained after stdin closes are one Turn each', () => {
     const { mutations } = replay(load('stdin-close-queued'));
     expect(timeline(mutations)).toEqual(['agent: ONE', 'summary: success 0 tools', 'agent: TWO', 'summary: success 0 tools', 'agent: THREE', 'summary: success 0 tools']);

@@ -1,6 +1,6 @@
 import { chatCommands } from '@claude-task/shared';
 import type { TaskSession } from '@claude-task/shared';
-import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, sql } from 'drizzle-orm';
 import type { Executor } from '../db/client';
 import { agentSkills, jobs, queueEntries, sessions, skills, tasks, turns } from '../db/schema';
 import { agentRefs } from '../modules/agents/service';
@@ -65,9 +65,10 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
   const [project] = await db.select({ skills: jobs.projectSkills }).from(jobs).where(and(eq(jobs.sessionId, s.id), isNotNull(jobs.projectSkills)))
     .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
   // One Session per (Task, Agent), so the Agent's latest Turn on the Task is this Session's latest.
-  // A Turn that couldn't measure the context leaves the previous measurement standing.
+  // A Turn that couldn't measure the context (0 is the backfill's "checked" mark) leaves the
+  // previous measurement standing.
   const [lastTurn] = await db.select({ tokens: turns.contextTokens, window: turns.contextWindow }).from(turns)
-    .where(and(eq(turns.taskId, taskId), eq(turns.agentId, s.agentId), isNotNull(turns.contextTokens)))
+    .where(and(eq(turns.taskId, taskId), eq(turns.agentId, s.agentId), gt(turns.contextTokens, 0)))
     .orderBy(desc(turns.finishedAt), desc(turns.index)).limit(1);
   return {
     // A Job's report follows the Worktree exactly; the Session's own copy fills the gap before one has run.

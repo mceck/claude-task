@@ -1,6 +1,6 @@
 import 'package:claude_task_mobile/src/app.dart';
-import 'package:claude_task_mobile/src/conversation.dart';
 import 'package:claude_task_mobile/src/models.dart';
+import 'package:claude_task_mobile/src/ui/context_badge.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -37,7 +37,7 @@ void main() {
     return h;
   }
 
-  testWidgets('shows how full the context is beside the Session state', (
+  testWidgets('shows the context beside the Session state and in the details', (
     tester,
   ) async {
     await open(
@@ -50,8 +50,9 @@ void main() {
         'context': {'tokens': 120252, 'window': 200000},
       },
     );
-    expect(find.byType(ContextBadge), findsOneWidget);
-    expect(find.text('120.3K (60%)'), findsOneWidget);
+    // The header and, on this wide layout, the Task details pane beside it.
+    expect(find.byType(ContextBadge), findsNWidgets(2));
+    expect(find.text('120.3K (60%)'), findsNWidgets(2));
   });
 
   testWidgets('no context chip before the first Turn', (tester) async {

@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { asc, sql } from 'drizzle-orm';
 import { taskTopic } from '@claude-task/shared';
 import type { Comment, InputBlock, TimelineItem } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
@@ -19,6 +19,8 @@ import {
   statusByName,
   timeline,
 } from './helpers/fixtures';
+import { turns } from '../src/db/schema';
+import { backfillTurnContexts } from '../src/projection/backfill';
 import { recoverAbandonedJobs } from '../src/runner/handlers';
 import { FakeRunner } from './helpers/runner';
 import { Stream, typicalTurn } from './helpers/stream';
@@ -232,6 +234,42 @@ describe('assignment and the first Job', () => {
     await runner.next('job.end', (m) => m.jobId === next.jobId);
     await runner.exit(next.jobId);
     expect(await getSession(admin, task.id)).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
+  });
+
+  it('backfills Context Usage for Turns recorded before it existed', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await startAndFinish(admin, runner, task.id, agent.id);
+    const { db } = app.server.ctx;
+    await db.update(turns).set({ contextTokens: null, contextWindow: null });
+    expect(await getSession(admin, task.id)).toMatchObject({ context: null });
+
+    expect(await backfillTurnContexts(db)).toBe(1);
+    expect(await getSession(admin, task.id)).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
+    // Nothing is left to replay, so a restart does not walk the history again.
+    expect(await backfillTurnContexts(db)).toBe(0);
+  });
+
+  it('marks a Turn it cannot measure as checked, keeping the previous context', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const start = await startAndFinish(admin, runner, task.id, agent.id);
+    await comment(admin, task.id, 'Continue.');
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    runner.accept(next.jobId);
+    await runner.play(next.jobId, [new Stream(next.sessionId).result({ subtype: 'error_during_execution', isError: true })]);
+    await runner.next('job.end', (m) => m.jobId === next.jobId);
+    await runner.exit(next.jobId);
+
+    const { db } = app.server.ctx;
+    await db.update(turns).set({ contextTokens: null, contextWindow: null });
+    expect(await backfillTurnContexts(db)).toBe(1);
+    // Indexes restart in each Job; what matters is that the measured Turn kept its size and the
+    // result-only Turn carries the 0 mark.
+    expect((await db.select({ tokens: turns.contextTokens }).from(turns).orderBy(asc(turns.contextTokens))).map((r) => r.tokens))
+      .toEqual([0, 15]);
+    expect(await getSession(admin, task.id)).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
+    expect(await backfillTurnContexts(db)).toBe(0);
   });
 });
 
