@@ -4,12 +4,12 @@ import 'package:fleather/fleather.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../models.dart';
 import 'markdown.dart';
 import 'markdown_document.dart';
+import '../uploads.dart';
 import 'theme.dart';
 import 'widgets.dart';
-
-enum _Mode { write, markdown, preview }
 
 /// A visual Markdown field sharing the form's plain-text controller. Merely
 /// opening it, moving the caret or previewing never rewrites the source.
@@ -18,10 +18,15 @@ class MarkdownEditor extends StatefulWidget {
   final bool enabled;
   final String hintText;
 
+  /// Uploads files picked by the user and returns their Attachments; without
+  /// it the toolbar has no attach button.
+  final Future<List<Json>> Function()? onAttach;
+
   const MarkdownEditor({
     super.key,
     required this.controller,
     this.enabled = true,
+    this.onAttach,
     this.hintText = 'Add context, acceptance criteria, links…',
   });
 
@@ -35,7 +40,6 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
   final _retired = <FleatherController>[];
   FleatherController? _rich;
   Delta? _lastDelta;
-  var _mode = _Mode.write;
   var _syncing = false;
   var _focused = false;
   var _sourceOnly = false;
@@ -46,7 +50,6 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
   void initState() {
     super.initState();
     _load();
-    if (_sourceOnly) _mode = _Mode.markdown;
     widget.controller.addListener(_sourceChanged);
   }
 
@@ -57,7 +60,6 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
       oldWidget.controller.removeListener(_sourceChanged);
       widget.controller.addListener(_sourceChanged);
       _load();
-      if (_sourceOnly) _mode = _Mode.markdown;
     }
   }
 
@@ -96,12 +98,8 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
 
   void _sourceChanged() {
     if (_syncing || !mounted || _loadedSource == widget.controller.text) return;
-    setState(() {
-      if (_mode == _Mode.write) {
-        _load();
-        if (_sourceOnly) _mode = _Mode.markdown;
-      }
-    });
+    // Source-only text is edited in place and must not be re-parsed mid-typing.
+    if (!_sourceOnly) setState(_load);
   }
 
   void _richChanged() {
@@ -121,18 +119,6 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
       });
     }
     if (mounted) setState(() {});
-  }
-
-  void _switchMode(_Mode mode) {
-    if (_mode == mode) return;
-    _focus.unfocus();
-    FocusManager.instance.primaryFocus?.unfocus();
-    setState(() {
-      if (mode == _Mode.write && _loadedSource != widget.controller.text) {
-        _load();
-      }
-      _mode = mode == _Mode.write && _sourceOnly ? _Mode.markdown : mode;
-    });
   }
 
   @override
@@ -273,6 +259,60 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
         embed,
         selection: TextSelection.collapsed(offset: selection.start + 1),
       );
+    }
+    _focus.requestFocus();
+  }
+
+  var _attaching = false;
+
+  Future<void> _attach() async {
+    final rich = _rich!;
+    setState(() => _attaching = true);
+    try {
+      final uploaded = await widget.onAttach!();
+      if (uploaded.isEmpty || !mounted || rich != _rich) return;
+      var offset = rich.selection.isValid
+          ? rich.selection.start
+          : rich.document.length - 1;
+      final end = rich.selection.isValid ? rich.selection.end : offset;
+      for (final file in uploaded) {
+        final name = file['filename'] as String;
+        final url = file['url'] as String;
+        final image = attachmentMarkdown(file).startsWith('!');
+        final length = offset == rich.selection.start ? end - offset : 0;
+        if (image) {
+          rich.replaceText(
+            offset,
+            length,
+            BlockEmbed.image(url, data: {'alt': name, 'title': ''}),
+          );
+          offset += 1;
+        } else {
+          rich.replaceText(offset, length, name);
+          rich.formatText(
+            offset,
+            name.length,
+            ParchmentAttribute.link.fromString(url),
+          );
+          offset += name.length;
+          rich.replaceText(offset, 0, '\n');
+          offset += 1;
+        }
+      }
+      rich.updateSelection(TextSelection.collapsed(offset: offset));
+    } catch (e) {
+      if (mounted) {
+        await showAppSheet<void>(
+          context,
+          maxWidth: 400,
+          builder: (sheet) => SheetScaffold(
+            title: 'Couldn\'t attach the file',
+            body: Text(e.toString()),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _attaching = false);
     }
     _focus.requestFocus();
   }
@@ -517,6 +557,12 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
               _link,
               active: style.contains(ParchmentAttribute.link),
             ),
+            if (widget.onAttach != null)
+              _tool(
+                Icons.attach_file_rounded,
+                'Attach images or files',
+                _attaching ? null : _attach,
+              ),
             PopupMenuButton<String>(
               tooltip: 'Insert block',
               enabled: widget.enabled,
@@ -556,51 +602,7 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            color: Palette.raised,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-            child: Row(
-              children: [
-                for (final mode in _Mode.values)
-                  Expanded(
-                    child: Semantics(
-                      selected: _mode == mode,
-                      child: TextButton(
-                        onPressed: () => _switchMode(mode),
-                        style: TextButton.styleFrom(
-                          foregroundColor: _mode == mode
-                              ? Palette.fg
-                              : Palette.fgMuted,
-                          backgroundColor: _mode == mode
-                              ? Palette.hover
-                              : Colors.transparent,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 10,
-                          ),
-                          minimumSize: const Size(0, 40),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          textStyle: const TextStyle(
-                            fontFamily: 'Geist',
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        child: Text(switch (mode) {
-                          _Mode.write => 'Write',
-                          _Mode.markdown => 'Markdown',
-                          _Mode.preview => 'Preview',
-                        }),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const Divider(),
-          if (_mode == _Mode.write && _rich != null) ...[
+          if (_rich != null) ...[
             _toolbar(),
             const Divider(),
             FleatherTheme(
@@ -634,12 +636,12 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
                 ],
               ),
             ),
-          ] else if (_mode == _Mode.markdown) ...[
+          ] else ...[
             if (_sourceOnly)
               const Padding(
                 padding: EdgeInsets.fromLTRB(14, 12, 14, 0),
                 child: Text(
-                  'This formatting can be edited in Markdown and viewed in Preview.',
+                  'This formatting can only be edited as Markdown.',
                   style: TextStyle(color: Palette.fgMuted, fontSize: 12.5),
                 ),
               ),
@@ -665,19 +667,7 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
                 disabledBorder: InputBorder.none,
               ),
             ),
-          ] else
-            ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 160, maxHeight: 320),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(14),
-                child: widget.controller.text.trim().isEmpty
-                    ? const Text(
-                        'Nothing to preview yet.',
-                        style: TextStyle(color: Palette.fgSubtle),
-                      )
-                    : Md(widget.controller.text, onLink: _launch),
-              ),
-            ),
+          ],
         ],
       ),
     ),
