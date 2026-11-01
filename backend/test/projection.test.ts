@@ -289,6 +289,18 @@ describe('stream projection', () => {
       expect(turnOf(mutations).turn.context).toEqual({ tokens: 31_142, window: 200_000 });
     });
 
+    it('is broadcast after every top-level model call, so clients follow it while the Turn runs', () => {
+      const { broadcasts } = replay([
+        message({ input_tokens: 2, cache_read_input_tokens: 30_000, output_tokens: 10 }),
+        message({ input_tokens: 5, output_tokens: 5 }, s.model, 'toolu_sub'),
+        message({ input_tokens: 2, cache_read_input_tokens: 31_000, output_tokens: 20 }),
+      ]);
+      expect(broadcasts.filter((b) => b.type === 'live.context').map((b) => b.context)).toEqual([
+        { tokens: 30_012, window: null },
+        { tokens: 31_022, window: null },
+      ]);
+    });
+
     it('follows the model the last message used', () => {
       const { mutations } = replay([
         message({ input_tokens: 1, output_tokens: 1 }, 'claude-sonnet-5-5'),

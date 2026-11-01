@@ -1,3 +1,4 @@
+import { useLiveContext } from '../lib/live';
 import type { AgentRef, AgentState, ContextUsage, Delivery, SessionState, TaskSession } from '@claude-task/shared';
 import { Check, CheckCheck, Clock, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
@@ -111,7 +112,8 @@ export function SessionChip({ session }: { session: TaskSession }) {
 
 /** Compact token counts: `120.2K`, `1.2M`, `940`. */
 export function formatContextTokens(n: number): string {
-  const one = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+  // Round first, so 119.96K reads 120K and not 120.0K.
+  const one = (v: number) => String(Math.round(v * 10) / 10);
   if (n >= 1_000_000) return `${one(n / 1_000_000)}M`;
   // Just below a million would read "1000K".
   if (n >= 999_950) return '1M';
@@ -154,7 +156,9 @@ function ContextRing({ pct }: { pct: number | null }) {
 }
 
 /** How full the conversation's context is, beside the Session chip: `120.2K (53%)`. */
-export function ContextBadge({ context }: { context: ContextUsage }) {
+export function ContextBadge({ taskId, context: stored }: { taskId: string; context: ContextUsage | null | undefined }) {
+  const context = useLiveContext(taskId, stored);
+  if (!context) return null;
   const pct = contextPercent(context);
   const title = contextTitle(context);
   // Neutral until it fills up, then the usual warning and error tones.

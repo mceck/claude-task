@@ -698,9 +698,9 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
-          if (session?['context'] != null) ...[
+          if (c.sessionContext != null) ...[
             const SizedBox(width: 6),
-            ContextBadge(context: session?['context']),
+            ContextBadge(context: c.sessionContext),
           ],
           // Beside the state it acts on, in free space: showing it
           // never shifts the title or the header actions.

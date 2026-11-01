@@ -6,8 +6,11 @@ import 'widgets.dart';
 
 /// Compact token counts: `120.2K`, `1.2M`, `940`.
 String formatContextTokens(num n) {
-  String one(double v) =>
-      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
+  // Round first, so 119.96K reads 120K and not 120.0K.
+  String one(double v) {
+    final r = (v * 10).round() / 10;
+    return r == r.roundToDouble() ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
+  }
   if (n >= 1000000) return '${one(n / 1000000)}M';
   // Just below a million would read "1000K".
   if (n >= 999950) return '1M';

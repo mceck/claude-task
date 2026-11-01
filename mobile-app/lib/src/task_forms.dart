@@ -461,11 +461,11 @@ class TaskDetails extends StatelessWidget {
                         }
                       : null,
                 ),
-                if (c.session?['context'] != null)
+                if (c.sessionContext != null)
                   _Property(
                     label: 'Context',
                     icon: Icons.donut_large_outlined,
-                    value: ContextBadge(context: c.session?['context']),
+                    value: ContextBadge(context: c.sessionContext),
                   ),
                 _Property(
                   label: 'Assignees',

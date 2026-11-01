@@ -311,7 +311,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
             </DropdownMenu>
             {session.data && <>
               <SessionChip session={session.data} />
-              {session.data.context && <ContextBadge context={session.data.context} />}
+              <ContextBadge taskId={task.id} context={session.data.context} />
               {session.data.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
               {task.agentId && session.data.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
               {session.data.unseenChanges && (
@@ -526,7 +526,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                 {session.data?.context && (
                   <Prop label="Context" className="@2xl:col-start-1 @2xl:row-start-4">
                     <div className="px-1.5">
-                      <ContextBadge context={session.data.context} />
+                      <ContextBadge taskId={task.id} context={session.data.context} />
                     </div>
                   </Prop>
                 )}

@@ -103,6 +103,19 @@ class TaskController extends ChangeNotifier {
   final Set<String> liveExpanded = {}, expandedComments = {};
   String liveThinking = '', liveStatus = '';
 
+  /// Context size after the latest model call of the running Turn (`tokens` only).
+  /// The Session's own `context` moves only when a Turn ends.
+  Json? liveContext;
+
+  /// The conversation's context: the running Turn's measurement over the
+  /// Session's stored one, keeping the stored window.
+  Json? get sessionContext {
+    final stored = session?['context'] as Json?;
+    final live = liveContext;
+    if (live == null) return stored;
+    return {'tokens': live['tokens'], 'window': live['window'] ?? stored?['window']};
+  }
+
   /// Notified when only the Live Turn preview changes (streamed text and
   /// Thinking, the retry status, the preparation output), instead of every
   /// listener: tokens arrive many times a second, and rebuilding the whole
@@ -365,6 +378,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    liveContext = null;
     liveSetup = null;
     conversationVisible = false;
     assignmentRetryId = null;
@@ -1095,6 +1109,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    liveContext = null;
     liveSetup = null;
     _clearRuns();
   }
@@ -1344,6 +1359,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
+    liveContext = null;
     liveSetup = null;
     _clearRuns();
     final cached = storage.read('task:${value.id}');
@@ -2331,6 +2347,11 @@ class TaskController extends ChangeNotifier {
       _live.value++;
       return;
     }
+    if (type == 'live.context' && event['taskId'] == task?.id) {
+      liveContext = Json.from(event['context'] as Map);
+      notifyListeners();
+      return;
+    }
     if (type == 'live.status' && event['taskId'] == task?.id) {
       liveStatus = event['status'] == null ? '' : 'Agent retrying request';
       _live.value++;
@@ -2358,6 +2379,7 @@ class TaskController extends ChangeNotifier {
     if (type == 'timeline.reset') {
       final id = event['taskId'] as String;
       if (id == task?.id) {
+        liveContext = null;
         _timelineEpoch++;
         _clearConversation();
         unawaited(_cacheTask());
@@ -2384,6 +2406,7 @@ class TaskController extends ChangeNotifier {
     if (type == 'session.changed' && event['taskId'] == task?.id) {
       session = event['session'] as Json?;
       if (session?['state'] != 'running') {
+        liveContext = null;
         liveText.clear();
         liveThinking = '';
         liveStatus = '';
