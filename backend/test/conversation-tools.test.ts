@@ -80,14 +80,15 @@ async function commentsOf(admin: Awaited<ReturnType<TestApp['admin']>>, taskId: 
 describe('Conversation tools (MCP)', () => {
   const app = useTestApp({ agents: { uploadTimeoutMs: 1000 } });
 
-  it('job.start disallows AskUserQuestion and tells the Agent about the new tools', async () => {
+  it('job.start disallows AskUserQuestion and tells the Agent how to ask and show files', async () => {
     const { start, client } = await setup(app);
     expect(start.claudeArgs.disallowedTools).toEqual(['AskUserQuestion']);
     expect(start.claudeArgs.appendSystemPrompt).toContain('ask_question');
     expect(start.claudeArgs.appendSystemPrompt).toContain('send_files');
-    expect(start.claudeArgs.appendSystemPrompt).toContain('create_survey');
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(['send_files', 'ask_question', 'create_survey']));
+    // Surveys are for explicit requests only: the tool says so itself.
+    expect(tools.find((t) => t.name === 'create_survey')!.description).toContain('ONLY when a human explicitly asked');
   });
 
   it('send_files posts the files the Runner uploads as an Agent Comment', async () => {

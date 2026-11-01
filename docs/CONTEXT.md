@@ -374,7 +374,7 @@ The actions an Agent can take from inside its Session: reading and searching Tas
 ### Execution
 
 **Assignment**:
-Linking an Agent to a Task. It doesn't start any work by itself: the Session stays `pending` until the first Comment is delivered to it, whatever the Task's Status. That is normally a User Comment; with Board Write Access it can be an Agent Comment written by another Agent.
+Linking an Agent to a Task. It doesn't start any work by itself: the Session stays `pending` until the first Comment is delivered to it, whatever the Task's Status. That is normally a User Comment; it can also be an Agent Comment written through the Task Tools, by another Agent with Board Write Access or by the Agent itself from a global Schedule.
 _Avoid_: dispatch, scheduling
 
 **Session**:

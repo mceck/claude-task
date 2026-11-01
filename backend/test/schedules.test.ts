@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import type { TestApp } from './helpers/app';
 import type { ApiClient } from './helpers/client';
-import { createAgent, createProject, createTag, createTask, createUser, getSession, statusByName, timeline } from './helpers/fixtures';
+import { createAgent, createProject, createTag, createTask, createUser, getSession, moveToStatus, statusByName, timeline } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 
 const MINUTE = 60_000;
@@ -289,6 +289,13 @@ describe('Scheduled runs and the Task Tools', () => {
     expect(names).toContain('open_pull_request');
   });
 
+  it('offers no pull request to a read-only Schedule, whose pushes are all refused', async () => {
+    const { client } = await started({ repository: { connectionId: 'env-github', providerRepoId: '1' }, readOnly: true });
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain('open_pull_request');
+    expect(names).toContain('get_task');
+  });
+
   it('tells the Agent it works unattended, and what it can do on every board or in git', async () => {
     const global = await started({ readOnly: true });
     const prompt = global.start.claudeArgs.appendSystemPrompt;
@@ -302,6 +309,8 @@ describe('Scheduled runs and the Task Tools', () => {
 
   it('lets the scheduler, not the Agent, move and edit the Task of a run', async () => {
     const { client } = await started();
+    const names = (await client.listTools()).tools.map((t) => t.name);
+    for (const own of ['set_status', 'update_task', 'create_task']) expect(names).not.toContain(own);
     expect((await call(client, 'set_status', { status_name: 'Succeeded' })).isError).toBe(true);
     expect((await call(client, 'update_task', { title: 'Mine' })).isError).toBe(true);
     expect((await call(client, 'create_task', { title: 'Mine' })).isError).toBe(true);
@@ -352,6 +361,32 @@ describe('Scheduled runs and the Task Tools', () => {
     const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
     expect(next.jobId).not.toBe(start.jobId);
     expect(JSON.stringify(next.initialMessage)).toContain('Implement refunds.');
+  });
+
+  it('starts a Task with an Agent Comment by the Agent itself, and never touches closed Tasks', async () => {
+    const admin = await app.admin();
+    const payments = await createProject(admin, { name: 'Payments', key: 'PAY' });
+    const idle = await createTask(admin, payments.project.id, { title: 'Refund flow' });
+    const shipped = await createTask(admin, payments.project.id, { title: 'Shipped' });
+    await moveToStatus(admin, shipped.id, statusByName(payments, 'Closed').id);
+    const { agent, client } = await started();
+
+    for (const [name, args] of [
+      ['update_task_by_key', { key: shipped.key, title: 'Reopened?' }],
+      ['set_task_status', { key: shipped.key, status_name: 'In Progress' }],
+      ['assign_task_to_me', { key: shipped.key }],
+    ] as const) {
+      const res = await call(client, name, args);
+      expect(res.isError, name).toBe(true);
+      expect(res.text, name).toContain('closed');
+    }
+
+    expect((await call(client, 'assign_task_to_me', { key: idle.key })).isError).toBe(false);
+    expect((await call(client, 'start_task', { key: idle.key, prompt: 'Implement refunds.' })).isError).toBe(false);
+    const posted = (await timeline(admin, idle.id))
+      .flatMap((item) => (item.type === 'comment' ? [item.comment] : []))
+      .find((c) => c.body === 'Implement refunds.')!;
+    expect(posted).toMatchObject({ kind: 'agent', author: { type: 'agent', displayName: agent.name }, delivery: { state: 'queued' } });
   });
 
   it('does not let a global Agent reach an archived Project', async () => {

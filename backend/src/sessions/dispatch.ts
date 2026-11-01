@@ -12,11 +12,13 @@ import type { Executor } from '../db/client';
 import { ACTIVE_JOB_STATES, desiredContainerSpec, getAgentRow } from '../modules/agents/service';
 import { credentialEnv } from '../modules/credentials/service';
 import { agentExtensions, resolvedMcp } from '../modules/extensions/service';
+import { PLATFORM_SKILL_NAME } from '../modules/extensions/platform-skill';
 import type { GitProvider } from '../git/provider';
 import { systemComment } from '../runner/handlers';
 import { newToken } from '../secrets';
 import { REASSIGNED_MESSAGE, RESUME_MESSAGE, inlineBudget, renderComments, renderTaskFiles, startMessage, systemPrompt, taskSnapshot } from './messages';
 import type { CommentRow, MessageParts } from './messages';
+import { carriesDelivery } from './queue';
 
 export const runnerWsUrl = (backendUrl: string) => `${backendUrl.replace(/^http/, 'ws')}${RUNNER_WS_PATH}`;
 export const gitProxyUrl = (backendUrl: string, projectId: string) => `${backendUrl}${GIT_PROXY_PATH}/${projectId}.git`;
@@ -143,7 +145,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
         .set({
           queueEntryId: null,
           deliveredInJobId: job!.id,
-          deliveryState: sql`case when ${comments.kind} = 'user' or ${comments.noticeMessage} is not null then 'delivered'::delivery_state else ${comments.deliveryState} end`,
+          deliveryState: sql`case when ${carriesDelivery} then 'delivered'::delivery_state else ${comments.deliveryState} end`,
           deliveryReason: null,
         })
         .where(
@@ -196,6 +198,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
           services: agent.services,
           boardWriteAccess: project!.kind === 'project' && !schedule && project!.boardWriteAccess,
           schedule: schedule ? { global: !repository, readOnly: schedule.readOnly } : null,
+          platformSkill: extensions.skills.some((skill) => skill.name === PLATFORM_SKILL_NAME && skill.source === 'platform'),
         }),
         mcpConfig: JSON.stringify({
           mcpServers: {

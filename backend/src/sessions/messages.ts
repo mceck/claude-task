@@ -247,68 +247,50 @@ export interface PromptInput {
   boardWriteAccess: boolean;
   /** The Task is a Scheduled Run: nobody answers, and a global Schedule's Agent also has the global tools. */
   schedule?: { global: boolean; readOnly: boolean } | null;
+  /** The Agent has the `claude-task` Platform Skill (an Admin may have unassigned it). */
+  platformSkill: boolean;
 }
 
-/** `--append-system-prompt`: the platform section, then Project and Agent instructions. */
+/**
+ * `--append-system-prompt`: the platform section, then Project and Agent instructions. The platform
+ * section holds who and where the Agent is and the rules of the board; each tool describes itself,
+ * and the `claude-task` Platform Skill holds the playbook.
+ */
 export function systemPrompt(p: PromptInput): string {
+  const playbook = [
+    'searching the project',
+    'working the board',
+    ...(p.boardWriteAccess ? ['coordinating other agents'] : []),
+    ...(p.schedule?.global ? ['acting on every project'] : []),
+    'handing off work',
+  ];
   const platform = [
     `You are ${p.agentName}, an AI agent on the team's task board, working on task ${p.taskKey} in project "${p.projectName}".`,
     `Your working directory is ${AGENT_HOME}/${p.worktreePath}${p.branch ? `, a git worktree on the task branch \`${p.branch}\`` : ''}.`,
     '',
     'How this works:',
-    '- Everything you write as text is posted as a comment on the task, for humans: write clearly and use markdown.',
-    '- New messages from humans can arrive while you work. Take them into account as soon as you see them.',
+    '- Everything you write as text is posted as a comment on the task, for humans: use markdown, lead with the result and keep it short. The timeline already shows your tool calls.',
+    '- New messages can arrive while you work. Take them into account as soon as you see them.',
     p.schedule
       ? '- This is a scheduled run and you work unattended: no human will answer you. Decide on your own, or finish with an explanation of what blocks you. When your work is done, end your turn: the run closes by itself.'
-      : '- If you need a decision with clear options, ask it with `ask_question`; otherwise ask in text. Then end your turn: the answer will arrive as a new message.',
-    '- To show humans screenshots, charts, logs or other files, post them with `send_files`.',
-    '- Files attached to comments, and files linked in the task description, are saved under `.claude-task/attachments/` in your working directory.',
-    '',
-    'Task tools (MCP server `claude-task`):',
-    '- `get_task`: read your task (or another task of the project by key): fields, statuses, tags and comments.',
-    '- `update_task`: change your task\'s title, description, priority or tags (e.g. tick checklist items).',
-    '- `set_status`: move your task to another status to signal progress. Closed statuses are for humans.',
-    '- `list_tasks`: filter the project\'s tasks, and search their titles, descriptions and keys.',
-    '- `search_comments`: search the comments of the project, including past tasks and decisions.',
-    '- `read_comments`: read the conversation around a comment you found.',
-    '- `create_task`: report an out-of-scope issue as a new, unassigned task.',
-    '- `send_files`: post files from your container (screenshots, reports) to the conversation.',
-    ...(p.schedule
-      ? []
-      : [
-          '- `ask_question`: ask a multiple-choice question; the first answer decides.',
-          '- `create_survey`: collect answers from every assignee. Only when a human explicitly asks for a survey or for several people\'s opinions.',
-        ]),
-    '- The `claude-task` skill (also `/claude-task`) is the playbook for searching the project, working the board, coordinating agents and moving around your container; invoke it when you need the details.',
+      : '- For a decision with clear options ask with `ask_question`, for an open question ask in text; then end your turn: the answer arrives as a new message.',
+    '- Show screenshots, logs and other files with `send_files`. Files attached to comments or linked in the task description are saved under `.claude-task/attachments/`.',
+    '- You act on the board through the `claude-task` tools. Closing tasks and choosing their people are for humans.',
     ...(p.boardWriteAccess
-      ? [
-          '',
-          'Board Write Access is on for this project, so these tools act on any task of it:',
-          '- `update_task_by_key` and `set_task_status`: edit or move any task. Closed tasks and closed statuses are for humans.',
-          '- `comment_on_task`: write in another task\'s conversation; the agent working on it receives your message.',
-          '- `list_agents`: the enabled agents with their state, current task and queue length.',
-          '- `start_agent`: assign an agent to an unassigned task and send it your opening message; it starts or queues. At most 3 starts per job.',
-        ]
+      ? ['- Board Write Access is on in this project: you can also edit and move its other tasks, write to the agents working on them and start agents on tasks.']
+      : []),
+    ...(p.schedule?.global
+      ? ['- You can act on the board of every project: read, create, edit and move their tasks, and take tasks on yourself with `assign_task_to_me` and `start_task`.']
+      : []),
+    ...(p.platformSkill
+      ? [`- The \`claude-task\` skill is the playbook for ${playbook.slice(0, -1).join(', ')} and ${playbook.at(-1)}. Read it before going beyond your own task.`]
       : []),
   ];
-  if (p.schedule?.global) {
-    platform.push(
-      '',
-      'Global task tools, for acting on the boards of every project:',
-      '- `list_projects`: the projects with their task counts; `list_tasks` takes a `project` key and `get_task` any task key.',
-      '- `update_task_by_key` and `set_task_status`: edit or move any task. Closed statuses are for humans.',
-      '- `create_task_in_project`: create a new, unassigned task in any project.',
-      '- `assign_task_to_me`: assign a task to yourself; it starts no work. `start_task` then sends it your prompt, and you work on it in a session of its own after this one.',
-    );
-  }
   if (p.schedule?.readOnly) platform.push('', 'This schedule is read-only for git: you can fetch and read the repository, and every push is refused.');
-  if (p.branch) {
+  else if (p.branch) {
     platform.push(
       '',
-      'Git:',
-      '- `open_pull_request`: open or update a pull request from your task branch after committing and pushing it.',
-      `- Never push to branches other than \`${p.branch}\`.`,
-      '- Before moving the task to a review status, commit, push the task branch and open or update the pull request with `open_pull_request`.',
+      `Git: commit and push only to \`${p.branch}\`. To hand off, push it and open or update the pull request with \`open_pull_request\`, before moving the task to a review status.`,
     );
   }
   if (p.services.length) {

@@ -66,14 +66,21 @@ export async function enqueue(
   return row!;
 }
 
-/** Links Comments to the entry; Users' Comments (and notices) become `queued`. */
+/**
+ * In an update of `comments`: the Comments that are Messages and carry a Delivery. User Comments,
+ * notices, and Agent Comments another Agent wrote through its Task Tools, recognised by a Job of
+ * another Task; an Agent's own output, also attached when a Session resumes, keeps none.
+ */
+export const carriesDelivery = sql`(${comments.kind} = 'user' or ${comments.noticeMessage} is not null or (${comments.kind} = 'agent' and exists (select 1 from jobs j where j.id = "comments"."job_id" and j.task_id <> "comments"."task_id")))`;
+
+/** Links Comments to the entry; the ones that carry a Delivery become `queued`. */
 export async function attachComments(tx: Executor, after: AfterCommit, entryId: string, commentIds: string[]): Promise<void> {
   if (commentIds.length === 0) return;
   await tx
     .update(comments)
     .set({
       queueEntryId: entryId,
-      deliveryState: sql`case when ${comments.kind} = 'user' or ${comments.noticeMessage} is not null then 'queued'::delivery_state else ${comments.deliveryState} end`,
+      deliveryState: sql`case when ${carriesDelivery} then 'queued'::delivery_state else ${comments.deliveryState} end`,
       deliveryReason: null,
       deliveredInJobId: null,
     })

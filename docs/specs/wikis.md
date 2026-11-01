@@ -75,7 +75,7 @@ A Chat is a conversation open to every User: Comments, Internal Notes, Attachmen
 - Session controls are the Chat's own: the Session state chip, **Stop** while a Turn runs, and **Retry** after a Job failed to start. The Flutter app also offers Notify agent when the Wiki's name or description changed since the Agent last read it.
 - The web Wiki view shows Comments and the Agent's work and leaves out Revisions. The Flutter app shows the Chat without the Task details panel.
 - Users follow, unfollow, mute and unmute a Wiki like a Task, for all its Chats at once (the choice applies to every Task of the Wiki Project, and a new Chat starts with it; commenting in a Chat follows the whole Wiki); the Flutter app labels these actions "Follow wiki" and "Mute wiki". Phone notifications for a Wiki carry the Chat's id and open that Chat in the Flutter app.
-- The Agent's Task Tools act on the Task of the Job, which is the Chat it works in.
+- The Agent's Task Tools act on the Task of the Job, which is the Chat it works in; the tools that would change the Chat's Task (`update_task`, `set_status`, `create_task`) are not offered.
 
 ### Editing a Wiki
 
