@@ -11,6 +11,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import { API_PREFIX, GIT_PROXY_PATH } from '@claude-task/shared';
+import { sql } from 'drizzle-orm';
 import Fastify from 'fastify';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { installGuard } from './auth/guard';
@@ -88,6 +89,18 @@ export async function buildApp(
     }
     request.log.error(err);
     return reply.status(500).send({ error: { code: 'internal', message: 'Internal server error' } });
+  });
+
+  // Health for container orchestration, outside the API: no Login cookie and no CSRF header.
+  // It pings the database, so Compose reports the container unhealthy while the database is down.
+  app.get('/health', async (request, reply) => {
+    try {
+      await ctx.db.execute(sql`select 1`);
+      return { status: 'ok' };
+    } catch (err) {
+      request.log.warn({ err }, 'Health check failed: database unreachable');
+      return reply.status(503).send({ status: 'unavailable' });
+    }
   });
 
   await app.register(
