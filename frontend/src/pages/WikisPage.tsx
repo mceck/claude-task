@@ -279,7 +279,7 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
             <div className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
               <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{list?.find((c) => c.id === chat.id)?.title ?? 'New chat'}</h2>
               {session.data && <SessionChip session={session.data} />}
-              {session.data?.context && <ContextBadge context={session.data.context} />}
+              {chat && <ContextBadge taskId={chat.id} context={session.data?.context} />}
               {session.data?.state === 'running' && (
                 <Button
                   variant="outline"

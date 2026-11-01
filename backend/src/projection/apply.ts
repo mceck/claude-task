@@ -172,6 +172,7 @@ export async function applyProjection(
   }
   for (const b of broadcasts) {
     if (b.type === 'live.delta') after.emit(topic, { type: 'live.delta', taskId: job.taskId, delta: b.delta });
+    else if (b.type === 'live.context') after.emit(topic, { type: 'live.context', taskId: job.taskId, context: b.context });
     else after.emit(topic, { type: 'live.status', taskId: job.taskId, status: b.status });
   }
   if (created.length > 0) after.effect((ctx) => ctx.scheduler.publishComments(created, 'created'));

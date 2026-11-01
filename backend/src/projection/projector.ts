@@ -91,7 +91,8 @@ export type Mutation =
 
 export type Broadcast =
   | { type: 'live.delta'; delta: LiveDelta }
-  | { type: 'live.status'; status: { kind: 'retrying'; attempt: number; maxRetries: number; error: string | null } | null };
+  | { type: 'live.status'; status: { kind: 'retrying'; attempt: number; maxRetries: number; error: string | null } | null }
+  | { type: 'live.context'; context: ContextUsage };
 
 export interface ProjectionResult {
   state: ProjectionState;
@@ -328,7 +329,11 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
         cacheCreation: n(rawUsage.cache_creation_input_tokens),
         model: typeof e.message?.model === 'string' ? e.message.model : null,
       };
-      if (lastUsage.input + lastUsage.output + lastUsage.cacheRead + lastUsage.cacheCreation > 0) s.lastUsage = lastUsage;
+      if (lastUsage.input + lastUsage.output + lastUsage.cacheRead + lastUsage.cacheCreation > 0) {
+        s.lastUsage = lastUsage;
+        // Clients follow the context while the Turn runs; the window only arrives with the `result`.
+        broadcasts.push({ type: 'live.context', context: { tokens: lastUsage.input + lastUsage.cacheRead + lastUsage.cacheCreation + lastUsage.output, window: null } });
+      }
     }
     for (const block of content) {
       if (block?.type === 'text') {

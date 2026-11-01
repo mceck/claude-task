@@ -333,7 +333,7 @@ export function ScheduleRunPage() {
           <p className="text-xs text-muted-foreground">{schedule.data?.name}</p>
         </div>
         {session.data && <SessionChip session={session.data} />}
-        {session.data?.context && <ContextBadge context={session.data.context} />}
+        {task.data && <ContextBadge taskId={task.data.id} context={session.data?.context} />}
       </header>
       {task.isPending ? (
         <Loading />
