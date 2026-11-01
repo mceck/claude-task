@@ -48,6 +48,7 @@ function timeline(mutations: Mutation[]) {
 }
 
 function entryText(e: ActivityEntry): string {
+  if (e.name === 'Thinking') return `thinking: ${e.output}`;
   return `${e.summary} (${e.status}${e.outcome ? `, ${e.outcome}` : ''})`;
 }
 
@@ -89,7 +90,7 @@ describe('stream projection', () => {
     {
       name: 'thinking comes before the reply it led to, merged while consecutive',
       events: [s.thinking('Hmm.'), s.thinking('Got it.'), s.text('Answer.'), s.result()],
-      expected: ['thinking: Hmm.\n\nGot it.', 'agent: Answer.', 'summary: success 0 tools'],
+      expected: ['activity: thinking: Hmm.\n\nGot it.', 'agent: Answer.', 'summary: success 0 tools'],
     },
     {
       name: 'Bash outcomes: exit codes and failures',
@@ -192,9 +193,9 @@ describe('stream projection', () => {
       expected: ['activity: Task tool `set_status` (interrupted, interrupted) | github: `create_issue` (interrupted, interrupted)', 'summary: success 2 tools'],
     },
     {
-      name: 'thinking between tool calls closes the Activity group, keeping the order',
+      name: 'thinking between tool calls joins the Activity group, keeping the order',
       events: [s.thinking('First.'), s.toolUse('a', 'Read', { file_path: 'a' }), s.toolResult('a', 'x'), s.thinking('Second.'), s.toolUse('b', 'Read', { file_path: 'b' }), s.toolResult('b', 'y'), s.result()],
-      expected: ['thinking: First.', 'activity: Read `a` (ok)', 'thinking: Second.', 'activity: Read `b` (ok)', 'summary: success 2 tools'],
+      expected: ['activity: thinking: First. | Read `a` (ok) | thinking: Second. | Read `b` (ok)', 'summary: success 2 tools'],
     },
     {
       name: 'compaction leaves a notice',
@@ -460,7 +461,7 @@ describe('recorded streams (real CLI spike)', () => {
 
   it('empty thinking blocks produce no Timeline item', () => {
     const { mutations } = replay(load('thinking-redacted'));
-    expect(timeline(mutations).some((l) => l.startsWith('thinking:'))).toBe(false);
+    expect(timeline(mutations).some((l) => l.includes('thinking:'))).toBe(false);
   });
 
   it('a message consumed mid-turn belongs to the same Turn', () => {
