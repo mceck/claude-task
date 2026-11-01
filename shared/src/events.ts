@@ -41,7 +41,7 @@ export type TaskEvent =
   | { type: 'agent_item.updated'; item: AgentItem }
   /** Live text or thinking of the running Turn; not persisted, the final Comment follows. */
   | { type: 'live.delta'; taskId: string; delta: LiveDelta }
-  /** The conversation's context size after a model call of the running Turn; the window is null (the CLI reports it with the Turn's result). */
+  /** (also on the Project's topic, for the Board's cards) The conversation's context size after a model call of the running Turn; the window is null (the CLI reports it with the Turn's result). */
   | { type: 'live.context'; taskId: string; context: ContextUsage }
   /** Transient status of the running Turn (API retries); null clears it. */
   | { type: 'live.status'; taskId: string; status: { kind: 'retrying'; attempt: number; maxRetries: number; error: string | null } | null }

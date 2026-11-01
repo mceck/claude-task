@@ -42,7 +42,7 @@ export function expandedFromLive(commentId: string): boolean {
 }
 
 /** The Session's stored context, replaced by the running Turn's latest measurement (keeping the stored window). */
-export function useLiveContext(taskId: string, stored: ContextUsage | null | undefined): ContextUsage | null {
+export function useLiveContext(taskId: string, stored: ContextUsage | null | undefined, running = true): ContextUsage | null {
   const live = useSyncExternalStore(
     (l) => {
       listeners.add(l);
@@ -50,7 +50,8 @@ export function useLiveContext(taskId: string, stored: ContextUsage | null | und
     },
     () => contexts.get(taskId),
   );
-  if (!live) return stored ?? null;
+  // A Board card is not told when its Session stops, so it only trusts the live figure while the card says running.
+  if (!live || !running) return stored ?? null;
   return { tokens: live.tokens, window: live.window ?? stored?.window ?? null };
 }
 

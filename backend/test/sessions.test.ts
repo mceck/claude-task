@@ -1,5 +1,5 @@
 import { asc, sql } from 'drizzle-orm';
-import { taskTopic } from '@claude-task/shared';
+import { projectTopic, taskTopic } from '@claude-task/shared';
 import type { Comment, InputBlock, TimelineItem } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
@@ -284,6 +284,7 @@ describe('the Agent on the Timeline', () => {
     const task = await createTask(admin, project.id);
     const ws = await WsTestClient.connect(app.url, admin.cookie);
     await ws.subscribe(taskTopic(task.id));
+    await ws.subscribe(projectTopic(project.id));
     await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
     runner.accept(start.jobId);
@@ -305,6 +306,8 @@ describe('the Agent on the Timeline', () => {
 
     const deltas = ws.events('live.delta').map((e) => e.delta.text).join('');
     expect(deltas).toBe('Looking');
+    // The context follows the Turn (also published on the Project's topic, for the Board's cards).
+    expect(ws.events('live.context').length).toBeGreaterThan(0);
 
     const items = await timeline(admin, task.id);
     const shape = items

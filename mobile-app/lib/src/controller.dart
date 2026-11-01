@@ -103,18 +103,28 @@ class TaskController extends ChangeNotifier {
   final Set<String> liveExpanded = {}, expandedComments = {};
   String liveThinking = '', liveStatus = '';
 
-  /// Context size after the latest model call of the running Turn (`tokens` only).
-  /// The Session's own `context` moves only when a Turn ends.
-  Json? liveContext;
+  /// Context size after the latest model call of each running Turn, by Task
+  /// (`tokens` only). A Session's stored `context` moves only when a Turn ends.
+  final Map<String, Json> liveContexts = {};
 
-  /// The conversation's context: the running Turn's measurement over the
-  /// Session's stored one, keeping the stored window.
-  Json? get sessionContext {
-    final stored = session?['context'] as Json?;
-    final live = liveContext;
-    if (live == null) return stored;
-    return {'tokens': live['tokens'], 'window': live['window'] ?? stored?['window']};
+  /// The context of a Task: its running Turn's measurement over the stored one
+  /// (keeping the stored window). Only a running Session trusts the live
+  /// figure; a list row isn't told when its Session stops.
+  Json? contextOf(String taskId, String? state, Json? stored) {
+    final live = liveContexts[taskId];
+    if (live == null || state != 'running') return stored;
+    return {
+      'tokens': live['tokens'],
+      'window': live['window'] ?? stored?['window'],
+    };
   }
+
+  /// The open Task's context.
+  Json? get sessionContext => contextOf(
+    task?.id ?? '',
+    session?['state'] as String?,
+    session?['context'] as Json?,
+  );
 
   /// Notified when only the Live Turn preview changes (streamed text and
   /// Thinking, the retry status, the preparation output), instead of every
@@ -378,7 +388,7 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
-    liveContext = null;
+    liveContexts.clear();
     liveSetup = null;
     conversationVisible = false;
     assignmentRetryId = null;
@@ -1109,7 +1119,6 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
-    liveContext = null;
     liveSetup = null;
     _clearRuns();
   }
@@ -1359,7 +1368,6 @@ class TaskController extends ChangeNotifier {
     liveText.clear();
     liveThinking = '';
     liveStatus = '';
-    liveContext = null;
     liveSetup = null;
     _clearRuns();
     final cached = storage.read('task:${value.id}');
@@ -2347,8 +2355,11 @@ class TaskController extends ChangeNotifier {
       _live.value++;
       return;
     }
-    if (type == 'live.context' && event['taskId'] == task?.id) {
-      liveContext = Json.from(event['context'] as Map);
+    if (type == 'live.context') {
+      // Also from the Project's topic, so the Task list follows every running Task.
+      liveContexts[event['taskId'] as String] = Json.from(
+        event['context'] as Map,
+      );
       notifyListeners();
       return;
     }
@@ -2379,7 +2390,7 @@ class TaskController extends ChangeNotifier {
     if (type == 'timeline.reset') {
       final id = event['taskId'] as String;
       if (id == task?.id) {
-        liveContext = null;
+        liveContexts.remove(event['taskId']);
         _timelineEpoch++;
         _clearConversation();
         unawaited(_cacheTask());
@@ -2406,7 +2417,7 @@ class TaskController extends ChangeNotifier {
     if (type == 'session.changed' && event['taskId'] == task?.id) {
       session = event['session'] as Json?;
       if (session?['state'] != 'running') {
-        liveContext = null;
+        liveContexts.remove(task!.id);
         liveText.clear();
         liveThinking = '';
         liveStatus = '';

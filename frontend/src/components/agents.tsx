@@ -183,7 +183,9 @@ export function ContextBadge({ taskId, context: stored }: { taskId: string; cont
 }
 
 /** The same figure as plain inline text, for a Board card's footer. */
-export function ContextUsageLabel({ context }: { context: ContextUsage }) {
+export function ContextUsageLabel({ taskId, context: stored, running }: { taskId: string; context: ContextUsage | null | undefined; running: boolean }) {
+  const context = useLiveContext(taskId, stored, running);
+  if (!context) return null;
   const pct = contextPercent(context);
   const title = contextTitle(context);
   return (
