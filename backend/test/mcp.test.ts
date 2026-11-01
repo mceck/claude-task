@@ -39,7 +39,7 @@ async function setup(app: TestApp) {
 describe('Task Tools (MCP)', () => {
   const app = useTestApp();
 
-  it('lists the tools', async () => {
+  it('lists the tools, without open_pull_request in a Project without a Repository', async () => {
     const { client } = await setup(app);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
@@ -48,13 +48,20 @@ describe('Task Tools (MCP)', () => {
       'create_task',
       'get_task',
       'list_tasks',
-      'open_pull_request',
       'read_comments',
       'search_comments',
       'send_files',
       'set_status',
       'update_task',
     ]);
+    // Every tool and every input says what it is for.
+    for (const tool of tools) {
+      expect(tool.description, tool.name).toBeTruthy();
+      for (const [name, schema] of Object.entries(tool.inputSchema.properties ?? {}) as [string, { description?: string; type?: string }][]) {
+        if (['title', 'priority', 'questions'].includes(name)) continue;
+        expect(schema.description, `${tool.name}.${name}`).toBeTruthy();
+      }
+    }
   });
 
   it('reads the own Task with statuses, tags and non-internal comments', async () => {

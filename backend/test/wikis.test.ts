@@ -124,15 +124,11 @@ describe('Wikis', () => {
     const call = (name: string, args: Record<string, unknown> = {}) =>
       mcp.callTool({ name, arguments: args }) as Promise<{ content: { text: string }[]; isError?: boolean }>;
     expect((await call('get_task')).isError ?? false).toBe(false);
-    for (const [name, args] of [
-      ['update_task', { title: 'Renamed' }],
-      ['set_status', { status_name: 'Done' }],
-      ['create_task', { title: 'Stray task' }],
-    ] as const) {
-      const res = await call(name, args);
-      expect(res.isError, name).toBe(true);
-      expect(res.content[0]!.text).toContain('belongs to a Wiki');
-    }
+    // The tools that would change the Chat's Task are not offered at all.
+    const names = (await mcp.listTools()).tools.map((t) => t.name);
+    for (const name of ['update_task', 'set_status', 'create_task']) expect(names).not.toContain(name);
+    expect(names).toEqual(expect.arrayContaining(['get_task', 'search_comments', 'send_files', 'ask_question', 'open_pull_request']));
+    expect((await call('update_task', { title: 'Renamed' })).isError).toBe(true);
     await mcp.close();
   });
 

@@ -7,6 +7,7 @@ import type { TestApp } from './helpers/app';
 import { assignAgent, assignAndStart, comment, createAgent, createProject, createTask, moveToStatus, statusByName, timeline } from './helpers/fixtures';
 import type { FakeRunner } from './helpers/runner';
 import { seedPlatformSkill } from '../src/modules/extensions/platform-skill';
+import { Stream } from './helpers/stream';
 
 async function mcpClient(app: TestApp, start: JobStartMessage): Promise<Client> {
   const server = JSON.parse(start.claudeArgs.mcpConfig).mcpServers['claude-task'];
@@ -278,6 +279,66 @@ describe('Board Write Access (MCP)', () => {
     expect((await admin.get(`/tasks/${fourth.id}`)).body.task.agentId).toBeNull();
   });
 
+  it('tracks the Delivery of a message that waits for a busy Agent, until its Turn handles it', async () => {
+    const { admin, bundle, client, enableWrites } = await setup(app);
+    await enableWrites();
+    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const busy = await runningJob(app, admin, bundle.project.id, bob, bobRunner, 'Bob is busy');
+    const target = await createTask(admin, bundle.project.id, { title: 'Bob later' });
+
+    expect((await call(client, 'start_agent', { key: target.key, agent: 'Bob Bot', prompt: 'Pick this up next.' })).isError).toBe(false);
+    const delivery = async () =>
+      (await timeline(admin, target.id)).flatMap((item) => (item.type === 'comment' ? [item.comment] : [])).find((c) => c.body === 'Pick this up next.')!
+        .delivery?.state;
+    expect(await delivery()).toBe('queued');
+
+    const s = new Stream(busy.start.sessionId);
+    await bobRunner.play(busy.start.jobId, [s.init(), s.result()]);
+    await bobRunner.next('job.end', (m) => m.jobId === busy.start.jobId);
+    await bobRunner.exit(busy.start.jobId);
+    const next = await bobRunner.next('job.start', (m) => m.jobId !== busy.start.jobId);
+    bobRunner.accept(next.jobId);
+    await bobRunner.drain();
+    expect(JSON.stringify(next.initialMessage)).toContain('Pick this up next.');
+    expect(await delivery()).toBe('delivered');
+
+    const t = new Stream(next.sessionId);
+    await bobRunner.play(next.jobId, [t.init(), t.text('On it.'), t.result()]);
+    await app.settle();
+    expect(await delivery()).toBe('handled');
+  });
+
+  it('counts a comment that wakes an Agent that has not started yet as one of the three starts', async () => {
+    const { admin, bundle, client, enableWrites } = await setup(app);
+    await enableWrites();
+    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const waiting = await createTask(admin, bundle.project.id, { title: 'Assigned by a human' });
+    await assignAgent(admin, waiting.id, bob.id);
+
+    const woke = await call(client, 'comment_on_task', { key: waiting.key, body: 'Start with the failing test.' });
+    expect(woke.json).toMatchObject({ sessionStarted: true });
+    for (let i = 0; i < 2; i++) {
+      const target = await createTask(admin, bundle.project.id, { title: `Work ${i}` });
+      expect((await call(client, 'start_agent', { key: target.key, agent: 'Bob Bot', prompt: 'go' })).isError, `start ${i}`).toBe(false);
+    }
+    const another = await createTask(admin, bundle.project.id, { title: 'Also assigned by a human' });
+    await assignAgent(admin, another.id, bob.id);
+    const refused = await call(client, 'comment_on_task', { key: another.key, body: 'And this one.' });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('3 agents');
+    // A comment to an Agent whose Session already started is no start.
+    expect((await call(client, 'comment_on_task', { key: waiting.key, body: 'Also cover the edge case.' })).isError).toBe(false);
+  });
+
+  it('tells the Agent in its system prompt when Board Write Access is on', async () => {
+    const { admin, bundle, start, enableWrites } = await setup(app);
+    expect(start.claudeArgs.appendSystemPrompt).not.toContain('Board Write Access');
+    await enableWrites();
+    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const job = await runningJob(app, admin, bundle.project.id, bob, bobRunner, 'With writes');
+    expect(job.start.claudeArgs.appendSystemPrompt).toContain('Board Write Access is on');
+  });
+
   it('lists enabled agents with their state and queue', async () => {
     const { admin, client, enableWrites } = await setup(app);
     await enableWrites();
@@ -315,6 +376,24 @@ describe('Platform skill', () => {
     await seedPlatformSkill(app.server.ctx);
     const platform = (await admin.get('/skills')).body.skills.find((s: { name: string }) => s.name === 'claude-task');
     expect((await admin.get(`/agents/${agent.id}`)).body.agent.skillIds).toContain(platform.id);
+  });
+
+  it('ships an index with its references, and the system prompt points to it only for Agents that have it', async () => {
+    const admin = await app.admin();
+    const { rows } = await app.server.ctx.db.$client.query("select files from skills where name = 'claude-task'");
+    const paths = (rows[0].files as { path: string }[]).map((f) => f.path).sort();
+    expect(paths).toEqual(['SKILL.md', 'references/contexts.md', 'references/coordination.md', 'references/search.md']);
+
+    const bundle = await createProject(admin, { name: 'Skills' });
+    const { agent, runner } = await createAgent(app, admin, { name: 'Ada Bot' });
+    const withSkill = await runningJob(app, admin, bundle.project.id, agent, runner, 'With the skill');
+    expect(withSkill.start.claudeArgs.appendSystemPrompt).toContain('`claude-task` skill');
+
+    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot' });
+    expect((await admin.patch(`/agents/${bob.id}`, { skillIds: [] })).status).toBe(200);
+    await app.settle();
+    const without = await runningJob(app, admin, bundle.project.id, bob, bobRunner, 'Without the skill');
+    expect(without.start.claudeArgs.appendSystemPrompt).not.toContain('`claude-task` skill');
   });
 
   it('cannot be deleted from the catalog', async () => {

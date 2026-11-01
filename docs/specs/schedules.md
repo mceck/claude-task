@@ -78,13 +78,14 @@ A global Schedule has no Repository, so its runs work in a plain directory witho
 | `list_projects` | The ordinary Projects that are not archived: key, name and Task counts per Category. |
 | `list_tasks` | Gains an optional `project` key; without it, lists the Project of the run's own Task. |
 | `get_task` | Accepts the key of a Task of any Project. |
-| `update_task_by_key` | Updates the title, description, priority and tags of any Task, as Revisions attributed to the Agent. |
-| `set_task_status` | Moves any Task to a Status of its Project. Statuses of the `closed` Category are refused: closing is for humans. |
+| `search_comments` | Gains an optional `project` key, like `list_tasks`; `read_comments` reads around a Comment of any Project. |
+| `update_task_by_key` | Updates the title, description, priority and tags of any open Task, as Revisions attributed to the Agent. A Task in a `closed`-category Status is refused. |
+| `set_task_status` | Moves any open Task to a Status of its Project. Closed Tasks and Statuses of the `closed` Category are refused: closing is for humans. |
 | `create_task_in_project` | Creates a Task in any ordinary Project, in its first `open` Status, with no assignees and no Agent. |
-| `assign_task_to_me` | Assigns the Agent to a Task that has no Agent or already has this one. This opens a `pending` Session and starts no work; a Task of another Agent is answered with an error naming it. |
-| `start_task` | Posts a User Comment with the given prompt on a Task assigned to the Agent, authored by `System`, so the first Job of that Task's Session is started. |
+| `assign_task_to_me` | Assigns the Agent to an open Task that has no Agent or already has this one. This opens a `pending` Session and starts no work; a Task of another Agent is answered with an error naming it, and a closed Task is refused. |
+| `start_task` | Posts the given prompt as an Agent Comment written by the Agent on an open Task assigned to it, and delivers it, so that Task's Session starts (or receives a Message) after the run, in the Agent's Queue. It is not counted against the start limit of [Board Write Access](agent-sessions.md#writing-to-the-board). |
 
-A Task started this way is an ordinary Task in an ordinary Project: it joins the Agent's Queue, runs in the same Agent Container one Job at a time, and its Timeline is read there. Tied Schedules keep the Task Tools of their own Project and receive no global tools. Only ordinary, non-archived Projects appear in the global tools' project list and accept targets; Tasks of Wiki Projects and Schedule Projects are answered with an error.
+A Task started this way is an ordinary Task in an ordinary Project: it joins the Agent's Queue, runs in the same Agent Container one Job at a time, and its Timeline is read there. `update_task_by_key` and `set_task_status` are the tools Board Write Access gives, with the same rules over every Project. Tied Schedules keep the Task Tools of their own Project and receive no global tools. Only ordinary, non-archived Projects appear in the global tools' project list and accept targets; Tasks of Wiki Projects and Schedule Projects are answered with an error.
 
 ### Read-only Schedules
 
@@ -92,7 +93,7 @@ The Git Proxy rejects every push of a Job of a read-only Schedule, with `claude-
 
 ### Runs without a person
 
-Nobody answers an Agent during a Scheduled Run. The Task Tools for Questions and Surveys (`ask_question`, `create_survey`) are not offered in a Scheduled Run, the Task Tools that edit or move the run's own Task (`update_task`, `set_status`, `create_task`) answer with an error because the scheduler manages it, and the Job's system prompt tells the Agent that it works unattended, that no human will answer, and that it should decide on its own or finish with an explanation.
+Nobody answers an Agent during a Scheduled Run. The Task Tools for Questions and Surveys (`ask_question`, `create_survey`) are not offered in a Scheduled Run, nor are the Task Tools that edit or move the run's own Task (`update_task`, `set_status`, `create_task`), because the scheduler manages it. A read-only Schedule is not offered `open_pull_request` either, since every push is refused. The Job's system prompt tells the Agent that it works unattended, that no human will answer, and that it should decide on its own or finish with an explanation.
 
 ### Notifications
 
@@ -122,7 +123,7 @@ flowchart LR
 
 - The **Schedules module** owns the Schedule configuration, the run history, the skip and catch-up rules, the next run time computation and the creation of runs. It calls the same Task, assignment and Comment operations as the API.
 - The **Scheduler** gains the Schedule step in its tick. It reads time from an injectable clock and exposes the tick, so the behaviour can be tested without waiting.
-- The **Task Tools server** resolves the Job to its Schedule and exposes the global tools only for global Schedules, and withholds the Question and Survey tools for every Scheduled Run.
+- The **Task Tools server** resolves the Job to its Schedule and exposes the global tools only for global Schedules, and withholds the Question, Survey and own-Task tools for every Scheduled Run and `open_pull_request` for read-only ones.
 - The **Git Proxy** reads the read-only flag from the Job.
 - The **Notifications module** records `schedule.run_failed` and `schedule.blocked` in the transaction that reports them.
 
@@ -147,8 +148,8 @@ flowchart LR
 - **Skipped runs overlap rather than queue.** When the previous run is active, the new one is skipped. Queueing would build a backlog behind a slow Agent and replay stale work.
 - **At most one catch-up run.** Replaying every missed due time after downtime would start a burst of identical work; one catch-up bounded by the period keeps recent work and drops the rest.
 - **Succeeded and Failed are closed.** Unattended runs need no follow-up conversation. Closing at the end of the first Job frees the Worktree and uses the one existing mechanism that ends a Session.
-- **Read-only means read-only git.** The Push Policy is the only guard that the platform can enforce reliably for every provider, while restricting Claude's tools or Bash would remove most of what a review or report needs. The Task Tools stay available, so a read-only global Schedule can still change Tasks.
-- **Global tools exist only for global Schedules.** Ordinary Jobs keep Project-scoped tools. The global tools give a few explicit, auditable ways to act across boards, not a wider scope for every Agent.
+- **Read-only means read-only git.** The Push Policy is the only guard that the platform can enforce reliably for every provider, while restricting Claude's tools or Bash would remove most of what a review or report needs. The Task Tools stay available, except `open_pull_request`, which would need a pushed branch, so a read-only global Schedule can still change Tasks.
+- **Global tools exist only for global Schedules.** Ordinary Jobs keep Project-scoped tools. The global tools give a few explicit, auditable ways to act across boards, not a wider scope for every Agent. Where they overlap with Board Write Access they are the same tools with the same rules (closed Tasks are out of reach, a start is an Agent Comment by the caller), so an Agent learns one contract.
 - **Alerts for Schedules are phone alerts to the creator.** The platform has no other notification channel. Alerts go to one person, since an Admin who created the Schedule is the one expected to fix it.
 
 ## Related specs
