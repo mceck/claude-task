@@ -166,7 +166,7 @@ describe('assignment and the first Job', () => {
     expect(runner.messages('job.start')).toHaveLength(1);
     expect(await getSession(admin, second.id)).toMatchObject({ state: 'pending', queuePosition: 1 });
     const card = (await admin.get(`/projects/${project.id}/tasks`)).body.tasks.find((t: { id: string }) => t.id === second.id);
-    expect(card.session).toEqual({ agentId: agent.id, state: 'pending', queuePosition: 1 });
+    expect(card.session).toEqual({ agentId: agent.id, state: 'pending', queuePosition: 1, context: null });
 
     const start = runner.messages('job.start')[0]!;
     runner.accept(start.jobId);
@@ -214,6 +214,9 @@ describe('assignment and the first Job', () => {
     const session = await getSession(admin, task.id);
     // The Stream's assistant message reports 10 input and 5 output tokens; the result names a 1M window.
     expect(session).toMatchObject({ id: start.sessionId, state: 'idle', context: { tokens: 15, window: 1_000_000 } });
+    // The Board card carries the same figure for its footer.
+    const card = (await admin.get(`/projects/${project.id}/tasks`)).body.tasks.find((t: { id: string }) => t.id === task.id);
+    expect(card.session).toMatchObject({ context: { tokens: 15, window: 1_000_000 } });
 
     // A Session that has not run a Turn yet has no context to show.
     const other = await createTask(admin, project.id);

@@ -35,7 +35,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { ApiError, errorMessage, post } from '../api/client';
 import { keys, useAgents, useBoardTasks, useProject, useTaskPreferences, useUsers } from '../api/queries';
-import { AgentAvatar } from '../components/agents';
+import { AgentAvatar, ContextUsageLabel } from '../components/agents';
 import { TagChip, ErrorText, Loading, PriorityIcon, PRIORITY_STYLE, StatusDot, useConfirm, UserAvatar } from '../components/common';
 import { MultiPick } from '../components/MultiPick';
 import { TaskDetail } from '../components/TaskDetail';
@@ -432,6 +432,7 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
     ? `${unreadComments} unread ${unreadComments === 1 ? 'comment' : 'comments'} of ${card.commentCount}`
     : `${card.commentCount} comments`;
   const toolCallsLabel = `${card.toolCallCount} tool ${card.toolCallCount === 1 ? 'call' : 'calls'}`;
+  const context = card.session?.context ?? null;
 
   const close = async () => {
     if (!closedStatus) return;
@@ -500,13 +501,14 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
       </div>
       {card.pullRequest && <div className="mb-2"><PullRequestBadge pr={card.pullRequest} /></div>}
       <p className={cn('text-[13px] leading-snug', unread ? 'font-semibold text-foreground' : 'font-medium text-foreground/90 group-hover:text-foreground')}>{card.title}</p>
-      {(cardTags.length > 0 || card.commentCount > 0 || card.toolCallCount > 0) && (
+      {(cardTags.length > 0 || card.commentCount > 0 || card.toolCallCount > 0 || context) && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1">
           {cardTags.map((l) => (
             <TagChip key={l.id} name={l.name} color={l.color} />
           ))}
-          {(card.toolCallCount > 0 || card.commentCount > 0) && (
+          {(card.toolCallCount > 0 || card.commentCount > 0 || context) && (
             <span className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
+              {context && <ContextUsageLabel context={context} />}
               {card.toolCallCount > 0 && (
                 <span data-testid="task-tool-calls" className="flex items-center gap-1" title={toolCallsLabel} aria-label={toolCallsLabel}>
                   <Wrench className="size-3" /> {card.toolCallCount}

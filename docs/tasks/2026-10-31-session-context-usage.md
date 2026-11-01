@@ -18,7 +18,7 @@ A Task's conversation grows with every Turn and the Agent only has so much conte
 
 Each Turn records its **Context Usage**: the prompt tokens of the Turn's last top-level assistant message plus the output it produced, and the model's context window from the `result`'s `modelUsage`. The `result`'s own usage is not used because it sums every model call of the Turn and counts the cached prompt once per call.
 
-A Session reports the Context Usage of its latest Turn in `TaskSession.context` (null before the first Turn or when the stream says nothing). Both clients show it beside the Session chip in the Task view header, in a Wiki Chat header and in the native app's conversation header, and again as a read-only property in the Task details (the web panel and the native sheet): `120.2K (53%)`, with `K` below a million and `M` from a million, the percentage rounded and capped at 100, a small ring filled to it and the exact counts in the tooltip. The chip is neutral below 70%, amber from 70% and red from 90%.
+A Session reports the Context Usage of its latest Turn in `TaskSession.context` (null before the first Turn or when the stream says nothing). Both clients show it beside the Session chip in the Task view header, in a Wiki Chat header and in the native app's conversation header, again as a read-only property in the Task details (the web panel and the native sheet), and on the Board: the web card puts it in the footer just left of the tool call count, and the native Task row puts it beside the Agent badge. The format is `120.2K (53%)`, with `K` below a million and `M` from a million, the percentage rounded and capped at 100, a small ring filled to it and the exact counts in the tooltip. The chip is neutral below 70%, amber from 70% and red from 90%.
 
 Clients update it through the existing `session.changed` event, which the scheduler publishes when a Turn lands.
 
@@ -39,6 +39,7 @@ Turns recorded before the field existed are filled when the backend starts: it r
 - [x] Subagent and synthetic messages, Turns without a model call, and CLIs without `modelUsage` behave as described above.
 - [x] `GET /tasks/:id/session` carries the latest Turn's context and null before the first Turn.
 - [x] The web Task view, Wiki Chat and schedule run headers show the chip, and the native app's conversation header shows it too.
+- [x] The web Board card shows it left of the tool call count, and the native Task row beside the Agent badge, when non-zero.
 - [x] Tokens format as `120.2K` and `1.2M`, the percentage is rounded and capped, and high usage changes the tone.
 - [x] Existing Turns are backfilled from their raw stream at startup, without replaying them on later starts.
 - [x] Backend tests cover the projection, the Session API and the backfill; specs, glossary and manual are updated.

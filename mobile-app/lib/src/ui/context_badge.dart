@@ -15,30 +15,51 @@ String formatContextTokens(num n) {
   return n.round().toString();
 }
 
+/// The `context` of a Session: tokens carried and the model's window.
+class ContextInfo {
+  final num tokens;
+  final num? window;
+  /// Rounded to a whole number and capped at 100; null when the CLI reported no window.
+  final num? pct;
+  const ContextInfo(this.tokens, this.window, this.pct);
+
+  String get label =>
+      pct == null ? formatContextTokens(tokens) : '${formatContextTokens(tokens)} ($pct%)';
+
+  String get title => pct == null
+      ? 'Context: ${formatContextTokens(tokens)} tokens'
+      : 'Context: ${formatContextTokens(tokens)} of ${formatContextTokens(window!)} tokens ($pct%)';
+
+  /// Neutral until it fills up, then the usual warning and error tones.
+  Color get color => pct == null || pct! < 70
+      ? Palette.fgSubtle
+      : pct! < 90
+      ? Palette.orange
+      : Palette.danger;
+}
+
+/// Reads a Session's `context`; null when the Session has no measurement.
+ContextInfo? contextInfo(Json? context) {
+  final tokens = context?['tokens'] as num?;
+  if (tokens == null) return null;
+  final window = context?['window'] as num?;
+  final pct = window != null && window > 0
+      ? (tokens / window * 100).round().clamp(0, 100)
+      : null;
+  return ContextInfo(tokens, window, pct);
+}
+
 /// How full the conversation's context is, beside the Session badge: `120.2K (53%)`.
 class ContextBadge extends StatelessWidget {
-  final Json? session;
-  const ContextBadge({super.key, this.session});
+  final Json? context;
+  const ContextBadge({super.key, this.context});
   @override
-  Widget build(BuildContext context) {
-    final raw = session?['context'];
-    final tokens = raw is Map ? raw['tokens'] as num? : null;
-    if (tokens == null) return const SizedBox.shrink();
-    final window = raw is Map ? raw['window'] as num? : null;
-    final pct = window != null && window > 0
-        ? (tokens / window * 100).round().clamp(0, 100)
-        : null;
-    // Neutral until it fills up, then the usual warning and error tones.
-    final color = pct == null || pct < 70
-        ? Palette.fgSubtle
-        : pct < 90
-        ? Palette.orange
-        : Palette.danger;
-    final detail = pct == null
-        ? 'Context: ${formatContextTokens(tokens)} tokens'
-        : 'Context: ${formatContextTokens(tokens)} of ${formatContextTokens(window!)} tokens ($pct%)';
+  Widget build(BuildContext widgetContext) {
+    final info = contextInfo(context);
+    if (info == null) return const SizedBox.shrink();
+    final color = info.color;
     return Tooltip(
-      message: detail,
+      message: info.title,
       child: Container(
         padding: const EdgeInsets.fromLTRB(6, 2, 8, 2),
         decoration: BoxDecoration(
@@ -52,9 +73,7 @@ class ContextBadge extends StatelessWidget {
             Dot(color: color, size: 6),
             const SizedBox(width: 5),
             Text(
-              pct == null
-                  ? formatContextTokens(tokens)
-                  : '${formatContextTokens(tokens)} ($pct%)',
+              info.label,
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w500,
@@ -64,6 +83,31 @@ class ContextBadge extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The same figure as plain inline text, for a Task list row.
+class ContextLabel extends StatelessWidget {
+  final Json? context;
+  const ContextLabel({super.key, this.context});
+  @override
+  Widget build(BuildContext widgetContext) {
+    final info = contextInfo(context);
+    if (info == null) return const SizedBox.shrink();
+    return Tooltip(
+      message: info.title,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Dot(color: info.color, size: 5),
+          const SizedBox(width: 4),
+          Text(
+            info.label,
+            style: TextStyle(fontSize: 10.5, color: info.color),
+          ),
+        ],
       ),
     );
   }

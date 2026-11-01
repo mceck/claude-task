@@ -465,7 +465,7 @@ class TaskDetails extends StatelessWidget {
                   _Property(
                     label: 'Context',
                     icon: Icons.donut_large_outlined,
-                    value: ContextBadge(session: c.session),
+                    value: ContextBadge(context: c.session?['context']),
                   ),
                 _Property(
                   label: 'Assignees',

@@ -15,6 +15,7 @@ import 'schedules_page.dart';
 import 'task_forms.dart';
 import 'settings.dart';
 import 'wiki.dart';
+import 'ui/context_badge.dart';
 import 'ui/theme.dart';
 import 'ui/project_logo.dart';
 import 'ui/widgets.dart';
@@ -2198,6 +2199,10 @@ class _TaskRow extends StatelessWidget {
                             queuePosition: task.queuePosition,
                             size: 18,
                           ),
+                        ],
+                        if (task.sessionContext != null) ...[
+                          const SizedBox(width: 8),
+                          ContextLabel(context: task.sessionContext),
                         ],
                         if (task.commentCount > 0) ...[
                           const SizedBox(width: 8),
