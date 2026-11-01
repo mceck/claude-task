@@ -308,7 +308,7 @@ describe('Git integration through the public API', () => {
     await client.close();
   });
 
-  it('merges the open PR from the task with one call, advances the status, refuses drafts and provider refusals, and records who merged', async () => {
+  it('merges the open PR from the task with one call, leaves the status alone, refuses drafts and provider refusals, and records who merged', async () => {
     const { admin, bundle, task, start } = await running();
     app.git.branches.get('1')!.add(start.git!.taskBranch);
     const client = await clientFor(start);
@@ -319,8 +319,10 @@ describe('Git integration through the public API', () => {
     remote.draft = false;
     await app.server.ctx.gitSync.refreshTask(task.id, 0);
     const review = statusByName(bundle, 'Ready for Review');
-    const done = statusByName(bundle, 'Done');
     await moveToStatus(admin, task.id, review.id);
+    const statusChanges = async () =>
+      (await timeline(admin, task.id)).filter((i) => i.type === 'revision' && i.revision.changes.some((c) => c.field === 'statusId')).length;
+    const beforeMerge = await statusChanges();
     app.git.mergeRefusal = 'conflicts';
     const refused = await admin.post(`/tasks/${task.id}/pull-request/merge`, {});
     expect(refused.status).toBe(409);
@@ -330,47 +332,21 @@ describe('Git integration through the public API', () => {
     const merged = await admin.post(`/tasks/${task.id}/pull-request/merge`, {});
     expect(merged.status).toBe(200);
     expect(merged.body.task.pullRequest).toMatchObject({ number: 1, state: 'merged' });
-    expect(merged.body.task.statusId).toBe(done.id);
+    expect(merged.body.task.statusId).toBe(review.id);
     expect(remote.state).toBe('merged');
     const items = await timeline(admin, task.id);
     expect(items.some((i) => i.type === 'revision' && i.revision.actor.type === 'user' && i.revision.changes[0]?.field === 'pullRequest')).toBe(true);
-    expect(
-      items.some(
-        (i) =>
-          i.type === 'revision' &&
-          i.revision.actor.type === 'user' &&
-          i.revision.changes.some((c) => c.field === 'statusId' && c.before === review.id && c.after === done.id),
-      ),
-    ).toBe(true);
+    expect(await statusChanges()).toBe(beforeMerge);
     expect(items.some((i) => i.type === 'comment' && i.comment.body.includes('merged by'))).toBe(true);
     expect((await admin.post(`/tasks/${task.id}/pull-request/merge`, {})).status).toBe(409);
     // A merged PR frees the slot: the next open_pull_request creates a new one.
     expect(JSON.parse((await callPR(client)).text).number).toBe(2);
-    // Done has no later non-closed Status: the Task stays in Done and its Session stays open.
+    // Merging again leaves the Task where it is and its Session stays open.
     const again = await admin.post(`/tasks/${task.id}/pull-request/merge`, {});
     expect(again.status).toBe(200);
-    expect(again.body.task.statusId).toBe(done.id);
+    expect(again.body.task.statusId).toBe(review.id);
     expect((await getSession(admin, task.id))!.state).toBe('running');
     await client.close();
-  });
-
-  it('keeps a closed task closed when its open PR is merged', async () => {
-    const { admin, bundle, runner, task, start } = await running();
-    app.git.branches.get('1')!.add(start.git!.taskBranch);
-    const client = await clientFor(start);
-    await callPR(client);
-    await client.close();
-    await runner.play(start.jobId, [new Stream().result()]);
-    await runner.exit(start.jobId);
-    const closed = statusByName(bundle, 'Closed');
-    const others = bundle.statuses.filter((s) => s.id !== closed.id).map((s) => s.id);
-    // Closed is reorderable: put it before a non-closed Status so the "next" one is reachable.
-    expect((await admin.put(`/projects/${bundle.project.id}/statuses/order`, { statusIds: [closed.id, ...others] })).status).toBe(200);
-    await moveToStatus(admin, task.id, closed.id);
-    const merged = await admin.post(`/tasks/${task.id}/pull-request/merge`, {});
-    expect(merged.status).toBe(200);
-    expect(merged.body.task.statusId).toBe(closed.id);
-    expect((await getSession(admin, task.id))!.state).toBe('closed');
   });
 
   it('refreshes PR state on opening a task and broadcasts card changes without moving status or ending the session', async () => {

@@ -93,7 +93,7 @@ Type `/` to see the Agent's available commands and Skills, including the ones th
 
 ## Review code changes
 
-The Task's details show its branch and Pull Request when available. For an open, non-draft Pull Request, use the merge action after checking the changes. The app asks you to confirm **Merge** and applies the code host's own review and check requirements. The merge advances the Task to the next Status when there is one, and never closes the Task. See [Git repositories and pull requests](git-repositories.md#review-and-merge-changes) for web and native controls.
+The Task's details show its branch and Pull Request when available. For an open, non-draft Pull Request, use the merge action after checking the changes. The app asks you to confirm **Merge** and applies the code host's own review and check requirements. The merge leaves the Task's Status unchanged and never closes the Task. See [Git repositories and pull requests](git-repositories.md#review-and-merge-changes) for web and native controls.
 
 ## Delete a Task
 
