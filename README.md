@@ -47,6 +47,8 @@ On a fresh Amazon Linux EC2 instance, clone the repo and run `scripts/deploy.sh`
 
 A single production image serves the API, the WebSocket and the built frontend; Postgres runs alongside. An optional voice relay (TURN) can be added with `docker compose --profile turn up` by setting `VOICE_TURN_HOST`, `VOICE_TURN_SECRET` and `VOICE_TURN_EXTERNAL_IP`.
 
+The container exposes `GET /health` for orchestration: it needs no Login and answers `503` while the database is unreachable. `docker-compose.yml` uses it as the app's healthcheck.
+
 ## Testing
 
 - `pnpm test` — backend suite (Vitest against real Postgres, with a fake runner that replays recorded stream-json fixtures).

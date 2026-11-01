@@ -87,6 +87,13 @@ services:
       AGENT_STOP_WHEN_UNUSED: ${AGENT_STOP_WHEN_UNUSED:-true}
       AGENT_WIKI_IDLE_MINUTES: ${AGENT_WIKI_IDLE_MINUTES:-30}
     stop_grace_period: 30s
+    healthcheck:
+      # The backend answers 503 while its database is unreachable.
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:3000/health >/dev/null || exit 1']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
     group_add:
       - ${DOCKER_GID:-0}
     networks: [default, agents]
