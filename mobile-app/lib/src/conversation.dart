@@ -2522,7 +2522,10 @@ class _ActivityState extends State<_Activity> {
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
+    // Thinking is an entry of the group: its reasoning is the output.
+    final thinking = item['name'] == 'Thinking';
     final (icon, color) = switch (item['status']) {
+      _ when thinking => (Icons.psychology_outlined, Palette.agent),
       'ok' => (Icons.check_rounded, Palette.success),
       'error' => (Icons.close_rounded, Palette.danger),
       _ => (Icons.more_horiz_rounded, Palette.warning),
@@ -2561,7 +2564,7 @@ class _ActivityState extends State<_Activity> {
                           color: Palette.fg,
                         ),
                       ),
-                      TextSpan(text: '  ${item['summary']}'),
+                      if (!thinking) TextSpan(text: '  ${item['summary']}'),
                       if (item['outcome'] != null)
                         TextSpan(
                           text: '  · ${item['outcome']}',
@@ -2589,9 +2592,11 @@ class _ActivityState extends State<_Activity> {
               border: Border.all(color: Palette.border),
             ),
             child: SelectableText(
-              '${item['input']}\n${item['output'] ?? ''}',
-              style: const TextStyle(
-                fontFamily: mono,
+              thinking
+                  ? '${item['output'] ?? ''}'
+                  : '${item['input']}\n${item['output'] ?? ''}',
+              style: TextStyle(
+                fontFamily: thinking ? null : mono,
                 fontSize: 11.5,
                 height: 1.5,
                 color: Palette.fgMuted,
