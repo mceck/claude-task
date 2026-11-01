@@ -243,6 +243,8 @@ export interface PromptInput {
   projectInstructions: string;
   agentPrompt: string;
   services: AgentService[];
+  /** The Project's Agents may act on every Task of the Project, not only on their own. */
+  boardWriteAccess: boolean;
   /** The Task is a Scheduled Run: nobody answers, and a global Schedule's Agent also has the global tools. */
   schedule?: { global: boolean; readOnly: boolean } | null;
 }
@@ -266,7 +268,9 @@ export function systemPrompt(p: PromptInput): string {
     '- `get_task`: read your task (or another task of the project by key): fields, statuses, tags and comments.',
     '- `update_task`: change your task\'s title, description, priority or tags (e.g. tick checklist items).',
     '- `set_status`: move your task to another status to signal progress. Closed statuses are for humans.',
-    '- `list_tasks`: list the project\'s tasks.',
+    '- `list_tasks`: filter the project\'s tasks, and search their titles, descriptions and keys.',
+    '- `search_comments`: search the comments of the project, including past tasks and decisions.',
+    '- `read_comments`: read the conversation around a comment you found.',
     '- `create_task`: report an out-of-scope issue as a new, unassigned task.',
     '- `send_files`: post files from your container (screenshots, reports) to the conversation.',
     ...(p.schedule
@@ -275,6 +279,17 @@ export function systemPrompt(p: PromptInput): string {
           '- `ask_question`: ask a multiple-choice question; the first answer decides.',
           '- `create_survey`: collect answers from every assignee. Only when a human explicitly asks for a survey or for several people\'s opinions.',
         ]),
+    '- The `claude-task` skill (also `/claude-task`) is the playbook for searching the project, working the board, coordinating agents and moving around your container; invoke it when you need the details.',
+    ...(p.boardWriteAccess
+      ? [
+          '',
+          'Board Write Access is on for this project, so these tools act on any task of it:',
+          '- `update_task_by_key` and `set_task_status`: edit or move any task. Closed tasks and closed statuses are for humans.',
+          '- `comment_on_task`: write in another task\'s conversation; the agent working on it receives your message.',
+          '- `list_agents`: the enabled agents with their state, current task and queue length.',
+          '- `start_agent`: assign an agent to an unassigned task and send it your opening message; it starts or queues. At most 3 starts per job.',
+        ]
+      : []),
   ];
   if (p.schedule?.global) {
     platform.push(

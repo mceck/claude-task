@@ -19,6 +19,7 @@ import type { Executor } from '../../db/client';
 import { agentBuilds, agents, credentials, jobs, projects, queueEntries, sessions } from '../../db/schema';
 import { badRequest, conflict, notFound, parse } from '../../errors';
 import { latestRateLimits } from '../credentials/service';
+import { withDefaultSkills } from '../extensions/platform-skill';
 import { getTaskRow, unassignDeletedAgent } from '../tasks/service';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { retrySession, stopTurn } from '../../sessions/lifecycle';
@@ -71,7 +72,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { skillIds, mcpServerIds, pluginIds, ...fields } = body;
     const row = await ctx.db.transaction(async (tx) => {
       const [created] = await tx.insert(agents).values(fields).returning();
-      await setAssignments(tx, created!.id, { skillIds, mcpServerIds, pluginIds });
+      await setAssignments(tx, created!.id, { skillIds: await withDefaultSkills(tx, skillIds), mcpServerIds, pluginIds });
       return created!;
     });
     ctx.scheduler.build(row.id);

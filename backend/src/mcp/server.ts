@@ -3,19 +3,21 @@ import { GitProviderError } from '../git/provider';
 // Task Tools: the MCP server (Streamable HTTP, stateless) an Agent's `claude` reaches with its
 // Job token. Every mutation is a Revision attributed to the Agent.
 import { ATTACHMENT_MAX_FILES, CATEGORIES, PRIORITIES, QUESTION_LIMITS, taskKey } from '@claude-task/shared';
-import type { Actor, QuestionItem, QuestionKind } from '@claude-task/shared';
+import type { Actor, Category, QuestionItem, QuestionKind } from '@claude-task/shared';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { transact } from '../context';
 import type { AppContext } from '../context';
 import type { Executor } from '../db/client';
-import { agents, comments, jobs, tags, projects, schedules, sessions, statuses, tasks } from '../db/schema';
+import { agents, comments, jobs, tags, projects, schedules, sessions, statuses, tasks, users } from '../db/schema';
 import { badRequest, fromDatabaseError, HttpError, unauthorized } from '../errors';
 import { actorResolver, SYSTEM_ACTOR } from '../modules/actors';
-import { ACTIVE_JOB_STATES } from '../modules/agents/service';
+import { ACTIVE_JOB_STATES, loadAgents } from '../modules/agents/service';
+import { readComments, searchComments } from '../modules/search/comments';
+import { deliverComment } from '../sessions/lifecycle';
 import { createTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from '../modules/tasks/service';
 import { assertBoardTask } from '../modules/projects/service';
 import { createAgentComment, createUserComment } from '../modules/comments/service';
@@ -30,6 +32,9 @@ interface JobScope {
   taskId: string;
   sessionId: string;
   projectId: string;
+  projectKind: string;
+  /** The Project lets its Agents act on every Task of the Project. */
+  boardWriteAccess: boolean;
   actor: Actor;
   /** The Job belongs to a Scheduled Run: `global` when its Schedule has no Repository. */
   schedule: { global: boolean } | null;
@@ -65,7 +70,15 @@ async function jobScope(ctx: AppContext, request: FastifyRequest): Promise<JobSc
   const token = /^Bearer (.+)$/.exec(request.headers.authorization ?? '')?.[1];
   if (!token) throw unauthorized('Missing job token');
   const [row] = await ctx.db
-    .select({ job: jobs, agentName: agents.name, projectId: tasks.projectId, scheduleId: schedules.id, repository: projects.repository })
+    .select({
+      job: jobs,
+      agentName: agents.name,
+      projectId: tasks.projectId,
+      projectKind: projects.kind,
+      boardWriteAccess: projects.boardWriteAccess,
+      scheduleId: schedules.id,
+      repository: projects.repository,
+    })
     .from(jobs)
     .innerJoin(agents, eq(agents.id, jobs.agentId))
     .innerJoin(tasks, eq(tasks.id, jobs.taskId))
@@ -82,6 +95,8 @@ async function jobScope(ctx: AppContext, request: FastifyRequest): Promise<JobSc
     taskId: row.job.taskId,
     sessionId: row.job.sessionId,
     projectId: row.projectId,
+    projectKind: row.projectKind,
+    boardWriteAccess: row.boardWriteAccess,
     actor: { type: 'agent', id: row.job.agentId, displayName: row.agentName },
     schedule: row.scheduleId ? { global: !row.repository } : null,
   };
@@ -118,16 +133,49 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
   server.registerTool(
     'list_tasks',
     {
-      description: "List tasks of your project (summary fields only). Closed tasks are left out unless you ask for status_category 'closed'.",
+      description:
+        'List tasks of your project (summary fields only). `text` matches the title, the description or the task key: it is split into words and every word must appear somewhere in the task. Closed tasks are left out unless you ask for `status_category` `closed`.',
       inputSchema: {
         ...(scope.schedule?.global ? { project: z.string().optional().describe('Project key; defaults to the project of your own task') } : {}),
         status_category: z.enum(CATEGORIES).optional(),
         tag: z.string().optional().describe('Label name'),
-        text: z.string().optional().describe('Matches title or key'),
+        assignee: z.string().optional().describe("A User's display name, or `none` for tasks without assignees"),
+        priority: z.enum(PRIORITIES).optional(),
+        updated_since: z.string().optional().describe('Only tasks changed since this ISO 8601 date-time'),
+        text: z.string().max(200).optional().describe('Words to look for in the title, description or key'),
         limit: z.number().int().min(1).max(200).optional(),
       },
     },
     (args) => run(() => listTasks(ctx, scope, args as Parameters<typeof listTasks>[2])),
+  );
+
+  server.registerTool(
+    'search_comments',
+    {
+      description:
+        "Search the comments of your project's tasks. The query is split into words and every word must appear in the same comment; matching is case-insensitive, without accent folding. Internal notes and deleted comments are never included. Closed tasks are left out unless you ask for `status_category` `closed`. Returns short snippets with the ids to read around them with `read_comments`.",
+      inputSchema: {
+        ...(scope.schedule?.global ? { project: z.string().optional().describe('Project key; defaults to the project of your own task') } : {}),
+        query: z.string().trim().min(2).max(200),
+        status_category: z.enum(CATEGORIES).optional().describe('Only comments on tasks in this category; closed tasks are excluded by default'),
+        limit: z.number().int().min(1).max(50).optional().describe('Maximum number of hits (default 20)'),
+      },
+    },
+    (args) => run(() => searchProjectComments(ctx, scope, args)),
+  );
+
+  server.registerTool(
+    'read_comments',
+    {
+      description:
+        'Read the conversation around one comment: the `before` comments before it and the `after` comments after it, in chronological order, with whether there are more on each side. Internal notes and deleted comments are never included.',
+      inputSchema: {
+        comment_id: z.string().min(1),
+        before: z.number().int().min(0).max(25).optional().describe('Comments to return before it (default 10)'),
+        after: z.number().int().min(0).max(25).optional().describe('Comments to return after it (default 10)'),
+      },
+    },
+    (args) => run(() => readTaskComments(ctx, scope, args)),
   );
 
   server.registerTool(
@@ -203,6 +251,7 @@ function buildServer(ctx: AppContext, scope: JobScope): McpServer {
   );
   }
   if (scope.schedule?.global) registerGlobalTools(server, ctx, scope);
+  if (scope.boardWriteAccess && scope.projectKind === 'project' && !scope.schedule) registerBoardWriteTools(server, ctx, scope);
 
   server.registerTool('open_pull_request', {
     description: 'Open or update a pull request (a merge request on GitLab) from your task branch. Commit and push the branch first. Never changes the task status.',
@@ -293,7 +342,20 @@ async function getTask(ctx: AppContext, scope: JobScope, key: string | undefined
   };
 }
 
-async function listTasks(ctx: AppContext, scope: JobScope, args: { project?: string; status_category?: string; tag?: string; text?: string; limit?: number }) {
+async function listTasks(
+  ctx: AppContext,
+  scope: JobScope,
+  args: {
+    project?: string;
+    status_category?: Category;
+    tag?: string;
+    assignee?: string;
+    priority?: (typeof PRIORITIES)[number];
+    updated_since?: string;
+    text?: string;
+    limit?: number;
+  },
+) {
   let projectId = scope.projectId;
   if (args.project && scope.schedule?.global) {
     const [project] = await ctx.db.select().from(projects).where(eq(projects.key, args.project.trim().toUpperCase()));
@@ -304,10 +366,18 @@ async function listTasks(ctx: AppContext, scope: JobScope, args: { project?: str
   const tagRows = await ctx.db.select().from(tags).where(eq(tags.projectId, projectId));
   const tag = args.tag ? tagRows.find((l) => l.name.toLowerCase() === args.tag!.toLowerCase()) : undefined;
   if (args.tag && !tag) throw badRequest(`No tag named "${args.tag}" in the project`);
+  const assigneeIds = args.assignee ? await userIdsByDisplayName(ctx, args.assignee) : [];
+  let updatedSince: Date | undefined;
+  if (args.updated_since) {
+    updatedSince = new Date(args.updated_since);
+    if (Number.isNaN(updatedSince.getTime())) throw badRequest('updated_since must be an ISO 8601 date-time');
+  }
   const cards = await loadCards(ctx.db, {
     projectId,
     includeClosed: args.status_category === 'closed',
-    filter: { assignees: [], tags: tag ? [tag.id] : [], priorities: [], text: args.text ?? '' },
+    search: args.text,
+    updatedSince,
+    filter: { assignees: assigneeIds, tags: tag ? [tag.id] : [], priorities: args.priority ? [args.priority] : [], text: '' },
   });
   const status = (id: string) => statusRows.find((s) => s.id === id);
   return {
@@ -631,4 +701,278 @@ async function startAnyTask(ctx: AppContext, scope: JobScope, key: string, promp
     return createUserComment(tx, after, current, { body: prompt, internal: false, attachments: [] }, SYSTEM_ACTOR);
   });
   return { started: key, comment: comment.id, next: 'The task runs in its own session once you are free; read it later with get_task.' };
+}
+
+// Comment search and reading: the two tools every Job gets, plus the helpers they share.
+
+/** User ids for a display name in any letter case, or `none` for Tasks without Assignees. */
+async function userIdsByDisplayName(ctx: AppContext, name: string): Promise<string[]> {
+  if (name.trim().toLowerCase() === 'none') return ['none'];
+  const matches = await ctx.db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.displayName}) = ${name.trim().toLowerCase()}`);
+  if (matches.length === 0) {
+    const all = await ctx.db
+      .select({ name: users.displayName })
+      .from(users)
+      .where(eq(users.active, true))
+      .orderBy(asc(users.displayName));
+    throw badRequest(`No user named "${name}". Available: ${all.map((u) => u.name).join(', ') || 'none'}`);
+  }
+  return matches.map((u) => u.id);
+}
+
+async function searchProjectComments(
+  ctx: AppContext,
+  scope: JobScope,
+  args: { project?: string; query: string; status_category?: Category; limit?: number },
+) {
+  let projectId = scope.projectId;
+  if (args.project && scope.schedule?.global) {
+    const [project] = await ctx.db.select().from(projects).where(eq(projects.key, args.project.trim().toUpperCase()));
+    if (!project || project.kind !== 'project' || project.archivedAt) throw badRequest(`No project ${args.project}`);
+    projectId = project.id;
+  }
+  const limit = args.limit ?? 20;
+  const hits = await searchComments(ctx.db, {
+    projectId,
+    query: args.query,
+    statusCategory: args.status_category,
+    limit,
+  });
+  return { hits, truncated: hits.length >= limit };
+}
+
+async function readTaskComments(ctx: AppContext, scope: JobScope, args: { comment_id: string; before?: number; after?: number }) {
+  const window = await readComments(ctx.db, {
+    commentId: args.comment_id,
+    before: args.before ?? 10,
+    after: args.after ?? 10,
+  });
+  if (!window) throw badRequest('No such comment, or it is internal or deleted.');
+  if (scope.schedule?.global) await assertOrdinaryProject(ctx.db, window.projectId, args.comment_id);
+  else if (window.projectId !== scope.projectId) throw badRequest('That comment is not in your project.');
+  return {
+    task: window.task,
+    comments: window.comments,
+    hasMoreBefore: window.hasMoreBefore,
+    hasMoreAfter: window.hasMoreAfter,
+  };
+}
+
+// Board Write Access: the extra Task Tools of a Project that lets its Agents act on every Task.
+
+const STARTS_PER_JOB = 3;
+
+function registerBoardWriteTools(server: McpServer, ctx: AppContext, scope: JobScope): void {
+  server.registerTool(
+    'update_task_by_key',
+    {
+      description:
+        'Update any task of your project: title, description, priority or tags (tag names must exist in the project; the list replaces the current tags). Closed tasks cannot be edited.',
+      inputSchema: {
+        key: z.string().min(1),
+        title: z.string().trim().min(1).max(500).optional(),
+        description: z.string().max(100_000).optional(),
+        priority: z.enum(PRIORITIES).optional(),
+        tags: z.array(z.string()).max(50).optional(),
+      },
+    },
+    (args) => run(() => updateTaskInProject(ctx, scope, args)),
+  );
+  server.registerTool(
+    'set_task_status',
+    {
+      description: 'Move any task of your project to another status by name. Closed statuses are for humans.',
+      inputSchema: { key: z.string().min(1), status_name: z.string().min(1) },
+    },
+    ({ key, status_name }) => run(() => setStatusInProject(ctx, scope, key, status_name)),
+  );
+  server.registerTool(
+    'comment_on_task',
+    {
+      description:
+        "Write an Agent Comment in another task's conversation. It is delivered to the agent working on that task, mid-turn when it is running there and queued otherwise; the agent sees you as the author. It does not notify people. Closed tasks and your own task are refused.",
+      inputSchema: { key: z.string().min(1), body: z.string().trim().min(1).max(100_000) },
+    },
+    (args) => run(() => commentOnTask(ctx, scope, args)),
+  );
+  server.registerTool(
+    'start_agent',
+    {
+      description:
+        'Assign an agent to a task of your project and send it your opening message, starting its session (or queueing the message when it is already working). The task must be unassigned or already assigned to that agent; it cannot be your own task. At most 3 starts per job.',
+      inputSchema: {
+        key: z.string().min(1),
+        agent: z.string().trim().min(1).max(64).describe("The agent's name, case-insensitive"),
+        prompt: z.string().trim().min(1).max(100_000).describe('The opening message: what to do, what done looks like'),
+      },
+    },
+    (args) => run(() => startAgent(ctx, scope, args)),
+  );
+  server.registerTool(
+    'list_agents',
+    {
+      description:
+        'List the enabled agents with their description, state, current task and queue length, so you can pick a free and suitable one.',
+      inputSchema: {},
+    },
+    () => run(() => listAgentsTool(ctx)),
+  );
+}
+
+/** A `closed`-category Status is out of reach for the Project's Agent-side writes. */
+async function assertOpenTask(db: Executor, taskId: string): Promise<void> {
+  const [row] = await db
+    .select({ category: statuses.category })
+    .from(tasks)
+    .innerJoin(statuses, eq(statuses.id, tasks.statusId))
+    .where(eq(tasks.id, taskId));
+  if (!row) throw badRequest('No such task.');
+  if (row.category === 'closed') throw badRequest('This task is closed: closed tasks are for humans.');
+}
+
+async function updateTaskInProject(
+  ctx: AppContext,
+  scope: JobScope,
+  args: { key: string; title?: string; description?: string; priority?: (typeof PRIORITIES)[number]; tags?: string[] },
+) {
+  const row = await findTaskInProject(ctx.db, scope, args.key);
+  await assertOpenTask(ctx.db, row.id);
+  const task = await transact(ctx, async (tx, after) => {
+    const current = await getTaskRow(tx, row.id);
+    return updateTask(
+      tx,
+      after,
+      row.id,
+      {
+        version: current.version,
+        title: args.title,
+        description: args.description,
+        priority: args.priority,
+        tagIds: args.tags ? await tagIds(tx, row.projectId, args.tags) : undefined,
+      },
+      scope.actor,
+    );
+  });
+  return { updated: task.key, version: task.version };
+}
+
+async function setStatusInProject(ctx: AppContext, scope: JobScope, key: string, name: string) {
+  const row = await findTaskInProject(ctx.db, scope, key);
+  await assertOpenTask(ctx.db, row.id);
+  const all = await ctx.db.select().from(statuses).where(eq(statuses.projectId, row.projectId));
+  const status = all.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
+  if (!status) throw badRequest(`No status named "${name}". Available: ${all.map((s) => s.name).join(', ')}`);
+  if (status.category === 'closed') throw badRequest(`"${status.name}" is a closed status; only humans can close tasks.`);
+  const task = await transact(ctx, (tx, after) => moveTask(tx, after, row.id, { statusId: status.id }, scope.actor));
+  return { moved: task.key, status: status.name };
+}
+
+async function commentOnTask(ctx: AppContext, scope: JobScope, args: { key: string; body: string }) {
+  const row = await findTaskInProject(ctx.db, scope, args.key);
+  if (row.id === scope.taskId) throw badRequest('That is your own task: your text already goes there.');
+  await assertOpenTask(ctx.db, row.id);
+  const id = await transact(ctx, async (tx, after) => {
+    const [job] = await tx
+      .select({ id: jobs.id })
+      .from(jobs)
+      .innerJoin(sessions, eq(sessions.id, jobs.sessionId))
+      .where(and(eq(jobs.id, scope.jobId), activeJobCondition));
+    if (!job) throw unauthorized('Your job ended before the comment could be posted');
+    const commentId = await createAgentComment(tx, after, {
+      taskId: row.id,
+      agentId: scope.agentId,
+      jobId: scope.jobId,
+      body: args.body,
+      attachments: [],
+    });
+    const [comment] = await tx.select().from(comments).where(eq(comments.id, commentId));
+    await deliverComment(tx, after, { id: row.id }, comment!);
+    return commentId;
+  });
+  return { posted: id, task: args.key };
+}
+
+async function startAgent(
+  ctx: AppContext,
+  scope: JobScope,
+  args: { key: string; agent: string; prompt: string },
+) {
+  const row = await findTaskInProject(ctx.db, scope, args.key);
+  if (row.id === scope.taskId) throw badRequest('That is your own task: work on it directly.');
+  await assertOpenTask(ctx.db, row.id);
+  const [agent] = await ctx.db
+    .select()
+    .from(agents)
+    .where(sql`lower(${agents.name}) = ${args.agent.trim().toLowerCase()}`);
+  if (!agent) {
+    const all = await ctx.db
+      .select({ name: agents.name })
+      .from(agents)
+      .where(eq(agents.enabled, true))
+      .orderBy(asc(agents.name));
+    throw badRequest(`No agent named "${args.agent}". Available: ${all.map((a) => a.name).join(', ') || 'none'}`);
+  }
+  if (!agent.enabled) throw badRequest(`${agent.name} is disabled.`);
+  if (agent.id === scope.agentId) throw badRequest('That is you: start another agent, or do the work on your own task.');
+  if (row.agentId && row.agentId !== agent.id) {
+    const [other] = await ctx.db.select({ name: agents.name }).from(agents).where(eq(agents.id, row.agentId));
+    throw badRequest(`${args.key} is assigned to ${other?.name ?? 'another agent'}.`);
+  }
+  return transact(ctx, async (tx, after) => {
+    // Starts of one Job are serialized, so two parallel calls cannot both pass the cap.
+    const [job] = await tx.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, scope.jobId)).for('update');
+    const [active] = job
+      ? await tx
+          .select({ id: jobs.id })
+          .from(jobs)
+          .innerJoin(sessions, eq(sessions.id, jobs.sessionId))
+          .where(and(eq(jobs.id, scope.jobId), activeJobCondition))
+      : [];
+    if (!active) throw unauthorized('Your job ended before the agent could be started');
+    const [started] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(comments)
+      .where(and(eq(comments.jobId, scope.jobId), isNotNull(comments.startedAgentId)));
+    if ((started?.n ?? 0) >= STARTS_PER_JOB)
+      throw badRequest(`You have started ${STARTS_PER_JOB} agents in this job. Finish your own work, or report why the rest is blocked.`);
+    const current = await getTaskRow(tx, row.id, { lock: true });
+    await assertOpenTask(tx, current.id);
+    if (current.agentId && current.agentId !== agent.id) throw badRequest(`${args.key} is assigned to another agent.`);
+    if (!current.agentId) await updateTask(tx, after, current.id, { version: current.version, agentId: agent.id }, scope.actor);
+    const [session] = await tx
+      .select()
+      .from(sessions)
+      .where(and(eq(sessions.taskId, current.id), eq(sessions.agentId, agent.id)));
+    const startsSession = !!session && !session.started && session.state !== 'closed' && session.state !== 'paused';
+    const commentId = await createAgentComment(tx, after, {
+      taskId: current.id,
+      agentId: scope.agentId,
+      jobId: scope.jobId,
+      body: args.prompt,
+      attachments: [],
+    });
+    if (startsSession) await tx.update(comments).set({ startedAgentId: agent.id }).where(eq(comments.id, commentId));
+    const [comment] = await tx.select().from(comments).where(eq(comments.id, commentId));
+    await deliverComment(tx, after, { id: current.id }, comment!);
+    return { started: args.key, agent: agent.name, comment: commentId, sessionStarted: startsSession };
+  });
+}
+
+async function listAgentsTool(ctx: AppContext) {
+  const all = await loadAgents(ctx.db, (id) => ctx.runners.isReady(id));
+  return {
+    agents: all
+      .filter((agent) => agent.enabled)
+      .sort((a, b) => a.queueLength - b.queueLength || a.name.localeCompare(b.name))
+      .map((agent) => ({
+        name: agent.name,
+        description: agent.description,
+        state: agent.state,
+        currentTask: agent.currentTask ? { key: agent.currentTask.key, title: agent.currentTask.title } : null,
+        queueLength: agent.queueLength,
+      })),
+  };
 }

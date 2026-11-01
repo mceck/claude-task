@@ -23,6 +23,7 @@ import { badRequest, conflict, notFound } from '../../errors';
 import { actorResolver } from '../actors';
 import { UUID } from '../../ids';
 import { ACTIVE_JOB_STATES } from '../agents/service';
+import { likePattern, searchWords } from '../search/text';
 
 export type TaskRow = typeof tasks.$inferSelect;
 
@@ -63,6 +64,10 @@ export interface CardQuery {
   taskIds?: string[];
   filter?: BoardFilter;
   includeClosed?: boolean;
+  /** Words that must all appear in the title, the description or the Task Key (Task Tools search). */
+  search?: string;
+  /** Only Tasks changed since then (Task Tools filter). */
+  updatedSince?: Date;
 }
 
 /** The Board projection of Tasks, in Board order (status, then position). */
@@ -101,6 +106,20 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
       where.push(sql`(t.title ilike ${pattern} or (p.key || '-' || t.number) ilike ${pattern})`);
     }
   }
+  // Task Tools search: words, not phrases, over the title, the description and the Task Key.
+  const words = q.search?.trim() ? searchWords(q.search) : [];
+  if (words.length > 0) {
+    where.push(
+      sql`(${sql.join(
+        words.map((word) => {
+          const pattern = likePattern(word);
+          return sql`(lower(t.title) like ${pattern} escape '!' or lower(t.description) like ${pattern} escape '!' or lower(p.key || '-' || t.number) like ${pattern} escape '!')`;
+        }),
+        sql` and `,
+      )})`,
+    );
+  }
+  if (q.updatedSince) where.push(sql`t.updated_at >= ${q.updatedSince}`);
 
   const result = await db.execute<CardRow>(sql`
     select t.id, t.project_id, p.key as project_key, t.number, t.title, t.status_id, t.priority,

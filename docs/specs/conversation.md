@@ -6,12 +6,12 @@ The conversation is the human side of a Task's Timeline: the Comments Users writ
 
 - A **Comment** is an entry in a Task's conversation. Every Comment has a kind:
   - `user`: written by a User through the app, as a Comment or as an Internal Note.
-  - `agent`: an **Agent Comment**, written by an Agent during a Turn. Its text is projected from the Agent's stream; files, Questions and Surveys are posted through the Task Tools (see [Agent sessions](agent-sessions.md)).
+  - `agent`: an **Agent Comment**, written by an Agent during a Turn. Its text is projected from the Agent's stream; files, Questions, Surveys and comments written in another Task are posted through the Task Tools (see [Agent sessions](agent-sessions.md)). A comment another Agent writes in a Task of a Project with Board Write Access is delivered to that Task's Agent like a User Comment.
   - `system`: a **System Comment** written by the platform, such as errors, resumes after a restart, and the notice that a User notified the Agent of Task changes.
 - An **Internal Note** is a User Comment flagged as internal when it is posted. It is shown to every User and delivered to no Agent.
 - An **Attachment** is a file a User uploads or an Agent posts. A Comment carries up to 10 of them. Files uploaded from the Task description editor are Attachments of the Task itself rather than of a Comment.
 - A **Message** is what the Agent receives: one or more Comments merged together, or a system notice. Users write Comments; the platform turns them into Messages.
-- **Delivery** is the state of a User Comment towards the Agent: queued, delivered, handled (the Turn that read it has ended), or not delivered with a reason.
+- **Delivery** is the state of a Comment towards the Agent: queued, delivered, handled (the Turn that read it has ended), or not delivered with a reason. It applies to User Comments and to the few platform-written Comments that are Messages, including an Agent Comment another Agent wrote through its Task Tools.
 - A **Scheduled Message** is a Comment a User writes ahead of time for a chosen date and time. It stays off the Timeline until it is due, then is published as an ordinary Comment.
 - A **Limit Resume** is a Scheduled Message the platform creates when a Turn stops at a usage limit that reports its reset time (see [Agent sessions](agent-sessions.md#usage-limits-and-limit-resume)).
 - A **Question** is an Agent Comment asking Users to choose among options. The first User who answers closes it, and the answer reaches the Agent as a Message.
@@ -151,7 +151,7 @@ stateDiagram-v2
 
 ### Delivery to the Agent
 
-Every User Comment that is not an Internal Note gets a Delivery as soon as the Task has, or has had, an Agent Session. The state is shown on the Comment as a small badge, and changes live:
+Every Comment that is not an Internal Note gets a Delivery as soon as the Task has, or has had, an Agent Session: a User Comment, a Notify agent notice, a Survey result, and an Agent Comment written by another Agent through its Task Tools. The state is shown on the Comment as a small badge, and changes live:
 
 | State | Badge | Meaning |
 | --- | --- | --- |
@@ -159,7 +159,7 @@ Every User Comment that is not an Internal Note gets a Delivery as soon as the T
 | delivered | check, "Delivered" | Written to the Agent's running Turn, or included in the Message that started a Job. |
 | not delivered | slashed circle, "Not delivered" | The Agent will never receive it. The reason appears on hover. |
 
-Comments without a badge are Internal Notes, Agent Comments, System Comments other than Notify agent notices and Survey results, and Comments on a Task that never had an Agent.
+Comments without a badge are Internal Notes, an Agent's own output, System Comments other than Notify agent notices and Survey results, and Comments on a Task that never had an Agent. An Agent Comment written by another Agent into the Task carries one.
 
 The reasons for "not delivered" are:
 

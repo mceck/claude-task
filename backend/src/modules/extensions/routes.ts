@@ -65,9 +65,12 @@ export function extensionRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.delete('/skills/:id', admin, async (request, reply) => {
     const { id } = parse(params, request.params);
     await ctx.db.transaction(async (tx) => {
+      const [skill] = await tx.select({ source: skills.source }).from(skills).where(eq(skills.id, id));
+      if (!skill) throw notFound('Skill');
+      if (skill.source === 'platform') throw conflict('The platform skill cannot be deleted');
       const [assigned] = await tx.select().from(agentSkills).where(eq(agentSkills.skillId, id));
       if (assigned) throw conflict('Unassign this skill from all agents before deleting it');
-      if (!(await tx.delete(skills).where(eq(skills.id, id)).returning()).length) throw notFound('Skill');
+      await tx.delete(skills).where(eq(skills.id, id));
     });
     return reply.status(204).send();
   });

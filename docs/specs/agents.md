@@ -30,7 +30,7 @@ Agents are the platform's Claude Code workers. This area covers an **Agent** as 
 | Manage Credentials | Admins |
 | Manage the Extensions catalog and its MCP server list | Admins |
 | Read the Skills and Plugins catalogs | Every User |
-| Edit a Project's Setup Script, Agent Instructions and default Agent | Every User |
+| Edit a Project's Setup Script, Agent Instructions, default Agent and Board Write Access | Every User |
 | Add, change, import and delete a Project's environment variables, plain or secret | Admins |
 | Read a Project's environment variables (secret values appear as their last four characters) | Every User |
 
@@ -174,7 +174,7 @@ The Job's environment is the Project's variables, then the Agent's environment, 
 
 ### Project environment variables
 
-Every User can choose an optional default Agent while creating a Project in the web and native apps. The picker offers enabled Agents and No Agent. Each Project has an "Agents" settings section holding its default Agent (assigned to new Tasks, see [Board](board.md)), its Setup Script and Agent Instructions (editable by every User; their use is described in [Git integration](git-integration.md) and [Agent sessions](agent-sessions.md)) and its environment variables (managed by Admins).
+Every User can choose an optional default Agent while creating a Project in the web and native apps. The picker offers enabled Agents and No Agent. Each Project has an "Agents" settings section holding its default Agent (assigned to new Tasks, see [Board](board.md)), its Board Write Access switch (off by default, see [Agent sessions](agent-sessions.md#writing-to-the-board)), its Setup Script and Agent Instructions (editable by every User; their use is described in [Git integration](git-integration.md) and [Agent sessions](agent-sessions.md)) and its environment variables (managed by Admins).
 
 The Setup Script and Agent Instructions save automatically after 600 ms without edits, on leaving a field, or when switching settings tabs or navigating to another app view. Each save carries only the fields that changed. Saves run in order and include newer edits made during a request. The section shows saving, saved or failed state, preserves failed edits and offers Retry. Environment variables, secrets and imports use their own add, update, delete and import actions.
 
@@ -403,6 +403,8 @@ The catalog stores a snapshot of every imported file, executable scripts and bin
 
 Skill names are unique in the catalog. Importing a name that already came from another source is answered with `409`. **Reimport** fetches the same source again and updates the Skills in place, keeping their identity and assignments, and schedules a synchronization for every Agent they are assigned to.
 
+The platform also carries a **Platform Skill** named `claude-task`: the playbook for working a Task, covering how to search the Project and its Conversations, the Task Tools, the git handoff, and what lives where in the Agent's container. The backend seeds it into the catalog at startup under the source `platform`, so its files follow the platform version rather than an import someone remembered to run, and it belongs to every Agent by default: new Agents get it when they are created, and existing Agents get it once when it first appears in an upgrade. An Admin can unassign it from an Agent like any other Skill; the catalog answers its deletion with `409`. When its content changes, the Agents that have it synchronize their Skills again on their next idle moment.
+
 #### MCP servers
 
 An MCP server entry has a name (1 to 64 letters, digits, `_` or `-`, unique), a description and a transport:
@@ -549,6 +551,7 @@ Sessions, Jobs and Queue Entries belong to [Agent sessions](agent-sessions.md).
 
 ## Decisions
 
+- **The platform's own Skill is a catalog entry seeded by the backend.** Admins see it and can unassign it like any other Skill, which keeps one mental model and one synchronization path, while seeding from the backend makes its content follow the platform version. Its source is `platform`, its deletion is answered with `409`, and a content change bumps the extension revision of the Agents that have it, so their containers synchronize again. A reserved entry outside the catalog was rejected because it needs a second installation mechanism; an imported repository Skill was rejected because a fresh installation could not obtain it without network access and an Admin step.
 - **Stop local Agent Containers with the backend, preserving their volumes.** Local development releases CPU and memory when the backend exits, while production defaults to keeping Agents alive through backend restarts. An environment setting selects either lifecycle explicitly. Container selection follows the Installation's Agent records, so other Docker workloads keep their own lifecycle.
 
 - **Automatic saves for Agent settings, explicit application of Docker configuration.** Saving only edited fields keeps other Users' settings and Extension assignments intact, and serializing saves preserves the latest edits during slow requests. Dockerfile, Development Services and resource limits share an explicit action because applying them can build an image or recreate a container.

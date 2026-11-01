@@ -113,6 +113,8 @@ export const projects = pgTable(
     defaultAgentId: uuid('default_agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'set null' }),
     /** Copied to each new Task: a usage limit with a known reset time resumes it without asking. */
     autoResume: boolean('auto_resume').notNull().default(false),
+    /** The Project's Agents may act on every Task of the Project, not only on their own. */
+    boardWriteAccess: boolean('board_write_access').notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -254,6 +256,8 @@ export const comments = pgTable(
     jobId: uuid('job_id'),
     /** On the User Comment answering a Question: the Question's Comment. */
     answersCommentId: uuid('answers_comment_id').references((): AnyPgColumn => comments.id, { onDelete: 'set null' }),
+    /** On an Agent Comment that started another Agent's Session: the Agent it started. */
+    startedAgentId: uuid('started_agent_id').references(() => agents.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

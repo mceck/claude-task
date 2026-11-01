@@ -167,7 +167,7 @@ There are no per-Project permissions: every active User sees and works on every 
 | Area | Every User | Admins only |
 | --- | --- | --- |
 | Users | List all Users; change own password and avatar; view User avatars | Create Users, edit display name, role, active flag and any User's avatar, reset passwords |
-| Projects | Create, edit, archive, unarchive; manage Statuses and Tags; link the Repository; edit the Setup Script and Agent Instructions; read environment variables (secret values redacted) | Permanently delete an archived Project; create, import, overwrite and delete environment variables and secrets |
+| Projects | Create, edit, archive, unarchive; manage Statuses and Tags; link the Repository; edit the Setup Script and Agent Instructions; turn Board Write Access on or off; read environment variables (secret values redacted) | Permanently delete an archived Project; create, import, overwrite and delete environment variables and secrets |
 | Tasks | Create, edit, move, delete; assign Users and Agents | |
 | Comments | Post Comments and Internal Notes; edit own Comments; delete own Comments | Delete any Comment |
 | Agents | List Agents and see their state, builds, Queue, Jobs and usage; reorder and remove Queue Entries; Stop, Retry and Notify agent on a Task | Create, edit, duplicate, delete Agents; set and remove avatars; rebuild, restart and recreate containers; read container logs |

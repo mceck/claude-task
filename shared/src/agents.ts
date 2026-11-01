@@ -360,5 +360,7 @@ export interface ProjectAgentSettings {
   defaultAgentId: string | null;
   /** New Tasks resume by themselves after a usage limit. */
   autoResume: boolean;
+  /** The Project's Agents may act on every Task of the Project, not only on their own. */
+  boardWriteAccess: boolean;
   env: ProjectEnvVar[];
 }

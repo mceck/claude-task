@@ -27,6 +27,7 @@ import { createDb, runMigrations } from './db/client';
 import { resetInterruptedBuilds } from './modules/agents/builds';
 import { agents } from './db/schema';
 import { bootstrapAdmin } from './modules/users/service';
+import { seedPlatformSkill } from './modules/extensions/platform-skill';
 import { RealtimeHub } from './realtime/hub';
 import { ProjectActivity } from './realtime/project-activity';
 
@@ -77,6 +78,7 @@ export async function createServer(
     ctx.gitSync = new GitSync(ctx);
     const app = await buildApp(ctx, { logger: overrides.logger });
     ctx.log = app.log;
+    await seedPlatformSkill(ctx);
     loginRevocations = ctx.loginRevocations = new LoginRevocations(config.databaseUrl, ctx.hub, app.log);
     await loginRevocations.start();
     await resetInterruptedBuilds(db);

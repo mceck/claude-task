@@ -42,7 +42,7 @@ Assigning an Agent:
 
 When the Task is in a `closed`-category Status at the moment of assignment, the Session is created (or kept) `closed` instead.
 
-The **first User Comment** on the Task, written after the assignment, is the trigger. It creates a `start` entry at the end of the Agent's Queue with that Comment attached. The Session stays `pending` until the entry is dispatched. Only non-internal Comments trigger the Session, since only they are delivered to an Agent. Notify agent is available only once a Session has started (see [Notify agent of changes](#notify-agent-of-changes)), so on a `pending` Session the first Comment is the only trigger.
+The **first Comment delivered after the assignment** is the trigger. It creates a `start` entry at the end of the Agent's Queue with that Comment attached. The Session stays `pending` until the entry is dispatched. Only non-internal Comments trigger the Session, since only they are delivered to an Agent. Normally that first Comment is a User Comment. In a Project with [Board Write Access](#writing-to-the-board), an Agent Comment written by another Agent through its Task Tools starts the Session too. Notify agent is available only once a Session has started (see [Notify agent of changes](#notify-agent-of-changes)), so on a `pending` Session the first Comment is the only trigger.
 
 Comments written before the assignment stay on the Task and reach the Agent as part of the opening Message.
 
@@ -123,7 +123,7 @@ Comments attached this way become `queued` again, including those previously mar
 
 ### Comments reaching the Agent
 
-When a non-internal User Comment (or a Notify agent notice) is posted on a Task with a current Session, the backend decides its Delivery in the same transaction:
+When a non-internal Comment is posted on a Task with a current Session (a User Comment, a Notify agent notice, or an Agent Comment written by another Agent through its Task Tools), the backend decides its Delivery in the same transaction:
 
 | Situation | Delivery |
 | --- | --- |
@@ -132,7 +132,7 @@ When a non-internal User Comment (or a Notify agent notice) is posted on a Task 
 | The Session's Job is `running`, the Runner is connected, the Task has no Queue Entry waiting, and the Comment is not a native command | `delivered` right away: the Message is written to the running process's stdin |
 | Anything else (Agent busy on another Task, Job still being dispatched or finishing, Runner disconnected, an entry already waiting, a native command) | `queued`: merged into the Task's Queue Entry, or into a new one. An entry for the Task the Agent is working on goes to the **front** of the Queue, so it runs before the other Tasks once the current Job ends; an entry for any other Task goes to the end |
 
-Comments on a Task that was never assigned an Agent carry no Delivery at all, like Internal Notes, Agent Comments and System Comments.
+Comments on a Task that was never assigned an Agent carry no Delivery at all, like Internal Notes. An Agent Comment carries Delivery only when another Agent wrote it through its Task Tools; an Agent's own output and System Comments stay on the Timeline.
 
 **Mid-turn delivery.** A Comment written to stdin during a Turn is read by `claude` at its next model call, after the current batch of tool calls, and belongs to that same Turn: one `result` covers it. This is how a User steers the Agent while it works.
 
@@ -316,6 +316,8 @@ The appended system prompt is the same for every Job of a Session; it holds no T
    - that `send_files` shows screenshots and other files to humans, and that `create_survey` is only for when a human explicitly asks to collect several people's answers;
    - that files attached to Comments and linked in the description are saved under `.claude-task/attachments/` in its working directory;
    - the Task Tools on the `claude-task` server and what each is for;
+   - a pointer to the `claude-task` Platform Skill, which holds the playbook for searching the Project, working the board, finding its way in the container and, when the Project allows it, coordinating other Agents;
+   - when the Project has Board Write Access: `update_task_by_key`, `set_task_status`, `comment_on_task`, `start_agent` and `list_agents`, and that they act on the Project's Tasks only (see [Writing to the board](#writing-to-the-board));
    - when the Project has a Repository: `open_pull_request`, that it pushes only to its Task Branch, and that before moving the Task to a review Status it commits, pushes and opens or updates the pull request;
    - when the Agent has Development Services: that they are ready to use in its container, shared by all its Tasks so Projects keep apart by their own database names, key prefixes or buckets, and each selected service with its address and access (the descriptions the Agent form shows). Without this, the Agent would not know the services exist.
 2. **Project instructions**, under the heading "Project instructions:", when the Project has Agent Instructions.
@@ -388,13 +390,16 @@ Every tool acts as the Agent: mutations are Revisions attributed to it and appea
 | Tool | Inputs | Behaviour |
 | --- | --- | --- |
 | `get_task` | `key` (optional), `comments_before` (optional cursor) | Reads the Agent's own Task, or another Task of the same Project by key (a key from another Project is an error). Returns key, title, description, Status, priority, tags, assignees, creator, whether it is the Agent's own Task, branch and pull request; the Project's Statuses with their Categories; the Project's tags; and non-internal, non-deleted Comments, newest 50 in chronological order, with a cursor for older ones. Reading its own Task marks the Agent as having read the current version, which clears Unseen Changes. |
-| `list_tasks` | `status_category`, `tag` (name), `text` (matches title or key), `limit` (1 to 200, default 50); all optional | Summary of the Project's Tasks: key, title, Status, Category, priority, tags, whether it is the Agent's own. Closed Tasks are listed only when `status_category` is `closed`. An unknown tag is an error. |
+| `list_tasks` | `status_category`, `tag` (name), `assignee` (a User's display name, or `none`), `priority`, `updated_since` (ISO 8601 date-time), `text` (up to 200 characters), `limit` (1 to 200, default 50); all optional | Summary of the Project's Tasks: key, title, Status, Category, priority, tags, whether it is the Agent's own. `text` matches the title, the description or the Task Key: the query is split into words and every word appears somewhere in the Task, matched case-insensitively as a substring with `%` and `_` taken literally and accents compared as typed. `assignee` matches a User's display name in any letter case, and `none` selects Tasks without Assignees. Closed Tasks are listed only when `status_category` is `closed`. An unknown tag or assignee is an error. |
+| `search_comments` | `query` (2 to 200 characters), `status_category`, `limit` (1 to 50, default 20); `project` for a Global Schedule's Job | Searches the bodies of the Project's Comments with `list_tasks`' word rule: every word appears in the same Comment. Answers up to `limit` hits, newest first, each with the Project, the Task's key, title, Status and Category, the Comment's id, author, kind and time, a snippet of about 250 characters around the first match, and the names of its Attachments. It reads non-internal, non-deleted Comments of Tasks whose Status is not `closed`; `status_category` `closed` searches only closed Tasks. Internal Notes and deleted Comments never match. |
+| `read_comments` | `comment_id`, `before` (0 to 25, default 10), `after` (0 to 25, default 10) | Reads the conversation around one non-internal, non-deleted Comment of a Task the Agent can read: up to `before` Comments before it and `after` after it, in chronological order, with whether more exist on each side. Answers the Task's key and title and each Comment's id, author, kind, time, body and Attachment names. It leaves Unseen Changes as they are. |
 | `update_task` | `title` (1 to 500 characters), `description` (up to 100,000), `priority` (`urgent`, `high`, `normal`, `low`, `none`), `tags` (up to 50 names, replacing the current set); all optional | Updates the Agent's own Task. Tag names match case-insensitively and must exist in the Project. The edit applies to the current version of the Task. |
 | `set_status` | `status_name` | Moves the Agent's own Task to the named Status (case-insensitive). Statuses in the `closed` Category are refused with a message that closing is for humans. |
 | `create_task` | `title`, `description`, `priority` (default `none`), `tags` | Creates a Task in the same Project, in its first `open` Status, with no assignees and no Agent, created by the Agent. |
 | `send_files` | `paths` (1 to 10), `caption` (optional Markdown, up to 100,000 characters) | Posts the files as an Agent Comment with the caption as its body. Returns the Comment and the stored file names. |
 | `ask_question` | `questions` (1 to 4 items), `paths` (0 to 10) | Posts a Question with the files, and answers that the Agent should end its Turn because the answer arrives as a new Message. |
 | `create_survey` | `questions` (1 to 4 items), `paths` (0 to 10) | Posts a Survey whose Expected Respondents are the Task's User Assignees, and answers with their names. A Task without Assignees gets an error suggesting `ask_question`. Its description limits it to explicit requests from humans. |
+| `open_pull_request` | `title`, `body`, `draft` | Opens or updates the pull request of the Task Branch. See [Git integration](git-integration.md). |
 
 An item of `ask_question` and `create_survey` mirrors Claude Code's own question tool: `header` (1 to 12 characters), `question` (1 to 2,000 characters), `options` (2 to 4, each a `label` of 1 to 60 characters, unique within the item ignoring case, and a `description` of up to 300 characters) and `multiSelect` (default false). "Other" is added by the clients, so an option labelled "Other" is refused. How Users answer is described in [Conversation](conversation.md).
 
@@ -402,8 +407,25 @@ An item of `ask_question` and `create_survey` mirrors Claude Code's own question
 
 In a Scheduled Run (see [Schedules](schedules.md)), `ask_question` and `create_survey` are not offered, `set_status` is refused because the scheduler moves the Task, and the other tools work as on any Task. The Jobs of a global Schedule also get the global Task Tools described there; their calls are Revisions attributed to the Agent like any other.
 
-In a Wiki's Session, the Task Tools act on the Task of the Job, which is the Chat the Agent is working in; `get_task` and `list_tasks` read the Wiki and its Project as usual, `send_files`, `ask_question` and `create_survey` work as on any Task, while `update_task`, `set_status` and `create_task` answer with an error that a Wiki changes through the conversation and its Git Repository (see [Wikis](wikis.md)).
-| `open_pull_request` | `title`, `body`, `draft` | Opens or updates the pull request of the Task Branch. See [Git integration](git-integration.md). |
+In a Wiki's Session, the Task Tools act on the Task of the Job, which is the Chat the Agent is working in; `get_task`, `list_tasks`, `search_comments` and `read_comments` read the Wiki and its Project as usual, `send_files`, `ask_question` and `create_survey` work as on any Task, while `update_task`, `set_status` and `create_task` answer with an error that a Wiki changes through the conversation and its Git Repository (see [Wikis](wikis.md)).
+
+### Writing to the board
+
+A Project can turn on **Board Write Access** (see the Agents settings in [Board](board.md)): a setting, off by default and editable by any User, that widens its Agents' Task Tools from their own Task to every Task of the Project. It belongs to ordinary Projects; a Wiki's Session and a Scheduled Run keep the tools of their own Task.
+
+With it on, a Job also gets:
+
+| Tool | Inputs | Behaviour |
+| --- | --- | --- |
+| `update_task_by_key` | `key`, and `title`, `description`, `priority`, `tags` as in `update_task` | Updates any Task of the Project. A Task in a `closed`-category Status is refused. |
+| `set_task_status` | `key`, `status_name` | Moves any Task of the Project to the named Status. Statuses in the `closed` Category are refused. |
+| `comment_on_task` | `key`, `body` (1 to 100,000 characters) | Posts an Agent Comment written by the calling Agent in another Task's Conversation and delivers it like a User Comment: written to the running process mid-Turn or queued. It notifies nobody. The Agent's own Task is refused, since its text already goes there. |
+| `start_agent` | `key`, `agent` (name, case-insensitive), `prompt` (1 to 100,000 characters) | Assigns the named Agent to the Task when it has none, then posts the prompt as an Agent Comment written by the calling Agent and delivers it, which starts the Session or queues a Message when it has already started. Refused when the Agent is unknown or disabled, the Task is in a `closed`-category Status, the Task is the calling Agent's own, or it is assigned to another Agent. |
+| `list_agents` | none | The enabled Agents, ordered by Queue length then name, each with its name, description, Agent State, current Task and Queue length. |
+
+A Comment that starts another Agent's Session records the started Agent on the Comment; `start_agent` counts those Comments for the calling Job and refuses the fourth, so one Job starts at most three Agents. The record also says who started whom.
+
+Agent Comments on another Task are attributed to the writing Agent and appear on that Task's Timeline; the Agent reading them sees its name with "(agent)". They do not notify Users.
 
 ### Notify agent of changes
 
@@ -499,7 +521,7 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 - **Message size:** a Message inlines at most 20 images and 16 MB of images, so a Job start stays well within the Runner connection's frame limit.
 - **Display limits:** tool output and long tool inputs are cut at 20 KB on the Timeline; the raw stream keeps them whole. Setup output and stderr keep the last 64 KB per Job. A Run transcript keeps at most 2 MB over 500 messages, so a Job holds at most 60 MB of live transcripts.
 - **Secrets:** the Credential and Project secrets are decrypted only to build a Job's start and go only to the Runner of that Job's Agent. The Job token is stored as a hash and is valid only while its Job is active.
-- **Isolation:** Task Tools write only the Agent's own Task (reads and new Tasks stay within its Project), except the global Task Tools of a global Schedule; the Runner downloads only attachments of Tasks its Agent is working on, and only those visible to the Agent; an upload is accepted only from the Runner the backend asked, while the Job's tool call waits for it.
+- **Isolation:** Task Tools read within the Agent's Project and write the Agent's own Task; new Tasks stay within the Project. A Project with Board Write Access widens writes to every Task of that Project, never across Projects and never into a `closed`-category Status, and the global Task Tools of a global Schedule act on every ordinary Project. The Runner downloads only attachments of Tasks its Agent is working on, and only those visible to the Agent; an upload is accepted only from the Runner the backend asked, while the Job's tool call waits for it.
 - **Live updates** are coalesced and flushed once per event loop turn; a browser whose backlog grows past 16 MB is disconnected and refetches on reconnect.
 
 ## Decisions
@@ -526,6 +548,10 @@ Agent Containers, images and Extensions are managed as described in [Agents](age
 - **Deterministic Worktree paths and projection ids.** `--resume` and the transcript's relative paths depend on the working directory, so a recreated Worktree keeps its path. Item ids derived from the Job and a counter make reprocessing a resent event or replaying a stream idempotent.
 - **A rotatable Claude session identity on the Session.** Delete Chat needs a fresh conversation while keeping the Session row, its Worktree and the bookkeeping of a Job still being cancelled. Sessions created before the identity existed fall back to their own id, which is what their transcripts use. Cancelled Jobs discard their remaining output so a late event can't repopulate a cleared conversation.
 - **A Wiki's Chats are Tasks of its Wiki Project, so each has its own Session and Queue Entry.** Several independent Claude conversations per Wiki need several (Task, Agent) Sessions, and the Queue, delivery, projection and notification rules already work per Task. Chats of one Wiki share the Worktree, Task Branch and pull request of the Wiki's first Task, so every Session of a Wiki resumes in the same working directory.
+- **Search matches words, not phrases, with portable SQL.** `list_tasks` text and `search_comments` split the query into words and require each one as a case-insensitive substring, in any field for a Task and in the same Comment for a conversation. Full-text search was rejected: stemming helps prose but hurts the Task Keys, file names and identifiers that dominate a team board, and it would tie the Task Tools to one database. Accents are not folded, so `perche` does not find `perché`: folding would need `unaccent`, a normalized column maintained at every Comment write, or a portable chain of `replace`, and the contract stays the same if recall improves later. The Board filter keeps its own rule over title and key, because clients apply it live to already loaded cards, which carry no description.
+- **Board Write Access is a Project switch, off by default, editable by any User.** It widens Task Tools to the Project's Tasks and nothing more: closing a Task and choosing its User Assignees stay human decisions, since closing ends another Agent's Session and an Assignee answers Surveys. Wiki and Schedule Projects keep their own rules. A per-Agent permission was rejected because the human decision is about how a board is run, not about one worker.
+- **An Agent starts another Agent with an Agent Comment, not a User Comment.** Delivery already starts a Session on the first non-internal Comment, and an Agent Comment keeps the author visible, so the started Agent reads who called it. A User Comment authored by the system, as the global Task Tools do, was rejected because it hides the caller; a separate start channel was rejected because the delivery path already does the work.
+- **At most three starts per Job, recorded on the Comment.** A delegation loop shows up as one Job that keeps starting Agents, so the Job is the natural place for the limit and the Comment already carries it. The Comment that starts a Session records the started Agent, which gives the count and a record of who started whom. A per-Project rate limit was rejected as a complement for later: it smooths long-term abuse but does not stop one runaway Turn.
 
 ## Related specs
 

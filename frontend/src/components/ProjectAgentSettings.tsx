@@ -110,6 +110,23 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
             }
           />
         </div>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <span id="board-write-access-label" className="text-sm font-medium">Agents may write to the board</span>
+            <p className="text-xs text-muted-foreground">
+              Agents can edit, move and comment on every task of this project, and start other agents. Closing tasks stays with people.
+            </p>
+          </div>
+          <Switch
+            aria-labelledby="board-write-access-label"
+            checked={settings.boardWriteAccess}
+            onCheckedChange={(boardWriteAccess) =>
+              void patch<{ settings: Settings }>(`/projects/${projectId}/agent-settings`, { boardWriteAccess })
+                .then((r) => qc.setQueryData(keys.agentSettings(projectId), r.settings))
+                .catch((err) => toast.error(errorMessage(err)))
+            }
+          />
+        </div>
         <Field label="Worktree setup script" hint="Runs once for each new worktree, before Claude starts.">
           <Textarea
             aria-label="Worktree setup script"
