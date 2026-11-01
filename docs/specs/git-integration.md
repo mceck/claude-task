@@ -12,7 +12,7 @@ Git integration ties every Project to one code Repository on GitHub or GitLab an
 - A **Worktree** is the checkout of the Task's Task Branch inside the Agent Volume. All Worktrees of a Project in one Agent Volume share one **bare clone** of the Repository.
 - The **Git Proxy** is the backend endpoint every Agent Container uses as its git remote. It authenticates the Agent with its **Job token** and forwards git traffic to the provider with the Git Connection's credential.
 - The **Push Policy** is the Git Proxy's rule on pushes: an Agent can create and update its own Task Branch, force pushes included; every other ref update is rejected.
-- A **Pull Request** is a request to merge a Task Branch into the Base Branch. On GitLab it is a merge request, shown as `!N`; on GitHub it is shown as `#N`. Its state (open, draft, merged, closed) is tracked separately from the Task's Status; merging from the Task view advances the Status.
+- A **Pull Request** is a request to merge a Task Branch into the Base Branch. On GitLab it is a merge request, shown as `!N`; on GitHub it is shown as `#N`. Its state (open, draft, merged, closed) is tracked separately from the Task's Status, and merging it never changes the Status.
 - **Base Branch Protection** is the provider-side rule set that keeps the Git Connection's credential from pushing directly to the Base Branch. The platform shows it for information; the Push Policy is the guard.
 - The **provider** of a Git Connection is its kind: GitHub or GitLab. Each provider is an adapter behind one common interface, so the rest of the system treats Repositories, branches and Pull Requests the same way whatever the host.
 
@@ -322,11 +322,12 @@ A User merges the Task's Pull Request with one action, without leaving the platf
 1. The backend asks the provider to merge it with the provider's default merge method (GitHub: merge commit; GitLab: the project's setting). The GitHub token for this operation is scoped to Contents write and Pull requests write on the one Repository; the GitLab call uses the connection's token.
 2. If the provider refuses (conflicts, failing checks, missing approvals, branch rules; HTTP 405, 406, 409 or 422), the request fails with 409 and a generic message; nothing changes on the Task. Other provider failures are reported as for any provider call.
 3. On success the stored Pull Request is updated from the provider's answer, a Revision attributed to the User is recorded, the Board and Task view are updated, and a System Comment says "Pull request [#N](link) merged by <User>." (or "Merge request [!N](...)").
-4. The Task advances to the next Status in Board order, skipping `closed`-category Statuses. The move is recorded as a second Revision attributed to the same User and puts the Task at the end of the target column. A Task in a `closed`-category Status stays there, and so does a Task with no later non-closed Status, so merging never ends or reopens its Session.
+
+The Task keeps its Status: moving it along the Board stays the team's decision. Its Session is unaffected too.
 
 The provider's own rules still apply: the platform never bypasses them.
 
-A merge refused by the provider leaves both the Pull Request and the Task's Status unchanged.
+A merge refused by the provider leaves both the Pull Request and the Task unchanged.
 
 ### Pull Request state sync
 
@@ -337,11 +338,11 @@ The platform polls providers; it needs no webhooks, so the backend can stay unre
 
 A refresh updates the stored Pull Request and, when it changed, records a Revision attributed to the system and broadcasts the Task change to the Board and the Task view. A refresh is discarded when the Project changed Repository meanwhile, when the Task now points to another Pull Request, or when a newer check or `open_pull_request` already updated it. A failing provider is logged and skipped; the Task keeps its last known state.
 
-A refresh never changes a Task's Status or a Session. Only the merge action in the Task view advances the Status, and a merged Pull Request keeps the Task's Session open.
+A refresh never changes a Task's Status or a Session. Merging does neither: it only updates the Pull Request, so a merged Pull Request keeps the Task's Session open and the Status where the team put it.
 
 ### What Users see
 
-- **Task view**: a "Task code" section with the Task Branch name (linking to the branch page on the provider), the Pull Request badge and, while the Pull Request is open and not a draft, a **Merge pull request** / **Merge merge request** button that asks for confirmation first and then advances the Task to the next Status. The branch link appears once a Job has stored it; after a Repository change it returns with the next Job.
+- **Task view**: a "Task code" section with the Task Branch name (linking to the branch page on the provider), the Pull Request badge and, while the Pull Request is open and not a draft, a **Merge pull request** / **Merge merge request** button that asks for confirmation first. The branch link appears once a Job has stored it; after a Repository change it returns with the next Job.
 - **Board card**: the Pull Request badge, linking to the provider: `#N` or `!N` followed by `open`, `draft`, `merged` or `closed`, coloured green for open, muted for draft, violet for merged and red for closed. Its label says "Pull request" or "Merge request" by provider.
 - **Timeline**: Pull Request changes appear as Revisions, such as "updated merge request !3 (merged)", next to the System Comments posted by `open_pull_request`.
 - **Wikis** show the branch and Pull Request of their first Task the same way. Every Chat of a Wiki is a Task of its Wiki Project and shares that branch, Worktree and Pull Request: a Chat's Job pushes the first Task's Task Branch through the proxy and opens or updates its Pull Request with `open_pull_request`.
@@ -398,7 +399,7 @@ The backend's public address `APP_URL` is used for Task links in Pull Request fo
 | List repositories | Any User | Repositories grouped by connection, with an error per failing connection |
 | Read, set a Project's Repository | Any User | Repository and Base Branch, plus whether the Project has non-closed Sessions |
 | Re-check protection | Any User | Refreshes Base Branch Protection |
-| Merge a Task's Pull Request | Any User | Merges its open, non-draft Pull Request on the provider and advances the Task to the next non-closed Status |
+| Merge a Task's Pull Request | Any User | Merges its open, non-draft Pull Request on the provider, without changing the Task's Status |
 
 The shared types package defines the payloads. Secrets are accepted on create and update and never returned.
 
@@ -439,7 +440,7 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - **GitHub tokens are scoped per operation.** The token the proxy uses can write contents of one Repository only; Pull Request operations use separate tokens; all of them stay in the backend.
 - **Polling instead of webhooks.** The backend needs no public address and no webhook secret per provider; a 5-minute delay is acceptable for Pull Request state.
 - **Merging is a User action in the backend, not an Agent tool.** The Push Policy keeps Agents off the Base Branch, so merging is left to Users; the backend does it with the connection's credential, which never leaves it, and the provider's rules (reviews, checks, protection) still decide whether the merge is allowed.
-- **Merging from the Task view advances the Task one Status.** The button is the team's explicit hand-off after review, so it also moves the Task along the board. The next Status in order is used instead of a fixed `done` Status because each Project names and orders its own workflow. `closed`-category Statuses are skipped, because a merge is not a decision to end or reopen the Agent's Session; a Task in a `closed` Status stays closed, and a Task with no later non-closed Status stays where it is. Merges detected by polling leave the Status alone, since they can happen outside the team's flow. Pull Request state still never drives an Agent.
+- **Merging does not move the Task's Status.** The merge is a code action on the provider; where the Task sits on the Board is the team's decision. Each Project names and orders its own workflow, so no Status can be inferred from a merge, and an automatic move could land the Task in a column the team didn't choose. Pull Request state still never drives an Agent, and a merge detected by polling behaves the same as one from the Task view.
 - **Deterministic Worktree paths and a bare clone per Project.** `claude --resume` needs the same working directory, and Worktrees sharing one bare clone keep disk use and fetch time low for an Agent working on many Tasks of the same Project.
 - **The Task Branch name is fixed once chosen.** Links, open Pull Requests and the Agent's own memory of the branch all depend on it, so renaming the Task keeps it.
 - **The bare clone records its Repository identity.** The Git Proxy URL is the same whatever Repository a Project links, so the identity is what tells a reusable clone from one of another Repository, while clones from before the proxy are adopted without losing Worktrees.

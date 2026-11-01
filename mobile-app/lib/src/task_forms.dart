@@ -1007,7 +1007,7 @@ Future<void> confirmMergePullRequest(
   final accepted = await confirm(
     context,
     title: 'Merge $noun?',
-    message: 'It is merged into the base branch with the provider\'s default merge method. If there is a later Status, the Task advances to it.',
+    message: 'It is merged into the base branch with the provider\'s default merge method. The Task keeps its Status.',
     confirmLabel: 'Merge',
   );
   if (accepted && context.mounted) {

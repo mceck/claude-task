@@ -77,7 +77,7 @@ A failed connection shows its own error while other connections remain available
 
 ### Merge from the native app
 
-Open a Task, then **Task details**. Under **Code**, open the branch or **Open Pull Request** to review the changes on the code host. For an open, non-draft request, choose **Merge Pull Request** or **Merge Merge Request** on GitLab, then confirm **Merge**. If the provider refuses because of required reviews, checks or conflicts, its error appears and you can retry after resolving the cause. The merge advances the Task to the next Status when there is one, and never closes the Task.
+Open a Task, then **Task details**. Under **Code**, open the branch or **Open Pull Request** to review the changes on the code host. For an open, non-draft request, choose **Merge Pull Request** or **Merge Merge Request** on GitLab, then confirm **Merge**. If the provider refuses because of required reviews, checks or conflicts, its error appears and you can retry after resolving the cause. The merge leaves the Task's Status unchanged and never closes the Task.
 
 ## Review and merge changes
 
@@ -85,13 +85,13 @@ Open a Task, then **Task details**. Under **Code**, open the branch or **Open Pu
 2. Ask the Agent to commit, push and open or update a pull request when ready.
 3. Open the Task's branch link to inspect the code, or its pull request badge to review on the provider.
 4. Review the code. When the pull request is open and not a draft, click **Merge pull request** (**Merge merge request** on GitLab) in the Task's "Task code" section and confirm, or merge on GitHub or GitLab. The provider's own rules (required reviews, checks, conflicts) still apply: if it refuses, you see an error and nothing changes.
-5. When you merge with the button, the Task advances to the next Status in order. A merge made on the code host leaves the Status unchanged. Adjust the Status if your team's workflow needs another one.
+5. Merging never changes the Task's Status, whether you merge with the button or on the code host. Move the Task yourself when your team's workflow needs it.
 
 Task Branch names are assigned when the first Job starts, for example `task/web-12-improve-onboarding`. Renaming the Task keeps that branch name. GitLab badges use merge request terminology.
 
 A Task has one pull request at a time. If you ask the Agent for changes while it is open, the Agent pushes to the same branch and the pull request updates; once it is merged or closed, the Agent opens a new one.
 
-Merging from the Task view advances the Task to the next Status in order, skipping Closed Statuses, and never closes the Task. A Task already in a Closed Status stays closed. A merge made on the code host leaves the Task's Status unchanged. Moving a Task to **Done** also leaves the Session available; a Status in the `closed` Category ends it.
+Merging never changes the Task's Status, whether you merge from the Task view or on the code host, and it never closes the Task. Moving a Task to **Done** also leaves the Session available; a Status in the `closed` Category ends it.
 
 Closing removes the Agent's local Worktree. Ask the Agent to push work before closing: reopening recreates its working files from the remote Task Branch.
 
