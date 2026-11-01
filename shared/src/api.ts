@@ -389,6 +389,7 @@ export const updateAgentSettingsBody = z.strictObject({
   agentInstructions: z.string().max(100_000).optional(),
   defaultAgentId: id.nullable().optional(),
   autoResume: z.boolean().optional(),
+  boardWriteAccess: z.boolean().optional(),
 });
 export type UpdateAgentSettingsBody = z.infer<typeof updateAgentSettingsBody>;
 

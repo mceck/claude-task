@@ -175,7 +175,7 @@ export interface Comment {
   editedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
-  /** Whether a User's Comment reached the Agent; null for Internal Notes, agent and system Comments, or with no Agent. */
+  /** Whether the Comment reached the Agent; null for Internal Notes, an Agent's own output, System Comments that are not Messages, or with no Agent. */
   delivery: Delivery | null;
   /** Set on an Agent's Question. */
   question: Question | null;

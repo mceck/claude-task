@@ -63,6 +63,8 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
   late String? _savedDefaultAgentId = _defaultAgentId;
   late bool _autoResume = _settings['autoResume'] == true;
   late bool _savedAutoResume = _autoResume;
+  late bool _boardWriteAccess = _settings['boardWriteAccess'] == true;
+  late bool _savedBoardWriteAccess = _boardWriteAccess;
   Timer? _debounce;
   Future<bool>? _saveFuture;
   String? _saveError, _envError;
@@ -77,6 +79,8 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
     if (_defaultAgentId != _savedDefaultAgentId)
       'defaultAgentId': _defaultAgentId,
     if (_autoResume != _savedAutoResume) 'autoResume': _autoResume,
+    if (_boardWriteAccess != _savedBoardWriteAccess)
+      'boardWriteAccess': _boardWriteAccess,
   };
 
   @override
@@ -111,6 +115,10 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
     }
     if (_autoResume == _savedAutoResume) {
       _autoResume = _savedAutoResume = _settings['autoResume'] == true;
+    }
+    if (_boardWriteAccess == _savedBoardWriteAccess) {
+      _boardWriteAccess = _savedBoardWriteAccess =
+          _settings['boardWriteAccess'] == true;
     }
   }
 
@@ -274,8 +282,7 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
           children: [
             LabeledField(
               label: 'Default Agent',
-              description:
-                  'Assigned to new Tasks while enabled. The first User Comment starts the Agent.',
+              description: 'Assigned to new Tasks while enabled. The first User Comment starts the Agent.',
               child: SelectField(
                 leading: selected == null
                     ? null
@@ -297,11 +304,19 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
             ),
             SwitchRow(
               label: 'Automatic resume at limit',
-              description:
-                  'When an Agent hits a usage limit with a known reset time, resume it without asking. New Tasks copy this switch; existing Tasks keep theirs.',
+              description: 'When an Agent hits a usage limit with a known reset time, resume it without asking. New Tasks copy this switch; existing Tasks keep theirs.',
               value: _autoResume,
               onChanged: (v) {
                 setState(() => _autoResume = v);
+                unawaited(_flush());
+              },
+            ),
+            SwitchRow(
+              label: 'Agents may write to the board',
+              description: 'Agents can edit, move and comment on every Task of this Project, and start other Agents. Closing Tasks stays with people.',
+              value: _boardWriteAccess,
+              onChanged: (v) {
+                setState(() => _boardWriteAccess = v);
                 unawaited(_flush());
               },
             ),
@@ -314,8 +329,7 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
             _autoField(
               'Agent Instructions',
               _instructions,
-              hint:
-                  'Applied to every Agent working on this Project, alongside the Repository instructions.',
+              hint: 'Applied to every Agent working on this Project, alongside the Repository instructions.',
             ),
             if (_saveError != null)
               Notice.error(
@@ -358,8 +372,7 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
         ),
         Section(
           title: 'Environment variables & secrets',
-          description:
-              'Sent only to Jobs for this Project. Admins manage variables and secrets.',
+          description: 'Sent only to Jobs for this Project. Admins manage variables and secrets.',
           trailing: _admin
               ? SectionAdd(
                   tooltip: 'Add variable',

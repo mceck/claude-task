@@ -194,6 +194,7 @@ export async function dispatchNext(ctx: AppContext, agentId: string): Promise<bo
           projectInstructions: project!.agentInstructions,
           agentPrompt: agent.systemPrompt,
           services: agent.services,
+          boardWriteAccess: project!.kind === 'project' && !schedule && project!.boardWriteAccess,
           schedule: schedule ? { global: !repository, readOnly: schedule.readOnly } : null,
         }),
         mcpConfig: JSON.stringify({

@@ -63,7 +63,7 @@ Logo changes use the same realtime event as other Project edits. Concurrent repl
 
 - **General**: logo upload, replacement and removal, name, description (the key is shown read-only), archive and unarchive, and for Admins on archived Projects, "Delete permanently".
 - **Statuses** and **Tags**: described below.
-- **Agents**: the **Automatic resume at limit** switch (off by default; new Tasks copy its value, see Creating Tasks), the Setup Script and Agent Instructions (each up to 100,000 characters, editable by any User and saved automatically after a 600 ms pause or when leaving the field or view) and the Project's environment variables and secrets (Admins only). The section shows save progress and errors with a Retry action. See [Agents](agents.md) and [Agent Sessions](agent-sessions.md).
+- **Agents**: the **Automatic resume at limit** switch (off by default; new Tasks copy its value, see Creating Tasks), the **Agents may write to the board** switch (Board Write Access, off by default: it lets the Project's Agents act on every Task of the Project, see [Agent Sessions](agent-sessions.md#writing-to-the-board)), the Setup Script and Agent Instructions (each up to 100,000 characters, editable by any User and saved automatically after a 600 ms pause or when leaving the field or view) and the Project's environment variables and secrets (Admins only). The section shows save progress and errors with a Retry action. See [Agents](agents.md) and [Agent Sessions](agent-sessions.md).
 - **Repository**: the linked Repository and its Base Branch. See [Git integration](git-integration.md).
 
 ### Statuses
@@ -125,7 +125,7 @@ A card is the same without the description and the creator.
 
 ### Updating Tasks
 
-Any User edits a Task's title, description, Status, priority, Tags, User assignees and assigned Agent. Agents edit their own Task through Task Tools, within the limits described in [Agent Sessions](agent-sessions.md).
+Any User edits a Task's title, description, Status, priority, Tags, User assignees and assigned Agent. Agents edit their own Task through Task Tools, and the Tasks of a Project with Board Write Access, within the limits described in [Agent Sessions](agent-sessions.md).
 
 Every update carries the Task **version** the client last saw. The platform applies it field by field:
 
@@ -242,7 +242,7 @@ Realtime topics: `project:<id>` carries `task.created`, `task.updated`, `task.mo
 
 ## Data model
 
-- **Project**: key (unique, 2 to 6 uppercase letters, fixed), kind (`project` or `wiki`), name, description, archived at, Repository link, default Agent, automatic resume switch (off by default), next Task number (starts at 1), Setup Script, Agent Instructions, created at, updated at.
+- **Project**: key (unique, 2 to 6 uppercase letters, fixed), kind (`project` or `wiki`), name, description, archived at, Repository link, default Agent, automatic resume switch (off by default), Board Write Access switch (off by default), next Task number (starts at 1), Setup Script, Agent Instructions, created at, updated at.
 - **Status**: Project, name (unique within the Project, case-insensitive), color, Category, position.
 - **Tag**: Project, name (unique within the Project, case-insensitive), color.
 - **Task**: Project, number (unique within the Project), title, description, Status, priority, position (fractional key compared byte by byte), creator Actor, assigned Agent, automatic resume switch, current Session, Task Branch and pull request, conversation generation (see [Wikis](wikis.md)), version (starts at 1, increased on every recorded change), created at, updated at.
