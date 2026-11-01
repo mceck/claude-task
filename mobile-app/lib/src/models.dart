@@ -230,6 +230,7 @@ class Task {
       commentCount = o.commentCount,
       sessionState = o.sessionState,
       queuePosition = o.queuePosition,
+      sessionContext = o.sessionContext,
       branchName = o.branchName,
       branchUrl = o.branchUrl,
       pullRequest = o.pullRequest,

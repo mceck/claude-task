@@ -444,7 +444,7 @@ class TaskDetails extends StatelessWidget {
                                 context,
                                 title: 'Assign Agent?',
                                 message:
-                                    'Assigning an Agent moves ${t.key} out of “${status!.name}” to “${todo!.name}”.',
+                                    'Assigning an Agent moves ${t.key} out of “${status!.name}” to “${todo.name}”.',
                                 confirmLabel: 'Assign and move',
                                 destructive: false,
                               )) {
@@ -455,7 +455,7 @@ class TaskDetails extends StatelessWidget {
                             context,
                             () => c.updateTask({
                               'agentId': v.isEmpty ? null : v,
-                              if (fromBacklog) 'statusId': todo!.id,
+                              if (fromBacklog) 'statusId': todo.id,
                             }),
                           );
                         }
