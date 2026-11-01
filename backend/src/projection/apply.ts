@@ -139,6 +139,8 @@ export async function applyProjection(
             numToolCalls: m.turn.toolCalls,
             costUsd: m.turn.costUsd,
             usage: m.turn.usage,
+            contextTokens: m.turn.context?.tokens ?? null,
+            contextWindow: m.turn.context?.window ?? null,
           })
           .onConflictDoNothing();
         if (m.turn.commentId) await setAlertComment(tx, turnEventId(job.id, m.turn.index), m.turn.commentId);

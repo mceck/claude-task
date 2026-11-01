@@ -259,6 +259,49 @@ describe('stream projection', () => {
     expect(mutations.filter((m) => m.op === 'comment.create')).toHaveLength(2);
   });
 
+  describe('context usage', () => {
+    const message = (usage: Record<string, number>, model = s.model, parent: string | null = null) => ({
+      type: 'assistant',
+      message: { model, content: [{ type: 'text', text: 'x' }], usage },
+      parent_tool_use_id: parent,
+    });
+    const turnOf = (mutations: Mutation[]) => mutations.find((m) => m.op === 'turn') as Extract<Mutation, { op: 'turn' }>;
+
+    it('is the last model call of the Turn, not the summed usage the result reports', () => {
+      const { mutations } = replay([
+        message({ input_tokens: 2, cache_read_input_tokens: 30_000, cache_creation_input_tokens: 100, output_tokens: 10 }),
+        message({ input_tokens: 2, cache_read_input_tokens: 31_000, cache_creation_input_tokens: 120, output_tokens: 20 }),
+        s.result({ modelUsage: { [s.model]: { contextWindow: 200_000 } } }),
+      ]);
+      expect(turnOf(mutations).turn.context).toEqual({ tokens: 31_142, window: 200_000 });
+    });
+
+    it('follows the model the last message used', () => {
+      const { mutations } = replay([
+        message({ input_tokens: 1, output_tokens: 1 }, 'claude-sonnet-5-5'),
+        message({ input_tokens: 1, output_tokens: 1 }, 'claude-haiku-4-5'),
+        s.result({ modelUsage: { 'claude-sonnet-5-5': { contextWindow: 1_000_000 }, 'claude-haiku-4-5': { contextWindow: 200_000 } } }),
+      ]);
+      expect(turnOf(mutations).turn.context).toEqual({ tokens: 2, window: 200_000 });
+    });
+
+    it('keeps the tokens but no percentage when the CLI reports no window', () => {
+      const { mutations } = replay([s.text('hi'), s.result({ modelUsage: null })]);
+      expect(turnOf(mutations).turn.context).toEqual({ tokens: 15, window: null });
+    });
+
+    it('is empty when the Turn made no model call, and a Subagent message does not count', () => {
+      const empty = replay([s.result()]);
+      expect(turnOf(empty.mutations).turn.context).toBeNull();
+      const nested = replay([
+        s.text('top'),
+        message({ input_tokens: 90_000, output_tokens: 1 }, s.model, 'task1'),
+        s.result({ modelUsage: { [s.model]: { contextWindow: 1_000_000 } } }),
+      ]);
+      expect(turnOf(nested.mutations).turn.context).toEqual({ tokens: 15, window: 1_000_000 });
+    });
+  });
+
   it('is deterministic, so a replay produces the same ids', () => {
     const events = [s.text('x'), s.toolUse('a', 'Read', {}), s.result()];
     expect(replay(events).mutations).toEqual(replay(events).mutations);

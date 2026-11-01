@@ -217,6 +217,10 @@ _Avoid_: tool log, trace
 **Turn Summary**:
 The Timeline entry closing a Turn, with its duration, effort and outcome.
 
+**Context Usage**:
+How much of the model's context window the Session's conversation fills after its latest Turn, such as `120.2K (53%)`: the prompt tokens of the Turn's last model call plus the reply it produced.
+_Avoid_: token count, context length
+
 **Live Turn Preview**:
 The streamed text, Thinking and status of a running Turn, shown until the stored entries replace it.
 

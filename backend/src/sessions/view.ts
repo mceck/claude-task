@@ -2,7 +2,7 @@ import { chatCommands } from '@claude-task/shared';
 import type { TaskSession } from '@claude-task/shared';
 import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import type { Executor } from '../db/client';
-import { agentSkills, jobs, queueEntries, sessions, skills, tasks } from '../db/schema';
+import { agentSkills, jobs, queueEntries, sessions, skills, tasks, turns } from '../db/schema';
 import { agentRefs } from '../modules/agents/service';
 
 export type SessionRow = typeof sessions.$inferSelect;
@@ -64,6 +64,11 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
     .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
   const [project] = await db.select({ skills: jobs.projectSkills }).from(jobs).where(and(eq(jobs.sessionId, s.id), isNotNull(jobs.projectSkills)))
     .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
+  // One Session per (Task, Agent), so the Agent's latest Turn on the Task is this Session's latest.
+  // A Turn that couldn't measure the context leaves the previous measurement standing.
+  const [lastTurn] = await db.select({ tokens: turns.contextTokens, window: turns.contextWindow }).from(turns)
+    .where(and(eq(turns.taskId, taskId), eq(turns.agentId, s.agentId), isNotNull(turns.contextTokens)))
+    .orderBy(desc(turns.finishedAt), desc(turns.index)).limit(1);
   return {
     // A Job's report follows the Worktree exactly; the Session's own copy fills the gap before one has run.
     commands: chatCommands(runtime?.commands ?? null, skillRows, project?.skills ?? s.projectSkills ?? []),
@@ -74,6 +79,7 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
     held: entry?.held ?? false,
     // A pending Session hasn't read anything yet, and its first Message carries the whole Task.
     unseenChanges: (s.state === 'idle' || s.state === 'running') && unseen,
+    context: lastTurn?.tokens == null ? null : { tokens: lastTurn.tokens, window: lastTurn.window ?? null },
     lastJob: lastJob ?? null,
   };
 }

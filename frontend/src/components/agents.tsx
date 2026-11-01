@@ -1,4 +1,4 @@
-import type { AgentRef, AgentState, Delivery, SessionState, TaskSession } from '@claude-task/shared';
+import type { AgentRef, AgentState, ContextUsage, Delivery, SessionState, TaskSession } from '@claude-task/shared';
 import { Check, CheckCheck, Clock, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -106,6 +106,54 @@ export function SessionChip({ session }: { session: TaskSession }) {
       <StateDot state={session.state} className="size-1.5 ring-0" />
       {label}
     </span>
+  );
+}
+
+/** Compact token counts: `120.2K`, `1.2M`, `940`. */
+export function formatContextTokens(n: number): string {
+  const one = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+  if (n >= 1_000_000) return `${one(n / 1_000_000)}M`;
+  // Just below a million would read "1000K".
+  if (n >= 999_950) return '1M';
+  return n >= 1000 ? `${one(n / 1000)}K` : String(Math.round(n));
+}
+
+/** How full the conversation's context is, beside the Session chip: `120.2K (53%)`. */
+export function ContextBadge({ context }: { context: ContextUsage }) {
+  const pct = context.window ? Math.min(100, Math.round((context.tokens / context.window) * 100)) : null;
+  const title = pct === null
+    ? `Context: ${formatContextTokens(context.tokens)} tokens`
+    : `Context: ${formatContextTokens(context.tokens)} of ${formatContextTokens(context.window!)} tokens (${pct}%)`;
+  // Neutral until it fills up, then the usual warning and error tones.
+  const tone =
+    pct === null || pct < 70
+      ? 'border-border bg-muted/40 text-muted-foreground'
+      : pct < 90
+        ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+        : 'border-red-500/30 bg-red-500/10 text-red-400';
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span aria-label={title} className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', tone)}>
+          <span
+            aria-hidden
+            className="size-3 shrink-0 rounded-full"
+            style={
+              pct === null
+                ? { background: 'color-mix(in oklch, currentColor 25%, transparent)' }
+                : {
+                    background: `conic-gradient(currentColor ${pct}%, color-mix(in oklch, currentColor 20%, transparent) 0)`,
+                    maskImage: 'radial-gradient(circle, transparent 38%, black 40%)',
+                    WebkitMaskImage: 'radial-gradient(circle, transparent 38%, black 40%)',
+                  }
+            }
+          />
+          {formatContextTokens(context.tokens)}
+          {pct !== null && ` (${pct}%)`}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{title}</TooltipContent>
+    </Tooltip>
   );
 }
 

@@ -1,25 +1,33 @@
 import 'package:claude_task_mobile/src/app.dart';
+import 'package:claude_task_mobile/src/conversation.dart';
+import 'package:claude_task_mobile/src/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'support.dart';
 
 void main() {
-  Future<Harness> open(WidgetTester tester, {bool running = false}) async {
+  Future<Harness> open(
+    WidgetTester tester, {
+    bool running = false,
+    Json? session,
+  }) async {
     tester.view.physicalSize = const Size(1600, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final h = Harness();
     addTearDown(h.dispose);
-    if (running) {
-      h.api.session = {
-        'state': 'running',
-        'queuePosition': null,
-        'held': false,
-        'unseenChanges': false,
-      };
-    }
+    h.api.session =
+        session ??
+        (running
+            ? {
+                'state': 'running',
+                'queuePosition': null,
+                'held': false,
+                'unseenChanges': false,
+              }
+            : null);
     await h.login();
     await h.openTask();
     await tester.pumpWidget(TaskApp(controller: h.controller));
@@ -28,6 +36,37 @@ void main() {
     }
     return h;
   }
+
+  testWidgets('shows how full the context is beside the Session state', (
+    tester,
+  ) async {
+    await open(
+      tester,
+      session: {
+        'state': 'idle',
+        'queuePosition': null,
+        'held': false,
+        'unseenChanges': false,
+        'context': {'tokens': 120252, 'window': 200000},
+      },
+    );
+    expect(find.byType(ContextBadge), findsOneWidget);
+    expect(find.text('120.3K (60%)'), findsOneWidget);
+  });
+
+  testWidgets('no context chip before the first Turn', (tester) async {
+    await open(
+      tester,
+      session: {
+        'state': 'pending',
+        'queuePosition': null,
+        'held': false,
+        'unseenChanges': false,
+        'context': null,
+      },
+    );
+    expect(find.byType(ContextBadge), findsNothing);
+  });
 
   testWidgets('Stop is an icon beside the title while the Agent runs', (
     tester,

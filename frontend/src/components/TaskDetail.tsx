@@ -31,7 +31,7 @@ const nextTagColor = (existing: number) => TAG_COLORS[existing % TAG_COLORS.leng
 import { MultiPick } from './MultiPick';
 import { TaskActivity } from './TaskActivity';
 import { TaskAttachments } from './TaskAttachments';
-import { AgentAvatar, AgentStateDot, SessionChip } from './agents';
+import { AgentAvatar, AgentStateDot, ContextBadge, SessionChip } from './agents';
 
 type Fields = Omit<UpdateTaskBody, 'version'>;
 
@@ -311,6 +311,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
             </DropdownMenu>
             {session.data && <>
               <SessionChip session={session.data} />
+              {session.data.context && <ContextBadge context={session.data.context} />}
               {session.data.state === 'running' && <Button size="xs" variant="outline" onClick={() => sessionAction('stop')}>Stop</Button>}
               {task.agentId && session.data.held && <Button size="xs" variant="outline" onClick={() => sessionAction('retry')}>Retry</Button>}
               {session.data.unseenChanges && (

@@ -52,6 +52,10 @@ flowchart LR
   F -->|Reopen and post a Comment| C
 ```
 
+## Watch the context
+
+Once the Agent has finished a Turn, a chip beside the Session indicator shows how full the conversation's context is, for example **120.2K (53%)**: the tokens the Task's conversation carries and the percentage of the model's context window. It stays neutral as the context starts to fill, turns amber from 70% and red from 90%; hover it on the web or long-press it in the app for the exact counts. Before the first Turn there is no chip. When the context fills up the Agent compacts the conversation, and the chip drops after its next Turn.
+
 ## Stop or retry
 
 Click **Stop** on a running Task to interrupt the current Turn. Its Session remains available. Post another Comment to continue from it.
