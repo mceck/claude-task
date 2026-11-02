@@ -2,10 +2,11 @@
 // carrying the new projection; on reconnect clients refetch instead of replaying.
 import type { UserEvent } from './mobile';
 import type { VoiceCommand, VoiceServerMessage, VoiceRoom } from './voice';
-import type { Agent, AgentBuild, ContextUsage, Job, LiveDelta, QueueEntry, RunMessage, RunSummary, TaskSession } from './agents';
+import type { Agent, ContextUsage, Job, LiveDelta, QueueEntry, RunMessage, RunSummary, TaskSession } from './agents';
+import type { Worker, WorkerBuild } from './workers';
 import type { AgentItem, Comment, Tag, Project, Revision, ScheduledMessage, Status, Task, TaskCard } from './domain';
 
-export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | 'schedules' | 'projects' | `agent:${string}` | `user:${string}`;
+export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | 'schedules' | 'projects' | 'workers' | `agent:${string}` | `worker:${string}` | `user:${string}`;
 
 export const projectTopic = (projectId: string): Topic => `project:${projectId}`;
 export const taskTopic = (taskId: string): Topic => `task:${taskId}`;
@@ -14,6 +15,8 @@ export const AGENTS_TOPIC: Topic = 'agents';
 /** The Projects list: its unread and running indicators may have changed. */
 export const PROJECTS_TOPIC: Topic = 'projects';
 export const agentTopic = (agentId: string): Topic => `agent:${agentId}`;
+export const WORKERS_TOPIC: Topic = 'workers';
+export const workerTopic = (workerId: string): Topic => `worker:${workerId}`;
 
 /** Events on `project:<id>` (the Board). */
 export type BoardEvent =
@@ -55,12 +58,17 @@ export type TaskEvent =
 export type AgentEvent =
   | { type: 'agent.updated'; agent: Agent }
   | { type: 'agent.deleted'; agentId: string }
-  | { type: 'queue.changed'; agentId: string; entries: QueueEntry[] }
-  | { type: 'build.updated'; build: Omit<AgentBuild, 'log'> }
-  | { type: 'build.log'; agentId: string; buildId: string; chunk: string }
   | { type: 'job.updated'; job: Job };
 
-export type RealtimeEvent = { type: 'voice.room'; room: VoiceRoom } | { type: 'wiki.changed'; wikiId: string } | { type: 'schedule.changed'; scheduleId: string } | { type: 'project.activity'; projectId: string } | BoardEvent | TaskEvent | AgentEvent | UserEvent;
+/** Events on `workers` (the Workers list) and `worker:<id>` (a Worker's page). */
+export type WorkerEvent =
+  | { type: 'worker.updated'; worker: Worker }
+  | { type: 'worker.deleted'; workerId: string }
+  | { type: 'queue.changed'; workerId: string; entries: QueueEntry[] }
+  | { type: 'build.updated'; build: Omit<WorkerBuild, 'log'> }
+  | { type: 'build.log'; workerId: string; buildId: string; chunk: string };
+
+export type RealtimeEvent = { type: 'voice.room'; room: VoiceRoom } | { type: 'wiki.changed'; wikiId: string } | { type: 'schedule.changed'; scheduleId: string } | { type: 'project.activity'; projectId: string } | BoardEvent | TaskEvent | AgentEvent | WorkerEvent | UserEvent;
 
 export type ClientMessage =
   | VoiceCommand

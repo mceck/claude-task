@@ -51,9 +51,9 @@ export interface AgentsConfig {
   dockerSocket: string;
   /** The pinned Claude Code CLI version baked into the Base Image. */
   claudeCodeVersion: string;
-  /** How Agent Containers reach this backend (HTTP base URL; the Runner derives the WebSocket URL). */
+  /** How Worker Containers reach this backend (HTTP base URL; the Runner derives the WebSocket URL). */
   backendUrl: string;
-  /** Docker network Agent Containers join (e.g. the compose network with the backend); null = default bridge. */
+  /** Docker network Worker Containers join (e.g. the compose network with the backend); null = default bridge. */
   network: string | null;
   commitEmailDomain: string;
   reconcileIntervalMs: number;
@@ -63,13 +63,20 @@ export interface AgentsConfig {
   runnerPingIntervalMs?: number;
   /** How long a Task Tool waits for the Runner to upload the files an Agent posts (default 60s). */
   uploadTimeoutMs?: number;
-  /** Stop this Installation's Agent Containers on graceful backend shutdown. */
+  /** Stop this Installation's Worker Containers on graceful backend shutdown (`WORKER_STOP_ON_SHUTDOWN`). */
   stopOnShutdown?: boolean;
-  /** Stop an Agent's container while it has no work: no Job, empty Queue and no open Session. */
+  /** Stop a Worker Container above the minimum once it has had no Job for `idleStopMs` (`WORKER_STOP_WHEN_UNUSED`). */
   stopWhenUnused: boolean;
-  /** How long a Wiki's idle Session keeps its Agent's container running after its last Job. */
-  wikiIdleStopMs: number;
+  /** How long a Worker Container above the minimum stays up without a Job (`WORKER_IDLE_MINUTES`). */
+  idleStopMs: number;
 }
+
+/** Settings replaced by the Worker ones, reported at startup when still set. */
+export const OBSOLETE_SETTINGS: Record<string, string> = {
+  AGENT_STOP_WHEN_UNUSED: 'WORKER_STOP_WHEN_UNUSED',
+  AGENT_WIKI_IDLE_MINUTES: 'WORKER_IDLE_MINUTES',
+  AGENT_STOP_ON_SHUTDOWN: 'WORKER_STOP_ON_SHUTDOWN',
+};
 
 /** The Claude Code version the Base Image installs, verified against the stream-json format in tests. */
 export const DEFAULT_CLAUDE_CODE_VERSION = '2.1.310';
@@ -178,9 +185,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       commitEmailDomain: env.AGENT_COMMIT_EMAIL_DOMAIN?.trim() || 'agents.claude-task.local',
       reconcileIntervalMs: 30_000,
       runnerReconnectTimeoutMs: 5 * 60_000,
-      stopOnShutdown: bool(env.AGENT_STOP_ON_SHUTDOWN, env.NODE_ENV !== 'production'),
-      stopWhenUnused: bool(env.AGENT_STOP_WHEN_UNUSED, true),
-      wikiIdleStopMs: positiveInt(env.AGENT_WIKI_IDLE_MINUTES, 30) * 60_000,
+      stopOnShutdown: bool(env.WORKER_STOP_ON_SHUTDOWN, env.NODE_ENV !== 'production'),
+      stopWhenUnused: bool(env.WORKER_STOP_WHEN_UNUSED, true),
+      idleStopMs: positiveInt(env.WORKER_IDLE_MINUTES, 10) * 60_000,
     },
   };
 }

@@ -101,7 +101,8 @@ async function readTaskComments(ctx: AppContext, scope: JobScope, args: { commen
 /** Asks the Runner for the files; any unreadable file posts nothing. */
 async function collectFiles(ctx: AppContext, scope: JobScope, paths: string[]): Promise<NewAttachment[]> {
   if (paths.length === 0) return [];
-  const { manifest, files } = await ctx.uploads.request(scope.agentId, scope.jobId, paths);
+  if (!scope.containerId) throw new Error('the runner is not connected');
+  const { manifest, files } = await ctx.uploads.request(scope.containerId, scope.jobId, paths);
   const failed = manifest.filter((e) => e.error);
   if (failed.length > 0) {
     await discardBlobs(ctx.blobs, files.map((f) => f.blobId));

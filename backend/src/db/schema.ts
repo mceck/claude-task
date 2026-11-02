@@ -111,6 +111,10 @@ export const projects = pgTable(
     agentInstructions: text('agent_instructions').notNull().default(''),
     /** Assigned to every new Task of the Project when it is enabled. */
     defaultAgentId: uuid('default_agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'set null' }),
+    /** Where the Project's Jobs run (docs/specs/workers.md). */
+    workerId: uuid('worker_id')
+      .notNull()
+      .references((): AnyPgColumn => workers.id, { onDelete: 'restrict' }),
     /** Copied to each new Task: a usage limit with a known reset time resumes it without asking. */
     autoResume: boolean('auto_resume').notNull().default(false),
     /** The Project's Agents may act on every Task of the Project, not only on their own. */
@@ -398,8 +402,6 @@ export const agents = pgTable(
     /** BlobStore id of an uploaded image, shown instead of the emoji. */
     avatarBlobId: text('avatar_blob_id'),
     description: text('description').notNull().default(''),
-    dockerfile: text('dockerfile').notNull(),
-    services: jsonb('services').$type<AgentService[]>().notNull().default(['postgres', 'redis']),
     /** Plain name/value pairs merged into every Job of this Agent (docs/specs/agents.md). */
     env: jsonb('env').$type<Record<string, string>>().notNull().default({}),
     credentialId: uuid('credential_id')
@@ -409,28 +411,9 @@ export const agents = pgTable(
     effort: effortEnum('effort'),
     permissionMode: permissionModeEnum('permission_mode').notNull().default('bypassPermissions'),
     systemPrompt: text('system_prompt').notNull().default(''),
+    /** Bumped on every change to the Agent's Extensions; each Worker synchronizes its Agent Profile to it. */
     extensionsRevision: integer('extensions_revision').notNull().default(0),
-    configuredExtensionsRevision: integer('configured_extensions_revision').notNull().default(-1),
-    extensionsError: text('extensions_error'),
-    cpuLimit: doublePrecision('cpu_limit'),
-    memoryMb: integer('memory_mb'),
     enabled: boolean('enabled').notNull().default(true),
-    /** SHA-256 of the token the Runner connects with; regenerated on every container recreation. */
-    runnerTokenHash: text('runner_token_hash'),
-    /** The image of the latest successful build: what the container should run. */
-    imageTag: text('image_tag'),
-    imageState: imageStateEnum('image_state').notNull().default('none'),
-    /** Base Image version the latest build used. */
-    imageBaseVersion: text('image_base_version'),
-    /** Image and limits the current container was created with (JSON), compared with the desired ones. */
-    containerSpec: text('container_spec'),
-    containerState: text('container_state').notNull().default('missing'),
-    /** Set when an Admin asked to recreate the container even if the Agent is working. */
-    forceRecreate: boolean('force_recreate').notNull().default(false),
-    runnerConnectedAt: timestamp('runner_connected_at', { withTimezone: true }),
-    runnerDisconnectedAt: timestamp('runner_disconnected_at', { withTimezone: true }),
-    runnerVersion: text('runner_version'),
-    claudeVersion: text('claude_version'),
     lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -438,13 +421,69 @@ export const agents = pgTable(
   (t) => [uniqueIndex('agents_name_unique').on(sql`lower(${t.name})`)],
 );
 
-export const agentBuilds = pgTable(
-  'agent_builds',
+// Workers (docs/specs/workers.md)
+
+export const workers = pgTable(
+  'workers',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    agentId: uuid('agent_id')
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    dockerfile: text('dockerfile').notNull(),
+    services: jsonb('services').$type<AgentService[]>().notNull().default(['postgres', 'redis']),
+    /** Per Worker Container. */
+    cpuLimit: doublePrecision('cpu_limit'),
+    memoryMb: integer('memory_mb'),
+    /** Slots 1 to `minimum` are always on. */
+    minimum: integer('minimum').notNull().default(0),
+    cap: integer('cap').notNull().default(1),
+    enabled: boolean('enabled').notNull().default(true),
+    /** The image of the latest successful build: what the containers should run. */
+    imageTag: text('image_tag'),
+    imageState: imageStateEnum('image_state').notNull().default('none'),
+    /** Base Image version the latest build used. */
+    imageBaseVersion: text('image_base_version'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('workers_name_unique').on(sql`lower(${t.name})`)],
+);
+
+/** One Worker Slot that has had a container. Its Service Volume lives as long as the Worker. */
+export const workerContainers = pgTable(
+  'worker_containers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workerId: uuid('worker_id')
       .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
+      .references(() => workers.id, { onDelete: 'cascade' }),
+    slot: integer('slot').notNull(),
+    /** SHA-256 of the token the Runner connects with; regenerated on every container recreation. */
+    runnerTokenHash: text('runner_token_hash'),
+    /** Image and limits the container was created with (JSON), compared with the desired ones. */
+    containerSpec: text('container_spec'),
+    containerState: text('container_state').notNull().default('missing'),
+    /** Set when an Admin asked to recreate the container even if it runs a Job. */
+    forceRecreate: boolean('force_recreate').notNull().default(false),
+    runnerConnectedAt: timestamp('runner_connected_at', { withTimezone: true }),
+    runnerDisconnectedAt: timestamp('runner_disconnected_at', { withTimezone: true }),
+    runnerVersion: text('runner_version'),
+    claudeVersion: text('claude_version'),
+    /** Since when the container has had no Job: its last Job's end or its start. */
+    idleSince: timestamp('idle_since', { withTimezone: true }),
+    lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('worker_containers_slot_unique').on(t.workerId, t.slot), uniqueIndex('worker_containers_token_unique').on(t.runnerTokenHash)],
+);
+
+export const workerBuilds = pgTable(
+  'worker_builds',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workerId: uuid('worker_id')
+      .notNull()
+      .references(() => workers.id, { onDelete: 'cascade' }),
     dockerfile: text('dockerfile').notNull(),
     baseVersion: text('base_version').notNull(),
     status: buildStatusEnum('status').notNull().default('building'),
@@ -454,7 +493,24 @@ export const agentBuilds = pgTable(
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
-  (t) => [index('agent_builds_agent_idx').on(t.agentId, t.startedAt)],
+  (t) => [index('worker_builds_worker_idx').on(t.workerId, t.startedAt)],
+);
+
+/** The Agent Profile of one Agent in one Worker's volume, and the Extensions revision it holds. */
+export const agentProfiles = pgTable(
+  'agent_profiles',
+  {
+    workerId: uuid('worker_id')
+      .notNull()
+      .references(() => workers.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    appliedRevision: integer('applied_revision').notNull().default(-1),
+    error: text('error'),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.workerId, t.agentId] })],
 );
 
 export const skills = pgTable('skills', {
@@ -520,7 +576,7 @@ export const projectEnvVars = pgTable(
   (t) => [uniqueIndex('project_env_vars_name_unique').on(t.projectId, t.name)],
 );
 
-/** The persistent conversation of one (Task, Agent). Claude identity can rotate on Reset Chat. */
+/** The persistent conversation of one Task, whichever Agent works it. Claude identity can rotate on Delete Chat. */
 export const sessions = pgTable(
   'sessions',
   {
@@ -528,9 +584,10 @@ export const sessions = pgTable(
     taskId: uuid('task_id')
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
+    /** The Agent of the Session's latest Job: a different Task Agent at dispatch opens with the Agent Change Notice. */
+    lastAgentId: uuid('last_agent_id').references(() => agents.id, { onDelete: 'set null' }),
+    /** The Worker Slot of the latest Job, preferred for the next one. */
+    lastSlot: integer('last_slot'),
     state: sessionStateEnum('state').notNull().default('pending'),
     worktreePath: text('worktree_path').notNull(),
     /** Rotated by Reset Chat, independent of the persistent Session row. */
@@ -550,16 +607,16 @@ export const sessions = pgTable(
     createdAt: createdAt(),
     closedAt: timestamp('closed_at', { withTimezone: true }),
   },
-  (t) => [uniqueIndex('sessions_task_agent_unique').on(t.taskId, t.agentId), index('sessions_agent_idx').on(t.agentId)],
+  (t) => [uniqueIndex('sessions_task_unique').on(t.taskId)],
 );
 
 export const queueEntries = pgTable(
   'queue_entries',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    agentId: uuid('agent_id')
+    workerId: uuid('worker_id')
       .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
+      .references(() => workers.id, { onDelete: 'cascade' }),
     taskId: uuid('task_id')
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
@@ -573,8 +630,8 @@ export const queueEntries = pgTable(
     enqueuedAt: timestamp('enqueued_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('queue_entries_agent_task_unique').on(t.agentId, t.taskId),
-    index('queue_entries_agent_position_idx').on(t.agentId, t.position),
+    uniqueIndex('queue_entries_task_unique').on(t.taskId),
+    index('queue_entries_worker_position_idx').on(t.workerId, t.position),
   ],
 );
 
@@ -585,9 +642,13 @@ export const jobs = pgTable(
     sessionId: uuid('session_id')
       .notNull()
       .references(() => sessions.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
+    /** The Task's Agent at dispatch; cleared when it is deleted, its name stays. */
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
+    agentName: text('agent_name').notNull().default(''),
+    workerId: uuid('worker_id').references(() => workers.id, { onDelete: 'set null' }),
+    /** The Worker Container that runs it. */
+    containerId: uuid('container_id').references(() => workerContainers.id, { onDelete: 'set null' }),
+    slot: integer('slot'),
     taskId: uuid('task_id')
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
@@ -619,6 +680,7 @@ export const jobs = pgTable(
   },
   (t) => [
     index('jobs_agent_idx').on(t.agentId, t.createdAt),
+    index('jobs_worker_idx').on(t.workerId, t.createdAt),
     index('jobs_session_idx').on(t.sessionId),
     uniqueIndex('jobs_token_unique').on(t.tokenHash),
   ],
@@ -634,9 +696,7 @@ export const turns = pgTable(
     taskId: uuid('task_id')
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
     index: integer('index').notNull(),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }).notNull(),
@@ -688,9 +748,7 @@ export const agentItems = pgTable(
     jobId: uuid('job_id')
       .notNull()
       .references(() => jobs.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
     kind: agentItemKindEnum('kind').notNull(),
     payload: jsonb('payload').$type<AgentItemPayload>().notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
@@ -706,9 +764,7 @@ export const rateLimitObservations = pgTable(
     credentialId: uuid('credential_id')
       .notNull()
       .references(() => credentials.id, { onDelete: 'cascade' }),
-    agentId: uuid('agent_id')
-      .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
     observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
   },

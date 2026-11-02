@@ -232,6 +232,13 @@
       "when": 1793567110245,
       "tag": "0032_search-and-board-writes",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793647943037,
+      "tag": "0033_workers",
+      "breakpoints": true
     }
   ]
 }

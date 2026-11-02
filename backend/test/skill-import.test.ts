@@ -3,7 +3,9 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { importSkills } from '../src/modules/extensions/import-skills';
-import { skillArchive } from '../src/agents/skill-files';
+import { profileArchive } from '../src/agents/skill-files';
+
+const AGENT = '00000000-0000-4000-8000-000000000001';
 import { skillToken } from '@claude-task/shared';
 
 describe('skills CLI integration', () => {
@@ -30,9 +32,15 @@ describe('skills CLI integration', () => {
   });
   it('rejects container paths escaping their skill directory', async () => {
     await expect(
-      skillArchive(1, [{ name: 'review', files: [{ path: '../settings.json', content: '', executable: false }] }]),
+      profileArchive(AGENT, 1, [{ name: 'review', files: [{ path: '../settings.json', content: '', executable: false }] }]),
     ).rejects.toThrow('Invalid skill file path');
-    await expect(skillArchive(1, [{ name: '$(id)', files: [] }])).rejects.toThrow('Invalid or duplicate skill name');
+    await expect(profileArchive(AGENT, 1, [{ name: '$(id)', files: [] }])).rejects.toThrow('Invalid or duplicate skill name');
+    await expect(profileArchive('../../etc', 1, [])).rejects.toThrow('Invalid agent id');
+  });
+  it('links the shared session data into the Agent Profile and publishes its Skills there', async () => {
+    const { script } = await profileArchive(AGENT, 3, [{ name: 'review', files: [{ path: 'SKILL.md', content: '', executable: false }] }]);
+    expect(script).toContain(`ln -sfn /home/agent/.claude-shared/projects .claude-agents/${AGENT}/projects`);
+    expect(script).toContain(`ln -sfn "$store/3/review" .claude-agents/${AGENT}/skills/review`);
   });
   it('recognizes slash tokens at the caret without completing URLs or file paths', () => {
     expect(skillToken('/re', 3)).toEqual({ start: 0, query: 're' });

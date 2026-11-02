@@ -1,10 +1,18 @@
+import { SHARED_PROFILE_DIRS, agentProfilePath } from '@claude-task/shared';
 import type { InstalledSkill } from '@claude-task/shared';
 import { pack } from 'tar-stream';
 
-/** Extract in the persistent home before publishing managed symlinks. */
-export async function skillArchive(revision: number, skills: InstalledSkill[]): Promise<{ archive: Buffer; script: string }> {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The archive and script that bring one Agent Profile up to date: extracted in the Worker
+ * Volume's home, then the script links the shared session data and publishes the Skills.
+ */
+export async function profileArchive(agentId: string, revision: number, skills: InstalledSkill[]): Promise<{ archive: Buffer; script: string }> {
+  if (!UUID.test(agentId)) throw new Error('Invalid agent id');
   if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid skills revision');
-  const root = `.local/share/claude-task/skills/${revision}`;
+  const profile = agentProfilePath(agentId);
+  const root = `${profile}/.claude-task/skills/${revision}`;
   const tar = pack();
   const chunks: Buffer[] = [];
   const done = new Promise<void>((resolve, reject) => {
@@ -40,20 +48,24 @@ export async function skillArchive(revision: number, skills: InstalledSkill[]): 
       );
     }
   }
-  // All interpolated shell literals contain only validated slugs or an integer.
+  // All interpolated shell literals contain only validated slugs, a uuid or an integer.
   const script = `set -eu
 cd /home/agent
-mkdir -p .claude/skills
-store=/home/agent/.local/share/claude-task/skills
+mkdir -p ${profile}/skills
+# Every Agent Profile shares the Session transcripts and session data, so any Agent resumes any Session.
+${SHARED_PROFILE_DIRS.map((dir) => `mkdir -p .claude-shared/${dir}
+if [ -d ${profile}/${dir} ] && [ ! -L ${profile}/${dir} ]; then cp -a ${profile}/${dir}/. .claude-shared/${dir}/ && rm -rf ${profile}/${dir}; fi
+ln -sfn /home/agent/.claude-shared/${dir} ${profile}/${dir}`).join('\n')}
+store=/home/agent/${profile}/.claude-task/skills
 ${[...names]
   .map(
-    (name) => `if [ -e .claude/skills/${name} ] || [ -L .claude/skills/${name} ]; then
-  case "$(readlink .claude/skills/${name} || true)" in "$store/"*) ;; *) echo 'Skill name conflicts with an unmanaged skill: ${name}' >&2; exit 1;; esac
+    (name) => `if [ -e ${profile}/skills/${name} ] || [ -L ${profile}/skills/${name} ]; then
+  case "$(readlink ${profile}/skills/${name} || true)" in "$store/"*) ;; *) echo 'Skill name conflicts with an unmanaged skill: ${name}' >&2; exit 1;; esac
 fi`,
   )
   .join('\n')}
-${[...names].map((name) => `ln -sfn "$store/${revision}/${name}" .claude/skills/${name}`).join('\n')}
-for entry in .claude/skills/*; do
+${[...names].map((name) => `ln -sfn "$store/${revision}/${name}" ${profile}/skills/${name}`).join('\n')}
+for entry in ${profile}/skills/*; do
   [ -L "$entry" ] || continue
   case "$(readlink "$entry")" in
     "$store/${revision}/"*) ;;

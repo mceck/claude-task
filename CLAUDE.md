@@ -1,11 +1,11 @@
 # Claude Task
 
-Self-hosted kanban board where tasks are worked by Claude Code agents running in Docker containers. People talk to agents through task comments, and each task keeps one continuous Claude Code session until it's closed. It's for internal team use.
+Self-hosted kanban board where tasks are worked by Claude Code agents running in the Docker containers of Workers. People talk to agents through task comments, and each task keeps one continuous Claude Code session until it's closed, whichever Agent works it. It's for internal team use.
 
 ## Docs (read before changing behavior)
 
 - `docs/CONTEXT.md`: the domain glossary. Use its terms in code, UI and docs (Session/Job/Turn, Comment vs Message, Status vs column, etc.). If you need a new concept, add it there first.
-- `docs/specs/`: one living spec per area, with its architectural decisions: users-and-auth · board · conversation · agents · agent-sessions · runner · git-integration · wikis · clients. Read the affected specs first; don't contradict a recorded decision silently: change it in the spec, with the new rationale.
+- `docs/specs/`: one living spec per area, with its architectural decisions: users-and-auth · board · conversation · agents · workers · agent-sessions · runner · git-integration · wikis · clients. Read the affected specs first; don't contradict a recorded decision silently: change it in the spec, with the new rationale.
 - `docs/tasks/`: units of work with their `status`. See Workflow below.
 
 ## Stack & layout
@@ -31,14 +31,15 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 
 ## Invariants (don't break these)
 
-- **The first User Comment is the trigger.** Assigning an Agent only creates a `pending` Session; its first Job starts on the first User Comment. Notify agent works only on `idle` or `running` Sessions. Task Status never drives an Agent, except that a `closed`-category Status ends the Session.
-- **One Job at a time per Agent.** The Queue lives in the backend DB. The Runner is stateless, dials out over WebSocket, and resends events using seq/ack.
-- **One Session per (Task, Agent)**, resumed with `claude --resume <id>`. Worktree paths are deterministic per (project, task) because resume needs the same cwd.
+- **The first User Comment is the trigger.** Assigning an Agent only creates a `pending` Session; its first Job starts on the first User Comment. Changing the Agent never starts a Job either. Notify agent works only on `idle` or `running` Sessions. Task Status never drives an Agent, except that a `closed`-category Status ends the Session.
+- **One Job at a time per Worker Container, per Session and per Worktree.** An Agent has no concurrency limit. The Queue belongs to the Worker and lives in the backend DB. The Runner is stateless, dials out over WebSocket, and resends events using seq/ack.
+- **One Session per Task** (per Chat in a Wiki), whatever its Agent, resumed with `claude --resume <id>`. Changing the Agent resumes the same conversation under the new Agent's Agent Profile. Worktree paths are deterministic per (project, task) because resume needs the same cwd, and every Worker Container of a Worker shares the Worker Volume that holds them.
+- **Every Project runs on exactly one Worker.** Its Worker can change only while none of its Sessions is started and open, because transcripts and Worktrees live in the Worker Volume.
 - **Agents run `claude -p --input-format stream-json --output-format stream-json`**, not `--bare` (repo CLAUDE.md, `.claude/` and `.mcp.json` must load). Comments for the running Task are written to stdin mid-turn. Everything else waits in the Queue.
 - **The Timeline is projected from the stdout stream, never from hooks.** The platform configures no hooks. The projection is a pure function over stored raw events.
 - **The default `claude` version comes from `CLAUDE_CODE_VERSION`**, with the auto-updater off. Repository and user mise configurations can override it through mise's shims. The stream-json format remains a contract for the selected version.
 - **Secrets** (Credentials, project secret env) are encrypted at rest (`SECRETS_MASTER_KEY`), write-only in the API (last4 only), never logged, and sent per Job, never as container env.
-- **The agent user is non-root** (`bypassPermissions` refuses root). Agent Dockerfiles must start `FROM claude-task/agent-base` and end as `USER agent`.
+- **The agent user is non-root** (`bypassPermissions` refuses root). Worker Dockerfiles must start `FROM claude-task/agent-base` and end as `USER agent`.
 - **Agents reach git only through the Git Proxy** with their Job token, valid only for that Job's Repository while the Job is active (see `docs/specs/git-integration.md`). Provider credentials (Git Connections) never leave the backend. The proxy's Push Policy (only the Task Branch, no deletions or tags) keeps Agents off the Base Branch; provider-side protection is informational.
 - **Internal Notes are never delivered** to an Agent.
 

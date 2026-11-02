@@ -7,7 +7,7 @@ import { and, asc, desc, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
 import { agentItems, attachments, comments, limitResumeOffers, projects, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
-import { lockAgents } from '../agents/service';
+import { getWorkerRow } from '../workers/service';
 import { dropIfEmpty } from '../../sessions/queue';
 import { serializeAgentItem } from '../../projection/apply';
 import { badRequest, forbidden, notFound } from '../../errors';
@@ -307,12 +307,12 @@ export async function deleteComment(
   user: UserRow,
   removeBlob: (blobId: string) => Promise<void>,
 ): Promise<void> {
-  // A queued Comment changes its Agent's Queue: lock the Agent first, as the dispatcher does.
+  // A queued Comment changes its Worker's Queue: lock the Worker first, as the dispatcher does.
   const peek = await getCommentRow(tx, commentId);
   const [entry] = peek.queueEntryId
-    ? await tx.select({ agentId: queueEntries.agentId }).from(queueEntries).where(eq(queueEntries.id, peek.queueEntryId))
+    ? await tx.select({ workerId: queueEntries.workerId }).from(queueEntries).where(eq(queueEntries.id, peek.queueEntryId))
     : [];
-  if (entry) await lockAgents(tx, [entry.agentId]);
+  if (entry) await getWorkerRow(tx, entry.workerId, { lock: true });
   const row = await getCommentRow(tx, commentId, true);
   if (row.deletedAt) return;
   const own = row.kind === 'user' && row.authorType === 'user' && row.authorId === user.id;

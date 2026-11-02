@@ -26,7 +26,7 @@ export function registerAgentTools(server: McpServer, ctx: AppContext, scope: Jo
     'list_agents',
     {
       description:
-        'List the enabled agents, freest first: name, description, state, current task and queue length. States: `idle` (connected and free), `working` (on a job), `offline` (container stopped, it wakes when work arrives), `building` or `build_failed` (image not ready). Pick one whose description fits the work, preferring an empty queue.',
+        'List the enabled agents, least busy first: name, description, state (`idle` or `working`), number of active jobs and the tasks they work on. An agent can work several tasks at once, each on its own container of the task\'s worker. Pick one whose description fits the work, preferring a less busy one.',
       inputSchema: {},
     },
     () => run(ctx, () => listAgents(ctx)),
@@ -63,17 +63,17 @@ export function registerAgentTools(server: McpServer, ctx: AppContext, scope: Jo
 }
 
 async function listAgents(ctx: AppContext) {
-  const all = await loadAgents(ctx.db, (id) => ctx.runners.isReady(id));
+  const all = await loadAgents(ctx.db);
   return {
     agents: all
       .filter((agent) => agent.enabled)
-      .sort((a, b) => a.queueLength - b.queueLength || a.name.localeCompare(b.name))
+      .sort((a, b) => a.activeJobs - b.activeJobs || a.name.localeCompare(b.name))
       .map((agent) => ({
         name: agent.name,
         description: agent.description,
         state: agent.state,
-        currentTask: agent.currentTask ? { key: agent.currentTask.key, title: agent.currentTask.title } : null,
-        queueLength: agent.queueLength,
+        activeJobs: agent.activeJobs,
+        currentTasks: agent.activeTasks.map((t) => ({ key: t.key, title: t.title })),
       })),
   };
 }
@@ -140,11 +140,9 @@ export async function postMessage(
   body: string,
   opts: { capped: boolean },
 ): Promise<{ commentId: string; sessionStarted: boolean }> {
-  const [session] = taskAgentId
-    ? await tx.select().from(sessions).where(and(eq(sessions.taskId, taskId), eq(sessions.agentId, taskAgentId)))
-    : [];
+  const [session] = taskAgentId ? await tx.select().from(sessions).where(eq(sessions.taskId, taskId)) : [];
   // A Session waiting for its first Message, which no earlier Comment has already queued.
-  const startsSession = !!session && session.state === 'pending' && !(await getEntry(tx, taskAgentId!, taskId));
+  const startsSession = !!session && session.state === 'pending' && !(await getEntry(tx, taskId));
   if (startsSession && opts.capped) {
     const [started] = await tx
       .select({ n: sql<number>`count(*)::int` })

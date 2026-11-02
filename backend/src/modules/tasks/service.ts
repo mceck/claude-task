@@ -130,12 +130,12 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
         from task_assignees ta where ta.task_id = t.id), '{}') as assignee_ids,
       (select count(*)::int from comments c where c.task_id = t.id and c.deleted_at is null) as comment_count,
       (select coalesce(sum(tr.num_tool_calls), 0)::int from turns tr where tr.task_id = t.id) as tool_call_count,
-      t.branch_name, t.branch_url, t.pull_request, t.agent_id, ss.agent_id as session_agent_id, ss.state as session_state,
-      (select count(*)::int from queue_entries q join queue_entries q2 on q2.agent_id = q.agent_id and q2.position <= q.position
-        where q.task_id = t.id and q.agent_id = ss.agent_id) as queue_position,
+      t.branch_name, t.branch_url, t.pull_request, t.agent_id, coalesce(t.agent_id, ss.last_agent_id) as session_agent_id, ss.state as session_state,
+      (select count(*)::int from queue_entries q join queue_entries q2 on q2.worker_id = q.worker_id and q2.position <= q.position
+        where q.task_id = t.id) as queue_position,
       (select jsonb_build_object('tokens', tr.context_tokens, 'window', tr.context_window)
-        from turns tr
-        where tr.task_id = t.id and tr.agent_id = ss.agent_id and tr.context_tokens > 0
+        from turns tr join jobs j on j.id = tr.job_id
+        where tr.task_id = t.id and j.session_id = ss.id and tr.context_tokens > 0
         order by tr.finished_at desc, tr.index desc limit 1) as context
     from tasks t
     join projects p on p.id = t.project_id
@@ -164,8 +164,8 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     pullRequest: r.pull_request,
     agentId: r.agent_id,
     session:
-      r.agent_id && r.session_agent_id === r.agent_id && r.session_state
-        ? { agentId: r.agent_id, state: r.session_state, queuePosition: r.queue_position || null, context: r.context ?? null }
+      r.session_state
+        ? { agentId: r.session_agent_id, state: r.session_state, queuePosition: r.queue_position || null, context: r.context ?? null }
         : null,
     version: r.version,
     createdAt: new Date(r.created_at).toISOString(),

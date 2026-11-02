@@ -1,54 +1,51 @@
-// An Agent's Queue: one entry per Task, ordered by fractional position. Callers hold the
-// Agent's row lock, which serializes every change to its Queue.
+// A Worker's Queue: one entry per Task, ordered by fractional position. Callers hold the
+// Worker's row lock, which serializes every change to its Queue.
 import type { QueueEntry, QueueEntryKind } from '@claude-task/shared';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import type { AfterCommit } from '../context';
 import type { Executor } from '../db/client';
-import { comments, queueEntries } from '../db/schema';
-import { lockAgents, taskRefs } from '../modules/agents/service';
+import { comments, queueEntries, tasks } from '../db/schema';
+import { agentRefs, taskRefs } from '../modules/agents/service';
 
 export type EntryRow = typeof queueEntries.$inferSelect;
 
 /** `resume_interrupted` and `start` outrank `messages` when entries merge. */
 const KIND_RANK: Record<QueueEntryKind, number> = { messages: 0, resume_interrupted: 1, start: 2 };
 
-export async function getEntry(db: Executor, agentId: string, taskId: string, lock = false): Promise<EntryRow | null> {
-  const query = db
-    .select()
-    .from(queueEntries)
-    .where(and(eq(queueEntries.agentId, agentId), eq(queueEntries.taskId, taskId)));
+export async function getEntry(db: Executor, taskId: string, lock = false): Promise<EntryRow | null> {
+  const query = db.select().from(queueEntries).where(eq(queueEntries.taskId, taskId));
   const [row] = await (lock ? query.for('update') : query);
   return row ?? null;
 }
 
-async function edgePosition(db: Executor, agentId: string, edge: 'first' | 'last'): Promise<string | null> {
+async function edgePosition(db: Executor, workerId: string, edge: 'first' | 'last'): Promise<string | null> {
   const [row] = await db
     .select({ position: queueEntries.position })
     .from(queueEntries)
-    .where(eq(queueEntries.agentId, agentId))
+    .where(eq(queueEntries.workerId, workerId))
     .orderBy(edge === 'first' ? asc(queueEntries.position) : sql`${queueEntries.position} desc`)
     .limit(1);
   return row?.position ?? null;
 }
 
 /**
- * Adds the Task to the Agent's Queue, or merges into its existing entry, which keeps its
+ * Adds the Task to its Worker's Queue, or merges into its existing entry, which keeps its
  * position unless `front` asks to move it to the front.
  */
 export async function enqueue(
   tx: Executor,
   after: AfterCommit,
-  input: { agentId: string; taskId: string; sessionId: string; kind: QueueEntryKind; front?: boolean; held?: boolean },
+  input: { workerId: string; taskId: string; sessionId: string; kind: QueueEntryKind; front?: boolean; held?: boolean },
 ): Promise<EntryRow> {
-  const existing = await getEntry(tx, input.agentId, input.taskId, true);
+  const existing = await getEntry(tx, input.taskId, true);
   after.effect((ctx) => {
-    ctx.scheduler.publishQueue(input.agentId, [input.taskId]);
-    ctx.scheduler.kick(input.agentId);
+    ctx.scheduler.publishQueue(input.workerId, [input.taskId]);
+    ctx.scheduler.kick(input.workerId);
   });
   if (existing) {
     const kind = KIND_RANK[input.kind] > KIND_RANK[existing.kind] ? input.kind : existing.kind;
-    const position = input.front ? generateKeyBetween(null, await edgePosition(tx, input.agentId, 'first')) : existing.position;
+    const position = input.front ? generateKeyBetween(null, await edgePosition(tx, input.workerId, 'first')) : existing.position;
     const [row] = await tx
       .update(queueEntries)
       .set({ kind, position, held: input.held ?? existing.held })
@@ -57,11 +54,11 @@ export async function enqueue(
     return row!;
   }
   const position = input.front
-    ? generateKeyBetween(null, await edgePosition(tx, input.agentId, 'first'))
-    : generateKeyBetween(await edgePosition(tx, input.agentId, 'last'), null);
+    ? generateKeyBetween(null, await edgePosition(tx, input.workerId, 'first'))
+    : generateKeyBetween(await edgePosition(tx, input.workerId, 'last'), null);
   const [row] = await tx
     .insert(queueEntries)
-    .values({ agentId: input.agentId, taskId: input.taskId, sessionId: input.sessionId, kind: input.kind, position, held: input.held ?? false })
+    .values({ workerId: input.workerId, taskId: input.taskId, sessionId: input.sessionId, kind: input.kind, position, held: input.held ?? false })
     .returning();
   return row!;
 }
@@ -107,7 +104,7 @@ export async function dropIfEmpty(tx: Executor, after: AfterCommit, entryId: str
 export async function removeEntry(tx: Executor, after: AfterCommit, entry: EntryRow, reason: string): Promise<void> {
   await markNotDelivered(tx, after, entry.id, reason);
   await tx.delete(queueEntries).where(eq(queueEntries.id, entry.id));
-  after.effect((ctx) => ctx.scheduler.publishQueue(entry.agentId, [entry.taskId]));
+  after.effect((ctx) => ctx.scheduler.publishQueue(entry.workerId, [entry.taskId]));
 }
 
 async function markNotDelivered(tx: Executor, after: AfterCommit, entryId: string, reason: string): Promise<void> {
@@ -123,21 +120,25 @@ async function markNotDelivered(tx: Executor, after: AfterCommit, entryId: strin
   if (changed.length > 0) after.effect((ctx) => ctx.scheduler.publishComments(changed.map((c) => c.id)));
 }
 
-/** The Agent's Queue in order, with pending Message counts. */
-export async function loadQueue(db: Executor, agentId: string): Promise<QueueEntry[]> {
+/** The Worker's Queue in order, with pending Message counts and each Task's Agent. */
+export async function loadQueue(db: Executor, workerId: string): Promise<QueueEntry[]> {
   const rows = await db
     .select({
       entry: queueEntries,
+      agentId: tasks.agentId,
       pending: sql<number>`(select count(*)::int from comments c where c.queue_entry_id = queue_entries.id and c.deleted_at is null)`,
     })
     .from(queueEntries)
-    .where(eq(queueEntries.agentId, agentId))
+    .innerJoin(tasks, eq(tasks.id, queueEntries.taskId))
+    .where(eq(queueEntries.workerId, workerId))
     .orderBy(asc(queueEntries.position), asc(queueEntries.id));
   const refs = await taskRefs(db, rows.map((r) => r.entry.taskId));
-  return rows.map(({ entry, pending }) => ({
+  const agents = await agentRefs(db, rows.map((r) => r.agentId).filter((id): id is string => !!id));
+  return rows.map(({ entry, pending, agentId }) => ({
     id: entry.id,
-    agentId: entry.agentId,
+    workerId: entry.workerId,
     task: refs.get(entry.taskId)!,
+    agent: agentId ? (agents.get(agentId) ?? null) : null,
     kind: entry.kind,
     position: entry.position,
     held: entry.held,
@@ -157,7 +158,7 @@ export async function moveEntry(
     await tx
       .select({ id: queueEntries.id, position: queueEntries.position })
       .from(queueEntries)
-      .where(eq(queueEntries.agentId, entry.agentId))
+      .where(eq(queueEntries.workerId, entry.workerId))
       .orderBy(asc(queueEntries.position), asc(queueEntries.id))
   ).filter((e) => e.id !== entry.id);
   let slot = others.length;
@@ -180,5 +181,5 @@ export async function moveEntry(
     position = generateKeyBetween(lower, upper);
   }
   await tx.update(queueEntries).set({ position }).where(eq(queueEntries.id, entry.id));
-  after.effect((ctx) => ctx.scheduler.publishQueue(entry.agentId, []));
+  after.effect((ctx) => ctx.scheduler.publishQueue(entry.workerId, []));
 }

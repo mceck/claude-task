@@ -7,7 +7,8 @@ import { and, desc, eq, lte, ne, sql } from 'drizzle-orm';
 import type { AfterCommit, AppContext } from '../../context';
 import { transact } from '../../context';
 import type { Executor } from '../../db/client';
-import { agents, jobs, projects, scheduleRuns, schedules, sessions, statuses, tasks, turns, users } from '../../db/schema';
+import { agents, jobs, projects, scheduleRuns, schedules, sessions, statuses, tasks, turns, users, workers } from '../../db/schema';
+import { assertWorker, changeProjectWorker } from '../workers/assign';
 import { badRequest, conflict, notFound } from '../../errors';
 import { SYSTEM_ACTOR } from '../actors';
 import { notifySchedule } from '../../notifications/schedules';
@@ -104,18 +105,19 @@ async function loadLatestRuns(db: Executor): Promise<Map<string, ScheduleRun>> {
 
 export async function listSchedules(db: Executor, id?: string): Promise<Schedule[]> {
   const rows = await db
-    .select({ schedule: schedules, repository: projects.repository, creatorName: users.displayName })
+    .select({ schedule: schedules, repository: projects.repository, workerId: projects.workerId, creatorName: users.displayName })
     .from(schedules)
     .innerJoin(projects, eq(projects.id, schedules.projectId))
     .leftJoin(users, eq(users.id, schedules.createdBy))
     .where(id ? eq(schedules.id, id) : undefined)
     .orderBy(schedules.name);
   const latest = await loadLatestRuns(db);
-  return rows.map(({ schedule: s, repository, creatorName }) => ({
+  return rows.map(({ schedule: s, repository, workerId, creatorName }) => ({
     id: s.id,
     projectId: s.projectId,
     name: s.name,
     agentId: s.agentId,
+    workerId,
     cron: s.cron,
     timeZone: s.timeZone,
     prompt: s.prompt,
@@ -153,9 +155,16 @@ async function assertNameFree(db: Executor, name: string, exceptId?: string): Pr
   if (clash) throw conflict('A schedule with this name already exists');
 }
 
+/** A disabled Worker takes no Job: the run would only wait in its Queue. */
+async function workerAvailable(db: Executor, projectId: string): Promise<boolean> {
+  const [row] = await db.select({ enabled: workers.enabled }).from(projects).innerJoin(workers, eq(workers.id, projects.workerId)).where(eq(projects.id, projectId));
+  return !!row?.enabled;
+}
+
 export interface ScheduleInput {
   name: string;
   agentId: string;
+  workerId: string;
   cron: string;
   timeZone: string;
   prompt: string;
@@ -172,6 +181,7 @@ function computeNext(cron: string, timeZone: string, from: Date): Date {
 
 export async function createSchedule(tx: Executor, after: AfterCommit, input: ScheduleInput, creatorId: string): Promise<Schedule> {
   await assertAgent(tx, input.agentId);
+  await assertWorker(tx, input.workerId);
   await assertNameFree(tx, input.name);
   const nextRunAt = computeNext(input.cron, input.timeZone, new Date());
   // Internal keys stay within the readable Task Key format, like a Wiki's.
@@ -181,7 +191,7 @@ export async function createSchedule(tx: Executor, after: AfterCommit, input: Sc
   } while ((await tx.select({ id: projects.id }).from(projects).where(eq(projects.key, key))).length);
   const [project] = await tx
     .insert(projects)
-    .values({ key, kind: 'schedule', name: input.name, repository: input.repository, defaultAgentId: input.agentId })
+    .values({ key, kind: 'schedule', name: input.name, repository: input.repository, defaultAgentId: input.agentId, workerId: input.workerId })
     .returning();
   await tx.insert(statuses).values(SCHEDULE_STATUSES.map((s, position) => ({ ...s, position, projectId: project!.id })));
   const [row] = await tx
@@ -209,7 +219,8 @@ export async function updateSchedule(tx: Executor, after: AfterCommit, id: strin
   const row = await getScheduleRow(tx, id, true);
   if (patch.agentId !== undefined) await assertAgent(tx, patch.agentId);
   if (patch.name !== undefined) await assertNameFree(tx, patch.name, id);
-  const next = { ...row, ...Object.fromEntries(Object.entries(patch).filter(([k, v]) => v !== undefined && k !== 'repository')) } as ScheduleRow;
+  if (patch.workerId !== undefined) await changeProjectWorker(tx, after, row.projectId, patch.workerId);
+  const next = { ...row, ...Object.fromEntries(Object.entries(patch).filter(([k, v]) => v !== undefined && k !== 'repository' && k !== 'workerId')) } as ScheduleRow;
   const timingChanged = next.cron !== row.cron || next.timeZone !== row.timeZone || next.enabled !== row.enabled;
   let nextRunAt = row.nextRunAt;
   if (timingChanged) nextRunAt = next.enabled ? computeNext(next.cron, next.timeZone, new Date()) : null;
@@ -330,6 +341,7 @@ async function skipRun(tx: Executor, after: AfterCommit, schedule: ScheduleRow, 
 export async function runNow(tx: Executor, after: AfterCommit, id: string, now = new Date()): Promise<ScheduleRun> {
   const schedule = await getScheduleRow(tx, id, true);
   if (!(await agentAvailable(tx, schedule.agentId))) throw conflict('The schedule\'s agent is disabled or missing');
+  if (!(await workerAvailable(tx, schedule.projectId))) throw conflict('The schedule\'s worker is disabled');
   return startRun(tx, after, schedule, now, true);
 }
 
@@ -351,7 +363,9 @@ export async function runDueSchedules(ctx: AppContext, now: Date): Promise<void>
         await tx.update(schedules).set({ nextRunAt }).where(eq(schedules.id, id));
         const reason = !(await agentAvailable(tx, schedule.agentId))
           ? 'agent unavailable'
-          : await hasActiveRun(tx, schedule.projectId)
+          : !(await workerAvailable(tx, schedule.projectId))
+            ? 'worker unavailable'
+            : await hasActiveRun(tx, schedule.projectId)
             ? 'previous run still active'
             : now.getTime() - dueAt.getTime() >= period
               ? 'missed'

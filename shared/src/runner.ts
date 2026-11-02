@@ -3,7 +3,7 @@
 // runner (runner/internal/protocol) mirrors these shapes.
 import type { PermissionMode } from './agents';
 
-export const RUNNER_PROTOCOL_VERSION = 3;
+export const RUNNER_PROTOCOL_VERSION = 4;
 /** WebSocket path, authenticated with `Authorization: Bearer <runner token>`. */
 export const RUNNER_WS_PATH = '/api/v1/runner';
 /** Attachment downloads for the Runner, same bearer token: `${RUNNER_ATTACHMENTS_PATH}/<attachmentId>`. */
@@ -17,6 +17,14 @@ export const RUNNER_UPLOADS_PATH = '/api/v1/runner/uploads';
 export const GIT_PROXY_PATH = '/git';
 /** Streamable HTTP MCP endpoint for Task Tools, authenticated with the Job token. */
 export const MCP_PATH = '/api/v1/mcp';
+
+/** An Agent's Claude Code configuration directory, relative to the Worker Volume's home. */
+export const agentProfilePath = (agentId: string) => `.claude-agents/${agentId}`;
+/**
+ * Session data every Agent Profile of a Worker Volume shares, so any Agent resumes any Session:
+ * each is a link from the profile to the same directory under `.claude-shared/`.
+ */
+export const SHARED_PROFILE_DIRS = ['projects', 'todos', 'file-history', 'session-env', 'shell-snapshots'] as const;
 
 /** A stream-json user message content block, as written to `claude`'s stdin. */
 export type InputBlock = { type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
@@ -44,7 +52,7 @@ export interface GitSpec {
   taskBranch: string;
   /** Hint only: whether `origin/<taskBranch>` is expected to exist. */
   branchExists: boolean;
-  /** Bare clone, relative to the Agent's home: `repos/<projectId>.git`. */
+  /** Bare clone, relative to the agent user's home: `repos/<projectId>.git`. */
   repoPath: string;
   commitName: string;
   commitEmail: string;
@@ -89,8 +97,10 @@ export interface JobStartMessage {
   mode: 'new' | 'resume';
   /** Sets `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` (already present in `env` too). */
   resumeInterrupted: boolean;
-  /** Relative to the Agent's home, deterministic per (Project, Task): `worktrees/<projectId>/<taskKey>`. */
+  /** Relative to the agent user's home, deterministic per (Project, Task): `worktrees/<projectId>/<taskKey>`. */
   worktreePath: string;
+  /** The Agent Profile, relative to the home: `claude` runs with it as `CLAUDE_CONFIG_DIR`. */
+  agentProfilePath: string;
   git: GitSpec | null;
   /** Runs with `bash -lc` in the Worktree only when the Worktree was just created. Empty = none. */
   setupScript: string;
@@ -123,7 +133,7 @@ export type BackendToRunner =
    * `project_skills.result`. Sent before the Session's next Job, to fill the composer.
    */
   | { type: 'project_skills.request'; requestId: string; worktreePath: string }
-  /** Remove a Worktree directory (never the branch). Paths relative to the Agent's home. */
+  /** Remove a Worktree directory (never the branch). Paths relative to the agent user's home. */
   | { type: 'worktree.remove'; worktreePath: string; repoPath: string | null }
   /** Everything the Runner sent for this Job up to and including `seq` is processed. */
   | { type: 'ack'; jobId: string; seq: number }

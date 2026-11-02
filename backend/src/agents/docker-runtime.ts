@@ -2,14 +2,14 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BASE_IMAGE } from '@claude-task/shared';
+import { BASE_IMAGE, agentProfilePath } from '@claude-task/shared';
 import type { InstalledPlugin } from '@claude-task/shared';
 import Docker from 'dockerode';
 import { pack } from 'tar-stream';
 import type { AgentsConfig } from '../config';
-import { agentImageRepo, containerName, volumeName } from './runtime';
-import { skillArchive } from './skill-files';
-import type { AgentRuntime, BuildResult, ContainerInfo, ContainerSpec } from './runtime';
+import { SERVICE_DATA_DIR, containerName, serviceVolumeName, volumeName, workerImageRepo } from './runtime';
+import { profileArchive } from './skill-files';
+import type { BuildResult, ContainerInfo, ContainerSpec, ProfileSpec, WorkerRuntime } from './runtime';
 
 const AGENT_HOME = '/home/agent';
 
@@ -36,7 +36,7 @@ function runnerFiles(dir: string, rel = ''): string[] {
 }
 
 /** Talks to the host's Docker daemon over its socket (dockerode). */
-export class DockerRuntime implements AgentRuntime {
+export class DockerRuntime implements WorkerRuntime {
   readonly baseVersion: string;
   private readonly docker: Docker;
   private readonly baseDockerfile: string;
@@ -67,24 +67,27 @@ export class DockerRuntime implements AgentRuntime {
     await this.docker.getImage(tag).tag({ repo: BASE_IMAGE, tag: 'latest' });
   }
 
-  async buildAgentImage(input: { agentId: string; buildId: string; dockerfile: string }, onLog: (chunk: string) => void): Promise<BuildResult> {
-    const imageTag = `${agentImageRepo(input.agentId)}:${input.buildId.slice(0, 12)}`;
-    await this.build({ Dockerfile: input.dockerfile }, { t: imageTag, labels: { 'claude-task.agent': input.agentId } }, onLog);
+  async buildWorkerImage(input: { workerId: string; buildId: string; dockerfile: string }, onLog: (chunk: string) => void): Promise<BuildResult> {
+    const imageTag = `${workerImageRepo(input.workerId)}:${input.buildId.slice(0, 12)}`;
+    await this.build({ Dockerfile: input.dockerfile }, { t: imageTag, labels: { 'claude-task.worker': input.workerId } }, onLog);
     const info = await this.docker.getImage(imageTag).inspect();
     return { imageTag, user: info.Config?.User ?? '' };
   }
 
-  async createContainer(agentId: string, spec: ContainerSpec): Promise<void> {
-    await this.removeContainer(agentId);
-    await this.docker.createVolume({ Name: volumeName(agentId), Labels: { 'claude-task.agent': agentId } }).catch(ignore(409));
+  async createContainer(workerId: string, slot: number, spec: ContainerSpec): Promise<void> {
+    await this.removeContainer(workerId, slot);
+    const labels = { 'claude-task.worker': workerId };
+    await this.docker.createVolume({ Name: volumeName(workerId), Labels: labels }).catch(ignore(409));
+    await this.docker.createVolume({ Name: serviceVolumeName(workerId, slot), Labels: { ...labels, 'claude-task.slot': String(slot) } }).catch(ignore(409));
     const container = await this.docker.createContainer({
-      name: containerName(agentId),
+      name: containerName(workerId, slot),
       Image: spec.image,
       Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
-      Labels: { 'claude-task.agent': agentId },
+      Labels: { ...labels, 'claude-task.slot': String(slot) },
       HostConfig: {
         RestartPolicy: { Name: 'unless-stopped' },
-        Binds: [`${volumeName(agentId)}:${AGENT_HOME}`],
+        // The home is shared by every Worker Container of the Worker; service data belongs to the slot.
+        Binds: [`${volumeName(workerId)}:${AGENT_HOME}`, `${serviceVolumeName(workerId, slot)}:${SERVICE_DATA_DIR}`],
         NetworkMode: this.config.network ?? 'bridge',
         // So `host.docker.internal` reaches a backend running on the host (Linux needs this).
         ExtraHosts: ['host.docker.internal:host-gateway'],
@@ -93,32 +96,34 @@ export class DockerRuntime implements AgentRuntime {
       },
     });
     await container.start();
-    await this.pruneImages(agentId, spec.image);
+    await this.pruneImages(workerId, spec.image);
   }
 
-  async restartContainer(agentId: string): Promise<void> {
-    await this.docker.getContainer(containerName(agentId)).restart();
+  async restartContainer(workerId: string, slot: number): Promise<void> {
+    await this.docker.getContainer(containerName(workerId, slot)).restart();
   }
 
-  async stopContainer(agentId: string): Promise<void> {
-    await this.docker.getContainer(containerName(agentId)).stop({ t: 10 }).catch((err: unknown) => {
+  async stopContainer(workerId: string, slot: number): Promise<void> {
+    await this.docker.getContainer(containerName(workerId, slot)).stop({ t: 10 }).catch((err: unknown) => {
       if (![304, 404].includes((err as { statusCode?: number }).statusCode ?? 0)) throw err;
     });
   }
 
-  async configureSkills(agentId: string, revision: number, skills: import('@claude-task/shared').InstalledSkill[]): Promise<void> {
-    const { archive, script } = await skillArchive(revision, skills);
-    const container = this.docker.getContainer(containerName(agentId));
+  async configureProfile(workerId: string, slot: number, profile: ProfileSpec): Promise<void> {
+    const container = this.docker.getContainer(containerName(workerId, slot));
+    const { archive, script } = await profileArchive(profile.agentId, profile.revision, profile.skills);
     await container.putArchive(archive, { path: AGENT_HOME });
     const result = await execIn(container, ['/bin/bash', '-c', script]);
     if (result.exitCode !== 0) throw new Error(`${result.stderr}${result.stdout}`.trim() || 'Could not configure agent skills');
+    await this.configurePlugins(container, profile.agentId, profile.plugins);
   }
 
-  async configurePlugins(agentId: string, plugins: InstalledPlugin[]): Promise<void> {
-    const container = this.docker.getContainer(containerName(agentId));
+  private async configurePlugins(container: Docker.Container, agentId: string, plugins: InstalledPlugin[]): Promise<void> {
+    const profile = agentProfilePath(agentId);
+    const env = [`CLAUDE_CONFIG_DIR=${AGENT_HOME}/${profile}`];
     // Arguments go straight to `claude` (no shell), so names and sources can't inject anything.
     const claude = async (...args: string[]) => {
-      const { stdout, stderr } = await execIn(container, ['mise', 'exec', '--', 'claude', 'plugin', ...args]);
+      const { stdout, stderr } = await execIn(container, ['mise', 'exec', '--', 'claude', 'plugin', ...args], env);
       const line = stdout.trim().split('\n').pop() ?? '';
       try {
         return JSON.parse(line) as { outcome?: string; pluginId?: string; message?: string; failureCode?: string };
@@ -126,9 +131,10 @@ export class DockerRuntime implements AgentRuntime {
         throw new Error(`claude plugin ${args[0]} failed: ${(stderr || stdout).trim().slice(0, 500) || 'no output'}`);
       }
     };
-    const state = await execIn(container, ['cat', PLUGIN_STATE]);
+    const statePath = `${profile}/${PLUGIN_STATE_FILE}`;
+    const state = await execIn(container, ['cat', `${AGENT_HOME}/${statePath}`]);
     let managed: string[] = state.exitCode === 0 ? parseIds(state.stdout) : [];
-    const listed = await execIn(container, ['mise', 'exec', '--', 'claude', 'plugin', 'list', '--json']);
+    const listed = await execIn(container, ['mise', 'exec', '--', 'claude', 'plugin', 'list', '--json'], env);
     if (listed.exitCode !== 0) throw new Error(`claude plugin list failed: ${(listed.stderr || listed.stdout).trim().slice(0, 500)}`);
     const unmanaged = new Set(parseIds(listed.stdout, 'id').filter((id) => !managed.includes(id)));
     const wanted = new Set<string>();
@@ -148,19 +154,25 @@ export class DockerRuntime implements AgentRuntime {
         managed = managed.filter((m) => m !== id);
       }
     } finally {
-      await container.putArchive(await stateArchive(managed), { path: AGENT_HOME });
+      await container.putArchive(await stateArchive(statePath, managed), { path: AGENT_HOME });
     }
   }
 
-  async removeAgent(agentId: string): Promise<void> {
-    await this.removeContainer(agentId);
-    await this.pruneImages(agentId, null);
-    await this.docker.getVolume(volumeName(agentId)).remove().catch(ignore(404));
+  async removeContainer(workerId: string, slot: number): Promise<void> {
+    await this.docker.getContainer(containerName(workerId, slot)).remove({ force: true }).catch(ignore(404));
   }
 
-  async inspect(agentId: string): Promise<ContainerInfo> {
+  async removeWorker(workerId: string): Promise<void> {
+    const containers = await this.docker.listContainers({ all: true, filters: JSON.stringify({ label: [`claude-task.worker=${workerId}`] }) });
+    for (const c of containers) await this.docker.getContainer(c.Id).remove({ force: true }).catch(ignore(404));
+    await this.pruneImages(workerId, null);
+    const { Volumes } = await this.docker.listVolumes({ filters: JSON.stringify({ label: [`claude-task.worker=${workerId}`] }) });
+    for (const v of Volumes ?? []) await this.docker.getVolume(v.Name).remove().catch(ignore(404));
+  }
+
+  async inspect(workerId: string, slot: number): Promise<ContainerInfo> {
     try {
-      const info = await this.docker.getContainer(containerName(agentId)).inspect();
+      const info = await this.docker.getContainer(containerName(workerId, slot)).inspect();
       return { state: info.State.Status, image: info.Config.Image };
     } catch (err) {
       if ((err as { statusCode?: number }).statusCode === 404) return { state: 'missing', image: null };
@@ -168,9 +180,9 @@ export class DockerRuntime implements AgentRuntime {
     }
   }
 
-  async logs(agentId: string, tail: number): Promise<string> {
+  async logs(workerId: string, slot: number, tail: number): Promise<string> {
     try {
-      const raw = (await this.docker.getContainer(containerName(agentId)).logs({ stdout: true, stderr: true, tail, follow: false })) as Buffer;
+      const raw = (await this.docker.getContainer(containerName(workerId, slot)).logs({ stdout: true, stderr: true, tail, follow: false })) as Buffer;
       return demux(raw);
     } catch (err) {
       if ((err as { statusCode?: number }).statusCode === 404) return '';
@@ -209,13 +221,9 @@ export class DockerRuntime implements AgentRuntime {
     });
   }
 
-  private async removeContainer(agentId: string): Promise<void> {
-    await this.docker.getContainer(containerName(agentId)).remove({ force: true }).catch(ignore(404));
-  }
-
-  /** Old images of the Agent, except the one in use. */
-  private async pruneImages(agentId: string, keep: string | null): Promise<void> {
-    const images = await this.docker.listImages({ filters: JSON.stringify({ reference: [agentImageRepo(agentId)] }) });
+  /** Old images of the Worker, except the one in use. */
+  private async pruneImages(workerId: string, keep: string | null): Promise<void> {
+    const images = await this.docker.listImages({ filters: JSON.stringify({ reference: [workerImageRepo(workerId)] }) });
     for (const image of images) {
       if (keep && image.RepoTags?.includes(keep)) continue;
       await this.docker.getImage(image.Id).remove({ force: !keep }).catch(() => {});
@@ -229,10 +237,8 @@ function ignore(status: number) {
   };
 }
 
-/** Docker multiplexes stdout and stderr in 8-byte-header frames when there's no TTY. */
-/** The plugin IDs the platform installed, so it never uninstalls one installed by hand. */
-const PLUGIN_STATE_DIR = '.local/share/claude-task';
-const PLUGIN_STATE = `${AGENT_HOME}/${PLUGIN_STATE_DIR}/plugins.json`;
+/** The plugin IDs the platform installed in a profile, so it never uninstalls one installed by hand. */
+const PLUGIN_STATE_FILE = '.claude-task/plugins.json';
 const PLUGIN_COMMAND_TIMEOUT_MS = 5 * 60_000;
 
 function parseIds(json: string, key?: string): string[] {
@@ -245,7 +251,7 @@ function parseIds(json: string, key?: string): string[] {
   }
 }
 
-async function stateArchive(ids: string[]): Promise<Buffer> {
+async function stateArchive(statePath: string, ids: string[]): Promise<Buffer> {
   const tar = pack();
   const chunks: Buffer[] = [];
   tar.on('data', (chunk) => chunks.push(Buffer.from(chunk as Uint8Array)));
@@ -253,22 +259,22 @@ async function stateArchive(ids: string[]): Promise<Buffer> {
     tar.on('end', resolve);
     tar.on('error', reject);
   });
-  const parts = PLUGIN_STATE_DIR.split('/');
+  const parts = statePath.split('/').slice(0, -1);
   for (let i = 1; i <= parts.length; i++) tar.entry({ name: parts.slice(0, i).join('/'), type: 'directory', uid: 1000, gid: 1000, mode: 0o755 });
-  tar.entry({ name: `${PLUGIN_STATE_DIR}/plugins.json`, uid: 1000, gid: 1000, mode: 0o644 }, JSON.stringify(ids));
+  tar.entry({ name: statePath, uid: 1000, gid: 1000, mode: 0o644 }, JSON.stringify(ids));
   tar.finalize();
   await done;
   return Buffer.concat(chunks);
 }
 
 /** Runs a command as the agent user, without a shell; stdout and stderr stay apart. */
-async function execIn(container: Docker.Container, cmd: string[]): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+async function execIn(container: Docker.Container, cmd: string[], env: string[] = []): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   const exec = await container.exec({
     Cmd: cmd,
     User: 'agent',
     WorkingDir: AGENT_HOME,
     // Execs inherit the container's env: blank the Runner token for the code they run (plugins).
-    Env: [`HOME=${AGENT_HOME}`, 'GIT_TERMINAL_PROMPT=0', 'CLAUDE_TASK_RUNNER_TOKEN='],
+    Env: [`HOME=${AGENT_HOME}`, 'GIT_TERMINAL_PROMPT=0', 'CLAUDE_TASK_RUNNER_TOKEN=', ...env],
     AttachStdout: true,
     AttachStderr: true,
   });

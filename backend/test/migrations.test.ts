@@ -5,6 +5,40 @@ import { describe, expect, it } from 'vitest';
 import { createDb, migrationsFolder, runMigrations } from '../src/db/client';
 import { useTestApp } from './helpers/app';
 import { assignAgent, createAgent, createProject, createTask, getSession } from './helpers/fixtures';
+import { FakeRunner } from './helpers/runner';
+
+/** The schema before Workers: Agents with their own container, one Session per (Task, Agent), Queues per Agent. */
+const BEFORE_WORKERS = `
+  ALTER TABLE agents ADD COLUMN dockerfile text NOT NULL DEFAULT 'FROM claude-task/agent-base', ADD COLUMN services jsonb NOT NULL DEFAULT '["postgres","redis"]',
+    ADD COLUMN configured_extensions_revision integer NOT NULL DEFAULT -1, ADD COLUMN extensions_error text, ADD COLUMN cpu_limit double precision,
+    ADD COLUMN memory_mb integer, ADD COLUMN runner_token_hash text, ADD COLUMN image_tag text, ADD COLUMN image_state image_state NOT NULL DEFAULT 'none',
+    ADD COLUMN image_base_version text, ADD COLUMN container_spec text, ADD COLUMN container_state text NOT NULL DEFAULT 'missing',
+    ADD COLUMN force_recreate boolean NOT NULL DEFAULT false, ADD COLUMN runner_connected_at timestamptz, ADD COLUMN runner_disconnected_at timestamptz,
+    ADD COLUMN runner_version text, ADD COLUMN claude_version text;
+  CREATE TABLE agent_builds (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    dockerfile text NOT NULL, base_version text NOT NULL, status build_status NOT NULL DEFAULT 'building', image_tag text, log text NOT NULL DEFAULT '',
+    started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz);
+  ALTER TABLE sessions ADD COLUMN agent_id uuid;
+  UPDATE sessions s SET agent_id = coalesce(s.last_agent_id, t.agent_id) FROM tasks t WHERE t.id = s.task_id;
+  DELETE FROM sessions WHERE agent_id IS NULL;
+  ALTER TABLE sessions ALTER COLUMN agent_id SET NOT NULL,
+    ADD CONSTRAINT sessions_agent_id_agents_id_fk FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE;
+  DROP INDEX sessions_task_unique;
+  CREATE UNIQUE INDEX sessions_task_agent_unique ON sessions (task_id, agent_id);
+  CREATE INDEX sessions_agent_idx ON sessions (agent_id);
+  ALTER TABLE sessions DROP COLUMN last_agent_id, DROP COLUMN last_slot;
+  DELETE FROM queue_entries;
+  ALTER TABLE queue_entries ADD COLUMN agent_id uuid NOT NULL,
+    ADD CONSTRAINT queue_entries_agent_id_agents_id_fk FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE;
+  DROP INDEX queue_entries_task_unique;
+  DROP INDEX queue_entries_worker_position_idx;
+  CREATE UNIQUE INDEX queue_entries_agent_task_unique ON queue_entries (agent_id, task_id);
+  CREATE INDEX queue_entries_agent_position_idx ON queue_entries (agent_id, position);
+  ALTER TABLE queue_entries DROP COLUMN worker_id;
+  ALTER TABLE jobs DROP COLUMN agent_name, DROP COLUMN worker_id, DROP COLUMN container_id, DROP COLUMN slot;
+  ALTER TABLE projects DROP COLUMN worker_id;
+  DROP TABLE agent_profiles, worker_builds, worker_containers, workers;
+`;
 
 // Recreate previously applied schemas and ledgers in the disposable test DB.
 describe('migration upgrades', () => {
@@ -24,6 +58,8 @@ describe('migration upgrades', () => {
     try {
       const results = await Promise.allSettled([runMigrations(first.db), runMigrations(second.db)]);
       expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+      // A fresh installation starts without a Worker: an Admin creates the first one.
+      expect((await first.pool.query('SELECT count(*)::int AS n FROM workers')).rows[0].n).toBe(0);
     } finally {
       await first.pool.end();
       await second.pool.end();
@@ -45,6 +81,7 @@ describe('migration upgrades', () => {
     };
     const original = journal.entries.find((e) => e.tag === '0014_wiki')!;
     expect(original.when).toBe(1793054532571);
+    await db.$client.query(BEFORE_WORKERS);
     await db.$client.query(`
       ALTER TABLE sessions ALTER COLUMN claude_session_id SET DEFAULT gen_random_uuid();
       UPDATE sessions SET claude_session_id = gen_random_uuid(), started = true, state = 'idle';
@@ -70,14 +107,59 @@ describe('migration upgrades', () => {
     await runMigrations(db);
     expect((await db.$client.query('SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at')).rows).toEqual(first);
     expect((await admin.get(`/tasks/${task.id}`)).body.task).toMatchObject({ title: 'Existing task', description: 'Keep this content', chatGeneration: 0 });
-    expect(await getSession(admin, task.id)).toMatchObject({ id: session!.id, state: 'idle' });
+    // The upgrade to Workers keeps the Session, which starts a new conversation on the new Worker Volume.
+    expect(await getSession(admin, task.id)).toMatchObject({ id: session!.id, state: 'pending' });
+    const [{ worker_id: workerId }] = (await db.$client.query('SELECT worker_id FROM projects WHERE id = $1', [project.id])).rows;
+    expect((await db.$client.query('SELECT name, minimum, cap, services FROM workers WHERE id = $1', [workerId])).rows).toEqual([
+      { name: 'Default', minimum: 0, cap: 1, services: ['postgres', 'redis'] },
+    ]);
     const [column] = (await db.$client.query(`SELECT is_nullable, column_default FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'sessions' AND column_name = 'claude_session_id'`)).rows;
     expect(column).toEqual({ is_nullable: 'YES', column_default: null });
 
+    // The Default Worker builds and starts a container when work arrives; a fake Runner plays it.
+    await runner.close();
     await admin.post(`/tasks/${task.id}/comments`, { body: 'Continue the existing conversation' });
-    const start = await runner.next('job.start');
-    expect(start).toMatchObject({ mode: 'resume', sessionId: session!.id });
+    await app.server.ctx.scheduler.reconcileAll();
+    await app.settle();
+    const upgraded = await FakeRunner.connect(app, workerId);
+    const start = await upgraded.next('job.start');
+    expect(start).toMatchObject({ mode: 'new', sessionId: session!.id });
+    expect(start.initialMessage?.map((b) => (b.type === 'text' ? b.text : '')).join('\n')).toContain('Continue the existing conversation');
+  });
+
+  it('moves existing Projects to a Default Worker and keeps one Session per Task, starting over', async () => {
+    const admin = await app.admin();
+    const { project } = await createProject(admin);
+    const task = await createTask(admin, project.id);
+    const { agent } = await createAgent(app, admin, { name: 'Ada Bot' });
+    const { agent: other } = await createAgent(app, admin, { name: 'Bea Bot' });
+    await assignAgent(admin, task.id, agent.id);
+    const current = await getSession(admin, task.id);
+    const { db } = app.server.ctx;
+    const journal = JSON.parse(await readFile(path.join(migrationsFolder(), 'meta/_journal.json'), 'utf8')) as { entries: { tag: string; when: number }[] };
+    const workers = journal.entries.find((e) => e.tag === '0033_workers')!;
+    await db.$client.query(BEFORE_WORKERS);
+    // An earlier Agent's Session on the same Task, started, with a Comment waiting in its Queue.
+    const [{ id: older }] = (await db.$client.query(
+      `INSERT INTO sessions (task_id, agent_id, state, worktree_path, started) SELECT task_id, $1, 'paused', worktree_path, true FROM sessions WHERE id = $2 RETURNING id`,
+      [other.id, current!.id],
+    )).rows;
+    await db.$client.query(`UPDATE sessions SET state = 'idle', started = true WHERE id = $1`, [current!.id]);
+    const [{ id: entry }] = (await db.$client.query(
+      `INSERT INTO queue_entries (agent_id, task_id, session_id, kind, position) VALUES ($1, $2, $3, 'messages', 'a0') RETURNING id`,
+      [agent.id, task.id, current!.id],
+    )).rows;
+    await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= $1', [workers.when]);
+
+    await runMigrations(db);
+    const sessions = (await db.$client.query('SELECT id, state, started, last_agent_id FROM sessions WHERE task_id = $1', [task.id])).rows;
+    expect(sessions).toEqual([{ id: current!.id, state: 'pending', started: false, last_agent_id: agent.id }]);
+    expect((await db.$client.query('SELECT 1 FROM sessions WHERE id = $1', [older])).rows).toEqual([]);
+    const [{ worker_id: workerId }] = (await db.$client.query('SELECT worker_id FROM projects WHERE id = $1', [project.id])).rows;
+    expect((await db.$client.query('SELECT name FROM workers')).rows).toEqual([{ name: 'Default' }]);
+    expect((await db.$client.query('SELECT id, kind, worker_id FROM queue_entries')).rows).toEqual([{ id: entry, kind: 'start', worker_id: workerId }]);
+    expect((await db.$client.query("SELECT 1 FROM information_schema.columns WHERE table_name = 'agents' AND column_name = 'dockerfile'")).rows).toEqual([]);
   });
 
   it.each([
@@ -99,6 +181,7 @@ describe('migration upgrades', () => {
     const original = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations WHERE created_at = $1', [logoMigration.when])).rows[0];
     try {
       // Recreate the schema before User avatars so the newer migration is applied during the upgrade.
+      await db.$client.query(BEFORE_WORKERS);
       await db.$client.query('ALTER TABLE users DROP COLUMN avatar_blob_id');
       await db.$client.query('ALTER TABLE projects DROP COLUMN default_agent_id');
       await db.$client.query('DROP TABLE survey_responses, questions');

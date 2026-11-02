@@ -11,13 +11,7 @@ import { invalidateExtensions, serializeMcp, serializePlugin, serializeSkill, st
 const params = z.object({ id: z.uuid() });
 export function extensionRoutes(app: FastifyInstance, ctx: AppContext): void {
   const admin = { config: { auth: 'admin' as const } };
-  const sync = (ids: string[]) => {
-    for (const id of new Set(ids))
-      void ctx.scheduler.reconcile(id).then(
-        () => ctx.scheduler.kick(id),
-        () => {},
-      );
-  };
+  const sync = (ids: string[]) => ctx.scheduler.refreshAgents(ids);
   app.get('/skills', async () => ({ skills: (await ctx.db.select().from(skills).orderBy(asc(skills.name))).map(serializeSkill) }));
   app.post('/skills/import', { ...admin, bodyLimit: 16_000 }, async (request, reply) => {
     const body = parse(importSkillsBody, request.body);

@@ -1,13 +1,20 @@
 import { RUNNER_PROTOCOL_VERSION, RUNNER_WS_PATH } from '@claude-task/shared';
 import type { BackendToRunner, JobStartMessage, RunnerJobMessage, RunnerToBackend } from '@claude-task/shared';
+import { and, eq } from 'drizzle-orm';
 import WebSocket from 'ws';
+import { workerContainers } from '../../src/db/schema';
 import type { TestApp } from './app';
 import type { StreamEvent } from './stream';
 
 type Received = BackendToRunner;
 
+/** A Worker Container: a Worker id alone means its slot 1. */
+export type RunnerTarget = string | { workerId: string; slot?: number };
+
+const target = (t: RunnerTarget) => (typeof t === 'string' ? { workerId: t, slot: 1 } : { workerId: t.workerId, slot: t.slot ?? 1 });
+
 /**
- * Plays the Runner inside an Agent Container: connects with the container's token, records
+ * Plays the Runner inside a Worker Container: connects with the container's token, records
  * what the backend sends, and replays stream-json events for a Job.
  */
 export class FakeRunner {
@@ -18,7 +25,8 @@ export class FakeRunner {
 
   private constructor(
     private readonly app: TestApp,
-    readonly agentId: string,
+    readonly workerId: string,
+    readonly slot: number,
     private readonly socket: WebSocket,
   ) {
     socket.on('message', (raw) => {
@@ -33,21 +41,23 @@ export class FakeRunner {
     this.closed = new Promise((resolve) => socket.on('close', (code) => resolve({ code })));
   }
 
-  /** The token the backend put in the Agent Container's env. */
-  static token(app: TestApp, agentId: string): string {
-    const token = app.runtime.containers.get(agentId)?.spec.env.CLAUDE_TASK_RUNNER_TOKEN;
-    if (!token) throw new Error(`no container for agent ${agentId}`);
+  /** The token the backend put in the Worker Container's env. */
+  static token(app: TestApp, to: RunnerTarget): string {
+    const { workerId, slot } = target(to);
+    const token = app.runtime.container(workerId, slot)?.spec.env.CLAUDE_TASK_RUNNER_TOKEN;
+    if (!token) throw new Error(`no container for worker ${workerId} slot ${slot}`);
     return token;
   }
 
   /** `autoPong: false` plays a Runner that went silent (a half-open connection). */
   static async connect(
     app: TestApp,
-    agentId: string,
+    to: RunnerTarget,
     opts: { token?: string; activeJobId?: string | null; hello?: boolean; autoPong?: boolean } = {},
   ): Promise<FakeRunner> {
+    const { workerId, slot } = target(to);
     const socket = new WebSocket(`${app.url.replace(/^http/, 'ws')}${RUNNER_WS_PATH}`, {
-      headers: { authorization: `Bearer ${opts.token ?? FakeRunner.token(app, agentId)}` },
+      headers: { authorization: `Bearer ${opts.token ?? FakeRunner.token(app, { workerId, slot })}` },
       autoPong: opts.autoPong ?? true,
     });
     await new Promise<void>((resolve, reject) => {
@@ -55,7 +65,12 @@ export class FakeRunner {
       socket.once('unexpected-response', (_req, res) => reject(new Error(`runner rejected: ${res.statusCode}`)));
       socket.once('error', reject);
     });
-    const runner = new FakeRunner(app, agentId, socket);
+    const runner = new FakeRunner(app, workerId, slot, socket);
+    const [row] = await app.server.ctx.db
+      .select({ id: workerContainers.id })
+      .from(workerContainers)
+      .where(and(eq(workerContainers.workerId, workerId), eq(workerContainers.slot, slot)));
+    runner.containerId = row?.id ?? '';
     if (opts.hello !== false) {
       await runner.hello(opts.activeJobId ?? null);
     }
@@ -69,8 +84,15 @@ export class FakeRunner {
     const pong = new Promise<void>((resolve) => this.socket.once('pong', () => resolve()));
     this.socket.ping();
     await pong;
-    await this.app.server.ctx.runners.drain(this.agentId);
+    await this.app.server.ctx.runners.drain(this.containerId);
     await this.app.settle();
+  }
+
+  /** The Worker Container's id, the key the backend keeps its connection under. */
+  containerId = '';
+
+  get open(): boolean {
+    return this.socket.readyState === WebSocket.OPEN;
   }
 
   send(msg: RunnerToBackend): void {
@@ -108,9 +130,13 @@ export class FakeRunner {
     await this.drain();
   }
 
+  /** Jobs `runJob` already played, so a shared Runner takes the next one. */
+  private readonly played = new Set<string>();
+
   /** A whole Job: accept, play the Turn, and exit once the backend says `job.end`. */
   async runJob(events: StreamEvent[]): Promise<JobStartMessage> {
-    const start = await this.next('job.start');
+    const start = await this.next('job.start', (m) => !this.played.has(m.jobId));
+    this.played.add(start.jobId);
     this.accept(start.jobId);
     await this.play(start.jobId, events);
     await this.next('job.end', (m) => m.jobId === start.jobId);

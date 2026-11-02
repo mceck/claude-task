@@ -10,7 +10,7 @@ describe('projects', () => {
 
   it('creates a project with the six default statuses', async () => {
     const admin = await app.admin();
-    const res = await admin.post('/projects', { key: 'API', name: 'Public API', description: 'The REST API' });
+    const res = await admin.post('/projects', { workerId: app.workerId, key: 'API', name: 'Public API', description: 'The REST API' });
     expect(res.status).toBe(201);
     expect(res.body.project).toMatchObject({ key: 'API', name: 'Public API', description: 'The REST API', archivedAt: null });
     expect(res.body.statuses.map((s: { name: string; category: string }) => [s.name, s.category])).toEqual([
@@ -29,7 +29,7 @@ describe('projects', () => {
     const { agent, runner } = await createAgent(app, admin);
     const { client } = await createUser(app, admin);
     app.git.branches.get('1')!.add('develop');
-    const result = await client.post('/projects', {
+    const result = await client.post('/projects', { workerId: app.workerId,
       key: 'CFG', name: 'Configured', defaultAgentId: agent.id,
       repository: { connectionId: 'env-github', providerRepoId: '1', baseBranch: 'develop' },
     });
@@ -45,7 +45,7 @@ describe('projects', () => {
 
   it('accepts a Repository alone and uses its default Base Branch', async () => {
     const admin = await app.admin();
-    const result = await admin.post('/projects', {
+    const result = await admin.post('/projects', { workerId: app.workerId,
       key: 'REPO', name: 'Repository only',
       repository: { connectionId: 'env-github', providerRepoId: '1' },
     });
@@ -57,11 +57,11 @@ describe('projects', () => {
   it('accepts a default Agent alone and explicit empty configuration', async () => {
     const admin = await app.admin();
     const { agent } = await createAgent(app, admin);
-    const result = await admin.post('/projects', { key: 'AGENT', name: 'Agent only', defaultAgentId: agent.id });
+    const result = await admin.post('/projects', { workerId: app.workerId, key: 'AGENT', name: 'Agent only', defaultAgentId: agent.id });
     expect(result.status).toBe(201);
     expect(result.body.project.repository).toBeNull();
     expect((await createTask(admin, result.body.project.id)).agentId).toBe(agent.id);
-    const empty = await admin.post('/projects', { key: 'EMPTY', name: 'Empty', defaultAgentId: null, repository: null });
+    const empty = await admin.post('/projects', { workerId: app.workerId, key: 'EMPTY', name: 'Empty', defaultAgentId: null, repository: null });
     expect(empty.status).toBe(201);
     expect((await createTask(admin, empty.body.project.id)).agentId).toBeNull();
   });
@@ -73,22 +73,22 @@ describe('projects', () => {
     { repository: { connectionId: 'env-github', providerRepoId: '1', baseBranch: 'missing' } },
   ])('rejects invalid initial configuration atomically: %j', async (configuration) => {
     const admin = await app.admin();
-    const result = await admin.post('/projects', { key: 'RETRY', name: 'Invalid', ...configuration });
+    const result = await admin.post('/projects', { workerId: app.workerId, key: 'RETRY', name: 'Invalid', ...configuration });
     expect(result.status, JSON.stringify(result.body)).toBe(400);
     expect((await admin.get('/projects/RETRY')).status).toBe(404);
-    expect((await admin.post('/projects', { key: 'RETRY', name: 'Corrected' })).status).toBe(201);
+    expect((await admin.post('/projects', { workerId: app.workerId, key: 'RETRY', name: 'Corrected' })).status).toBe(201);
   });
 
   it.each(['A', 'TOOLONG', 'api', 'A1', 'AB-C', ''])('rejects the key %j', async (key) => {
     const admin = await app.admin();
-    const res = await admin.post('/projects', { key, name: 'x' });
+    const res = await admin.post('/projects', { key, name: 'x', workerId: app.workerId });
     expect(res.status).toBe(400);
   });
 
   it('keeps keys unique', async () => {
     const admin = await app.admin();
     await createProject(admin, { key: 'WEB' });
-    const res = await admin.post('/projects', { key: 'WEB', name: 'Again' });
+    const res = await admin.post('/projects', { workerId: app.workerId, key: 'WEB', name: 'Again' });
     expect(res.status).toBe(409);
   });
 
@@ -200,7 +200,7 @@ describe('projects', () => {
       expect((await admin.get(`/tasks/${task.id}`)).status).toBe(404);
       expect((await admin.get(`/attachments/${comment.attachments[0].id}`)).status).toBe(404);
       // The key is free again.
-      expect((await admin.post('/projects', { key: 'GONE', name: 'Reborn' })).status).toBe(201);
+      expect((await admin.post('/projects', { workerId: app.workerId, key: 'GONE', name: 'Reborn' })).status).toBe(201);
     });
   });
 });
@@ -408,7 +408,7 @@ describe('Project activity events', () => {
   it('stays quiet for Wikis', async () => {
     const { admin, ws } = await watch();
     const { agent } = await createAgent(app, admin);
-    const created = await admin.post('/wikis', { name: 'Team wiki', agentId: agent.id, repository: { connectionId: 'env-github', providerRepoId: '1' } });
+    const created = await admin.post('/wikis', { name: 'Team wiki', agentId: agent.id, workerId: app.workerId, repository: { connectionId: 'env-github', providerRepoId: '1' } });
     await comment(admin, created.body.wiki.taskId, 'Hello');
     await wait(1200);
     expect(activity(ws)).not.toContain(created.body.wiki.id);

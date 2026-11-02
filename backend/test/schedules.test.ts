@@ -16,7 +16,7 @@ async function setup(app: TestApp, body: Record<string, unknown> = {}) {
   const { agent, runner } = await createAgent(app, admin, { name: 'Night Bot' });
   const created = await admin.post('/schedules', {
     name: 'Nightly review',
-    agentId: agent.id,
+    agentId: agent.id, workerId: app.workerId,
     cron: '0 3 * * *',
     timeZone: 'Europe/Rome',
     prompt: 'Review the open pull requests.',
@@ -65,13 +65,16 @@ describe('Schedules', () => {
 
   it('rejects invalid Schedules without storing anything', async () => {
     const { admin, agent } = await setup(app);
-    const base = { name: 'Another', agentId: agent.id, cron: '0 3 * * *', prompt: 'Go.' };
+    const base = { name: 'Another', agentId: agent.id, workerId: app.workerId, cron: '0 3 * * *', prompt: 'Go.' };
     expect((await admin.post('/schedules', { ...base, cron: '61 * * * *' })).status).toBe(400);
     expect((await admin.post('/schedules', { ...base, cron: '* * * *' })).status).toBe(400);
     expect((await admin.post('/schedules', { ...base, timeZone: 'Mars/Olympus' })).status).toBe(400);
     expect((await admin.post('/schedules', { ...base, prompt: '  ' })).status).toBe(400);
     expect((await admin.post('/schedules', { ...base, name: '' })).status).toBe(400);
     expect((await admin.post('/schedules', { ...base, agentId: crypto.randomUUID() })).status).toBe(400);
+    expect((await admin.post('/schedules', { ...base, workerId: crypto.randomUUID() })).status).toBe(400);
+    const { workerId: _w, ...withoutWorker } = base;
+    expect((await admin.post('/schedules', withoutWorker)).status).toBe(400);
     expect((await admin.post('/schedules', { ...base, name: 'nightly REVIEW' })).status).toBe(409);
     await admin.patch(`/agents/${agent.id}`, { enabled: false });
     expect((await admin.post('/schedules', { ...base, name: 'Disabled agent' })).status).toBe(400);
@@ -204,6 +207,7 @@ describe('Schedules', () => {
     expect((await admin.patch(`/schedules/${schedule.id}`, { cron: 'nope' })).status).toBe(400);
 
     await admin.post(`/schedules/${schedule.id}/run`);
+    await app.settle();
     const rows = await app.server.ctx.db.execute<{ n: number }>(sql`select count(*)::int as n from tasks`);
     expect(rows.rows[0]!.n).toBe(1);
     expect((await admin.delete(`/schedules/${schedule.id}`)).status).toBe(409);
@@ -223,7 +227,7 @@ describe('Schedules', () => {
 
   it('keeps the latest run of a low-frequency Schedule when other Schedules have thousands', async () => {
     const { admin, agent, schedule } = await setup(app);
-    const weekly = (await admin.post('/schedules', { name: 'Weekly', agentId: agent.id, cron: '0 3 * * 1', prompt: 'Go.' })).body
+    const weekly = (await admin.post('/schedules', { name: 'Weekly', agentId: agent.id, workerId: app.workerId, cron: '0 3 * * 1', prompt: 'Go.' })).body
       .schedule as Schedule;
     // The weekly Schedule's last run is older than 1001 runs of the first one.
     await app.server.ctx.db.execute(

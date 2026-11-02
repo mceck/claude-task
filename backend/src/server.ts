@@ -15,7 +15,7 @@ import { S3BlobStore } from './blobstore/s3';
 import { S3Client } from '@aws-sdk/client-s3';
 import { DockerRuntime } from './agents/docker-runtime';
 import { FakeRuntime } from './agents/fake-runtime';
-import type { AgentRuntime } from './agents/runtime';
+import type { WorkerRuntime } from './agents/runtime';
 import { Scheduler } from './agents/scheduler';
 import { RunnerHub } from './runner/hub';
 import { RunRegistry } from './sessions/runs';
@@ -24,8 +24,8 @@ import { ProjectSkillRequests } from './runner/skill-requests';
 import type { Config } from './config';
 import type { AppContext } from './context';
 import { createDb, runMigrations } from './db/client';
-import { resetInterruptedBuilds } from './modules/agents/builds';
-import { agents } from './db/schema';
+import { resetInterruptedBuilds } from './modules/workers/builds';
+import { workerContainers } from './db/schema';
 import { bootstrapAdmin } from './modules/users/service';
 import { seedPlatformSkill } from './modules/extensions/platform-skill';
 import { RealtimeHub } from './realtime/hub';
@@ -51,7 +51,7 @@ function createBlobStore(config: Config): BlobStore {
 /** Migrates the database, bootstraps the first admin and builds the app (not listening yet). */
 export async function createServer(
   config: Config,
-  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: AgentRuntime; startScheduler?: boolean; git?: ProviderFactory; push?: PushTransport } = {},
+  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: WorkerRuntime; startScheduler?: boolean; git?: ProviderFactory; push?: PushTransport } = {},
 ): Promise<Server> {
   const { db, pool } = createDb(config.databaseUrl);
   let loginRevocations: LoginRevocations | undefined;
@@ -111,20 +111,20 @@ export async function createServer(
           let stopFailure: unknown;
           const stopContainers = async (onlyRunning = false) => {
             if (!config.agents.stopOnShutdown) return;
-            const rows = await db.select({ id: agents.id }).from(agents);
-            const results = await Promise.allSettled(rows.map(async ({ id }) => {
-              if (onlyRunning && !['running', 'restarting'].includes((await ctx.runtime.inspect(id)).state)) return;
-              await ctx.runtime.stopContainer(id);
-              app.log.info({ agentId: id }, 'stopped Agent Container for backend shutdown');
+            const rows = await db.select({ workerId: workerContainers.workerId, slot: workerContainers.slot }).from(workerContainers);
+            const results = await Promise.allSettled(rows.map(async ({ workerId, slot }) => {
+              if (onlyRunning && !['running', 'restarting'].includes((await ctx.runtime.inspect(workerId, slot)).state)) return;
+              await ctx.runtime.stopContainer(workerId, slot);
+              app.log.info({ workerId, slot }, 'stopped Worker Container for backend shutdown');
             }));
             const errors: unknown[] = [];
             for (const [index, result] of results.entries()) {
               if (result.status === 'rejected') {
-                app.log.error({ err: result.reason, agentId: rows[index]!.id }, 'failed to stop Agent Container for backend shutdown');
+                app.log.error({ err: result.reason, workerId: rows[index]!.workerId, slot: rows[index]!.slot }, 'failed to stop Worker Container for backend shutdown');
                 errors.push(result.reason);
               }
             }
-            if (errors.length) throw new AggregateError(errors, 'Some Agent Containers could not be stopped');
+            if (errors.length) throw new AggregateError(errors, 'Some Worker Containers could not be stopped');
           };
           const stopping = stopContainers().catch((err) => {
             stopFailure = err;

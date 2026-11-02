@@ -32,7 +32,7 @@ describe('Schedule alerts', () => {
     await phone(second.client, 'other-admin-phone-token-02');
     const { agent, runner } = await createAgent(app, admin);
     const schedule = (
-      await admin.post('/schedules', { name: 'Alerts', agentId: agent.id, cron: '*/10 * * * *', prompt: 'Work.' })
+      await admin.post('/schedules', { name: 'Alerts', agentId: agent.id, workerId: app.workerId, cron: '*/10 * * * *', prompt: 'Work.' })
     ).body.schedule as Schedule;
     return { admin, agent, runner, schedule };
   }

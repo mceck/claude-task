@@ -1,4 +1,4 @@
-// Agents, Credentials, Sessions, Jobs and the Agent's Timeline items (docs/specs/agents.md, docs/specs/agent-sessions.md). Terms follow docs/CONTEXT.md.
+// Agents, Credentials, Sessions, Jobs and the Agent's Timeline items (docs/specs/agents.md, docs/specs/agent-sessions.md, docs/specs/workers.md). Terms follow docs/CONTEXT.md.
 
 export const PERMISSION_MODES = ['bypassPermissions', 'auto', 'acceptEdits', 'dontAsk'] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
@@ -42,7 +42,7 @@ export interface Credential {
 }
 
 export interface RateLimitObservation {
-  agentId: string;
+  agentId: string | null;
   /** The `rate_limit_info` of the stream's `rate_limit_event`. */
   info: Record<string, unknown>;
   observedAt: string;
@@ -54,8 +54,8 @@ export type ImageState = (typeof IMAGE_STATES)[number];
 export const BUILD_STATUSES = ['building', 'succeeded', 'failed'] as const;
 export type BuildStatus = (typeof BUILD_STATUSES)[number];
 
-/** What the Agents list shows, derived from configuration, image, container, Runner and Jobs. */
-export type AgentState = 'disabled' | 'building' | 'build_failed' | 'offline' | 'idle' | 'working';
+/** What the Agents list shows: disabled, or idle, or working with the number of its active Jobs. */
+export type AgentState = 'disabled' | 'idle' | 'working';
 
 /** Enough of an Agent to show it next to a Task or a Comment. */
 export interface AgentRef {
@@ -68,15 +68,17 @@ export interface AgentRef {
 }
 
 export interface Agent extends AgentRef {
-  services: AgentService[];
   skillIds: string[];
   mcpServerIds: string[];
   pluginIds: string[];
   skillCommands: import('./extensions').SkillCommand[];
+  /** A Worker still has to synchronize this Agent's Profile to its current Extensions. */
   extensionsPending: boolean;
+  /** The latest synchronization error on any Worker. */
   extensionsError: string | null;
+  /** Synchronization errors, per Worker. */
+  extensionErrors: { workerId: string; workerName: string; error: string }[];
   description: string;
-  dockerfile: string;
   /** Plain name/value pairs merged into every Job of this Agent; they win over the Project's. */
   env: Record<string, string>;
   credentialId: string;
@@ -85,18 +87,12 @@ export interface Agent extends AgentRef {
   effort: EffortLevel | null;
   permissionMode: PermissionMode;
   systemPrompt: string;
-  cpuLimit: number | null;
-  memoryMb: number | null;
   enabled: boolean;
-  imageState: ImageState;
-  /** Last observed container state (`running`, `exited`, `missing`, …). */
-  containerState: string;
-  runnerConnected: boolean;
-  /** A newer image is built but the container still runs the old one (waiting for the Agent to be idle). */
-  recreatePending: boolean;
   state: AgentState;
-  currentTask: TaskRef | null;
-  queueLength: number;
+  /** Jobs running right now, on any Worker. */
+  activeJobs: number;
+  /** The Tasks of those Jobs. */
+  activeTasks: TaskRef[];
   lastActivityAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -107,16 +103,6 @@ export interface TaskRef {
   key: string;
   title: string;
   projectId: string;
-}
-
-export interface AgentBuild {
-  id: string;
-  agentId: string;
-  status: BuildStatus;
-  baseVersion: string;
-  log: string;
-  startedAt: string;
-  finishedAt: string | null;
 }
 
 export const SESSION_STATES = ['pending', 'idle', 'running', 'paused', 'closed'] as const;
@@ -140,9 +126,10 @@ export interface ContextUsage {
 export interface TaskSession {
   commands?: import('./commands').ChatCommand[];
   id: string;
-  agent: AgentRef;
+  /** The Task's Agent, or the Agent of the Session's latest Job when the Task has none. */
+  agent: AgentRef | null;
   state: SessionState;
-  /** 1-based position in the Agent's Queue, when the Task has a Queue Entry. */
+  /** 1-based position in the Worker's Queue, when the Task has a Queue Entry. */
   queuePosition: number | null;
   /** The Queue Entry waits for a Retry after a failed Job. */
   held: boolean;
@@ -156,8 +143,10 @@ export interface TaskSession {
 
 export interface QueueEntry {
   id: string;
-  agentId: string;
+  workerId: string;
   task: TaskRef;
+  /** The Task's Agent, which the entry's Job runs with. */
+  agent: AgentRef | null;
   kind: QueueEntryKind;
   position: string;
   held: boolean;
@@ -176,7 +165,12 @@ export interface Usage {
 export interface Job {
   id: string;
   sessionId: string;
-  agentId: string;
+  /** Null once the Agent is deleted; `agentName` stays. */
+  agentId: string | null;
+  agentName: string;
+  workerId: string | null;
+  workerName: string | null;
+  slot: number | null;
   task: TaskRef;
   kind: QueueEntryKind;
   state: JobState;
@@ -358,6 +352,8 @@ export interface ProjectAgentSettings {
   agentInstructions: string;
   /** New Tasks start assigned to this Agent while it is enabled. */
   defaultAgentId: string | null;
+  /** Where the Project's Jobs run. */
+  workerId: string;
   /** New Tasks resume by themselves after a usage limit. */
   autoResume: boolean;
   /** The Project's Agents may act on every Task of the Project, not only on their own. */

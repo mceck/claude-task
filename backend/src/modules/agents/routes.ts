@@ -1,73 +1,47 @@
-import {
-  AGENT_AVATAR_MAX_BYTES,
-  AGENT_AVATAR_TYPES,
-  checkAgentDockerfile,
-  createAgentBody,
-  duplicateAgentBody,
-  moveQueueEntryBody,
-  recreateAgentBody,
-  updateAgentBody,
-} from '@claude-task/shared';
+import { AGENT_AVATAR_MAX_BYTES, AGENT_AVATAR_TYPES, createAgentBody, duplicateAgentBody, updateAgentBody } from '@claude-task/shared';
 import type { AgentUsage, JobDetail } from '@claude-task/shared';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentBuilds, agents, credentials, jobs, projects, queueEntries, sessions } from '../../db/schema';
+import { agents, credentials, jobs, projects, schedules, statuses, tasks } from '../../db/schema';
 import { badRequest, conflict, notFound, parse } from '../../errors';
 import { latestRateLimits } from '../credentials/service';
 import { withDefaultSkills } from '../extensions/platform-skill';
 import { getTaskRow, unassignDeletedAgent } from '../tasks/service';
-import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { retrySession, stopTurn } from '../../sessions/lifecycle';
 import { notifyAgent } from '../../sessions/notify';
 import { refreshProjectSkills } from '../../sessions/project-skills';
 import { loadTaskSession } from '../../sessions/view';
-import { agentNeedsContainer, getAgentRow, loadAgent, loadAgents, loadBuilds, loadJobs, serializeBuild, taskRefs } from './service';
+import { getAgentRow, loadAgent, loadAgents, loadJobs, taskRefs } from './service';
 import type { AgentRow } from './service';
 import { agentExtensions, setAssignments } from '../extensions/service';
 import { idOrKey } from '../../ids';
 import { receiveAvatar } from '../avatar';
 
 const params = z.object({ id: z.uuid() });
-const entryParams = z.object({ id: z.uuid(), entryId: z.uuid() });
-const buildParams = z.object({ id: z.uuid(), buildId: z.uuid() });
 const taskParams = z.object({ id: idOrKey });
-const logsQuery = z.object({ tail: z.coerce.number().int().min(1).max(5000).default(500) });
-
-function assertDockerfile(dockerfile: string): void {
-  const check = checkAgentDockerfile(dockerfile);
-  if (!check.ok) throw badRequest(check.error);
-}
 
 async function assertCredential(db: Executor, id: string): Promise<void> {
   const [row] = await db.select({ id: credentials.id }).from(credentials).where(eq(credentials.id, id));
   if (!row) throw badRequest('Unknown credential');
 }
 
-async function getQueueEntry(db: Executor, agentId: string, entryId: string) {
-  const [entry] = await db.select().from(queueEntries).where(and(eq(queueEntries.id, entryId), eq(queueEntries.agentId, agentId)));
-  if (!entry) throw notFound('Queue entry');
-  return entry;
-}
-
 export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
   const admin = { config: { auth: 'admin' as const } };
-  const connected = (id: string) => ctx.runners.isReady(id);
 
-  app.get('/agents', async () => ({ agents: await loadAgents(ctx.db, connected) }));
+  app.get('/agents', async () => ({ agents: await loadAgents(ctx.db) }));
 
   app.get('/agents/:id', async (request) => {
     const { id } = parse(params, request.params);
-    return { agent: await loadAgent(ctx.db, connected, id) };
+    return { agent: await loadAgent(ctx.db, id) };
   });
 
   app.post('/agents', admin, async (request, reply) => {
     const body = parse(createAgentBody, request.body);
-    assertDockerfile(body.dockerfile);
     await assertCredential(ctx.db, body.credentialId);
     const { skillIds, mcpServerIds, pluginIds, ...fields } = body;
     const row = await ctx.db.transaction(async (tx) => {
@@ -75,28 +49,24 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
       await setAssignments(tx, created!.id, { skillIds: await withDefaultSkills(tx, skillIds), mcpServerIds, pluginIds });
       return created!;
     });
-    ctx.scheduler.build(row.id);
-    return reply.status(201).send({ agent: await loadAgent(ctx.db, connected, row.id) });
+    return reply.status(201).send({ agent: await loadAgent(ctx.db, row.id) });
   });
 
   app.patch('/agents/:id', admin, async (request) => {
     const { id } = parse(params, request.params);
     const body = parse(updateAgentBody, request.body);
-    if (body.dockerfile !== undefined) assertDockerfile(body.dockerfile);
     if (body.credentialId !== undefined) await assertCredential(ctx.db, body.credentialId);
-    const before = await getAgentRow(ctx.db, id);
+    await getAgentRow(ctx.db, id);
     const { skillIds, mcpServerIds, pluginIds, ...fields } = body;
     await ctx.db.transaction(async (tx) => {
       await getAgentRow(tx, id, { lock: true });
       await tx.update(agents).set({ ...fields, updatedAt: new Date() }).where(eq(agents.id, id));
       await setAssignments(tx, id, { skillIds, mcpServerIds, pluginIds });
     });
-    if ((body.dockerfile !== undefined && body.dockerfile !== before.dockerfile)
-      || (body.services !== undefined && JSON.stringify(body.services) !== JSON.stringify(before.services))) ctx.scheduler.build(id);
-    else void ctx.scheduler.reconcile(id).then(() => ctx.scheduler.kick(id), () => {});
-    if (body.enabled) ctx.scheduler.kick(id);
-    await ctx.scheduler.publishAgent(id);
-    return { agent: await loadAgent(ctx.db, connected, id) };
+    // New Extensions or an Agent enabled again: the Workers with its Profile or its work synchronize and dispatch now.
+    ctx.scheduler.refreshAgents([id]);
+    ctx.scheduler.publishAgent(id);
+    return { agent: await loadAgent(ctx.db, id) };
   });
 
   app.get('/agents/:id/avatar', async (request, reply) => {
@@ -128,8 +98,8 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
       throw err;
     });
     if (before.avatarBlobId) await ctx.blobs.delete(before.avatarBlobId);
-    await ctx.scheduler.publishAgent(id);
-    return { agent: await loadAgent(ctx.db, connected, id) };
+    ctx.scheduler.publishAgent(id);
+    return { agent: await loadAgent(ctx.db, id) };
   });
 
   app.delete('/agents/:id/avatar', admin, async (request) => {
@@ -140,8 +110,8 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
       return row;
     });
     if (before.avatarBlobId) await ctx.blobs.delete(before.avatarBlobId);
-    await ctx.scheduler.publishAgent(id);
-    return { agent: await loadAgent(ctx.db, connected, id) };
+    ctx.scheduler.publishAgent(id);
+    return { agent: await loadAgent(ctx.db, id) };
   });
 
   app.delete('/agents/:id', admin, async (request, reply) => {
@@ -149,27 +119,29 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const avatarBlobId = (await getAgentRow(ctx.db, id)).avatarBlobId;
     const actor = userActor(currentUser(request));
     await transact(ctx, async (tx, after) => {
-      await unassignDeletedAgent(tx, after, id, actor);
       await getAgentRow(tx, id, { lock: true });
+      // Open Tasks (Wiki Chats included, which never close) keep their Agent.
       const open = await tx
-        .select({ taskId: sessions.taskId })
-        .from(sessions)
-        .where(and(eq(sessions.agentId, id), inArray(sessions.state, ['pending', 'idle', 'running'])));
+        .select({ taskId: tasks.id })
+        .from(tasks)
+        .innerJoin(statuses, eq(statuses.id, tasks.statusId))
+        .where(and(eq(tasks.agentId, id), ne(statuses.category, 'closed')));
       if (open.length > 0) {
         const refs = await taskRefs(tx, open.map((o) => o.taskId));
-        throw conflict(`The agent still has open sessions: ${[...refs.values()].map((t) => t.key).join(', ')}. Unassign it first.`);
+        throw conflict(`The agent is assigned to open tasks: ${[...refs.values()].map((t) => t.key).join(', ')}. Unassign it first.`);
       }
       const [wiki] = await tx
         .select({ name: projects.name })
         .from(projects)
         .where(and(eq(projects.defaultAgentId, id), eq(projects.kind, 'wiki')));
-      if (wiki) throw conflict(`This agent runs the Wiki "${wiki.name}". Assign another agent to it first.`);
+      if (wiki) throw conflict(`This agent is the default agent of the Wiki "${wiki.name}". Choose another one first.`);
+      const [schedule] = await tx.select({ name: schedules.name }).from(schedules).where(eq(schedules.agentId, id));
+      if (schedule) throw conflict(`This agent runs the Schedule "${schedule.name}". Choose another agent for it first.`);
+      await unassignDeletedAgent(tx, after, id, actor);
       await tx.delete(agents).where(eq(agents.id, id));
     });
     if (avatarBlobId) await ctx.blobs.delete(avatarBlobId);
-    ctx.runners.disconnect(id, 4003, 'agent deleted');
-    void ctx.runtime.removeAgent(id).catch((err) => ctx.log.warn({ err, agentId: id }, 'could not remove the agent container'));
-    await ctx.scheduler.publishAgent(id);
+    ctx.scheduler.publishAgent(id);
     return reply.status(204).send();
   });
 
@@ -191,16 +163,12 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
             avatarColor: source.avatarColor,
             avatarBlobId,
             description: source.description,
-            dockerfile: source.dockerfile,
-            services: source.services,
             env: source.env,
             credentialId: source.credentialId,
             model: source.model,
             effort: source.effort,
             permissionMode: source.permissionMode,
             systemPrompt: source.systemPrompt,
-            cpuLimit: source.cpuLimit,
-            memoryMb: source.memoryMb,
             enabled: source.enabled,
           })
           .returning();
@@ -216,90 +184,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
       if (avatarBlobId) await ctx.blobs.delete(avatarBlobId);
       throw err;
     }
-    ctx.scheduler.build(row.id);
-    return reply.status(201).send({ agent: await loadAgent(ctx.db, connected, row.id) });
-  });
-
-  app.post('/agents/:id/rebuild', admin, async (request) => {
-    const { id } = parse(params, request.params);
-    await getAgentRow(ctx.db, id);
-    ctx.scheduler.build(id);
-    return { agent: await loadAgent(ctx.db, connected, id) };
-  });
-
-  app.post('/agents/:id/restart', admin, async (request) => {
-    const { id } = parse(params, request.params);
-    await getAgentRow(ctx.db, id);
-    if (ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(ctx.db, id, ctx.config.agents.wikiIdleStopMs))) {
-      throw conflict('The agent has no work; its container starts when work arrives');
-    }
-    await ctx.runtime.restartContainer(id).catch((err) => {
-      throw conflict(`Could not restart the container: ${(err as Error).message}`);
-    });
-    await ctx.scheduler.reconcile(id);
-    return { agent: await loadAgent(ctx.db, connected, id) };
-  });
-
-  /** Recreates the container with a fresh token; waits for the running Job unless forced. */
-  app.post('/agents/:id/recreate', admin, async (request) => {
-    const { id } = parse(params, request.params);
-    const { force } = parse(recreateAgentBody, request.body ?? {});
-    const agent = await getAgentRow(ctx.db, id);
-    if (!agent.imageTag) throw conflict('The agent has no image yet');
-    await ctx.db.update(agents).set({ containerSpec: 'recreate', forceRecreate: force }).where(eq(agents.id, id));
-    await ctx.scheduler.reconcile(id);
-    return { agent: await loadAgent(ctx.db, connected, id) };
-  });
-
-  app.get('/agents/:id/builds', async (request) => {
-    const { id } = parse(params, request.params);
-    const builds = await loadBuilds(ctx.db, id);
-    // Only the latest log comes with the list; older ones on request.
-    return { builds: builds.map((b, i) => (i === 0 ? b : { ...b, log: '' })) };
-  });
-
-  app.get('/agents/:id/builds/:buildId', async (request) => {
-    const { id, buildId } = parse(buildParams, request.params);
-    const [row] = await ctx.db.select().from(agentBuilds).where(and(eq(agentBuilds.id, buildId), eq(agentBuilds.agentId, id)));
-    if (!row) throw notFound('Build');
-    return { build: serializeBuild(row) };
-  });
-
-  app.get('/agents/:id/logs', admin, async (request) => {
-    const { id } = parse(params, request.params);
-    const { tail } = parse(logsQuery, request.query);
-    await getAgentRow(ctx.db, id);
-    return { logs: await ctx.runtime.logs(id, tail).catch(() => '') };
-  });
-
-  // Queue (members may reorder and remove entries)
-
-  app.get('/agents/:id/queue', async (request) => {
-    const { id } = parse(params, request.params);
-    await getAgentRow(ctx.db, id);
-    return { entries: await loadQueue(ctx.db, id) };
-  });
-
-  app.post('/agents/:id/queue/:entryId/move', async (request) => {
-    const { id, entryId } = parse(entryParams, request.params);
-    const body = parse(moveQueueEntryBody, request.body);
-    await transact(ctx, async (tx, after) => {
-      await getAgentRow(tx, id, { lock: true });
-      const entry = await getQueueEntry(tx, id, entryId);
-      await moveEntry(tx, after, entry, body);
-    });
-    return { entries: await loadQueue(ctx.db, id) };
-  });
-
-  app.delete('/agents/:id/queue/:entryId', async (request, reply) => {
-    const { id, entryId } = parse(entryParams, request.params);
-    await transact(ctx, async (tx, after) => {
-      await getAgentRow(tx, id, { lock: true });
-      const entry = await getQueueEntry(tx, id, entryId);
-      if (entry.kind === 'start') throw badRequest("A session start can't be removed from the queue; unassign the agent instead");
-      await removeEntry(tx, after, entry, 'removed from queue');
-    });
-    return reply.status(204).send();
+    return reply.status(201).send({ agent: await loadAgent(ctx.db, row.id) });
   });
 
   // Jobs and usage

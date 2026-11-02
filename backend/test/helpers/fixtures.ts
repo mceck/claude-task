@@ -1,9 +1,11 @@
 import { DEFAULT_AGENT_DOCKERFILE } from '@claude-task/shared';
-import type { Agent, Comment, Credential, Tag, Priority, ProjectBundle, Role, Status, Task, TaskSession, TimelineItem, User } from '@claude-task/shared';
+import type { Agent, Comment, Credential, Tag, Priority, ProjectBundle, Role, Status, Task, TaskSession, TimelineItem, User, Worker } from '@claude-task/shared';
 import { expect } from 'vitest';
 import type { ApiClient } from './client';
+import { TEST_WORKER } from './app';
 import type { TestApp } from './app';
 import { FakeRunner } from './runner';
+import type { RunnerTarget } from './runner';
 
 let seq = 0;
 const unique = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -47,11 +49,19 @@ export function projectKey(): string {
   return `P${key.padStart(2, 'A')}`;
 }
 
+/** The Worker new Projects run on unless told otherwise: the test's default one. */
+export async function defaultWorkerId(client: ApiClient): Promise<string> {
+  const workers = (await client.get('/workers')).body.workers as Worker[];
+  const worker = workers.find((w) => w.name === TEST_WORKER) ?? workers[0];
+  if (!worker) throw new Error('no worker to create the project on');
+  return worker.id;
+}
+
 export async function createProject(
   client: ApiClient,
-  body: { key?: string; name?: string; description?: string } = {},
+  body: { key?: string; name?: string; description?: string; workerId?: string } = {},
 ): Promise<ProjectBundle> {
-  const res = await client.post('/projects', { key: projectKey(), name: 'Project', ...body });
+  const res = await client.post('/projects', { key: projectKey(), name: 'Project', workerId: body.workerId ?? (await defaultWorkerId(client)), ...body });
   expect(res.status).toBe(201);
   return res.body;
 }
@@ -106,27 +116,44 @@ export async function createCredential(
   return res.body.credential;
 }
 
+/** The fake Runner of a Worker Container, connected once and shared by the fixtures. */
+export async function runnerOf(app: TestApp, to: RunnerTarget = app.workerId): Promise<FakeRunner> {
+  const key = typeof to === 'string' ? `${to}:1` : `${to.workerId}:${to.slot ?? 1}`;
+  const known = app.runners.get(key);
+  if (known?.open) return known;
+  const runner = await FakeRunner.connect(app, to);
+  app.runners.set(key, runner);
+  return runner;
+}
+
 /**
- * Creates an Agent, lets its (fake) image build and container start, and connects a fake
- * Runner with the container's token, so the Agent is idle and ready for Jobs.
+ * Creates an Agent and returns it with the fake Runner of the default Worker's slot 1, connected
+ * so the Agent's Jobs dispatch there. Agents share that one Worker Container.
  */
 export async function createAgent(
   app: TestApp,
   admin: ApiClient,
-  opts: { name?: string; credentialId?: string; connect?: boolean; body?: Record<string, unknown> } = {},
+  opts: { name?: string; credentialId?: string; connect?: boolean; body?: Record<string, unknown>; slot?: number } = {},
 ): Promise<{ agent: Agent; runner: FakeRunner }> {
   const credentialId = opts.credentialId ?? (await createCredential(admin)).id;
   const res = await admin.post('/agents', {
     name: opts.name ?? `Agent ${unique()}`,
-    dockerfile: DEFAULT_AGENT_DOCKERFILE,
     credentialId,
     ...opts.body,
   });
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   await app.settle();
-  const runner = opts.connect === false ? (null as unknown as FakeRunner) : await FakeRunner.connect(app, res.body.agent.id);
+  const runner = opts.connect === false || !app.workerId ? (null as unknown as FakeRunner) : await runnerOf(app, { workerId: app.workerId, slot: opts.slot ?? 1 });
   const agent = (await admin.get(`/agents/${res.body.agent.id}`)).body.agent as Agent;
   return { agent, runner };
+}
+
+/** Creates a Worker and lets its (fake) image build; its slots up to the minimum start. */
+export async function createWorker(app: TestApp, admin: ApiClient, body: Record<string, unknown> = {}): Promise<Worker> {
+  const res = await admin.post('/workers', { name: `Worker ${unique()}`, dockerfile: DEFAULT_AGENT_DOCKERFILE, ...body });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  await app.settle();
+  return (await admin.get(`/workers/${res.body.worker.id}`)).body.worker as Worker;
 }
 
 /** Assigns (or with null unassigns) the Task's Agent. */

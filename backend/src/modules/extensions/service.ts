@@ -2,7 +2,7 @@ import type { McpServer, McpValue, Plugin, SaveMcpServerBody, Skill } from '@cla
 import { asc, eq, inArray, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentMcpServers, agentPlugins, agents, agentSkills, mcpServers, plugins, skills } from '../../db/schema';
+import { agentMcpServers, agentPlugins, agentProfiles, agents, agentSkills, mcpServers, plugins, skills } from '../../db/schema';
 import type { StoredMcpValue } from '../../db/schema';
 import { badRequest } from '../../errors';
 import { last4 } from '../../secrets';
@@ -84,12 +84,12 @@ export async function setAssignments(db: Executor, agentId: string, { skillIds, 
   }
   if (skillIds !== undefined || mcpServerIds !== undefined || pluginIds !== undefined) await invalidateExtensions(db, [agentId]);
 }
+/** A change to the Agents' Extensions: every Worker synchronizes their Profiles again, and old errors clear. */
 export async function invalidateExtensions(db: Executor, ids: string[]): Promise<void> {
-  if (ids.length)
-    await db
-      .update(agents)
-      .set({ extensionsRevision: sql`${agents.extensionsRevision} + 1`, extensionsError: null, updatedAt: new Date() })
-      .where(inArray(agents.id, [...new Set(ids)]));
+  if (!ids.length) return;
+  const unique = [...new Set(ids)];
+  await db.update(agents).set({ extensionsRevision: sql`${agents.extensionsRevision} + 1`, updatedAt: new Date() }).where(inArray(agents.id, unique));
+  await db.update(agentProfiles).set({ error: null }).where(inArray(agentProfiles.agentId, unique));
 }
 export function resolvedMcp(ctx: AppContext, rows: (typeof mcpServers.$inferSelect)[]): Record<string, unknown> {
   const decode = (values: Record<string, StoredMcpValue>) =>

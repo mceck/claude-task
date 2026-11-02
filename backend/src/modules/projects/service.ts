@@ -23,6 +23,7 @@ export function serializeProject(p: ProjectRow): Project {
     logoUrl: p.logoBlobId ? `${API_PREFIX}/projects/${p.id}/logo?v=${p.logoBlobId}` : null,
     key: p.key,
     repository: p.repository,
+    workerId: p.workerId,
     name: p.name,
     description: p.description,
     archivedAt: p.archivedAt?.toISOString() ?? null,
@@ -57,7 +58,7 @@ export async function assertBoardTask(db: Executor, projectId: string): Promise<
 
 export async function createProject(
   db: Executor,
-  input: Pick<ProjectRow, 'key' | 'name' | 'description'> & Partial<Pick<ProjectRow, 'repository' | 'defaultAgentId'>>,
+  input: Pick<ProjectRow, 'key' | 'name' | 'description' | 'workerId'> & Partial<Pick<ProjectRow, 'repository' | 'defaultAgentId'>>,
 ): Promise<ProjectRow> {
   const [project] = await db.insert(projects).values(input).returning();
   await db

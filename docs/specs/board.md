@@ -4,7 +4,7 @@ The board is where the team organizes work. It covers **Projects** (each with it
 
 ## Concepts
 
-- A **Project** is a body of work with its own Board, Statuses and Tags. It has a **Project Key**, a name, a description, an optional link to a code **Repository** (see [Git integration](git-integration.md)), Agent-related settings, and an archived flag.
+- A **Project** is a body of work with its own Board, Statuses and Tags. It has a **Project Key**, a name, a description, the **Worker** its Agents run on (see [Workers](workers.md)), an optional link to a code **Repository** (see [Git integration](git-integration.md)), Agent-related settings, and an archived flag.
 - The **Project Key** is a short uppercase code of 2 to 6 letters (`API`, `WEB`), unique across the installation and fixed at creation. It prefixes the Project's Task Keys.
 - A Project has a **kind**. Ordinary Projects have kind `project`. Each Wiki is stored as a Project of kind `wiki` with one backing Task; these Projects are kept out of the Projects list, absent from the Project API and managed only through the Wiki (see [Wikis](wikis.md)).
 - A **Status** is a named step of a Project's workflow, with a color and a position. Each Status belongs to one **Category**: `backlog`, `open`, `active`, `review`, `done` or `closed`. The Category gives the Status its fixed meaning whatever its name. Only `closed` changes how Agents behave, and `backlog` changes how Agents are assigned (see [Updating Tasks](#updating-tasks)): a Task entering a `closed`-category Status ends its Agent's Session (see [Agent Sessions](agent-sessions.md)).
@@ -24,6 +24,7 @@ erDiagram
   TASK }o--o{ USER : "assigned to"
   TASK }o--o| AGENT : "assigned to"
   TASK ||--o{ REVISION : "changed by"
+  WORKER ||--o{ PROJECT : "runs"
 ```
 
 ## Behaviour
@@ -32,7 +33,13 @@ erDiagram
 
 A Project has a kind: `project`, `wiki` or `schedule`. Wiki Projects and Schedule Projects are hidden from the Projects list, the Boards list and Project search, and their rules are in [Wikis](wikis.md) and [Schedules](schedules.md). A Schedule Project has three fixed Statuses (`Running`, `Succeeded`, `Failed`) that nobody edits, and its Tasks are created and moved by the scheduler.
 
-**Creating.** Any User creates a Project with a key, a name (1 to 100 characters after trimming) and an optional description (up to 10,000 characters). Creation also accepts an optional Repository with its Base Branch and an optional default Agent. Clients offer enabled Agents and a No Agent option; the API accepts an existing Agent or an empty value. The default Agent applies to new Tasks under the usual assignment rules. The Repository is checked through the same Git Connection, accessibility, Base Branch and protection checks as Project settings. A selected Repository, default Agent, Project and default Statuses are saved in one transaction. An unknown Agent or invalid Repository selection answers `400` and leaves the Project Key available for another attempt. The key must be 2 to 6 uppercase letters; anything else is answered with `400`, and a key already in use with `409` "A project with this key already exists". A new Project starts with six Statuses and no Tags:
+**Creating.** Any User creates a Project with a key, a name (1 to 100 characters after trimming), an optional description (up to 10,000 characters) and a Worker. Creation also accepts an optional Repository with its Base Branch and an optional default Agent.
+
+- **Worker**: required. Clients offer every Worker with its Worker State dot and preselect it when exactly one exists; the API accepts any existing Worker. On an installation with no Worker the form explains why a Project cannot be created yet: Admins see "Create a Worker first" with a link to the Workers section, Members see "Ask an Admin to create a Worker".
+- **Default Agent**: clients offer enabled Agents and a No Agent option; the API accepts an existing Agent or an empty value. The default Agent applies to new Tasks under the usual assignment rules.
+- **Repository**: checked through the same Git Connection, accessibility, Base Branch and protection checks as Project settings.
+
+The Worker, a selected Repository, the default Agent, the Project and its default Statuses are saved in one transaction. A missing or unknown Worker, an unknown Agent or an invalid Repository selection answers `400` and leaves the Project Key available for another attempt. The key must be 2 to 6 uppercase letters; anything else is answered with `400`, and a key already in use with `409` "A project with this key already exists". A new Project starts with six Statuses and no Tags:
 
 | Status | Category | Color |
 | --- | --- | --- |
@@ -57,14 +64,25 @@ Logo changes use the same realtime event as other Project edits. Concurrent repl
 
 **Archiving.** Any User can archive a Project, which hides it from the Projects list and the sidebar while keeping everything: its Board stays reachable by URL with an "Archived" badge, and its Tasks, Comments and Agent work carry on as before. Archiving an already archived Project keeps its original archive time. Unarchiving brings it back to the list.
 
-**Deleting permanently.** An Admin can delete an archived Project for good, from its settings after a confirmation. The Project must be archived first (otherwise `400` "Archive the project before deleting it"), and no Agent may have an active Job on any of its Tasks (otherwise `409` "An agent is working on this. Stop it, or close the task, before deleting."). Deletion removes the Project's Tasks, Comments, attachments (including the stored files), Revisions, Statuses and Tags, asks the Agents to remove the Tasks' Worktrees, and frees the key for a new Project.
+**Deleting permanently.** An Admin can delete an archived Project for good, from its settings after a confirmation. The Project must be archived first (otherwise `400` "Archive the project before deleting it"), and none of its Tasks may have an active Job (otherwise `409` "An agent is working on this. Stop it, or close the task, before deleting."). Deletion removes the Project's Tasks, Comments, attachments (including the stored files), Revisions, Statuses and Tags and its Queue Entries, asks a Runner of the Project's Worker to remove the Tasks' Worktrees, and frees the key for a new Project.
 
 **Settings.** A Project's settings page has five tabs:
 
 - **General**: logo upload, replacement and removal, name, description (the key is shown read-only), archive and unarchive, and for Admins on archived Projects, "Delete permanently".
 - **Statuses** and **Tags**: described below.
-- **Agents**: the **Automatic resume at limit** switch (off by default; new Tasks copy its value, see Creating Tasks), the **Agents may write to the board** switch (Board Write Access, off by default: it lets the Project's Agents act on every Task of the Project, see [Agent Sessions](agent-sessions.md#writing-to-the-board)), the Setup Script and Agent Instructions (each up to 100,000 characters, editable by any User and saved automatically after a 600 ms pause or when leaving the field or view) and the Project's environment variables and secrets (Admins only). The section shows save progress and errors with a Retry action. See [Agents](agents.md) and [Agent Sessions](agent-sessions.md).
+- **Agents**: the **Worker** picker (see [Changing the Worker](#changing-the-worker)), the default Agent, the **Automatic resume at limit** switch (off by default; new Tasks copy its value, see Creating Tasks), the **Agents may write to the board** switch (Board Write Access, off by default: it lets the Project's Agents act on every Task of the Project, see [Agent Sessions](agent-sessions.md#writing-to-the-board)), the Setup Script and Agent Instructions (each up to 100,000 characters, editable by any User and saved automatically after a 600 ms pause or when leaving the field or view) and the Project's environment variables and secrets (Admins only). The section shows save progress and errors with a Retry action. See [Agents](agents.md) and [Agent Sessions](agent-sessions.md).
 - **Repository**: the linked Repository and its Base Branch. See [Git integration](git-integration.md).
+
+### Changing the Worker
+
+Any User changes a Project's Worker from its Agents settings, choosing among every Worker. The Project's Sessions, transcripts and Worktrees live in the current Worker's Worker Volume, so the change is accepted only while the Project has no started Session outside a `closed`-category Status and no active Job. Otherwise it is answered with `409` listing those Tasks, and the settings show them with the explanation that they must be closed first. Sessions that never started carry nothing on the volume and do not block the change.
+
+When the change is accepted, in the same transaction:
+
+- the Project's Queue Entries leave the old Worker's Queue and join the end of the new Worker's Queue, keeping their relative order;
+- the Project's next Jobs run on the new Worker's Worker Containers. A closed Task reopened later gets its Worktree again on the new Worker; its transcript stayed on the old Worker Volume, so its next Comment starts a new conversation seeded with its Comments (see [Agent Sessions](agent-sessions.md)).
+
+The change is published as `project.updated`, and the Queue views of both Workers refresh. Wikis and Schedules follow the same rule for their own Worker (see [Wikis](wikis.md) and [Schedules](schedules.md)).
 
 ### Statuses
 
@@ -115,7 +133,7 @@ A full Task carries:
 
 - id, Task Key, number, Project;
 - title, description, Status, priority, Tag ids, assignee ids;
-- the assigned Agent and a summary of its Session (state and Queue position, see [Agent Sessions](agent-sessions.md));
+- the assigned Agent and a summary of its Session (state and position in the Queue of the Project's Worker, see [Agent Sessions](agent-sessions.md));
 - Task Branch name and link, and pull request state (see [Git integration](git-integration.md));
 - the number of Comments (every Comment not deleted, Internal Notes and Agent and System Comments included);
 - the number of tool calls across its Turns (subagent calls included, see [Agent Sessions](agent-sessions.md));
@@ -147,7 +165,7 @@ flowchart TD
 - An update that touches only fields nobody changed since V goes through, so two people editing different fields never collide.
 - An update that changes nothing records no Revision and keeps the version.
 - Changing the Status through an update puts the Task at the end of the new column.
-- Changing the Status or the Agent triggers the Session rules: assigning, reassigning or unassigning an Agent, closing and reopening (see [Agent Sessions](agent-sessions.md)). Status itself never starts an Agent; only entering or leaving a `closed`-category Status matters.
+- Changing the Status or the Agent triggers the Session rules: assigning, changing or unassigning an Agent, closing and reopening (see [Agent Sessions](agent-sessions.md)). Status itself never starts an Agent; only entering or leaving a `closed`-category Status matters.
 - **Backlog holds Tasks without an Agent.** Assigning an Agent to a Task in a `backlog`-category Status, through an update without a Status, also moves it to the first `open` Status (the clients ask for confirmation first and send both together). A Task leaving `backlog` for a non-`backlog` Status, through an update or a move, gets the Project's default Agent when it has none and that Agent is enabled; the Agent change is part of the same Revision. A Task already in Backlog with an Agent keeps it. Projects created before the `backlog` Category existed keep their Backlog Status as `open` until its Category is changed in settings.
 - Newly added assignees start following the Task.
 
@@ -176,7 +194,7 @@ Merging a Task's Pull Request from the Task view moves the Task like a move to t
 
 ### Deleting Tasks
 
-Any User deletes a Task, after a confirmation in the web app. Deletion removes the Task with its Comments, attachments (stored files included), Revisions, Session history and preferences, and asks the Agent to remove its Worktree. A Task with an active Agent Job can be deleted once the Agent is stopped or the Task closed; until then the request is answered with `409` "An agent is working on this. Stop it, or close the task, before deleting." The removal is published as `task.deleted` on the Project's topic and `task.removed` on the Task's topic. The Task's number stays used.
+Any User deletes a Task, after a confirmation in the web app. Deletion removes the Task with its Comments, attachments (stored files included), Revisions, Session history and preferences, and asks a Runner of the Project's Worker to remove its Worktree. A Task with an active Agent Job can be deleted once the Agent is stopped or the Task closed; until then the request is answered with `409` "An agent is working on this. Stop it, or close the task, before deleting." The removal is published as `task.deleted` on the Project's topic and `task.removed` on the Task's topic. The Task's number stays used.
 
 ### Bulk actions
 
@@ -214,7 +232,7 @@ The web Board of a Project shows:
 - a "Show closed" switch, kept in the URL, which adds the `closed`-category columns and their Tasks;
 - one column per shown Status in Status order, each with its color dot, name, number of visible cards, and an "Add task" box.
 
-A card shows the priority icon, the Task Key, the assigned Agent's avatar with its Session state and Queue position (`#2`), up to three assignee avatars, the pull request badge, the title, the Tags, the tool call count (a wrench icon) and the Comment count (a message icon). The tool call count is always muted and never marks unread work; only unread Comments highlight, in amber.
+A card shows the priority icon, the Task Key, the assigned Agent's avatar with its Session state and its position in the Worker's Queue (`#2`), up to three assignee avatars, the pull request badge, the title, the Tags, the tool call count (a wrench icon) and the Comment count (a message icon). The tool call count is always muted and never marks unread work; only unread Comments highlight, in amber.
 
 A card also carries the same **Close** action as the Task view (accessible name "Close task"), next to the Task Key: it moves the Task to the first `closed`-category Status in Status order, which ends its Session. It appears while the Task is in a Status of another Category, and a tooltip names the target Status. While the Agent is working on the Task (Session running or queued) it asks for confirmation first, since closing cancels that work; otherwise it closes at once. Clicking it does not open the Task and does not start a drag.
 
@@ -242,10 +260,10 @@ Realtime topics: `project:<id>` carries `task.created`, `task.updated`, `task.mo
 
 ## Data model
 
-- **Project**: key (unique, 2 to 6 uppercase letters, fixed), kind (`project` or `wiki`), name, description, archived at, Repository link, default Agent, automatic resume switch (off by default), Board Write Access switch (off by default), next Task number (starts at 1), Setup Script, Agent Instructions, created at, updated at.
+- **Project**: key (unique, 2 to 6 uppercase letters, fixed), kind (`project`, `wiki` or `schedule`), name, description, archived at, Worker (required), Repository link, default Agent, automatic resume switch (off by default), Board Write Access switch (off by default), next Task number (starts at 1), Setup Script, Agent Instructions, created at, updated at.
 - **Status**: Project, name (unique within the Project, case-insensitive), color, Category, position.
 - **Tag**: Project, name (unique within the Project, case-insensitive), color.
-- **Task**: Project, number (unique within the Project), title, description, Status, priority, position (fractional key compared byte by byte), creator Actor, assigned Agent, automatic resume switch, current Session, Task Branch and pull request, conversation generation (see [Wikis](wikis.md)), version (starts at 1, increased on every recorded change), created at, updated at.
+- **Task**: Project, number (unique within the Project), title, description, Status, priority, position (fractional key compared byte by byte), creator Actor, assigned Agent, automatic resume switch, its Session (one per Task, whichever Agent works it), Task Branch and pull request, conversation generation (see [Wikis](wikis.md)), version (starts at 1, increased on every recorded change), created at, updated at.
 - **Task assignee**: Task, User. **Task Tag**: Task, Tag.
 - **Revision**: Task, version (unique per Task), Actor, changes (field, before, after), created at.
 
@@ -261,8 +279,10 @@ Deleting a Project removes its Statuses, Tags and Tasks; deleting a Task removes
 ## Decisions
 
 - **The automatic resume switch is copied to the Task at creation.** A Task of a Project that resumes automatically keeps doing so when the Project's switch changes later, and a Task can opt out on its own. A single inherited value would make a Project-wide change silently alter Tasks mid-work.
-- **Project creation saves the initial Repository and default Agent atomically.** Both clients send the initial configuration in the creation request, so a failed Repository check or Agent selection leaves the User free to retry with the same Project Key.
-
+- **Project creation saves the Worker, the initial Repository and the default Agent atomically.** Both clients send the initial configuration in the creation request, so a failed Repository check, Worker or Agent selection leaves the User free to retry with the same Project Key.
+- **Each Project runs on exactly one Worker, chosen by any User.** The Worker decides the toolchain and the capacity of every Task of the Project, and its Worker Volume holds their Worktrees and transcripts, so all of a Project's work lives in one place. Choosing where a Project runs is everyday work for the team, while configuring Workers stays with Admins. A choice per Task was rejected: Tasks would scatter one Repository's Bare Clones across Workers.
+- **A Project's Worker changes only while no Session is started and open.** A started Session's transcript and Worktree live on the old Worker's volume, which the new Worker cannot read. Copying Sessions between volumes was rejected as fragile; refusing the change with the list of Tasks to close keeps every conversation resumable. Queue Entries move with the Project, so pending work is never lost.
+- **Fresh installations start with no Worker.** An Admin creates one before the first Project, and the creation form says so, rather than the platform guessing a Dockerfile and Development Services for the team.
 - **Project-owned logos in the shared file store.** The Project stores a reference to its own image. Authenticated downloads reuse the existing file store and Login rules, while changing the URL on replacement lets both clients refresh the image. Cleanup runs after commit so failed edits keep the existing logo available.
 
 - **Fixed Project Keys and per-Project sequential numbers.** Task Keys appear in branch names, links and conversations, so they never change and are never reused. The counter lives on the Project row, whose lock serializes creation and keeps numbers gapless.
@@ -281,6 +301,7 @@ Deleting a Project removes its Statuses, Tags and Tasks; deleting a Task removes
 - [Users and authentication](users-and-auth.md): who can do what on Projects, Statuses, Tags and Tasks.
 - [Conversation](conversation.md): Comments, Internal Notes, attachments (including files embedded in descriptions), following and notifications.
 - [Agents](agents.md): Agents assignable to Tasks, and the Project's environment variables and secrets.
+- [Workers](workers.md): the Worker a Project runs on, its Queue and its Worker Containers.
 - [Agent Sessions](agent-sessions.md): Assignment, Sessions and the effect of `closed` Statuses, the Timeline, Unseen Changes, and the Task Tools Agents use to read, edit, move and create Tasks.
 - [Git integration](git-integration.md): the Project's Repository, Task Branches, Worktrees and pull requests shown on Tasks.
 - [Wikis](wikis.md): Projects of kind `wiki`.

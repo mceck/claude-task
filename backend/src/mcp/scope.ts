@@ -12,6 +12,9 @@ import { hashToken } from '../secrets';
 export interface JobScope {
   jobId: string;
   agentId: string;
+  /** The Worker Container running the Job, whose Runner reads its files. */
+  containerId: string | null;
+  workerId: string | null;
   taskId: string;
   sessionId: string;
   projectId: string;
@@ -53,14 +56,17 @@ export async function jobScope(ctx: AppContext, request: FastifyRequest): Promis
   if (!row) throw unauthorized('Unknown or expired job token');
   return {
     jobId: row.job.id,
-    agentId: row.job.agentId,
+    // Joined to its Agent above, so the Job still has one.
+    agentId: row.job.agentId!,
+    containerId: row.job.containerId,
+    workerId: row.job.workerId,
     taskId: row.job.taskId,
     sessionId: row.job.sessionId,
     projectId: row.projectId,
     projectKind: row.projectKind,
     hasRepository: !!row.repository,
     boardWriteAccess: row.boardWriteAccess,
-    actor: { type: 'agent', id: row.job.agentId, displayName: row.agentName },
+    actor: { type: 'agent', id: row.job.agentId!, displayName: row.agentName },
     schedule: row.scheduleId ? { global: !row.repository, readOnly: row.scheduleReadOnly ?? false } : null,
   };
 }

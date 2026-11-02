@@ -11,10 +11,10 @@ A team member with a login to the app. Each User is either an Admin or a Member.
 _Avoid_: account, person
 
 **Admin**:
-A User who also manages users, Agents, Credentials, Extensions, Git Connections and Project Environment Variables, and can permanently delete Projects.
+A User who also manages users, Agents, Workers, Credentials, Extensions, Git Connections and Project Environment Variables, and can permanently delete Projects.
 
 **Member**:
-A User who works with Projects, Tasks and Wikis and assigns Agents. Platform configuration is left to Admins.
+A User who works with Projects, Tasks and Wikis, assigns Agents and chooses the Worker of a Project. Platform configuration is left to Admins.
 
 **Login**:
 A User's authenticated browser or app session, ended by logging out, a password reset, deactivation, or 30 days without activity. Changing your password ends your other Logins.
@@ -30,7 +30,7 @@ One deployment of Claude Task, identified by its URL. The native app can sign in
 ### Board
 
 **Project**:
-A body of work with its own Board, Statuses and Tags, optionally linked to one Repository.
+A body of work with its own Board, Statuses and Tags, run on one Worker and optionally linked to one Repository.
 _Avoid_: workspace, list, repo
 
 **Project Key**:
@@ -89,7 +89,7 @@ Whoever performed an action: a User, an Agent or the system.
 ### Schedule
 
 **Schedule**:
-A recurring job an Admin configures with a name, an Agent, a cron expression, a time zone and an initial prompt, optionally tied to a Repository. At every due time it starts a Scheduled Run.
+A recurring job an Admin configures with a name, an Agent, a Worker, a cron expression, a time zone and an initial prompt, optionally tied to a Repository. At every due time it starts a Scheduled Run.
 _Avoid_: cron job, routine
 
 **Schedule Project**:
@@ -111,7 +111,7 @@ A Schedule whose Jobs have every git push refused by the Git Proxy.
 ### Wiki
 
 **Wiki**:
-A shared knowledge base kept in a Repository of Markdown files, including its own Skills and conventions, with one assigned Agent and Chats open to all Users.
+A shared knowledge base kept in a Repository of Markdown files, including its own Skills and conventions, run on one Worker, with a default Agent for new Chats and Chats open to all Users.
 
 **Wiki Project**:
 The Project of kind `wiki` that carries a Wiki, hidden from the Projects list.
@@ -120,7 +120,7 @@ The Project of kind `wiki` that carries a Wiki, hidden from the Projects list.
 The first Task of a Wiki Project. It holds what all of the Wiki's Chats share: the Task Branch, the pull request and the Wiki's following.
 
 **Chat**:
-One of a Wiki's separate Conversations, held by one Task of its Wiki Project and with its own Session. A Wiki has any number of Chats, all open to every User, and each can be continued independently. A Task of an ordinary Project has a single Conversation instead.
+One of a Wiki's separate Conversations, held by one Task of its Wiki Project, with its own Session and its own Agent (the Wiki's default Agent when the Chat starts, changeable at any time). A Wiki has any number of Chats, all open to every User, and each can be continued independently. A Task of an ordinary Project has a single Conversation instead.
 _Avoid_: thread, conversation (for a Wiki's Chat, say Chat)
 
 **New Chat**:
@@ -237,7 +237,7 @@ Work an Agent delegates to a Subagent during a Turn; its transcript is shown liv
 _Avoid_: task, subtask, child agent, delegation
 
 **Background Command**:
-A shell command an Agent leaves running in the background during a Turn; its output stays in the container, and the Timeline keeps just how it ended.
+A shell command an Agent leaves running in the background during a Turn; its output stays in the Worker Container, and the Timeline keeps just how it ended.
 _Avoid_: background task, background job
 
 **Active Run**:
@@ -252,6 +252,10 @@ Edits by Users to a Task made after its Agent last read it, which the Agent can 
 
 **Change Notice**:
 The Message that Notify agent sends, listing the Unseen Changes.
+
+**Agent Change Notice**:
+The notice opening the first Message a Session receives after its Agent changed, telling the new Agent who it is now and who worked before.
+_Avoid_: reassignment notice
 
 ### Notifications
 
@@ -277,11 +281,15 @@ A phone's push token, tied to one Login.
 ### Agents
 
 **Agent**:
-A global, named Claude Code worker with its own environment, Credential and instructions, assignable to any Task in any Project.
-_Avoid_: bot, assistant, worker
+A global, named Claude Code configuration (Credential, model, effort, permission mode, instructions, environment and Extensions), assignable to any Task in any Project and to any Wiki Chat. It has no container of its own: its Jobs run on the Worker of the Task's Project.
+_Avoid_: bot, assistant
 
 **Agent State**:
-The summary of an Agent's condition: disabled, building, build_failed, offline, idle or working. `offline` also covers an Agent whose container is stopped because it has no work.
+The summary of an Agent's condition: disabled, idle, or working with the number of its active Jobs and their Tasks.
+
+**Agent Profile**:
+An Agent's own Claude Code configuration directory inside a Worker Volume, holding its Skills, Plugins and settings. Every Agent Profile of a Worker Volume shares the same Session transcripts, so any Agent can resume any Session.
+_Avoid_: agent home, claude dir
 
 **Agent Prompt**:
 An Agent's own instructions, added to every Session it runs.
@@ -295,45 +303,64 @@ _Avoid_: account, token, API key
 Plain name/value variables an Agent applies to every Job, more specific than the Project's environment variables.
 _Avoid_: container env, secrets
 
-**Agent Container**:
-The one long-lived container in which an Agent works.
-_Avoid_: sandbox, VM, environment
+### Workers
 
-**Agent Volume**:
-The persistent storage of an Agent Container, holding its repositories, Worktrees, Session transcripts, installed tools, Skills and Development Service data.
+**Worker**:
+A global, named execution environment an Admin configures: a Dockerfile, Development Services, CPU and memory limits per Worker Container, and a minimum and a cap of Worker Containers. Each Project runs on exactly one Worker, and the Worker starts and stops Worker Containers between its minimum and its cap to work its Queue.
+_Avoid_: runtime, pool, environment, sandbox
+
+**Worker Container**:
+One running instance of a Worker, occupying one Worker Slot. It runs one Job at a time, for any Agent.
+_Avoid_: agent container, instance, replica
+
+**Worker Slot**:
+The stable number, from 1 to the Worker's cap, that identifies one Worker Container and its Service Volume. Slots from 1 to the minimum are always on.
+
+**Worker Volume**:
+The persistent storage shared by every Worker Container of one Worker, mounted as the agent user's home: Bare Clones, Worktrees, Session transcripts, Agent Profiles and installed tools.
+_Avoid_: agent volume, shared volume
+
+**Service Volume**:
+The persistent storage of one Worker Slot, holding the data of its Development Services. It survives the Worker Container being stopped or recreated, and is deleted with the Worker.
+
+**Worker State**:
+The summary of a Worker's condition: disabled, building, build_failed, offline (no Worker Container running), idle or working (with the number of busy Worker Containers).
 
 **Base Image**:
-The platform-provided image every Agent's environment is built on.
+The platform-provided image every Worker Image is built on.
 
 **Platform Version**:
 The version of the Base Image, made from the pinned Claude Code version and the image recipe including the Runner.
 
-**Agent Image**:
-An Agent's own image, built from its Dockerfile on top of the Base Image.
+**Worker Image**:
+A Worker's own image, built from its Dockerfile on top of the Base Image. Every Worker Container of the Worker runs it.
+_Avoid_: agent image
 
 **Build**:
-One attempt to produce an Agent Image, with its log.
+One attempt to produce a Worker Image, with its log.
 
 **Development Service**:
-A local database or tool (PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO, Chrome) run inside an Agent Container.
+A local database or tool (PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO, Chrome) run inside a Worker Container, with its data in the slot's Service Volume.
 _Avoid_: services (alone)
 
 **Runner**:
-The platform's process inside an Agent Container that carries out Jobs.
-_Avoid_: daemon, worker, agent
+The platform's process inside a Worker Container that carries out Jobs.
+_Avoid_: daemon, agent
 
 **Runner Protocol**:
 The versioned message contract between the Runner and the backend.
 
 **Runner Token**:
-The secret identifying one Agent Container's Runner to the backend.
+The secret identifying one Worker Container's Runner to the backend.
 
 **Worktree**:
-A Task's working directory inside an Agent Volume: an isolated checkout on its Task Branch when the Project has a Repository.
+A Task's working directory inside its Worker's Worker Volume: an isolated checkout on its Task Branch when the Project has a Repository.
 _Avoid_: checkout, workspace, clone
 
 **Bare Clone**:
-The repository of one Project inside an Agent Volume, shared by that Project's Worktrees.
+The repository of one Project inside a Worker Volume, shared by that Project's Worktrees.
+
+### Agent setup
 
 **Task Branch**:
 The branch dedicated to a Task, named after its Task Key and fixed once chosen.
@@ -366,7 +393,7 @@ _Avoid_: local skill, repository skill
 An external tool server in the platform's catalog, made available to the Agents it's assigned to.
 
 **Plugin**:
-A Claude Code plugin from a marketplace, kept in the platform's catalog and installed into the Agent Containers of the Agents it's assigned to. Unlike a catalog Skill, the platform stores only where to install it from, not its files.
+A Claude Code plugin from a marketplace, kept in the platform's catalog and installed into the Agent Profiles of the Agents it's assigned to. Unlike a catalog Skill, the platform stores only where to install it from, not its files.
 
 **Task Tools**:
 The actions an Agent can take from inside its Session: reading and searching Tasks and Conversations, editing and moving its own Task, creating new ones, opening a pull request, and posting files, Questions and Surveys to its Task's Conversation. A global Schedule's Agent also gets the global Task Tools, which act on the Tasks of every Project.
@@ -378,14 +405,14 @@ Linking an Agent to a Task. It doesn't start any work by itself: the Session sta
 _Avoid_: dispatch, scheduling
 
 **Session**:
-The single continuous Claude Code conversation between a Task and one Agent, or for a Wiki between one Chat and its Agent. It lasts until the Task is closed (or the Chat deleted) and resumes when the Task is reopened.
+The single continuous Claude Code conversation of a Task, or of a Wiki's Chat, whichever Agent works it. Changing the Agent resumes the same conversation with the new Agent's configuration. It lasts until the Task is closed (or the Chat deleted) and resumes when the Task is reopened.
 _Avoid_: conversation, thread
 
 **Claude Session Identity**:
 The id a Session's Claude Code conversation runs under. It starts equal to the Session and changes only when a Chat restarts from its history.
 
 **Job**:
-One execution of an Agent on a Session, from start to exit. An Agent runs at most one Job at a time.
+One execution of a Session on a Worker Container, with the configuration of the Task's Agent at dispatch, from start to exit. A Worker Container, a Session and a Worktree each have at most one Job at a time; an Agent can have Jobs on any number of Worker Containers.
 _Avoid_: execution, process
 
 **Job Token**:
@@ -400,11 +427,11 @@ One cycle in which the Agent works on the Messages it has received until it stop
 _Avoid_: step, iteration
 
 **Queue**:
-The ordered list of pending work for one Agent.
+The ordered list of pending work of one Worker, for the Tasks of every Project it runs, whatever their Agent.
 _Avoid_: backlog (that's a Status name)
 
 **Queue Entry**:
-Pending work for one Task in an Agent's Queue: starting its Session, delivering its pending Messages, or resuming an interrupted Turn.
+Pending work for one Task in its Worker's Queue: starting its Session, delivering its pending Messages, or resuming an interrupted Turn.
 
 **Held**:
 A Queue Entry whose start failed. It stays in the Queue until a Retry or a new Comment.
@@ -437,7 +464,7 @@ A Git Connection defined by the backend's environment instead of the UI. It's re
 An organization's or user's grant allowing a GitHub Git Connection's App to access selected Repositories.
 
 **Git Proxy**:
-The backend endpoint that Agent Containers use as their git remote. It admits only the active Job's Repository and forwards traffic to the provider with the Connection Secret, which stays in the backend.
+The backend endpoint that Worker Containers use as their git remote. It admits only the active Job's Repository and forwards traffic to the provider with the Connection Secret, which stays in the backend.
 _Avoid_: mirror, gateway
 
 **Git Credential Helper**:

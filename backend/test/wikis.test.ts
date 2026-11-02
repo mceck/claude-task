@@ -5,7 +5,7 @@ import { taskTopic } from '@claude-task/shared';
 import type { InputBlock, Wiki, WikiChat } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
-import { comment, createAgent, createUser, getSession, timeline } from './helpers/fixtures';
+import { comment, createAgent, createUser, createWorker, getSession, timeline } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 import { FakeRunner } from './helpers/runner';
 import { WsTestClient } from './helpers/ws';
@@ -24,7 +24,7 @@ describe('Wikis', () => {
     const result = await admin.post('/wikis', {
       name: 'Team wiki',
       description: 'Shared knowledge',
-      agentId: agent.id,
+      agentId: agent.id, workerId: app.workerId,
       repository: { connectionId: 'env-github', providerRepoId: '1' },
     });
     expect(result.status, JSON.stringify(result.body)).toBe(201);
@@ -275,38 +275,61 @@ describe('Wikis', () => {
     expect((await chats(admin, wiki))[0]!.title).toBe('Internal planning');
   });
 
-  it('keeps a Chat with the Agent that runs it when the Wiki changes Agent', async () => {
+  it('gives each Chat its own Agent: the default for new Chats, changeable from the Chat without losing it', async () => {
     const { admin, wiki, agent, runner } = await setup();
     await comment(admin, wiki.taskId, 'Original conversation');
     const s = new Stream();
     const first = await runner.runJob([s.init(), s.text('Before the change'), s.result()]);
     const spare = await newChat(admin, wiki);
-    const { agent: other, runner: otherRunner } = await createAgent(app, admin);
+    const { agent: other } = await createAgent(app, admin, { name: 'Bea Bot' });
 
+    // A new default Agent leaves existing Chats as they are.
     expect((await admin.patch(`/wikis/${wiki.id}`, { agentId: other.id })).status).toBe(200);
     expect((await admin.get(`/wikis/${wiki.id}`)).body.wiki.agentId).toBe(other.id);
-    // The old Chat stays readable, paused, and cannot be continued by the new Agent.
-    expect(await getSession(admin, wiki.taskId)).toMatchObject({ state: 'paused' });
+    expect(await getSession(admin, wiki.taskId)).toMatchObject({ state: 'idle', agent: { id: agent.id } });
     expect((await chats(admin, wiki)).find((c) => c.id === wiki.taskId)).toMatchObject({ agentId: agent.id });
-    const refused = await admin.post(`/tasks/${wiki.taskId}/comments`, { body: 'Can you continue?' });
-    expect(refused.status).toBe(409);
-    expect(JSON.stringify(refused.body)).toContain(agent.name);
-    expect((await timeline(admin, wiki.taskId)).filter((i) => i.type === 'comment')).toHaveLength(2);
+    await comment(admin, wiki.taskId, 'Still you?');
+    const same = await runner.next('job.start', (m) => m.jobId !== first.jobId);
+    expect(same).toMatchObject({ mode: 'resume', sessionId: first.sessionId, agentProfilePath: `.claude-agents/${agent.id}` });
+    runner.accept(same.jobId);
+    await runner.play(same.jobId, [s.result()]);
+    await runner.next('job.end', (m) => m.jobId === same.jobId);
+    await runner.exit(same.jobId);
 
-    // A Chat created now belongs to the new Agent; the unused one moves to it too.
+    // The empty Chat New Chat hands out takes the new default Agent.
+    expect((await newChat(admin, wiki)).id).toBe(spare.id);
     await comment(admin, spare.id, 'A question for the new agent');
-    const other1 = await otherRunner.next('job.start');
-    expect(other1.mode).toBe('new');
-    expect(texts(other1.initialMessage)).not.toContain('Original conversation');
+    const fresh = await runner.next('job.start', (m) => ![first.jobId, same.jobId].includes(m.jobId));
+    expect(fresh.mode).toBe('new');
+    expect(fresh.agentProfilePath).toBe(`.claude-agents/${other.id}`);
     expect((await chats(admin, wiki)).find((c) => c.id === spare.id)).toMatchObject({ agentId: other.id });
+    runner.accept(fresh.jobId);
+    await runner.exit(fresh.jobId);
 
-    // Back to the first Agent: its Chat continues the Claude conversation it had.
-    expect((await admin.patch(`/wikis/${wiki.id}`, { agentId: agent.id })).status).toBe(200);
-    expect(await getSession(admin, wiki.taskId)).toMatchObject({ state: 'idle' });
-    await comment(admin, wiki.taskId, 'Continuing with you again');
-    const resumed = await runner.next('job.start', (m) => m.jobId !== first.jobId);
-    expect(resumed).toMatchObject({ mode: 'resume', sessionId: first.sessionId });
+    // Changing a Chat's own Agent resumes its conversation with the new one.
+    const changed = await admin.put(`/wikis/${wiki.id}/chats/${wiki.taskId}/agent`, { agentId: other.id });
+    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
+    expect(changed.body.chat).toMatchObject({ id: wiki.taskId, agentId: other.id });
+    await comment(admin, wiki.taskId, 'Over to you, Bea');
+    const resumed = await runner.next('job.start', (m) => ![first.jobId, same.jobId, fresh.jobId].includes(m.jobId));
+    expect(resumed).toMatchObject({ mode: 'resume', sessionId: first.sessionId, agentProfilePath: `.claude-agents/${other.id}` });
+    expect(texts(resumed.initialMessage)).toContain('You are now working as agent "Bea Bot"');
+    expect((await admin.put(`/wikis/${wiki.id}/chats/${wiki.taskId}/agent`, { agentId: randomUUID() })).status).toBe(400);
     expect((await admin.patch(`/wikis/${wiki.id}`, { agentId: randomUUID() })).status).toBe(400);
+  });
+
+  it('refuses a new Worker while the Wiki has started Chats, and moves once they are deleted', async () => {
+    const { admin, wiki, runner } = await setup();
+    const other = await createWorker(app, admin, { name: 'Docs worker' });
+    await comment(admin, wiki.taskId, 'Hello');
+    const start = await runner.runJob([new Stream().init(), new Stream().result()]);
+    const refused = await admin.patch(`/wikis/${wiki.id}`, { workerId: other.id });
+    expect(refused.status).toBe(409);
+    expect(JSON.stringify(refused.body)).toMatch(/delete the chats/);
+    expect((await admin.delete(`/wikis/${wiki.id}/chats/${wiki.taskId}`)).status).toBe(204);
+    expect((await admin.patch(`/wikis/${wiki.id}`, { workerId: other.id })).status).toBe(200);
+    expect((await admin.get(`/wikis/${wiki.id}`)).body.wiki.workerId).toBe(other.id);
+    expect(start.jobId).toBeTruthy();
   });
 
   it('applies the Wiki\'s name, description, follow and mute choices to every Chat', async () => {
@@ -399,27 +422,25 @@ describe('Wikis', () => {
     expect((await member.get(`/tasks/${chat.id}/preferences`)).body.preference).toMatchObject({ following: true });
   });
 
-  it('takes Internal Notes in a Chat run by another Agent, and lets a Chat whose Agent was deleted continue', async () => {
+  it('refuses deleting an Agent while a Chat or the Wiki uses it', async () => {
     const { admin, wiki, agent, runner } = await setup();
     await comment(admin, wiki.taskId, 'Original conversation');
     await runner.next('job.start');
     const { agent: other } = await createAgent(app, admin);
     expect((await admin.patch(`/wikis/${wiki.id}`, { agentId: other.id })).status).toBe(200);
-    // Internal Notes are never delivered to an Agent, so they are fine in any Chat.
-    expect((await admin.post(`/tasks/${wiki.taskId}/comments`, { body: 'Note to self', internal: true })).status).toBe(201);
-    expect((await admin.post(`/tasks/${wiki.taskId}/comments`, { body: 'To the agent' })).status).toBe(409);
-    // With its Agent gone, the Chat carries on with the Wiki's current one.
-    expect((await admin.delete(`/agents/${agent.id}`)).status).toBe(204);
-    expect((await admin.post(`/tasks/${wiki.taskId}/comments`, { body: 'Anyone there?' })).status).toBe(201);
-    expect((await chats(admin, wiki)).find((c) => c.id === wiki.taskId)).toMatchObject({ agentId: other.id });
+    // The Chat still has its own Agent, so the Agent stays.
+    expect((await admin.delete(`/agents/${agent.id}`)).status).toBe(409);
+    expect((await admin.delete(`/agents/${other.id}`)).status).toBe(409);
   });
 
   it('rejects missing or inaccessible repositories and invalid Agents without leaving partial Wikis', async () => {
     const { admin, agent } = await setup();
     for (const body of [
-      { name: 'No repository', agentId: agent.id },
-      { name: 'Missing repository', agentId: agent.id, repository: { connectionId: 'env-github', providerRepoId: '9999' } },
-      { name: 'Missing agent', agentId: randomUUID(), repository: { connectionId: 'env-github', providerRepoId: '1' } },
+      { name: 'No repository', agentId: agent.id, workerId: app.workerId },
+      { name: 'No worker', agentId: agent.id, repository: { connectionId: 'env-github', providerRepoId: '1' } },
+      { name: 'Missing worker', agentId: agent.id, workerId: randomUUID(), repository: { connectionId: 'env-github', providerRepoId: '1' } },
+      { name: 'Missing repository', agentId: agent.id, workerId: app.workerId, repository: { connectionId: 'env-github', providerRepoId: '9999' } },
+      { name: 'Missing agent', agentId: randomUUID(), workerId: app.workerId, repository: { connectionId: 'env-github', providerRepoId: '1' } },
     ])
       expect((await admin.post('/wikis', body)).status).toBe(400);
     expect((await admin.get('/wikis')).body.wikis).toHaveLength(1);
@@ -435,10 +456,10 @@ describe('Wikis', () => {
     await runner.drain();
     await runner.close();
     await comment(admin, wiki.taskId, 'Queued before deletion');
-    expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toHaveLength(1);
+    expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toHaveLength(1);
     expect((await admin.delete(`/wikis/${wiki.id}/chats/${wiki.taskId}`)).status).toBe(204);
-    expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toEqual([]);
-    const reconnected = await FakeRunner.connect(app, agent.id, { activeJobId: job.jobId });
+    expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toEqual([]);
+    const reconnected = await FakeRunner.connect(app, app.workerId, { activeJobId: job.jobId });
     await reconnected.next('job.cancel', (m) => m.jobId === job.jobId);
     await reconnected.exit(job.jobId);
     expect(await timeline(admin, wiki.taskId)).toEqual([]);

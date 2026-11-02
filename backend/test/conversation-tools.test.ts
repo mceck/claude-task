@@ -4,7 +4,7 @@ import type { BackendToRunner, Comment, JobStartMessage, UploadManifestEntry } f
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import type { TestApp } from './helpers/app';
-import { assignAgent, assignAndStart, comment, createAgent, createProject, createTask, createUser, statusByName, moveToStatus, timeline } from './helpers/fixtures';
+import { assignAgent, assignAndStart, comment, createAgent, createProject, createTask, createUser, statusByName, moveToStatus, timeline, createWorker } from './helpers/fixtures';
 import { FakeRunner } from './helpers/runner';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
@@ -30,10 +30,10 @@ const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000
 /** Plays the Runner's side of `job.upload`: the manifest, then one part per successful entry. */
 async function upload(
   app: TestApp,
-  agentId: string,
+  _agentId: string,
   request: UploadRequest,
   entries: (UploadManifestEntry & { file?: { name: string; type: string; data: Buffer } })[],
-  token = FakeRunner.token(app, agentId),
+  token = FakeRunner.token(app, app.workerId),
 ): Promise<number> {
   const form = new FormData();
   form.append('manifest', JSON.stringify(entries.map(({ path, error }) => ({ path, ...(error ? { error } : {}) }))));
@@ -48,7 +48,8 @@ async function setup(app: TestApp, opts: { assignees?: string[]; agentName?: str
   const { agent, runner } = await createAgent(app, admin, { name: opts.agentName ?? 'Ada Bot' });
   const task = await createTask(admin, bundle.project.id, { title: 'Fix login', assigneeIds: opts.assignees ?? [] });
   await assignAndStart(admin, task.id, agent.id);
-  const start = await runner.next('job.start');
+  // Agents share the default Worker Container: take the Job of this Task.
+  const start = await runner.next('job.start', (m) => m.initialMessage?.some((b) => b.type === 'text' && b.text.includes(`task ${task.key} `)) ?? false);
   runner.accept(start.jobId);
   await runner.drain();
   return { admin, bundle, agent, runner, task, start, client: await mcpClient(app, start) };
@@ -144,11 +145,12 @@ describe('Conversation tools (MCP)', () => {
 
   it('accepts an upload only from the Runner it asked', async () => {
     const { admin, agent, runner, client } = await setup(app);
-    const other = await createAgent(app, admin, { name: 'Other Bot' });
+    // Another Worker Container's Runner, of another Worker.
+    const other = await createWorker(app, admin, { minimum: 1 });
     const pending = call(client, 'send_files', { paths: ['a.txt'] });
     const request = await runner.next('job.upload');
     const file = { name: 'a.txt', type: 'text/plain', data: Buffer.from('a') };
-    expect(await upload(app, agent.id, request, [{ path: 'a.txt', file }], FakeRunner.token(app, other.agent.id))).toBe(404);
+    expect(await upload(app, agent.id, request, [{ path: 'a.txt', file }], FakeRunner.token(app, other.id))).toBe(404);
     expect(await upload(app, agent.id, request, [{ path: 'a.txt', file }])).toBe(204);
     expect((await pending).isError).toBe(false);
   });
@@ -210,10 +212,11 @@ describe('Conversation tools (MCP)', () => {
   });
 
   it('create_survey needs Assignees, who become its Expected Respondents', async () => {
-    const { client } = await setup(app);
+    const { client, runner, start } = await setup(app);
     const refused = await call(client, 'create_survey', { questions: [DB_ITEM] });
     expect(refused.isError).toBe(true);
     expect(refused.text).toContain('no assignees');
+    await finishTurn(runner, start);
 
     const admin = await app.admin();
     const mia = await createUser(app, admin, { displayName: 'Mia' });
@@ -397,7 +400,7 @@ describe('Answering Questions and Surveys', () => {
     expect((await admin.post(`/comments/00000000-0000-4000-8000-000000000000/answer`, { answers: [{ selected: ['x'] }] })).status).toBe(404);
   });
 
-  it('a newly assigned Agent reads the Question and its answer in the conversation', async () => {
+  it('a newly assigned Agent resumes the conversation that holds the Question and its answer', async () => {
     const { admin, runner, start, task, questionId } = await askQuestion();
     // Answered mid-turn: written to the running Job.
     await admin.post(`/comments/${questionId}/answer`, { answers: [{ selected: ['Postgres'] }, { selected: ['Search'] }] });
@@ -406,8 +409,11 @@ describe('Answering Questions and Surveys', () => {
     const other = await createAgent(app, admin, { name: 'Bea Bot' });
     await assignAgent(admin, task.id, other.agent.id);
     await comment(admin, task.id, 'Take over please');
-    const message = texts((await other.runner.next('job.start')).initialMessage);
-    expect(message).toContain('**Database**: Which database should we use?');
-    expect(message).toContain('→ Postgres');
+    // The new Agent resumes the same conversation, which already holds the Question and its answer.
+    const next = await other.runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(next).toMatchObject({ sessionId: start.sessionId, mode: 'resume' });
+    const message = texts(next.initialMessage);
+    expect(message).toContain('You are now working as agent "Bea Bot"');
+    expect(message).toContain('Take over please');
   });
 });

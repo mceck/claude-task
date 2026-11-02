@@ -43,7 +43,7 @@ async function setup(app: TestApp) {
 }
 
 describe('Comment search and reading (MCP)', () => {
-  const app = useTestApp();
+  const app = useTestApp({ worker: { minimum: 2, cap: 2 } });
 
   it('searches Tasks by title, description and key, with every word required', async () => {
     const { admin, bundle, client } = await setup(app);
@@ -170,7 +170,7 @@ describe('Comment search and reading (MCP)', () => {
 });
 
 describe('Board Write Access (MCP)', () => {
-  const app = useTestApp();
+  const app = useTestApp({ worker: { minimum: 2, cap: 2 } });
 
   it('offers the write tools only in a Project that allows them', async () => {
     const { client, enableWrites } = await setup(app);
@@ -198,7 +198,7 @@ describe('Board Write Access (MCP)', () => {
   it('writes in another Task and delivers the message to its Agent', async () => {
     const { admin, bundle, client, enableWrites } = await setup(app);
     await enableWrites();
-    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
     const target = await createTask(admin, bundle.project.id, { title: 'Bob works here' });
     await assignAndStart(admin, target.id, bob.id);
     const bobStart = await bobRunner.next('job.start');
@@ -227,7 +227,7 @@ describe('Board Write Access (MCP)', () => {
   it('assigns an agent to an unassigned Task and starts its Session', async () => {
     const { admin, bundle, client, enableWrites } = await setup(app);
     await enableWrites();
-    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
     const target = await createTask(admin, bundle.project.id, { title: 'Bob starts' });
 
     const res = await call(client, 'start_agent', { key: target.key, agent: 'bob bot', prompt: 'Take this over.' });
@@ -249,7 +249,7 @@ describe('Board Write Access (MCP)', () => {
   it('refuses its own Task, a Task of another Agent, itself and disabled Agents', async () => {
     const { admin, bundle, client, agent, task, enableWrites } = await setup(app);
     await enableWrites();
-    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
     expect((await call(client, 'start_agent', { key: task.key, agent: 'Bob Bot', prompt: 'x' })).isError).toBe(true);
 
     const taken = await createTask(admin, bundle.project.id, { title: 'Bob has it' });
@@ -267,7 +267,7 @@ describe('Board Write Access (MCP)', () => {
   it('starts at most three agents per Job', async () => {
     const { admin, bundle, client, enableWrites } = await setup(app);
     await enableWrites();
-    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
     for (let i = 0; i < 3; i++) {
       const target = await createTask(admin, bundle.project.id, { title: `Work ${i}` });
       expect((await call(client, 'start_agent', { key: target.key, agent: 'Bob Bot', prompt: 'go' })).isError, `start ${i}`).toBe(false);
@@ -282,7 +282,7 @@ describe('Board Write Access (MCP)', () => {
   it('tracks the Delivery of a message that waits for a busy Agent, until its Turn handles it', async () => {
     const { admin, bundle, client, enableWrites } = await setup(app);
     await enableWrites();
-    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
     const busy = await runningJob(app, admin, bundle.project.id, bob, bobRunner, 'Bob is busy');
     const target = await createTask(admin, bundle.project.id, { title: 'Bob later' });
 
@@ -311,7 +311,7 @@ describe('Board Write Access (MCP)', () => {
   it('counts a comment that wakes an Agent that has not started yet as one of the three starts', async () => {
     const { admin, bundle, client, enableWrites } = await setup(app);
     await enableWrites();
-    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const { agent: bob } = await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
     const waiting = await createTask(admin, bundle.project.id, { title: 'Assigned by a human' });
     await assignAgent(admin, waiting.id, bob.id);
 
@@ -334,22 +334,24 @@ describe('Board Write Access (MCP)', () => {
     const { admin, bundle, start, enableWrites } = await setup(app);
     expect(start.claudeArgs.appendSystemPrompt).not.toContain('Board Write Access');
     await enableWrites();
-    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
     const job = await runningJob(app, admin, bundle.project.id, bob, bobRunner, 'With writes');
     expect(job.start.claudeArgs.appendSystemPrompt).toContain('Board Write Access is on');
   });
 
-  it('lists enabled agents with their state and queue', async () => {
-    const { admin, client, enableWrites } = await setup(app);
+  it('lists enabled agents, least busy first, with their active jobs', async () => {
+    const { admin, client, enableWrites, task } = await setup(app);
     await enableWrites();
-    await createAgent(app, admin, { name: 'Bob Bot' });
-    const listed = (await call(client, 'list_agents')).json.agents as { name: string; state: string; queueLength: number; currentTask: unknown }[];
-    expect(listed.find((a) => a.name === 'Bob Bot')).toMatchObject({ state: 'idle', queueLength: 0, currentTask: null });
+    await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
+    const listed = (await call(client, 'list_agents')).json.agents as { name: string; state: string; activeJobs: number; currentTasks: { key: string }[] }[];
+    expect(listed.map((a) => a.name)).toEqual(['Bob Bot', 'Ada Bot']);
+    expect(listed[0]).toMatchObject({ state: 'idle', activeJobs: 0, currentTasks: [] });
+    expect(listed[1]).toMatchObject({ state: 'working', activeJobs: 1, currentTasks: [{ key: task.key }] });
   });
 });
 
 describe('Platform skill', () => {
-  const app = useTestApp();
+  const app = useTestApp({ worker: { minimum: 2, cap: 2 } });
 
   beforeEach(async () => {
     // The test app truncates every table before each test; the backend seeds the skill at startup.
@@ -389,7 +391,7 @@ describe('Platform skill', () => {
     const withSkill = await runningJob(app, admin, bundle.project.id, agent, runner, 'With the skill');
     expect(withSkill.start.claudeArgs.appendSystemPrompt).toContain('`claude-task` skill');
 
-    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot' });
+    const { agent: bob, runner: bobRunner } = await createAgent(app, admin, { name: 'Bob Bot', slot: 2 });
     expect((await admin.patch(`/agents/${bob.id}`, { skillIds: [] })).status).toBe(200);
     await app.settle();
     const without = await runningJob(app, admin, bundle.project.id, bob, bobRunner, 'Without the skill');
@@ -406,7 +408,7 @@ describe('Platform skill', () => {
 });
 
 describe('Project Board Write Access setting', () => {
-  const app = useTestApp();
+  const app = useTestApp({ worker: { minimum: 2, cap: 2 } });
 
   it('is off by default and toggles from the Agent settings', async () => {
     const admin = await app.admin();

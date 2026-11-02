@@ -43,10 +43,10 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
   const [entry] = await db
     .select({
       held: queueEntries.held,
-      position: sql<number>`(select count(*)::int from queue_entries q2 where q2.agent_id = queue_entries.agent_id and q2.position <= queue_entries.position)`,
+      position: sql<number>`(select count(*)::int from queue_entries q2 where q2.worker_id = queue_entries.worker_id and q2.position <= queue_entries.position)`,
     })
     .from(queueEntries)
-    .where(and(eq(queueEntries.agentId, s.agentId), eq(queueEntries.taskId, taskId)));
+    .where(eq(queueEntries.taskId, taskId));
   const [lastJob] = await db
     .select({ id: jobs.id, state: jobs.state, failureStage: jobs.failureStage, error: jobs.error })
     .from(jobs)
@@ -57,18 +57,23 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
     .select({ unseen: unseenChangesSql(taskId, s.lastSeenTaskVersion) })
     .from(sessions)
     .where(eq(sessions.id, s.id));
-  const agent = (await agentRefs(db, [s.agentId])).get(s.agentId)!;
-  const skillRows = await db.select({ name: skills.name, description: skills.description }).from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId))
-    .where(and(eq(agentSkills.agentId, s.agentId), eq(skills.userInvocable, true)));
+  // The Task's Agent, or the one that worked the conversation last while the Task has none.
+  const agentId = row.agentId ?? s.lastAgentId;
+  const agent = agentId ? ((await agentRefs(db, [agentId])).get(agentId) ?? null) : null;
+  const skillRows = agentId
+    ? await db.select({ name: skills.name, description: skills.description }).from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId))
+      .where(and(eq(agentSkills.agentId, agentId), eq(skills.userInvocable, true)))
+    : [];
   const [runtime] = await db.select({ commands: jobs.slashCommands }).from(jobs).where(and(eq(jobs.sessionId, s.id), isNotNull(jobs.slashCommands)))
     .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
   const [project] = await db.select({ skills: jobs.projectSkills }).from(jobs).where(and(eq(jobs.sessionId, s.id), isNotNull(jobs.projectSkills)))
     .orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
-  // One Session per (Task, Agent), so the Agent's latest Turn on the Task is this Session's latest.
-  // A Turn that couldn't measure the context (0 is the backfill's "checked" mark) leaves the
-  // previous measurement standing.
+  // One Session per Task, so the Task's latest Turn is this Session's latest. A Turn that
+  // couldn't measure the context (0 is the backfill's "checked" mark) leaves the previous
+  // measurement standing; a conversation that started over measures again.
   const [lastTurn] = await db.select({ tokens: turns.contextTokens, window: turns.contextWindow }).from(turns)
-    .where(and(eq(turns.taskId, taskId), eq(turns.agentId, s.agentId), gt(turns.contextTokens, 0)))
+    .innerJoin(jobs, eq(jobs.id, turns.jobId))
+    .where(and(eq(turns.taskId, taskId), eq(jobs.sessionId, s.id), gt(turns.contextTokens, 0)))
     .orderBy(desc(turns.finishedAt), desc(turns.index)).limit(1);
   return {
     // A Job's report follows the Worktree exactly; the Session's own copy fills the gap before one has run.

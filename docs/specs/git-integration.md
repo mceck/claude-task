@@ -1,6 +1,6 @@
 # Git integration
 
-Git integration ties every Project to one code Repository on GitHub or GitLab and lets Agents work on it like a developer would: each Task gets its own Task Branch and Worktree, the Agent commits and pushes with plain git, and hands the work back as a Pull Request. Admins configure **Git Connections** to the code hosts; members link a Project's Repository through one of them. Agents reach git only through the backend's **Git Proxy**, which admits the active Job's Repository, accepts pushes to the Task Branch alone, and talks to the provider with a credential that stays in the backend. The area exists so Agents can run with full permissions inside their container while the Repository, its Base Branch and the provider credentials stay safe.
+Git integration ties every Project to one code Repository on GitHub or GitLab and lets Agents work on it like a developer would: each Task gets its own Task Branch and Worktree, the Agent commits and pushes with plain git, and hands the work back as a Pull Request. Admins configure **Git Connections** to the code hosts; members link a Project's Repository through one of them. Agents reach git only through the backend's **Git Proxy**, which admits the active Job's Repository, accepts pushes to the Task Branch alone, and talks to the provider with a credential that stays in the backend. The area exists so Agents can run with full permissions inside a Worker Container while the Repository, its Base Branch and the provider credentials stay safe.
 
 ## Concepts
 
@@ -9,8 +9,8 @@ Git integration ties every Project to one code Repository on GitHub or GitLab an
 - A **Repository** is the code repository linked to a Project (or a Wiki), reached through exactly one Git Connection. Its identity is the pair (Git Connection, provider's numeric repository id), so renames and moves on the provider keep working. Several Projects may link the same Repository.
 - The **Base Branch** is the branch Task Branches start from and Pull Requests target. It defaults to the Repository's default branch.
 - A **Task Branch** is the branch dedicated to one Task, named after its Task Key and title and fixed once chosen.
-- A **Worktree** is the checkout of the Task's Task Branch inside the Agent Volume. All Worktrees of a Project in one Agent Volume share one **bare clone** of the Repository.
-- The **Git Proxy** is the backend endpoint every Agent Container uses as its git remote. It authenticates the Agent with its **Job token** and forwards git traffic to the provider with the Git Connection's credential.
+- A **Worktree** is the checkout of the Task's Task Branch inside the Worker Volume of the Project's Worker. All Worktrees of a Project share one **Bare Clone** of the Repository in that Worker Volume, and every Worker Container of the Worker sees them, so any of them can work any Task (see [Workers](workers.md)).
+- The **Git Proxy** is the backend endpoint every Worker Container uses as its git remote. It authenticates the Agent with its **Job token** and forwards git traffic to the provider with the Git Connection's credential.
 - The **Push Policy** is the Git Proxy's rule on pushes: an Agent can create and update its own Task Branch, force pushes included; every other ref update is rejected.
 - A **Pull Request** is a request to merge a Task Branch into the Base Branch. On GitLab it is a merge request, shown as `!N`; on GitHub it is shown as `#N`. Its state (open, draft, merged, closed) is tracked separately from the Task's Status, and merging it never changes the Status.
 - **Base Branch Protection** is the provider-side rule set that keeps the Git Connection's credential from pushing directly to the Base Branch. The platform shows it for information; the Push Policy is the guard.
@@ -25,7 +25,7 @@ flowchart LR
   T -->|gets| TB[Task Branch]
   T -->|may have| PR[Pull Request]
   TB -->|checked out in| W[Worktree]
-  W -->|shares| BC[Bare clone per Project]
+  W -->|shares| BC[Bare Clone per Project]
   BC -->|origin| GP[Git Proxy]
   GP -->|credential of| GC
 ```
@@ -144,9 +144,9 @@ With a GitLab service account holding Developer, GitLab's default protection ("M
 
 A Task gets its Task Branch when its first Job is dispatched in a Project with a Repository. The name is `task/<task key in lowercase>-<slug>`, for example `task/api-42-fix-login-redirect`. The slug is the title transliterated to ASCII, lowercased, with every run of other characters turned into one `-`, trimmed of leading and trailing dashes and cut to 40 characters (with any trailing dash removed again). A title that yields an empty slug gives `task/<key>`.
 
-At dispatch the backend asks the provider whether the Task Branch already exists on the Repository, then stores the name and the branch's web link on the Task. From then on the name is fixed: renaming the Task, reassigning it to another Agent, or changing the Repository keeps it. The link is refreshed on every dispatch.
+At dispatch the backend asks the provider whether the Task Branch already exists on the Repository, then stores the name and the branch's web link on the Task. From then on the name is fixed: renaming the Task, changing its Agent, changing the Project's Worker or changing the Repository keeps it. The link is refreshed on every dispatch.
 
-When the provider lookup fails (an outage, a broken connection), that Task's Queue Entry is held and a System Comment explains: "The agent couldn't start: checking the task branch on the git provider failed", with the reason and a hint to press Retry or post a Comment. The rest of the Agent's Queue goes on.
+When the provider lookup fails (an outage, a broken connection), that Task's Queue Entry is held and a System Comment explains: "The agent couldn't start: checking the task branch on the git provider failed", with the reason and a hint to press Retry or post a Comment. The rest of the Worker's Queue goes on.
 
 Branch web links:
 
@@ -155,24 +155,26 @@ Branch web links:
 
 The Agent learns its Task Branch from its first Message and its system prompt, which also tell it to push only that branch, and to commit, push and open or update the Pull Request before moving the Task to a review Status.
 
-### Worktrees in the Agent Volume
+### Worktrees in the Worker Volume
 
-Each Agent Volume holds, under the Agent's home:
+Each Worker Volume, mounted as the agent user's home in every Worker Container of its Worker, holds:
 
-- one bare clone per Project: `repos/<project id>.git`;
+- one Bare Clone per Project running on the Worker: `repos/<project id>.git`;
 - one Worktree per Task: `worktrees/<project id>/<Task Key>`.
 
-Paths are deterministic per (Project, Task), because resuming a Claude Code Session needs the same working directory. The Worktree path is stored on the Session when it is created. A Project without a Repository gets a plain directory at the same path, with no git.
+Paths are deterministic per (Project, Task), because resuming a Claude Code Session needs the same working directory, whichever Worker Container and Agent run the next Job. The Worktree path is stored on the Session when it is created. A Project without a Repository gets a plain directory at the same path, with no git.
 
-Each Job that has a Repository carries a git section: the Git Proxy URL of the Project, the Job token, the Repository identity (`<connection id>/<provider repository id>`), the Base Branch, the Task Branch, whether the Task Branch exists remotely (a hint), the bare clone path and the commit identity. The Runner prepares the Worktree right after accepting the Job, so the Job is already active for the Git Proxy:
+Several Worker Containers of one Worker can prepare Worktrees of the same Project at the same time. The Runner therefore holds an exclusive file lock per Bare Clone, kept in the Worker Volume next to the clone, around every git command that touches it (creating it, fetching, adding, removing and pruning Worktrees). A second Runner waits for the lock, so a Bare Clone is updated by one container at a time while the Worktrees themselves, one per Task and one Job each, are used freely.
+
+Each Job that has a Repository carries a git section: the Git Proxy URL of the Project, the Job token, the Repository identity (`<connection id>/<provider repository id>`), the Base Branch, the Task Branch, whether the Task Branch exists remotely (a hint), the Bare Clone path and the commit identity. The Runner prepares the Worktree right after accepting the Job, so the Job is already active for the Git Proxy:
 
 ```mermaid
 flowchart TD
-  A[Job accepted] --> B{Bare clone records another Repository identity?}
-  B -->|yes| C[Delete the bare clone]
-  B -->|no| D{Bare clone exists?}
+  A[Job accepted] --> B{Bare Clone records another Repository identity?}
+  B -->|yes| C[Delete the Bare Clone]
+  B -->|no| D{Bare Clone exists?}
   C --> D
-  D -->|no| E[Create bare clone with origin = Git Proxy URL]
+  D -->|no| E[Create Bare Clone with origin = Git Proxy URL]
   D -->|yes| F[Point origin at the Git Proxy URL]
   E --> G[Record Repository identity, fetch origin with prune]
   F --> G
@@ -195,14 +197,14 @@ Rules of the preparation:
 - A directory at the Worktree path that isn't a valid Worktree is a leftover and is removed first.
 - The upstream of the Task Branch is `origin/<Task Branch>` even before it exists remotely, so a plain `git push` works.
 - The commit identity is `<Agent name> (claude-task)` with the email `<Agent name slug>@<AGENT_COMMIT_EMAIL_DOMAIN>` (default domain `agents.claude-task.local`; the slug is at most 64 characters, `agent` when empty). These emails match no provider account, so Agent commits show the Agent's name with no avatar.
-- `.claude-task/` (attachments and platform markers) is excluded from git in the bare clone.
-- The Git Proxy URL is the same for whatever Repository a Project links, so the bare clone records the Repository identity. A bare clone recording a different identity (the Project changed Repository) is discarded and cloned again; a bare clone without a recorded identity is adopted, with its Worktrees kept.
+- `.claude-task/` (attachments and platform markers) is excluded from git in the Bare Clone.
+- The Git Proxy URL is the same for whatever Repository a Project links, so the Bare Clone records the Repository identity. A Bare Clone recording a different identity (the Project changed Repository) is discarded and cloned again; a Bare Clone without a recorded identity is adopted, with its Worktrees kept.
 - Every git command and its output appear in the Job's setup output. Each command times out after 30 minutes and never prompts on a terminal.
 - A new Worktree triggers the Project's Setup Script (see [Agent sessions](agent-sessions.md)).
 - When a Worktree is newly created for a Session that already ran, and the remote Task Branch is missing, the backend posts the System Comment "The previous remote task branch was not found. The worktree was recreated from the base branch."
 - A failure fails the Job at the `worktree` stage, with a System Comment and a Retry (see [Agent sessions](agent-sessions.md)).
 
-When a Task is closed or deleted, its Worktree is removed as soon as the Agent's Runner is connected: the Runner force-removes the Worktree, deletes the directory and prunes the bare clone's worktree list. Branches, local and remote, are kept. Reopening the Task recreates the Worktree at the same path from the remote Task Branch.
+When a Task is closed or deleted, its Worktree is removed once its Session has no active Job: the backend asks a connected Runner of the Project's Worker (the Session's last Worker Slot first), and the request waits until one connects. The Runner, under the Bare Clone lock, force-removes the Worktree, deletes the directory and prunes the Bare Clone's worktree list. Branches, local and remote, are kept. Reopening the Task recreates the Worktree at the same path from the remote Task Branch.
 
 ### Git Proxy
 
@@ -216,7 +218,7 @@ The Git Proxy serves git smart HTTP on the backend's main listener, outside the 
 
 ```mermaid
 sequenceDiagram
-  participant G as git in Agent Container
+  participant G as git in Worker Container
   participant H as Credential helper
   participant R as Runner
   participant P as Git Proxy
@@ -279,7 +281,7 @@ Failures, all as `502` with a plain message and no provider detail:
 
 Every proxied request is logged with Agent, Job, Project, service, refs pushed, provider status, bytes in and out, duration and any error. Rejected pushes are logged with their refs. Headers, credentials and URLs with credentials are never logged.
 
-Concurrency is bounded by the one-Job-per-Agent rule: the proxy serves at most one active Job per Agent, and that bound is its only rate limit.
+Concurrency is bounded by the Worker Containers: each runs at most one Job, so the proxy serves at most as many active Jobs as there are running Worker Containers (each Worker's cap at most), and that bound is its only rate limit.
 
 ### Credential helper
 
@@ -287,7 +289,7 @@ The Base Image configures git, system-wide and for every host, to use the platfo
 
 - answers `get` only; `store` and `erase` do nothing, so git never persists the token;
 - refuses on its own, before asking the Runner, requests that can never match a Git Proxy URL: a protocol other than `http`/`https`, an empty host or path, control characters or backslashes, `.` or `..` path segments;
-- asks the Runner over a Unix socket in the Agent's home, readable by the agent user only (mode 0600), with a 3-second connect timeout and a 40-second overall deadline;
+- asks the Runner of its own Worker Container over a Unix socket in a container-local directory outside the Worker Volume, readable by the agent user only (mode 0600), with a 3-second connect timeout and a 40-second overall deadline;
 - returns username `claude-task` and the Job token as password when the request matches the current Job's Git Proxy URL exactly: same scheme, same host and port (case-insensitive host), same path ignoring a leading slash and a trailing `.git`;
 - otherwise fails with "no active task for this repository", or with "the task Runner is unavailable" when the socket can't be reached.
 
@@ -363,7 +365,7 @@ flowchart LR
     SYNC[Git sync: PR polling, protection, token rotation]
     DSP[Dispatcher: Task Branch, git section of the Job]
   end
-  subgraph Agent Container
+  subgraph Worker Container
     GIT[git]
     HLP[Credential helper]
     RUN[Runner]
@@ -387,9 +389,9 @@ flowchart LR
 - **Git Proxy**: described above; it shares the backend's listener and database.
 - **Dispatcher**: computes and stores the Task Branch, checks it remotely, and puts the git section into the Job start (see [Agent sessions](agent-sessions.md)).
 - **Git sync**: a background loop every 5 minutes, also run at start. Each run rotates expiring GitLab tokens, refreshes open Pull Requests one by one, then re-checks Base Branch Protection older than 24 hours. Runs never overlap, and concurrent refreshes of the same Task share one provider call.
-- **Runner and credential helper**: prepare bare clones and Worktrees, remove Worktrees on request, and serve the Job token to git (see [Runner](runner.md)).
+- **Runner and credential helper**: prepare Bare Clones and Worktrees under the Bare Clone lock, remove Worktrees on request, and serve the Job token to git (see [Runner](runner.md)).
 
-The backend's public address `APP_URL` is used for Task links in Pull Request footers; the internal address `AGENT_BACKEND_URL` is what Agent Containers use for the Git Proxy.
+The backend's public address `APP_URL` is used for Task links in Pull Request footers; the internal address `AGENT_BACKEND_URL` is what Worker Containers use for the Git Proxy.
 
 ### API
 
@@ -410,17 +412,17 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - **Task**: Task Branch name (empty until the first dispatch with a Repository, then fixed), branch web link, and Pull Request (provider, number, link, state `open`/`merged`/`closed`, draft flag, checked at). Pull Request changes are recorded as Revisions.
 - **Session**: its Worktree path, fixed at creation, and whether its Worktree is waiting to be removed.
 - **Job**: a token, stored as a hash, that authenticates both the Task Tools and the Git Proxy.
-- **Bare clone** (in the Agent Volume): records the Repository identity it was cloned from.
+- **Bare Clone** (in the Worker Volume): records the Repository identity it was cloned from; its lock file sits next to it.
 
 ## Non-functional requirements
 
-- **Credential isolation**: provider credentials (GitHub private keys and installation tokens, GitLab tokens) live only in the backend. The only git secret in an Agent Container is the Job token, valid while its Job is active (`dispatched`, `running` or `finishing`), for its own Project only.
-- **Secrets at rest**: connection secrets are encrypted with `SECRETS_MASTER_KEY`, write-only through the API (GitLab tokens show their last 4 characters), and absent from logs, API responses, raw Session events, error messages and the Agent Containers' environment.
+- **Credential isolation**: provider credentials (GitHub private keys and installation tokens, GitLab tokens) live only in the backend. The only git secret in a Worker Container is the Job token, valid while its Job is active (`dispatched`, `running` or `finishing`), for its own Project only.
+- **Secrets at rest**: connection secrets are encrypted with `SECRETS_MASTER_KEY`, write-only through the API (GitLab tokens show their last 4 characters), and absent from logs, API responses, raw Session events, error messages and the Worker Containers' environment.
 - **Transport**: the Job token travels over `AGENT_BACKEND_URL`, the backend's internal address, the same way as the Task Tools token. Provider traffic is HTTPS, except GitLab instances explicitly allowed over HTTP for development.
 - **Streaming**: the proxy holds at most the push command section (64 KiB decoded, 1 MiB raw) in memory; packs of any size stream through. Large first clones put their bytes on the backend host; later fetches are incremental.
 - **Timeouts**: provider API calls 15 seconds; proxy idle 5 minutes; each Runner git command 30 minutes; credential helper 40 seconds.
 - **Freshness**: Pull Request state on the Board is at most 5 minutes old for open Pull Requests and at most 1 minute old when a Task is opened. Base Branch Protection is at most 24 hours old.
-- **Availability**: a broken Git Connection or provider outage affects only the Projects that use it: the picker still lists the other connections, polling skips it, and the Agent Queue continues with other Tasks.
+- **Availability**: a broken Git Connection or provider outage affects only the Projects that use it: the picker still lists the other connections, polling skips it, and the Worker's Queue continues with other Tasks.
 - **Observability**: every proxied request is logged with Agent, Job, Project, service, refs, status, bytes and duration; rotations and their failures are logged per connection.
 
 ## Decisions
@@ -428,7 +430,7 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - **Cache picker Repository lists for 60 seconds per connection in backend memory.** Opening forms in different clients reuses the same snapshot and simultaneous requests share their provider call. Connection fingerprints invalidate changed credentials without retaining secrets in cache keys. Errors are retried immediately, and saves check the provider directly. Each backend process keeps its own short-lived cache, which avoids adding persistent cache infrastructure for a list that is cheap to rebuild.
 
 - **Agent git traffic goes through a backend Git Proxy instead of provider tokens in the container.** GitLab has nothing like GitHub's per-repository installation tokens: the closest option, a per-Job project access token, lives until midnight UTC of the next day at best, creates a bot user per token and needs Premium on gitlab.com, and every further provider would need its own scheme. With the proxy, the only secret in the container is the Job token, which dies with the Job, and a new provider needs only its API adapter. Alternatives rejected: provider-minted tokens per Job (lifetime longer than the Job, tier requirements, Base Branch protected only by the provider); a long-lived bot token in the container (works for every repository and outlives the Job); SSH (a key per Agent registered with every provider, and the backend could no longer inspect pushes). The cost is that all git traffic, large first clones included, flows through the backend.
-- **The Job token is the proxy password.** It already lives in the Agent Container for the Task Tools and is invalid as soon as the Job leaves `running`/`finishing`, so using it for git adds no new secret.
+- **The Job token is the proxy password.** It already lives in the Worker Container for the Task Tools and is invalid as soon as the Job leaves `running`/`finishing`, so using it for git adds no new secret.
 - **The Push Policy guards the Base Branch; provider protection is informational.** Agents run with full permissions and no platform hooks, so nothing inside the container can stop a push. Checking ref updates in the proxy works the same on every provider and needs no provider configuration. Provider protection is still shown, as an optional second line of defense, with no warnings.
 - **A rejected push gets a git push report, not an HTTP error.** git then prints a readable reason per ref and the Agent understands what to do, while the provider is never contacted.
 - **Fetches are unrestricted within the Repository.** Agents read the whole Repository like a developer would; only writes need a policy.
@@ -441,9 +443,10 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - **Polling instead of webhooks.** The backend needs no public address and no webhook secret per provider; a 5-minute delay is acceptable for Pull Request state.
 - **Merging is a User action in the backend, not an Agent tool.** The Push Policy keeps Agents off the Base Branch, so merging is left to Users; the backend does it with the connection's credential, which never leaves it, and the provider's rules (reviews, checks, protection) still decide whether the merge is allowed.
 - **Merging does not move the Task's Status.** The merge is a code action on the provider; where the Task sits on the Board is the team's decision. Each Project names and orders its own workflow, so no Status can be inferred from a merge, and an automatic move could land the Task in a column the team didn't choose. Pull Request state still never drives an Agent, and a merge detected by polling behaves the same as one from the Task view.
-- **Deterministic Worktree paths and a bare clone per Project.** `claude --resume` needs the same working directory, and Worktrees sharing one bare clone keep disk use and fetch time low for an Agent working on many Tasks of the same Project.
+- **Deterministic Worktree paths and a Bare Clone per Project, in the Worker Volume.** `claude --resume` needs the same working directory, and Worktrees sharing one Bare Clone keep disk use and fetch time low for a Worker running many Tasks of the same Project. Keeping both on the volume every Worker Container of the Worker mounts lets any free container resume any Session.
+- **A file lock per Bare Clone, held by the Runner.** Two containers fetching into, adding Worktrees to or pruning one repository at the same time can fail half way or leave it inconsistent. A lock file next to the clone serializes those commands among the Worker's containers with no backend round trip, and costs only a short wait, since fetches are incremental.
 - **The Task Branch name is fixed once chosen.** Links, open Pull Requests and the Agent's own memory of the branch all depend on it, so renaming the Task keeps it.
-- **The bare clone records its Repository identity.** The Git Proxy URL is the same whatever Repository a Project links, so the identity is what tells a reusable clone from one of another Repository, while clones from before the proxy are adopted without losing Worktrees.
+- **The Bare Clone records its Repository identity.** The Git Proxy URL is the same whatever Repository a Project links, so the identity is what tells a reusable clone from one of another Repository, while clones from before the proxy are adopted without losing Worktrees.
 - **Repository changes wait for every Session to close.** A paused Session resumes in its Worktree and would otherwise continue on code from another Repository.
 
 ## Related specs
@@ -451,7 +454,8 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - [Users and authentication](users-and-auth.md): Admin and Member roles behind connection management and linking.
 - [Board](board.md): Projects, Tasks, Statuses, cards and Revisions that show branches and Pull Requests.
 - [Conversation](conversation.md): System Comments posted for Pull Requests, branch problems and failures.
-- [Agents](agents.md): Agent configuration, Credentials, the Base Image that installs the credential helper, and Agent Containers.
+- [Agents](agents.md): Agent configuration and Credentials; the Agent's name is the Commit Identity.
+- [Workers](workers.md): the Base Image that installs the credential helper, Worker Containers and the Worker Volume that holds Bare Clones and Worktrees.
 - [Agent sessions](agent-sessions.md): Sessions, Jobs, the Queue, Setup Scripts, the other Task Tools and Worktree removal on close.
 - [Runner](runner.md): the Runner, its protocol and how it prepares Worktrees and serves the credential helper.
 - [Wikis](wikis.md): Wikis link a Repository through the same Git Connections and work on a Task Branch through the same proxy.

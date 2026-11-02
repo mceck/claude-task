@@ -17,6 +17,7 @@ export interface Schedule {
   projectId: string;
   name: string;
   agentId: string | null;
+  workerId: string;
   cron: string;
   timeZone: string;
   prompt: string;
@@ -54,6 +55,7 @@ const timeZone = z.string().trim().min(1).max(100).refine(isTimeZone, 'Not a val
 export const createScheduleBody = z.strictObject({
   name: z.string().trim().min(1).max(100),
   agentId: z.uuid(),
+  workerId: z.uuid(),
   cron,
   timeZone: timeZone.default('UTC'),
   prompt: z.string().trim().min(1).max(50_000),
@@ -66,6 +68,7 @@ export type CreateScheduleBody = z.input<typeof createScheduleBody>;
 export const updateScheduleBody = z.strictObject({
   name: z.string().trim().min(1).max(100).optional(),
   agentId: z.uuid().optional(),
+  workerId: z.uuid().optional(),
   cron: cron.optional(),
   timeZone: timeZone.optional(),
   prompt: z.string().trim().min(1).max(50_000).optional(),

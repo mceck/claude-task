@@ -63,7 +63,7 @@ describe('assignment and the first Job', () => {
     await app.settle();
     expect(await runner.none('job.start')).toBe(true);
     expect(await getSession(admin, task.id)).toMatchObject({ state: 'pending', queuePosition: null });
-    expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toEqual([]);
+    expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toEqual([]);
 
     await comment(admin, task.id, 'Go ahead.');
     const start = await runner.next('job.start');
@@ -188,11 +188,12 @@ describe('assignment and the first Job', () => {
     const task = await createTask(admin, project.id);
     await assignAndStart(admin, task.id, agent.id);
     await app.settle();
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'offline', queueLength: 1 });
+    expect((await admin.get(`/workers/${app.workerId}`)).body.worker).toMatchObject({ state: 'offline', queueLength: 1 });
 
-    const runner = await FakeRunner.connect(app, agent.id);
+    const runner = await FakeRunner.connect(app, app.workerId);
     await runner.next('job.start');
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'working', currentTask: { id: task.id } });
+    expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'working', activeJobs: 1, activeTasks: [{ id: task.id }] });
+    expect((await admin.get(`/workers/${app.workerId}`)).body.worker).toMatchObject({ state: 'working', busy: 1, queueLength: 0 });
   });
 
   it("doesn't dispatch for a disabled Agent but keeps its Queue", async () => {
@@ -201,7 +202,8 @@ describe('assignment and the first Job', () => {
     const task = await createTask(admin, project.id);
     await assignAndStart(admin, task.id, agent.id);
     expect(await runner.none('job.start')).toBe(true);
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'disabled', queueLength: 1 });
+    expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'disabled', activeJobs: 0 });
+    expect((await admin.get(`/workers/${app.workerId}`)).body.worker).toMatchObject({ queueLength: 1 });
 
     await admin.patch(`/agents/${agent.id}`, { enabled: true });
     await runner.next('job.start');
@@ -519,7 +521,7 @@ describe('Comments reaching the Agent', () => {
       }
       const stored = comments(await timeline(admin, task.id)).find((c) => c.id === lost.id)!;
       expect(stored.delivery).toMatchObject({ state: 'queued' });
-      expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toHaveLength(1);
+      expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toHaveLength(1);
     } finally {
       hub.send = send;
       await runner.exit(start.jobId);
@@ -556,7 +558,7 @@ describe('Comments reaching the Agent', () => {
       await gate.query('select pg_advisory_unlock(93652)');
       expect((await moving).status).toBe(200);
       expect((await getSession(admin, task.id))?.state).toBe('closed');
-      expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toHaveLength(0);
+      expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toHaveLength(0);
     } finally {
       await gate.query('select pg_advisory_unlock_all()');
       gate.release();
@@ -596,7 +598,7 @@ describe('Comments reaching the Agent', () => {
     expect(a.delivery?.state).toBe('queued');
     expect(b.delivery?.state).toBe('queued');
     expect(await getSession(admin, other.id)).toMatchObject({ state: 'idle', queuePosition: 1 });
-    expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toMatchObject([{ task: { id: other.id }, kind: 'messages', pendingMessages: 2 }]);
+    expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toMatchObject([{ task: { id: other.id }, kind: 'messages', pendingMessages: 2 }]);
 
     const s = new Stream();
     await runner.play(busyJob.jobId, [s.text('Done'), s.result()]);
@@ -630,7 +632,7 @@ describe('Comments reaching the Agent', () => {
     const late = await comment(admin, task.id, 'One more thing');
     expect(late.delivery?.state).toBe('queued');
     expect(runner.messages('job.input')).toHaveLength(0);
-    const queue = (await admin.get(`/agents/${agent.id}/queue`)).body.entries;
+    const queue = (await admin.get(`/workers/${app.workerId}/queue`)).body.entries;
     expect(queue.map((e: { task: { id: string } }) => e.task.id)).toEqual([task.id, waiting.id]);
   });
 
@@ -646,7 +648,7 @@ describe('Comments reaching the Agent', () => {
 
     const c = await comment(admin, task.id, 'While you set up, also check Safari.');
     expect(c.delivery?.state).toBe('queued');
-    const queue = (await admin.get(`/agents/${agent.id}/queue`)).body.entries;
+    const queue = (await admin.get(`/workers/${app.workerId}/queue`)).body.entries;
     expect(queue.map((e: { task: { id: string }; pendingMessages: number }) => [e.task.id, e.pendingMessages])).toEqual([
       [task.id, 1],
       [waiting.id, 1],
@@ -854,7 +856,7 @@ describe('Session lifecycle', () => {
     expect(afterReopen.delivery).toMatchObject({ state: 'queued' });
     await app.settle();
     expect(await runner.none('job.input', (m) => (m as { jobId?: string }).jobId === running.jobId)).toBe(true);
-    expect((await admin.get(`/agents/${agent.id}/queue`)).body.entries).toHaveLength(1);
+    expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toHaveLength(1);
 
     await runner.exit(running.jobId, null, 'SIGTERM');
     const next = await runner.next('job.start', (m) => m.jobId !== first.jobId && m.jobId !== running.jobId);
@@ -875,7 +877,7 @@ describe('Session lifecycle', () => {
     expect(runner.messages('job.end').some((m) => m.jobId === running.jobId)).toBe(true);
     await runner.close();
 
-    const back = await FakeRunner.connect(app, agent.id, { activeJobId: running.jobId });
+    const back = await FakeRunner.connect(app, app.workerId, { activeJobId: running.jobId });
     expect(await back.next('job.end', (m) => m.jobId === running.jobId)).toMatchObject({ jobId: running.jobId });
   });
 
@@ -888,7 +890,7 @@ describe('Session lifecycle', () => {
     await runner.close();
 
     await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
-    const back = await FakeRunner.connect(app, agent.id, { activeJobId: start.jobId });
+    const back = await FakeRunner.connect(app, app.workerId, { activeJobId: start.jobId });
     expect(await back.next('job.cancel', (m) => m.jobId === start.jobId)).toMatchObject({ jobId: start.jobId });
     expect(await getSession(admin, task.id)).toMatchObject({ state: 'closed' });
   });
@@ -903,9 +905,10 @@ describe('Session lifecycle', () => {
     expect((await getSession(admin, task.id))!.state).toBe('closed');
   });
 
-  it('unassigning interrupts, pauses, and reassigning another Agent starts fresh with the history', async () => {
+  it('changing the Agent lets the running Turn finish, then resumes the same conversation with the new Agent', async () => {
     const { admin, project, agent, runner } = await setup(app);
-    const { agent: other, runner: otherRunner } = await createAgent(app, admin, { name: 'Bea Bot' });
+    const credential = await createCredential(admin, { kind: 'anthropic_api_key', secret: 'sk-ant-api03-bea-secret-9876' });
+    const { agent: other } = await createAgent(app, admin, { name: 'Bea Bot', credentialId: credential.id, body: { model: 'bea-model', systemPrompt: 'Bea rules.' } });
     const task = await createTask(admin, project.id, { title: 'Shared work' });
     await assignAndStart(admin, task.id, agent.id);
     const start = await runner.next('job.start');
@@ -913,59 +916,93 @@ describe('Session lifecycle', () => {
     const s = new Stream(start.sessionId);
     await runner.play(start.jobId, [s.init(), s.text('I found the bug in auth.ts.')]);
 
-    await assignAndStart(admin, task.id, other.id);
-    await runner.next('job.interrupt', (m) => m.jobId === start.jobId);
-    await runner.next('job.end', (m) => m.jobId === start.jobId);
-    const fresh = await otherRunner.next('job.start');
-    expect(fresh.sessionId).not.toBe(start.sessionId);
-    expect(fresh.mode).toBe('new');
-    const text = texts(fresh.initialMessage);
-    expect(text).toContain('Another agent worked on this task before you');
-    expect(text).toMatch(/\[Comment by Ada Bot \(agent\) — .+\]\nI found the bug in auth\.ts\./);
+    await assignAgent(admin, task.id, other.id);
+    // The Turn of the previous Agent goes on; what is written now waits for the new one.
+    expect(await runner.none('job.interrupt')).toBe(true);
+    const meanwhile = await comment(admin, task.id, 'Bea, please take over.');
+    expect(meanwhile.delivery?.state).toBe('queued');
+    expect(runner.messages('job.input')).toHaveLength(0);
 
-    // The first Agent's process finishes; its paused Session stays paused.
     await runner.play(start.jobId, [s.result()]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
     await runner.exit(start.jobId);
-    const sessions = (await admin.get(`/tasks/${task.id}/session`)).body.session;
-    expect(sessions).toMatchObject({ agent: { id: other.id }, state: 'running' });
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(next).toMatchObject({ sessionId: start.sessionId, mode: 'resume', agentProfilePath: `.claude-agents/${other.id}` });
+    expect(next.claudeArgs.model).toBe('bea-model');
+    expect(next.claudeArgs.appendSystemPrompt).toContain('Bea rules.');
+    expect(next.env.ANTHROPIC_API_KEY).toBe('sk-ant-api03-bea-secret-9876');
+    const text = texts(next.initialMessage);
+    expect(text).toMatch(/^You are now working as agent "Bea Bot" \(previously "Ada Bot"\)/);
+    expect(text).toContain('Bea, please take over.');
+    expect(await getSession(admin, task.id)).toMatchObject({ id: expect.any(String), agent: { id: other.id }, state: 'running' });
   });
 
-  it('switching Agent before the first Job started moves the queued Comments to the new Agent', async () => {
+  it('changing the Agent of an idle Session starts nothing; the next Comment opens with the Agent Change Notice', async () => {
     const { admin, project, agent, runner } = await setup(app);
-    const { agent: other, runner: otherRunner } = await createAgent(app, admin, { name: 'Bea Bot' });
+    const { agent: other } = await createAgent(app, admin, { name: 'Bea Bot' });
+    const task = await createTask(admin, project.id);
+    const first = await startAndFinish(admin, runner, task.id, agent.id);
+    await assignAgent(admin, task.id, other.id);
+    expect(await runner.none('job.start', (m) => m.type === 'job.start' && m.jobId !== first.jobId)).toBe(true);
+    expect(await getSession(admin, task.id)).toMatchObject({ agent: { id: other.id }, state: 'idle' });
+
+    await comment(admin, task.id, 'Continue, Bea.');
+    const next = await runner.next('job.start', (m) => m.jobId !== first.jobId);
+    expect(next).toMatchObject({ sessionId: first.sessionId, mode: 'resume' });
+    const text = texts(next.initialMessage);
+    expect(text).toContain('You are now working as agent "Bea Bot" (previously "Ada Bot")');
+    expect(text).toContain('Continue, Bea.');
+  });
+
+  it('changing the Agent before the first Job keeps the queued Comments for the new Agent', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const { agent: other } = await createAgent(app, admin, { name: 'Bea Bot' });
     const busy = await createTask(admin, project.id);
     await assignAndStart(admin, busy.id, agent.id);
-    await runner.next('job.start');
+    const running = await runner.next('job.start');
     const task = await createTask(admin, project.id);
     await assignAndStart(admin, task.id, agent.id, 'First request.');
     await comment(admin, task.id, 'Second request.');
 
     await assignAgent(admin, task.id, other.id);
-    const start = await otherRunner.next('job.start');
+    runner.accept(running.jobId);
+    await runner.exit(running.jobId);
+    const start = await runner.next('job.start', (m) => m.jobId !== running.jobId);
     expect(start.mode).toBe('new');
+    expect(start.claudeArgs.appendSystemPrompt).toContain('Bea Bot');
     const text = texts(start.initialMessage);
     expect(text).toContain('First request.');
     expect(text).toContain('Second request.');
+    expect(text).not.toContain('You are now working as agent');
     const delivered = comments(await timeline(admin, task.id)).filter((c) => c.kind === 'user');
     expect(delivered.map((c) => c.delivery?.state)).toEqual(['delivered', 'delivered']);
   });
 
-  it('reassigning back to the original Agent resumes its paused Session with what was said meanwhile', async () => {
+  it('removing the Agent interrupts and pauses; any Agent assigned later resumes with what was said meanwhile', async () => {
     const { admin, project, agent, runner } = await setup(app);
-    const { agent: other, runner: otherRunner } = await createAgent(app, admin, { name: 'Bea Bot' });
+    const { agent: other } = await createAgent(app, admin, { name: 'Bea Bot' });
     const task = await createTask(admin, project.id);
-    const first = await startAndFinish(admin, runner, task.id, agent.id);
-    await assignAndStart(admin, task.id, other.id);
-    const bea = new Stream();
-    await otherRunner.runJob([bea.init(), bea.text('Bea here: tried a cache fix.'), bea.result()]);
-    await comment(admin, task.id, 'Bea, that broke staging.');
-
     await assignAndStart(admin, task.id, agent.id);
-    const resumed = await runner.next('job.start', (m) => m.jobId !== first.jobId);
-    expect(resumed).toMatchObject({ sessionId: first.sessionId, mode: 'resume' });
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.text('On it.')]);
+
+    await assignAgent(admin, task.id, null);
+    await runner.next('job.interrupt', (m) => m.jobId === start.jobId);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    await runner.play(start.jobId, [s.result()]);
+    await runner.exit(start.jobId);
+    expect(await getSession(admin, task.id)).toMatchObject({ agent: { id: agent.id }, state: 'paused' });
+    const unheard = await comment(admin, task.id, 'That broke staging.');
+    expect(unheard.delivery).toMatchObject({ state: 'not_delivered', reason: 'no agent assigned' });
+
+    await assignAgent(admin, task.id, other.id);
+    const resumed = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(resumed).toMatchObject({ sessionId: start.sessionId, mode: 'resume' });
     const text = texts(resumed.initialMessage);
-    expect(text).toContain('Bea here: tried a cache fix.');
-    expect(text).toContain('Bea, that broke staging.');
+    expect(text).toContain('You are now working as agent "Bea Bot" (previously "Ada Bot")');
+    expect(text).toContain('That broke staging.');
     expect(text).not.toContain('On it.');
   });
 
@@ -982,7 +1019,7 @@ describe('Session lifecycle', () => {
 
     // The container restarts: a new Runner process says hello without the Job.
     await runner.close();
-    const restarted = await FakeRunner.connect(app, agent.id, { activeJobId: null });
+    const restarted = await FakeRunner.connect(app, app.workerId, { activeJobId: null });
     const resumed = await restarted.next('job.start');
     expect(resumed).toMatchObject({ sessionId: start.sessionId, mode: 'resume', resumeInterrupted: true });
     expect(resumed.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN).toBe('1');
@@ -1004,7 +1041,7 @@ describe('Session lifecycle', () => {
 
     // The container restarts after `job.accepted` but before any stdout event.
     await runner.close();
-    const restarted = await FakeRunner.connect(app, agent.id, { activeJobId: null });
+    const restarted = await FakeRunner.connect(app, app.workerId, { activeJobId: null });
     const next = await restarted.next('job.start', (m) => m.jobId !== second.jobId);
     expect(next.resumeInterrupted).toBe(false);
     expect(next.mode).toBe('resume');
@@ -1016,7 +1053,7 @@ describe('Session lifecycle', () => {
     const admin = await app.admin();
     const { project } = await createProject(admin);
     const { agent } = await createAgent(app, admin, { connect: false });
-    const runner = await FakeRunner.connect(app, agent.id, { hello: false });
+    const runner = await FakeRunner.connect(app, app.workerId, { hello: false });
     const task = await createTask(admin, project.id);
     await assignAndStart(admin, task.id, agent.id);
     await app.settle();
@@ -1036,7 +1073,7 @@ describe('Session lifecycle', () => {
     runner.accept(start.jobId);
     await runner.drain();
 
-    await app.server.ctx.db.execute(sql`update agents set runner_disconnected_at = now() - interval '6 minutes' where id = ${agent.id}::uuid`);
+    await app.server.ctx.db.execute(sql`update worker_containers set runner_disconnected_at = now() - interval '6 minutes' where worker_id = ${app.workerId}::uuid`);
     const hub = app.server.ctx.runners;
     const actual = hub.isConnected.bind(hub);
     let calls = 0;
@@ -1066,7 +1103,7 @@ describe('Session lifecycle', () => {
     await runner.play(start.jobId, [s.init(), s.text('Before the blip.')]);
     await runner.close();
 
-    const back = await FakeRunner.connect(app, agent.id, { activeJobId: start.jobId });
+    const back = await FakeRunner.connect(app, app.workerId, { activeJobId: start.jobId });
     expect(await back.next('ack', (m) => m.jobId === start.jobId)).toMatchObject({ seq: 3 });
     back.resend({ type: 'job.event', jobId: start.jobId, seq: 3, line: JSON.stringify(s.text('Before the blip.')) });
     back.resend({ type: 'job.event', jobId: start.jobId, seq: 4, line: JSON.stringify(s.text('After the blip.')) });
@@ -1145,7 +1182,7 @@ describe('the Queue', () => {
 
     const deleted = comments(await timeline(admin, queued!.id)).find((c) => c.id === first.id)!;
     expect(deleted.delivery).toEqual({ state: 'not_delivered', reason: 'comment deleted', jobId: null, at: expect.any(String) });
-    const entry = (await admin.get(`/agents/${agent.id}/queue`)).body.entries.find((e: { task: { id: string } }) => e.task.id === queued!.id);
+    const entry = (await admin.get(`/workers/${app.workerId}/queue`)).body.entries.find((e: { task: { id: string } }) => e.task.id === queued!.id);
     expect(entry).toMatchObject({ pendingMessages: 1 });
   });
 
@@ -1157,16 +1194,16 @@ describe('the Queue', () => {
     await runner.next('job.start');
     for (const t of [a!, b!, c!]) await assignAndStart(admin, t.id, agent.id);
 
-    let entries = (await member.get(`/agents/${agent.id}/queue`)).body.entries;
+    let entries = (await member.get(`/workers/${app.workerId}/queue`)).body.entries;
     expect(entries.map((e: { task: { title: string } }) => e.task.title)).toEqual(['A', 'B', 'C']);
-    const moved = await member.post(`/agents/${agent.id}/queue/${entries[2].id}/move`, { afterEntryId: null });
+    const moved = await member.post(`/workers/${app.workerId}/queue/${entries[2].id}/move`, { afterEntryId: null });
     expect(moved.body.entries.map((e: { task: { title: string } }) => e.task.title)).toEqual(['C', 'A', 'B']);
     expect(await getSession(member, c!.id)).toMatchObject({ queuePosition: 1 });
 
     // Start entries can't be removed; messages entries can.
-    expect((await member.delete(`/agents/${agent.id}/queue/${entries[0].id}`)).status).toBe(400);
+    expect((await member.delete(`/workers/${app.workerId}/queue/${entries[0].id}`)).status).toBe(400);
     void runner;
-    entries = (await member.get(`/agents/${agent.id}/queue`)).body.entries;
+    entries = (await member.get(`/workers/${app.workerId}/queue`)).body.entries;
     expect(entries.every((e: { kind: string }) => e.kind === 'start')).toBe(true);
   });
 
@@ -1178,8 +1215,8 @@ describe('the Queue', () => {
     await assignAndStart(admin, busy.id, agent.id);
     await runner.next('job.start', (m) => texts(m.initialMessage).includes(busy.key));
     const c = await comment(admin, task.id, 'Low priority remark');
-    const [entry] = (await admin.get(`/agents/${agent.id}/queue`)).body.entries;
-    expect((await admin.delete(`/agents/${agent.id}/queue/${entry.id}`)).status).toBe(204);
+    const [entry] = (await admin.get(`/workers/${app.workerId}/queue`)).body.entries;
+    expect((await admin.delete(`/workers/${app.workerId}/queue/${entry.id}`)).status).toBe(204);
     const after = comments(await timeline(admin, task.id)).find((x) => x.id === c.id)!;
     expect(after.delivery).toEqual({ state: 'not_delivered', reason: 'removed from queue', jobId: null, at: expect.any(String) });
   });
@@ -1288,7 +1325,7 @@ describe('Runner output and attachment isolation', () => {
     };
     const visible = await upload(false);
     const internal = await upload(true);
-    const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, agent.id)}` } };
+    const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, app.workerId)}` } };
     expect((await app.client().get(`/runner/attachments/${visible}`, opts)).status).toBe(200);
     expect((await app.client().get(`/runner/attachments/${internal}`, opts)).status).toBe(404);
   });
@@ -1325,7 +1362,7 @@ describe('Runner output and attachment isolation', () => {
         `.claude-task/attachments/${image.id}/mock.png`,
       ].sort());
 
-      const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, agent.id)}` } };
+      const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, app.workerId)}` } };
       expect((await app.client().get(`/runner/attachments/${doc.id}`, opts)).status).toBe(200);
       await runner.exit(start.jobId);
     });
@@ -1352,7 +1389,7 @@ describe('Runner output and attachment isolation', () => {
       await assignAndStart(admin, task.id, agent.id);
       const start = await runner.next('job.start');
       runner.accept(start.jobId);
-      const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, agent.id)}` } };
+      const opts = { headers: { authorization: `Bearer ${FakeRunner.token(app, app.workerId)}` } };
       expect((await app.client().get(`/runner/attachments/${file.id}`, opts)).status).toBe(404);
     });
 

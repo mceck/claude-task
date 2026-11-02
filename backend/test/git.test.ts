@@ -114,7 +114,7 @@ describe('Git integration through the public API', () => {
     app.git.addRepository('3', 'acme', 'new-repository');
     expect((await admin.get('/git/repositories')).body.groups[0].repositories).toHaveLength(2);
     expect(list).toHaveBeenCalledTimes(1);
-    const result = await admin.post('/projects', {
+    const result = await admin.post('/projects', { workerId: app.workerId,
       key: 'FRESH', name: 'Fresh Repository', repository: { connectionId: 'env-github', providerRepoId: '3' },
     });
     expect(result.status).toBe(201);
@@ -265,8 +265,8 @@ describe('Git integration through the public API', () => {
     const other = await createAgent(app, admin);
     app.git.branches.get('1')!.add(branch);
     await assignAndStart(admin, task.id, other.agent.id);
-    const reassigned = await other.runner.next('job.start');
-    expect(reassigned.git).toMatchObject({ taskBranch: branch, branchExists: true });
+    const reassigned = await other.runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(reassigned.git).toMatchObject({ taskBranch: branch, branchExists: true, commitName: `${other.agent.name} (claude-task)` });
     expect(reassigned.worktreePath).toBe(start.worktreePath);
   });
 

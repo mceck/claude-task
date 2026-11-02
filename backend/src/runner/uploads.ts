@@ -1,4 +1,4 @@
-// Files an Agent posts through a Task Tool: the backend asks the Agent's Runner with `job.upload`
+// Files an Agent posts through a Task Tool: the backend asks the Worker Container's Runner with `job.upload`
 // and waits for the Runner's multipart POST to the upload endpoint (docs/specs/runner.md).
 import { randomUUID } from 'node:crypto';
 import { RUNNER_UPLOADS_PATH } from '@claude-task/shared';
@@ -18,7 +18,7 @@ export interface UploadedFiles {
 }
 
 interface Pending {
-  agentId: string;
+  containerId: string;
   jobId: string;
   paths: string[];
   /** Set once the Runner's POST arrived; the deadline still applies while it streams. */
@@ -49,15 +49,15 @@ export class UploadRequests {
    * Asks the Runner for the files and waits for them. Rejects with a message for the model when
    * the Runner isn't connected or the upload doesn't finish in time.
    */
-  request(agentId: string, jobId: string, paths: string[]): Promise<UploadedFiles> {
+  request(containerId: string, jobId: string, paths: string[]): Promise<UploadedFiles> {
     const requestId = randomUUID();
     return new Promise<UploadedFiles>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
         reject(badRequest(`Could not collect the files: the runner did not upload them within ${Math.round(this.timeoutMs / 1000)} seconds.`));
       }, this.timeoutMs);
-      this.pending.set(requestId, { agentId, jobId, paths, taken: false, resolve, reject, timer });
-      const sent = this.runners.send(agentId, {
+      this.pending.set(requestId, { containerId, jobId, paths, taken: false, resolve, reject, timer });
+      const sent = this.runners.send(containerId, {
         type: 'job.upload',
         jobId,
         requestId,
@@ -73,9 +73,9 @@ export class UploadRequests {
   }
 
   /** Takes the pending request for this Runner's upload, or null when there is none (or it was taken). */
-  take(agentId: string, requestId: string): TakenUpload | null {
+  take(containerId: string, requestId: string): TakenUpload | null {
     const pending = this.pending.get(requestId);
-    if (!pending || pending.agentId !== agentId || pending.taken) return null;
+    if (!pending || pending.containerId !== containerId || pending.taken) return null;
     pending.taken = true;
     const settle = () => {
       if (this.pending.get(requestId) !== pending) return false;

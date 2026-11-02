@@ -1,4 +1,4 @@
-import { importEnvBody, parseDotenv, putEnvVarBody, updateAgentSettingsBody, ENV_VAR_NAME, ENV_VALUE_MAX, RESERVED_ENV_NAME } from '@claude-task/shared';
+import { importEnvBody, parseDotenv, projectTopic, putEnvVarBody, updateAgentSettingsBody, ENV_VAR_NAME, ENV_VALUE_MAX, RESERVED_ENV_NAME } from '@claude-task/shared';
 import type { ProjectAgentSettings, ProjectEnvVar } from '@claude-task/shared';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -8,7 +8,9 @@ import type { Executor } from '../../db/client';
 import { agents, projectEnvVars, projects } from '../../db/schema';
 import { badRequest, notFound, parse } from '../../errors';
 import { last4 } from '../../secrets';
-import { getBoardProject } from './service';
+import { getBoardProject, serializeProject } from './service';
+import { changeProjectWorker } from '../workers/assign';
+import { transact } from '../../context';
 import { idOrKey } from '../../ids';
 
 const projectParams = z.object({ projectId: idOrKey });
@@ -30,6 +32,7 @@ async function loadSettings(db: Executor, projectId: string): Promise<ProjectAge
     setupScript: p!.setupScript,
     agentInstructions: p!.agentInstructions,
     defaultAgentId: p!.defaultAgentId,
+    workerId: p!.workerId,
     autoResume: p!.autoResume,
     boardWriteAccess: p!.boardWriteAccess,
     env: env.map(serializeEnvVar),
@@ -54,7 +57,12 @@ export function agentSettingsRoutes(app: FastifyInstance, ctx: AppContext): void
       const [found] = await ctx.db.select({ id: agents.id }).from(agents).where(eq(agents.id, body.defaultAgentId));
       if (!found) throw badRequest('Unknown agent');
     }
-    await ctx.db.update(projects).set({ ...body, updatedAt: new Date() }).where(eq(projects.id, project.id));
+    const { workerId, ...fields } = body;
+    await transact(ctx, async (tx, after) => {
+      if (workerId !== undefined && (await changeProjectWorker(tx, after, project.id, workerId)))
+        after.emit(projectTopic(project.id), { type: 'project.updated', project: serializeProject((await getBoardProject(tx, project.id))) });
+      if (Object.keys(fields).length) await tx.update(projects).set({ ...fields, updatedAt: new Date() }).where(eq(projects.id, project.id));
+    });
     return { settings: await loadSettings(ctx.db, project.id) };
   });
 

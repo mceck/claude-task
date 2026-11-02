@@ -4,7 +4,7 @@ import type { GitConnections } from './git/connections';
 import type { GitSync } from './git/sync';
 import type { RealtimeEvent, Topic } from '@claude-task/shared';
 import type { FastifyBaseLogger } from 'fastify';
-import type { AgentRuntime } from './agents/runtime';
+import type { WorkerRuntime } from './agents/runtime';
 import type { Scheduler } from './agents/scheduler';
 import type { BlobStore } from './blobstore';
 import type { Config } from './config';
@@ -26,11 +26,11 @@ export interface AppContext {
   hub: RealtimeHub;
   loginRevocations: LoginRevocations;
   blobs: BlobStore;
-  runtime: AgentRuntime;
+  runtime: WorkerRuntime;
   /** Git Connections and their providers. */
   git: GitConnections;
   gitSync: GitSync;
-  /** Connected Runners, one per Agent. */
+  /** Connected Runners, one per Worker Container. */
   runners: RunnerHub;
   /** Live transcripts of the running Jobs' Runs; memory only. */
   runs: RunRegistry;

@@ -98,7 +98,7 @@ Downloading an Attachment requires a signed-in User. PNG, JPEG, GIF, WebP and AV
 
 ### Files from the Agent
 
-An Agent posts files from its Agent Container with the `send_files` Task Tool: up to 10 files of up to 25 MB each, with an optional Markdown caption. They form one Agent Comment whose body is the caption, placed on the Timeline at the moment of the call, between the text the Agent wrote before and after it. The files are Attachments like any other: images preview inline, other files download, and Admins can delete the Comment. How the files leave the container is described in [Agent sessions](agent-sessions.md) and [Runner](runner.md).
+An Agent posts files from its Worker Container with the `send_files` Task Tool: up to 10 files of up to 25 MB each, with an optional Markdown caption. They form one Agent Comment whose body is the caption, placed on the Timeline at the moment of the call, between the text the Agent wrote before and after it. The files are Attachments like any other: images preview inline, other files download, and Admins can delete the Comment. How the files leave the container is described in [Agent sessions](agent-sessions.md) and [Runner](runner.md).
 
 ### Questions
 
@@ -155,8 +155,8 @@ Every Comment that is not an Internal Note gets a Delivery as soon as the Task h
 
 | State | Badge | Meaning |
 | --- | --- | --- |
-| queued | clock, "Queued" | Waiting in the Agent's Queue, either because the Agent is busy with another Task, the Session has not started, or a slash command waits for the Turn to end. |
-| delivered | check, "Delivered" | Written to the Agent's running Turn, or included in the Message that started a Job. |
+| queued | clock, "Queued" | Waiting in the Queue of the Worker the Task's Project runs on, either because no Worker Container is free, another Chat of the same Wiki is running, the Session has not started, the Task's Agent changed while a Turn was still running with the previous one, or a slash command waits for the Turn to end. |
+| delivered | check, "Delivered" | Written to the running Turn of the Task's Agent, or included in the Message that started a Job. |
 | not delivered | slashed circle, "Not delivered" | The Agent will never receive it. The reason appears on hover. |
 
 Comments without a badge are Internal Notes, an Agent's own output, System Comments other than Notify agent notices and Survey results, and Comments on a Task that never had an Agent. An Agent Comment written by another Agent into the Task carries one.
@@ -165,20 +165,20 @@ The reasons for "not delivered" are:
 
 - `no agent assigned`: the Task has no Agent, or its Agent's Session is paused;
 - `task closed`: the Task is in a closed-category Status;
-- `agent unassigned`: the Agent was unassigned or replaced while the Comment was queued;
-- `removed from queue`: a User removed the Task's Queue Entry from the Agent's Queue;
+- `agent unassigned`: the Agent was removed from the Task while the Comment was queued. A change to another Agent keeps queued Comments queued, and the new Agent receives them;
+- `removed from queue`: a User removed the Task's Queue Entry from the Worker's Queue;
 - `comment deleted`: the Comment was withdrawn by deleting it.
 
-When a Job fails to start, the Comments it carried go back to queued, at the front of the Agent's Queue, and wait for a User to press Retry or post another Comment.
+When a Job fails to start, the Comments it carried go back to queued, at the front of the Worker's Queue, and wait for a User to press Retry or post another Comment.
 
 ```mermaid
 stateDiagram-v2
   [*] --> none: Internal Note, or Task never had an Agent
   [*] --> delivered: Agent running a Turn on this Task
-  [*] --> queued: Agent busy, Session not started, or slash command
+  [*] --> queued: no free Worker Container, Agent changed mid-Turn, Session not started, or slash command
   [*] --> not_delivered: no Agent, paused or closed Session
   queued --> delivered: Job starts with this Comment
-  queued --> not_delivered: unassigned, Task closed, removed from Queue
+  queued --> not_delivered: Agent removed, Task closed, removed from Queue
   delivered --> queued: Job failed to start
 ```
 
@@ -367,10 +367,10 @@ sequenceDiagram
 - **Description files are Task Attachments linked by URL.** The description stays plain Markdown that Users and the Agent can edit without breaking links, and unlinked uploads are pruned after a 24-hour grace period so drafts in progress keep their files.
 - **Following and read positions live on the server.** Phone and desktop installations of one User share them, and push selection happens where the events are.
 - **An explicit follow choice beats automatic following.** Users who unfollowed a noisy Task stay unfollowed when they comment again.
-- **Questions and Surveys don't block the Agent.** The tool posts and the Agent ends its Turn; the answer is a Comment that travels through the Queue like any other. Holding the Turn open until a human answers (Claude Code's own `AskUserQuestion` through the stream-json permission protocol) would keep the Job, and with it the whole Agent, busy for hours.
+- **Questions and Surveys don't block the Agent.** The tool posts and the Agent ends its Turn; the answer is a Comment that travels through the Queue like any other. Holding the Turn open until a human answers (Claude Code's own `AskUserQuestion` through the stream-json permission protocol) would keep the Job, and with it a Worker Container and the Task's Worktree, busy for hours.
 - **A Question takes the first answer, and it is final.** Two answers would contradict each other in the Agent's Session, and a delivered answer cannot be taken back. Users who disagree say so in a Comment, which reaches the Agent in order.
 - **Questions stay open until answered.** Closing them when the conversation moves on would need a rule about what counts as moving on; the answer quotes its question and time, so the Agent judges relevance itself.
-- **The answer to a Question is a User Comment by the person who answered.** Delivery, following, unread state and reassignment then work without special cases, and the Timeline shows who decided.
+- **The answer to a Question is a User Comment by the person who answered.** Delivery, following, unread state and Agent changes then work without special cases, and the Timeline shows who decided.
 - **Survey Expected Respondents are fixed at creation.** A moving target would make "everyone answered" unpredictable; Send now covers anyone missing.
 - **Survey results reach the Agent as a System Comment with a notice, like Notify agent.** One Message with the whole picture, delivered through the normal Queue, and a Timeline entry that says why the Agent resumed.
 - **Question and Survey bodies carry a Markdown version of the items.** Older clients and later Agents read them without knowing the structure.
@@ -388,7 +388,7 @@ sequenceDiagram
 
 ## Related specs
 
-- [Agent sessions](agent-sessions.md): how Comments become Messages, the Queue, injection into a running Turn, Session commands, Notify agent's effect on the Agent's read point, and the Agent's Timeline items.
+- [Agent sessions](agent-sessions.md): how Comments become Messages, the Worker's Queue, Agent changes, injection into a running Turn, Session commands, Notify agent's effect on the Agent's read point, and the Agent's Timeline items.
 - [Board](board.md): Tasks, Revisions and the description editor.
 - [Wikis](wikis.md): a Wiki's Chats and Delete Chat.
 - [Clients](clients.md): composer and Timeline UI, drafts, offline cache, real-time transport, phone registration and push delivery.

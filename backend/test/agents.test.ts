@@ -1,102 +1,13 @@
 import { sql } from 'drizzle-orm';
-import { DEFAULT_AGENT_DOCKERFILE, agentTopic, projectTopic } from '@claude-task/shared';
+import { DEFAULT_AGENT_DOCKERFILE, projectTopic } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
-import { assignAgent, assignAndStart, createAgent, createCredential, createProject, createTask, createUser } from './helpers/fixtures';
-import { FakeRunner } from './helpers/runner';
+import { assignAgent, assignAndStart, createAgent, createCredential, createProject, createTask, createUser, getSession } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
 
 describe('agents', () => {
   const app = useTestApp();
-
-  it('builds the image, creates the container with its limits, and goes idle once the Runner connects', async () => {
-    const admin = await app.admin();
-    const credential = await createCredential(admin);
-    const res = await admin.post('/agents', {
-      name: 'Ada Bot',
-      avatarEmoji: '🦊',
-      avatarColor: '#ff8800',
-      dockerfile: DEFAULT_AGENT_DOCKERFILE,
-      credentialId: credential.id,
-      cpuLimit: 2,
-      memoryMb: 4096,
-    });
-    expect(res.status).toBe(201);
-    const id = res.body.agent.id;
-    expect(res.body.agent.services).toEqual(['postgres', 'redis']);
-    await app.settle();
-    expect(app.runtime.builds[0]!.dockerfile).toContain('RUN /usr/local/bin/claude-task-install-services postgres redis\n');
-
-    const container = app.runtime.containers.get(id)!;
-    expect(container.spec).toMatchObject({ cpuLimit: 2, memoryMb: 4096, image: expect.stringContaining(`claude-task/agent-${id}:`) });
-    expect(container.spec.env).toEqual({ CLAUDE_TASK_BACKEND_URL: 'ws://backend.test/api/v1/runner', CLAUDE_TASK_RUNNER_TOKEN: expect.any(String) });
-    expect((await admin.get(`/agents/${id}`)).body.agent).toMatchObject({ state: 'offline', imageState: 'built', containerState: 'running' });
-
-    const builds = (await admin.get(`/agents/${id}/builds`)).body.builds;
-    expect(builds).toMatchObject([{ status: 'succeeded', baseVersion: 'fake-1' }]);
-    expect(builds[0].log).toContain('FROM claude-task/agent-base:fake-1');
-
-    await FakeRunner.connect(app, id);
-    expect((await admin.get(`/agents/${id}`)).body.agent).toMatchObject({ state: 'idle', runnerConnected: true, credentialName: credential.name });
-  });
-
-  it('streams the build log live', async () => {
-    const admin = await app.admin();
-    const ws = await WsTestClient.connect(app.url, admin.cookie);
-    let release!: () => void;
-    app.runtime.scriptBuild({ log: 'Step 1/3 : FROM claude-task/agent-base\n', hold: new Promise<void>((r) => (release = r)) });
-    const { agent } = await (async () => {
-      const credential = await createCredential(admin);
-      const res = await admin.post('/agents', { name: 'Streamer', dockerfile: DEFAULT_AGENT_DOCKERFILE, credentialId: credential.id });
-      return { agent: res.body.agent };
-    })();
-    await ws.subscribe(agentTopic(agent.id));
-    // The build is held, so the Agent shows as building.
-    await new Promise((r) => setTimeout(r, 50));
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent.state).toBe('building');
-    release();
-    await app.settle();
-    const logs = (await admin.get(`/agents/${agent.id}/builds`)).body.builds[0].log;
-    expect(logs).toContain('Step 1/3');
-    expect(ws.events('build.updated').map((e) => e.build.status)).toContain('succeeded');
-    ws.close();
-  });
-
-  it('installs only selected services, accepts no services and preserves selection on unrelated edits', async () => {
-    const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { body: { services: ['rustfs', 'mysql', 'mailpit'] }, connect: false });
-    expect(agent.services).toEqual(['mysql', 'mailpit', 'rustfs']);
-    expect(app.runtime.builds.at(-1)!.dockerfile).toContain('RUN /usr/local/bin/claude-task-install-services mysql mailpit rustfs\n');
-    expect(app.runtime.builds.at(-1)!.dockerfile).toContain('ENV CLAUDE_TASK_SERVICES="mysql mailpit rustfs"');
-    const count = app.runtime.builds.length;
-    await admin.patch(`/agents/${agent.id}`, { description: 'Updated description' });
-    await admin.patch(`/agents/${agent.id}`, { services: ['mailpit', 'rustfs', 'mysql'] });
-    await app.settle();
-    expect(app.runtime.builds).toHaveLength(count);
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent.services).toEqual(agent.services);
-    expect((await admin.get('/agents')).body.agents[0].services).toEqual(agent.services);
-
-    const oldImage = app.runtime.containers.get(agent.id)!.spec.image;
-    expect((await admin.patch(`/agents/${agent.id}`, { services: [] })).status).toBe(200);
-    await app.settle();
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent.services).toEqual([]);
-    expect(app.runtime.builds.at(-1)!.dockerfile).toContain('ENV CLAUDE_TASK_SERVICES=""');
-    expect(app.runtime.containers.get(agent.id)!.spec.image).not.toBe(oldImage);
-
-    const empty = await createAgent(app, admin, { body: { services: [] }, connect: false });
-    expect(empty.agent.services).toEqual([]);
-  });
-
-  it('rejects unknown or duplicate services on creation and update', async () => {
-    const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { connect: false });
-    for (const services of [['mongo'], ['redis', 'redis'], 'postgres', null]) {
-      expect((await admin.patch(`/agents/${agent.id}`, { services })).status).toBe(400);
-      expect((await admin.post('/agents', { name: 'Invalid services', credentialId: agent.credentialId, dockerfile: DEFAULT_AGENT_DOCKERFILE, services })).status).toBe(400);
-    }
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent.services).toEqual(['postgres', 'redis']);
-  });
 
   it('stores Agent environment variables, validates their names and reserves the platform ones', async () => {
     const admin = await app.admin();
@@ -110,7 +21,7 @@ describe('agents', () => {
       CLAUDE_CODE_SUBAGENT_MODEL: 'openrouter/subagent',
       ENABLE_TOOL_SEARCH: 'false',
     };
-    const created = await admin.post('/agents', { name: 'Env agent', credentialId: credential.id, dockerfile: DEFAULT_AGENT_DOCKERFILE, env });
+    const created = await admin.post('/agents', { name: 'Env agent', credentialId: credential.id, env });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     expect(created.body.agent.env).toEqual(env);
 
@@ -125,6 +36,7 @@ describe('agents', () => {
       { ANTHROPIC_AUTH_TOKEN: 'x' },
       { CLAUDE_CODE_OAUTH_TOKEN: 'x' },
       { CLAUDE_CODE_RESUME_INTERRUPTED_TURN: '1' },
+      { CLAUDE_CONFIG_DIR: '/tmp' },
       { CLAUDE_TASK_RUNNER_TOKEN: 'x' },
       { HOME: '/tmp' },
       { LONG: 'x'.repeat(100_001) },
@@ -138,127 +50,29 @@ describe('agents', () => {
     const rejected = await admin.post('/agents', {
       name: 'Invalid env agent',
       credentialId: credential.id,
-      dockerfile: DEFAULT_AGENT_DOCKERFILE,
       env: { 'BAD-NAME': 'x' },
     });
     expect(rejected.status).toBe(400);
     expect(JSON.stringify(rejected.body.error.details)).toContain('environment variable name');
   });
 
-  it('rejects Dockerfiles not based on the Base Image', async () => {
+  it('creates an Agent as configuration only, idle until it has Jobs', async () => {
     const admin = await app.admin();
     const credential = await createCredential(admin);
-    for (const dockerfile of ['FROM node:22\nUSER agent\n', 'RUN echo hi\nFROM claude-task/agent-base\n', 'FROM claude-task/agent-base-evil\n']) {
-      const res = await admin.post('/agents', { name: 'Bad', dockerfile, credentialId: credential.id });
-      expect(res.status, dockerfile).toBe(400);
-    }
-    const ok = await admin.post('/agents', { name: 'Tagged', dockerfile: '# toolchains\nARG X=1\nFROM claude-task/agent-base:latest AS base\nUSER agent\n', credentialId: credential.id });
-    expect(ok.status).toBe(201);
+    const res = await admin.post('/agents', { name: 'Ada Bot', avatarEmoji: '🦊', avatarColor: '#ff8800', credentialId: credential.id, model: 'opus', effort: 'high' });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.agent).toMatchObject({ state: 'idle', activeJobs: 0, activeTasks: [], credentialName: credential.name, model: 'opus', effort: 'high' });
+    expect(res.body.agent).not.toHaveProperty('dockerfile');
+    // Docker settings belong to Workers.
+    expect((await admin.post('/agents', { name: 'Docker', credentialId: credential.id, dockerfile: DEFAULT_AGENT_DOCKERFILE })).status).toBe(400);
+    expect((await admin.patch(`/agents/${res.body.agent.id}`, { services: ['mysql'] })).status).toBe(400);
+    expect((await admin.patch(`/agents/${res.body.agent.id}`, { enabled: false })).body.agent.state).toBe('disabled');
   });
 
-  it('fails a build whose image does not end as USER agent', async () => {
-    const admin = await app.admin();
-    app.runtime.scriptBuild({ user: 'root' });
-    const { agent } = await createAgent(app, admin, { connect: false });
-    expect(agent).toMatchObject({ state: 'build_failed', imageState: 'failed' });
-    const [build] = (await admin.get(`/agents/${agent.id}/builds`)).body.builds;
-    expect(build.status).toBe('failed');
-    expect(build.log).toContain('must end with `USER agent`');
-    expect(app.runtime.containers.has(agent.id)).toBe(false);
-  });
-
-  it('keeps the previous container running when a rebuild fails', async () => {
-    const admin = await app.admin();
-    const { agent } = await createAgent(app, admin);
-    const before = app.runtime.containers.get(agent.id)!.spec.image;
-    app.runtime.scriptBuild({ fail: 'apt-get: package not found' });
-    await admin.patch(`/agents/${agent.id}`, { services: ['mysql'] });
-    await app.settle();
-    expect(app.runtime.containers.get(agent.id)!.spec.image).toBe(before);
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ state: 'build_failed', containerState: 'running' });
-  });
-
-  it('recreates the container after a rebuild only once the Agent is idle, unless forced', async () => {
-    const admin = await app.admin();
-    const { project } = await createProject(admin);
-    const { agent, runner } = await createAgent(app, admin);
-    const oldImage = app.runtime.containers.get(agent.id)!.spec.image;
-    const task = await createTask(admin, project.id);
-    await assignAndStart(admin, task.id, agent.id);
-    const start = await runner.next('job.start');
-    runner.accept(start.jobId);
-    await runner.drain();
-
-    await admin.patch(`/agents/${agent.id}`, { services: ['mysql', 'mailpit', 'rustfs'] });
-    await app.settle();
-    expect(app.runtime.containers.get(agent.id)!.spec.image).toBe(oldImage);
-    expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ recreatePending: true, state: 'working' });
-
-    const s = new Stream();
-    await runner.play(start.jobId, [s.init(), s.result()]);
-    await runner.exit(start.jobId);
-    await app.settle();
-    const recreated = app.runtime.containers.get(agent.id)!;
-    expect(recreated.spec.image).not.toBe(oldImage);
-    // The old Runner token no longer works.
-    expect((await runner.closed).code).toBe(4002);
-    await expect(FakeRunner.connect(app, agent.id, { token: FakeRunner.token(app, agent.id) })).resolves.toBeTruthy();
-  });
-
-  it('force-recreates a busy Agent; its Job resumes after the restart', async () => {
-    const admin = await app.admin();
-    const { project } = await createProject(admin);
-    const { agent, runner } = await createAgent(app, admin);
-    const task = await createTask(admin, project.id);
-    await assignAndStart(admin, task.id, agent.id);
-    const start = await runner.next('job.start');
-    runner.accept(start.jobId);
-    const s = new Stream(start.sessionId);
-    await runner.play(start.jobId, [s.init(), s.text('Halfway')]);
-
-    expect((await admin.post(`/agents/${agent.id}/recreate`, { force: true })).status).toBe(200);
-    await app.settle();
-    const fresh = await FakeRunner.connect(app, agent.id);
-    expect(await fresh.next('job.start')).toMatchObject({ sessionId: start.sessionId, resumeInterrupted: true });
-  });
-
-  it('restarts a Build interrupted before the Agent reached building state', async () => {
-    const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { connect: false });
-    const before = app.runtime.builds.length;
-    await app.server.ctx.db.execute(sql`insert into agent_builds (agent_id, dockerfile, base_version, status)
-      values (${agent.id}::uuid, 'FROM claude-task/agent-base', 'fake-1', 'building')`);
-    const { resetInterruptedBuilds } = await import('../src/modules/agents/builds');
-    await resetInterruptedBuilds(app.server.ctx.db);
-    await app.server.ctx.scheduler.reconcileAll();
-    await app.settle();
-    expect(app.runtime.builds.length).toBeGreaterThan(before);
-    expect((await admin.get(`/agents/${agent.id}/builds`)).body.builds[0].status).toBe('succeeded');
-  });
-
-  it('rebuilds every Agent when the platform version changes', async () => {
-    const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { connect: false });
-    app.runtime.upgrade('fake-2');
-    await app.server.ctx.scheduler.reconcileAll();
-    await app.settle();
-    const builds = (await admin.get(`/agents/${agent.id}/builds`)).body.builds;
-    expect(builds.map((b: { baseVersion: string }) => b.baseVersion)).toEqual(['fake-2', 'fake-1']);
-    expect(app.runtime.containers.get(agent.id)!.spec.image).toContain(builds[0].id.slice(0, 12));
-  });
-
-  it('restarts a container that stopped', async () => {
-    const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { connect: false });
-    app.runtime.setState(agent.id, 'exited');
-    await app.server.ctx.scheduler.reconcileAll();
-    expect(app.runtime.containers.get(agent.id)!.state).toBe('running');
-  });
-
-  it('duplicates an Agent with the same environment', async () => {
+  it('duplicates an Agent with its configuration only', async () => {
     const admin = await app.admin();
     const { agent } = await createAgent(app, admin, {
-      body: { model: 'opus', systemPrompt: 'Be terse.', services: ['mysql', 'rustfs'], env: { ANTHROPIC_MODEL: 'openrouter/model' } },
+      body: { model: 'opus', systemPrompt: 'Be terse.', env: { ANTHROPIC_MODEL: 'openrouter/model' } },
       connect: false,
     });
     const res = await admin.post(`/agents/${agent.id}/duplicate`, {});
@@ -267,12 +81,8 @@ describe('agents', () => {
       name: `${agent.name} (copy)`,
       model: 'opus',
       systemPrompt: 'Be terse.',
-      dockerfile: agent.dockerfile,
-      services: ['mysql', 'rustfs'],
       env: { ANTHROPIC_MODEL: 'openrouter/model' },
     });
-    await app.settle();
-    expect(app.runtime.containers.has(res.body.agent.id)).toBe(true);
   });
 
   it('duplicates an Agent repeatedly with unique names that fit, without leaking avatar copies', async () => {
@@ -295,22 +105,29 @@ describe('agents', () => {
     expect((await admin.post(`/agents/${agent.id}/duplicate`, { name: names[0] })).status).toBe(409);
   });
 
-  it('deletes an Agent without open Sessions, with its container, images and volume', async () => {
+  it('refuses deleting an Agent assigned to an open Task or running a Schedule, and keeps its history named', async () => {
     const admin = await app.admin();
     const { project } = await createProject(admin);
-    const { agent, runner } = await createAgent(app, admin);
+    const { agent, runner } = await createAgent(app, admin, { name: 'Ada Bot' });
     const task = await createTask(admin, project.id);
     await assignAndStart(admin, task.id, agent.id);
-    await runner.next('job.start');
+    await runner.runJob([new Stream().init(), new Stream().text('Done.'), new Stream().result()]);
     const blocked = await admin.delete(`/agents/${agent.id}`);
     expect(blocked.status).toBe(409);
     expect(blocked.body.error.message).toContain(task.key);
 
     await assignAgent(admin, task.id, null);
+    const schedule = await admin.post('/schedules', { name: 'Nightly', agentId: agent.id, workerId: app.workerId, cron: '0 3 * * *', prompt: 'Go.' });
+    expect(schedule.status).toBe(201);
+    expect((await admin.delete(`/agents/${agent.id}`)).status).toBe(409);
+    expect((await admin.delete(`/schedules/${schedule.body.schedule.id}`)).status).toBe(204);
+
     expect((await admin.delete(`/agents/${agent.id}`)).status).toBe(204);
-    await app.settle();
-    expect(app.runtime.removed).toContain(agent.id);
     expect((await admin.get(`/tasks/${task.id}`)).body.task.agentId).toBeNull();
+    // The Session keeps its Jobs, with the Agent's name.
+    const [job] = (await admin.get(`/workers/${app.workerId}/jobs`)).body.jobs;
+    expect(job).toMatchObject({ agentId: null, agentName: 'Ada Bot', workerId: app.workerId, slot: 1 });
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'paused', agent: null });
   });
 
   it('deleting an Agent left on closed Tasks unassigns them visibly, with a Revision', async () => {
@@ -337,44 +154,20 @@ describe('agents', () => {
     expect(items.some((i: { type: string; revision?: { changes: { field: string }[] } }) => i.type === 'revision' && i.revision!.changes.some((c) => c.field === 'agentId' ))).toBe(true);
   });
 
-  it('lets members see Agents and their Queue but not change them', async () => {
+  it('lets members see Agents but not change them', async () => {
     const admin = await app.admin();
     const { client: member } = await createUser(app, admin);
     const { agent } = await createAgent(app, admin, { connect: false });
     expect((await member.get('/agents')).body.agents.map((a: { id: string }) => a.id)).toEqual([agent.id]);
-    expect((await member.get(`/agents/${agent.id}/queue`)).status).toBe(200);
+    expect((await member.get(`/agents/${agent.id}/jobs`)).status).toBe(200);
     const credential = await createCredential(admin);
     const attempts = [
-      member.post('/agents', { name: 'X', dockerfile: DEFAULT_AGENT_DOCKERFILE, credentialId: credential.id }),
+      member.post('/agents', { name: 'X', credentialId: credential.id }),
       member.patch(`/agents/${agent.id}`, { enabled: false }),
       member.delete(`/agents/${agent.id}`),
-      member.post(`/agents/${agent.id}/rebuild`),
-      member.post(`/agents/${agent.id}/recreate`, {}),
       member.post(`/agents/${agent.id}/duplicate`, {}),
-      member.get(`/agents/${agent.id}/logs`),
     ];
     for (const res of await Promise.all(attempts)) expect(res.status).toBe(403);
-  });
-
-  it('refuses unknown or stale Runner tokens', async () => {
-    const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { connect: false });
-    await expect(FakeRunner.connect(app, agent.id, { token: 'nope' })).rejects.toThrow(/401/);
-  });
-
-  it('drops a Runner connection that stops answering pings, so its Jobs can be recovered', async () => {
-    const admin = await app.admin();
-    const { agent } = await createAgent(app, admin, { connect: false });
-    const config = app.server.ctx.config.agents;
-    config.runnerPingIntervalMs = 50;
-    try {
-      const runner = await FakeRunner.connect(app, agent.id, { autoPong: false });
-      await expect(Promise.race([runner.closed, new Promise((r) => setTimeout(() => r('still open'), 2000))])).resolves.not.toBe('still open');
-      await app.settle();
-      expect((await admin.get(`/agents/${agent.id}`)).body.agent.runnerConnected).toBe(false);
-    } finally {
-      delete config.runnerPingIntervalMs;
-    }
   });
 });
 

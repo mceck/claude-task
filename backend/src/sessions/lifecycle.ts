@@ -1,21 +1,22 @@
-// Session lifecycle rules (docs/specs/agent-sessions.md): Assignment, unassignment, reassignment, closing and
-// reopening a Task, and how a User's Comment reaches the Agent. Lock order everywhere:
-// project → task → agents (by id) → session → job → queue entries.
+// Session lifecycle rules (docs/specs/agent-sessions.md): Assignment, Agent changes, unassignment, closing and
+// reopening a Task, and how a User's Comment reaches the Agent. One Session per Task, whichever Agent
+// works it. Lock order everywhere: project → task → worker → session → job → queue entries.
 import { cancelLimitResumes } from '../modules/scheduled-messages/service';
 import { commandName, taskKey } from '@claude-task/shared';
-import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { transactWithRetry } from '../context';
 import type { AfterCommit, AppContext } from '../context';
 import type { Executor } from '../db/client';
 import { comments, jobs, projects, sessions, statuses, tasks } from '../db/schema';
 import { conflict } from '../errors';
 import { gitOwnerTask } from '../git/owner';
-import { ACTIVE_JOB_STATES, lockAgents } from '../modules/agents/service';
+import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
 import type { TaskRow } from '../modules/tasks/service';
+import { getWorkerRow, workerOfTask } from '../modules/workers/service';
 import { renderComments } from './messages';
 import type { CommentRow } from './messages';
-import { attachComments, enqueue, getEntry, removeEntry } from './queue';
+import { attachComments, carriesDelivery, enqueue, getEntry, removeEntry } from './queue';
 import type { SessionRow } from './view';
 
 /** Deterministic per (Project, Task), because `--resume` needs the same cwd (docs/specs/agent-sessions.md). */
@@ -25,17 +26,23 @@ export async function worktreePathFor(db: Executor, task: Pick<TaskRow, 'id' | '
   return `worktrees/${task.projectId}/${taskKey(p!.key, owner.number)}`;
 }
 
+/** The Bare Clone a Worktree belongs to (`worktrees/<projectId>/…` → `repos/<projectId>.git`). */
+export const repoPathOf = (worktreePath: string) => `repos/${worktreePath.split('/')[1]}.git`;
+
 export async function isClosedStatus(db: Executor, statusId: string): Promise<boolean> {
   const [s] = await db.select({ category: statuses.category }).from(statuses).where(eq(statuses.id, statusId));
   return s?.category === 'closed';
 }
 
-async function lockSession(db: Executor, taskId: string, agentId: string): Promise<SessionRow | null> {
-  const [row] = await db
-    .select()
-    .from(sessions)
-    .where(and(eq(sessions.taskId, taskId), eq(sessions.agentId, agentId)))
-    .for('update');
+/** Locks the Worker of the Task's Project, which serializes its Queue and dispatch. */
+export async function lockTaskWorker(db: Executor, taskId: string): Promise<string> {
+  const workerId = await workerOfTask(db, taskId);
+  await getWorkerRow(db, workerId, { lock: true });
+  return workerId;
+}
+
+export async function lockSession(db: Executor, taskId: string): Promise<SessionRow | null> {
+  const [row] = await db.select().from(sessions).where(eq(sessions.taskId, taskId)).for('update');
   return row ?? null;
 }
 
@@ -48,11 +55,10 @@ export async function activeJob(db: Executor, sessionId: string, lock = false): 
   return row ?? null;
 }
 
-function publishSession(after: AfterCommit, taskId: string, agentIds: (string | null)[]): void {
-  for (const agentId of agentIds) {
-    if (!agentId) continue;
-    after.effect((ctx) => ctx.scheduler.publishQueue(agentId, [taskId]));
-    after.effect((ctx) => ctx.scheduler.refresh(agentId));
+function publishSession(after: AfterCommit, taskId: string, workerId: string | null): void {
+  if (workerId) {
+    after.effect((ctx) => ctx.scheduler.publishQueue(workerId, [taskId]));
+    after.effect((ctx) => void ctx.scheduler.reconcile(workerId));
   }
   after.effect((ctx) => ctx.scheduler.publishTask(taskId));
 }
@@ -74,10 +80,11 @@ export async function onTaskChanged(
   const closedNow = statusChanged ? await isClosedStatus(tx, task.statusId) : closedBefore;
 
   if (agentChanged) {
-    await cancelLimitResumes(tx, after, task.id, 'The agent was unassigned or replaced');
-    await reassign(tx, after, task, before.agentId, closedNow);
+    // A Limit Resume survives a change of Agent: the conversation goes on with the new one.
+    if (!task.agentId) await cancelLimitResumes(tx, after, task.id, 'The agent was unassigned');
+    await assign(tx, after, task, closedNow);
   }
-  if (!closedBefore && closedNow) await closeSessions(tx, after, task);
+  if (!closedBefore && closedNow) await closeSession(tx, after, task);
   else if (closedBefore && !closedNow) await reopenSession(tx, after, task);
 }
 
@@ -90,169 +97,124 @@ export async function onStatusClosedChanged(tx: Executor, after: AfterCommit, st
     .orderBy(asc(tasks.id))
     .for('update');
   for (const task of affected) {
-    if (closedNow) await closeSessions(tx, after, task);
+    if (closedNow) await closeSession(tx, after, task);
     else await reopenSession(tx, after, task);
   }
 }
 
-async function reassign(tx: Executor, after: AfterCommit, task: TaskRow, previous: string | null, closed: boolean): Promise<void> {
-  await lockAgents(tx, [previous, task.agentId].filter((x): x is string => !!x));
-  // Comments waiting for a previous Agent that never started: nothing to hand over, so they follow the Task.
-  let moved: string[] = [];
-  if (previous) {
-    const old = await lockSession(tx, task.id, previous);
-    if (old && old.state !== 'closed' && old.state !== 'paused') {
-      if (!old.started && task.agentId && !(await activeJob(tx, old.id))) {
-        const entry = await getEntry(tx, previous, task.id);
-        if (entry) {
-          const queued = await tx
-            .select({ id: comments.id })
-            .from(comments)
-            .where(and(eq(comments.queueEntryId, entry.id), eq(comments.deliveryState, 'queued'), isNull(comments.deletedAt)))
-            .orderBy(asc(comments.createdAt));
-          moved = queued.map((c) => c.id);
-        }
-      }
-      await pauseSession(tx, after, old, 'agent unassigned');
-    }
-  }
+/**
+ * The Task's Agent changed. The Session is the Task's, so a change between two Agents keeps it as
+ * it is (a running Job finishes with the previous Agent); removing the Agent pauses it, and
+ * assigning one to a paused Session resumes it with what was said meanwhile.
+ */
+async function assign(tx: Executor, after: AfterCommit, task: TaskRow, closed: boolean): Promise<void> {
+  const workerId = await lockTaskWorker(tx, task.id);
+  let session = await lockSession(tx, task.id);
   if (!task.agentId) {
-    publishSession(after, task.id, [previous]);
+    if (session && session.state !== 'closed' && session.state !== 'paused') await pauseSession(tx, after, session, 'agent unassigned');
+    publishSession(after, task.id, workerId);
     return;
   }
-
-  let session = await lockSession(tx, task.id, task.agentId);
   if (!session) {
     const [created] = await tx
       .insert(sessions)
-      .values({ taskId: task.id, agentId: task.agentId, state: closed ? 'closed' : 'pending', worktreePath: await worktreePathFor(tx, task) })
+      .values({ taskId: task.id, state: closed ? 'closed' : 'pending', worktreePath: await worktreePathFor(tx, task), closedAt: closed ? new Date() : null })
       .returning();
     session = created!;
-  } else if (closed) {
-    await tx.update(sessions).set({ state: 'closed', closedAt: session.closedAt ?? new Date() }).where(eq(sessions.id, session.id));
-  } else if (!session.started) {
-    await tx.update(sessions).set({ state: 'pending', closedAt: null }).where(eq(sessions.id, session.id));
-  } else {
-    // Back to an Agent that worked on it before: same Session, plus whatever was said meanwhile.
-    await tx.update(sessions).set({ state: 'idle', closedAt: null, worktreeRemovalPending: false }).where(eq(sessions.id, session.id));
-    const entry = await enqueue(tx, after, { agentId: task.agentId, taskId: task.id, sessionId: session.id, kind: 'messages' });
-    const since = await tx
-      .select({ id: comments.id })
-      .from(comments)
-      .where(
-        and(
-          eq(comments.taskId, task.id),
-          eq(comments.internal, false),
-          isNull(comments.deletedAt),
-          // Agent and User Comments, plus System notices (Survey results, Notify agent).
-          or(ne(comments.kind, 'system'), isNotNull(comments.noticeMessage)),
-          or(ne(comments.authorType, 'agent'), ne(comments.authorId, task.agentId)),
-          session.lastJobAt ? gt(comments.createdAt, session.lastJobAt) : undefined,
-        ),
-      )
-      .orderBy(asc(comments.createdAt));
-    await attachComments(tx, after, entry.id, since.map((c) => c.id));
-  }
-  if (moved.length > 0 && !session.started && !closed) {
-    const entry = await enqueue(tx, after, { agentId: task.agentId, taskId: task.id, sessionId: session.id, kind: 'start' });
-    await attachComments(tx, after, entry.id, moved);
+  } else if (session.state === 'paused') {
+    await tx
+      .update(sessions)
+      .set({ state: session.started ? 'idle' : 'pending', closedAt: null, worktreeRemovalPending: false })
+      .where(eq(sessions.id, session.id));
+    if (session.started) {
+      // Whatever was said while the Task had no Agent reaches the one assigned now.
+      const since = await tx
+        .select({ id: comments.id })
+        .from(comments)
+        .where(
+          and(
+            eq(comments.taskId, task.id),
+            eq(comments.internal, false),
+            isNull(comments.deletedAt),
+            carriesDelivery,
+            session.lastJobAt ? gt(comments.createdAt, session.lastJobAt) : undefined,
+          ),
+        )
+        .orderBy(asc(comments.createdAt));
+      if (since.length > 0) {
+        const entry = await enqueue(tx, after, { workerId, taskId: task.id, sessionId: session.id, kind: 'messages' });
+        await attachComments(tx, after, entry.id, since.map((c) => c.id));
+      }
+    }
   }
   await tx.update(tasks).set({ currentSessionId: session.id }).where(eq(tasks.id, task.id));
-  publishSession(after, task.id, [previous, task.agentId]);
+  publishSession(after, task.id, workerId);
 }
 
 /** Unassigned: the running Turn is interrupted and the process told to finish; nothing more is delivered. */
 async function pauseSession(tx: Executor, after: AfterCommit, session: SessionRow, reason: string): Promise<void> {
   const job = await activeJob(tx, session.id, true);
-  if (job && job.state !== 'finishing') {
+  if (job && job.state !== 'finishing' && job.containerId) {
+    const containerId = job.containerId;
     after.effect((ctx) => {
-      ctx.runners.send(job.agentId, { type: 'job.interrupt', jobId: job.id });
-      ctx.runners.send(job.agentId, { type: 'job.end', jobId: job.id });
+      ctx.runners.send(containerId, { type: 'job.interrupt', jobId: job.id });
+      ctx.runners.send(containerId, { type: 'job.end', jobId: job.id });
     });
   }
-  const entry = await getEntry(tx, session.agentId, session.taskId, true);
+  const entry = await getEntry(tx, session.taskId, true);
   if (entry) await removeEntry(tx, after, entry, reason);
   await tx.update(sessions).set({ state: 'paused' }).where(eq(sessions.id, session.id));
 }
 
-/** A Wiki's Chat whose Agent is no longer the Wiki's: its Session pauses, whatever it was doing. */
-export async function pauseTaskSession(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
-  if (!task.agentId) return;
-  await lockAgents(tx, [task.agentId]);
-  const session = await lockSession(tx, task.id, task.agentId);
-  if (!session || session.state === 'paused' || session.state === 'closed') return;
-  await pauseSession(tx, after, session, 'agent unassigned');
-  publishSession(after, task.id, [task.agentId]);
-}
-
-/** The Wiki is back to the Agent that runs this Chat: its Session is available again. */
-export async function resumeTaskSession(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
-  if (!task.agentId) return;
-  await lockAgents(tx, [task.agentId]);
-  const session = await lockSession(tx, task.id, task.agentId);
-  if (!session || session.state !== 'paused') return;
-  await tx.update(sessions).set({ state: session.started ? 'idle' : 'pending' }).where(eq(sessions.id, session.id));
-  publishSession(after, task.id, [task.agentId]);
-}
-
-/** Closed: cancel any Job, drop undelivered Messages, close every Session and remove the Worktrees. */
-async function closeSessions(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
+/** Closed: cancel any Job, drop undelivered Messages, close the Session and remove the Worktree. */
+async function closeSession(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
   await cancelLimitResumes(tx, after, task.id, 'The task was closed');
-  const open = await tx
-    .select({ id: sessions.id, agentId: sessions.agentId })
-    .from(sessions)
-    .where(and(eq(sessions.taskId, task.id), ne(sessions.state, 'closed')));
-  if (open.length === 0) return;
-  await lockAgents(tx, open.map((s) => s.agentId));
-  for (const { agentId } of open) {
-    const session = await lockSession(tx, task.id, agentId);
-    if (!session || session.state === 'closed') continue;
-    const job = await activeJob(tx, session.id, true);
-    if (job) {
-      await tx.update(jobs).set({ cancelRequested: true }).where(eq(jobs.id, job.id));
-      after.effect((ctx) => ctx.runners.send(job.agentId, { type: 'job.cancel', jobId: job.id }));
+  const workerId = await lockTaskWorker(tx, task.id);
+  const session = await lockSession(tx, task.id);
+  if (!session || session.state === 'closed') return;
+  const job = await activeJob(tx, session.id, true);
+  if (job) {
+    await tx.update(jobs).set({ cancelRequested: true }).where(eq(jobs.id, job.id));
+    if (job.containerId) {
+      const containerId = job.containerId;
+      after.effect((ctx) => ctx.runners.send(containerId, { type: 'job.cancel', jobId: job.id }));
     }
-    const entry = await getEntry(tx, agentId, task.id, true);
-    if (entry) await removeEntry(tx, after, entry, 'task closed');
-    await tx
-      .update(sessions)
-      .set({ state: 'closed', closedAt: new Date(), worktreeRemovalPending: true })
-      .where(eq(sessions.id, session.id));
-    after.effect((ctx) => ctx.scheduler.removeWorktree(session.id));
   }
-  publishSession(after, task.id, open.map((s) => s.agentId));
+  const entry = await getEntry(tx, task.id, true);
+  if (entry) await removeEntry(tx, after, entry, 'task closed');
+  await tx.update(sessions).set({ state: 'closed', closedAt: new Date(), worktreeRemovalPending: true }).where(eq(sessions.id, session.id));
+  after.effect((ctx) => ctx.scheduler.removeWorktree(session.id));
+  publishSession(after, task.id, workerId);
 }
 
-/** Tasks being deleted (with their Sessions): their Agents remove the Worktrees once committed. */
+/** Tasks being deleted (with their Sessions): a Runner of their Worker removes the Worktrees once committed. */
 export async function removeDeletedWorktrees(tx: Executor, after: AfterCommit, taskIds: string[]): Promise<void> {
   if (taskIds.length === 0) return;
   const kept = await tx
-    .select({ agentId: sessions.agentId, worktreePath: sessions.worktreePath })
+    .select({ workerId: projects.workerId, worktreePath: sessions.worktreePath, slot: sessions.lastSlot })
     .from(sessions)
-    .where(and(inArray(sessions.taskId, taskIds), or(ne(sessions.state, 'closed'), eq(sessions.worktreeRemovalPending, true))));
+    .innerJoin(tasks, eq(tasks.id, sessions.taskId))
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .where(and(inArray(sessions.taskId, taskIds), sql`(${sessions.state} <> 'closed' or ${sessions.worktreeRemovalPending})`));
   after.effect((ctx) => {
-    for (const s of kept) {
-      ctx.runners.send(s.agentId, { type: 'worktree.remove', worktreePath: s.worktreePath, repoPath: `repos/${s.worktreePath.split('/')[1]}.git` });
-    }
+    for (const s of kept) ctx.scheduler.sendToWorker(s.workerId, { type: 'worktree.remove', worktreePath: s.worktreePath, repoPath: repoPathOf(s.worktreePath) }, s.slot);
   });
 }
 
 /** Reopened: the same Session waits for the next Comment (or Notify agent). */
 async function reopenSession(tx: Executor, after: AfterCommit, task: TaskRow): Promise<void> {
-  if (!task.agentId || !task.currentSessionId) return;
-  await lockAgents(tx, [task.agentId]);
-  const session = await lockSession(tx, task.id, task.agentId);
+  if (!task.currentSessionId) return;
+  const workerId = await lockTaskWorker(tx, task.id);
+  const session = await lockSession(tx, task.id);
   if (!session || session.state !== 'closed') return;
-  await tx
-    .update(sessions)
-    .set({ state: session.started ? 'idle' : 'pending', closedAt: null, worktreeRemovalPending: false })
-    .where(eq(sessions.id, session.id));
-  publishSession(after, task.id, [task.agentId]);
+  const state = !task.agentId ? 'paused' : session.started ? 'idle' : 'pending';
+  await tx.update(sessions).set({ state, closedAt: null, worktreeRemovalPending: false }).where(eq(sessions.id, session.id));
+  publishSession(after, task.id, workerId);
 }
 
 /**
  * A User's Comment (or a Notify agent notice) on a Task: written to the running process right
- * away when the Agent is working on this Task, otherwise queued, merging into the Task's entry.
+ * away when the Task's Agent is working on this Task, otherwise queued, merging into the Task's entry.
  */
 export async function deliverComment(
   tx: Executor,
@@ -278,8 +240,8 @@ export async function deliverComment(
     await setDelivery('not_delivered', 'no agent assigned', null);
     return 'not_delivered';
   }
-  await lockAgents(tx, [task.agentId]);
-  const session = await lockSession(tx, task.id, task.agentId);
+  const workerId = await lockTaskWorker(tx, task.id);
+  const session = await lockSession(tx, task.id);
   if (!session || session.state === 'paused') {
     await setDelivery('not_delivered', 'no agent assigned', null);
     return 'not_delivered';
@@ -291,20 +253,24 @@ export async function deliverComment(
 
   const job = await activeJob(tx, session.id, true);
   // Native commands run at a Job boundary, after the active response has finished.
-  const waiting = await getEntry(tx, task.agentId, task.id);
+  const waiting = await getEntry(tx, task.id);
   // Only a Turn that is actually running can take more input. A Job that was told to
   // end or cancel keeps running while its stdin is already closed, so writing to it
-  // would lose the Comment; those go through the Queue instead.
+  // would lose the Comment; those go through the Queue instead. A Job of the previous
+  // Agent finishes its Turn alone: what is written now is for the Task's Agent.
   const canInject =
     job &&
+    job.containerId &&
+    job.agentId === task.agentId &&
     !job.discardOutput &&
     !job.cancelRequested &&
     job.state === 'running' &&
     session.state === 'running' &&
     !waiting &&
     !commandName(comment.body) &&
-    after.ctx.runners.isReady(job.agentId);
+    after.ctx.runners.isReady(job.containerId);
   if (canInject) {
+    const containerId = job.containerId!;
     const parts = await renderComments(after.ctx, tx, [comment]);
     await setDelivery('delivered', null, job.id);
     if (comment.noticeTaskVersion !== null) {
@@ -312,20 +278,20 @@ export async function deliverComment(
         .update(sessions)
         .set({ lastSeenTaskVersion: sql`greatest(${sessions.lastSeenTaskVersion}, ${comment.noticeTaskVersion})` })
         .where(eq(sessions.id, session.id));
-      publishSession(after, task.id, []);
+      publishSession(after, task.id, null);
     }
     after.effect((ctx) => {
-      if (!ctx.runners.send(job.agentId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch }))
+      if (!ctx.runners.send(containerId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch }))
         void requeueUnsentComment(ctx, comment.id, job.id).catch((err) => ctx.log.error({ err, commentId: comment.id }, 'could not requeue an unsent Comment'));
     });
     return 'delivered';
   }
 
-  // A new Comment is also how a held entry (after a failed Job) gets going again. When the
-  // Agent is working on this very Task, the entry goes to the front: the Task has priority
-  // over the other Tasks waiting in the Queue, so it continues as soon as this Job ends.
+  // A new Comment is also how a held entry (after a failed Job) gets going again. When a Job
+  // runs on this very Task, the entry goes to the front: the Task has priority over the other
+  // Tasks waiting in the Queue, so it continues as soon as this Job ends.
   const entry = await enqueue(tx, after, {
-    agentId: task.agentId,
+    workerId,
     taskId: task.id,
     sessionId: session.id,
     kind: session.started ? 'messages' : 'start',
@@ -333,7 +299,6 @@ export async function deliverComment(
     front: job !== null,
   });
   await attachComments(tx, after, entry.id, [comment.id]);
-  after.effect((ctx) => ctx.scheduler.kick(task.agentId!));
   return 'queued';
 }
 
@@ -346,8 +311,8 @@ async function requeueUnsentComment(ctx: AppContext, commentId: string, jobId: s
     await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, peek.projectId)).for('share');
     const [task] = await tx.select().from(tasks).where(eq(tasks.id, peek.taskId)).for('update');
     if (!task) return;
-    if (task.agentId) await lockAgents(tx, [task.agentId]);
-    const session = task.agentId ? await lockSession(tx, task.id, task.agentId) : null;
+    const workerId = await lockTaskWorker(tx, task.id);
+    const session = await lockSession(tx, task.id);
     const [comment] = await tx.select().from(comments).where(eq(comments.id, commentId)).for('update');
     // A Turn ending before this ran may have marked it handled, though it never reached the process.
     if (!comment || comment.deletedAt || !['delivered', 'handled'].includes(comment.deliveryState) || comment.deliveredInJobId !== jobId) return;
@@ -363,15 +328,14 @@ async function requeueUnsentComment(ctx: AppContext, commentId: string, jobId: s
     if (session.state === 'closed') return failed('task closed');
     const job = await activeJob(tx, session.id);
     const entry = await enqueue(tx, after, {
-      agentId: task.agentId,
+      workerId,
       taskId: task.id,
       sessionId: session.id,
       kind: session.started ? 'messages' : 'start',
-      // The Comment was meant for the Task the Agent is working on: keep it ahead of other Tasks.
+      // The Comment was meant for the Task being worked on: keep it ahead of other Tasks.
       front: job !== null,
     });
     await attachComments(tx, after, entry.id, [commentId]);
-    after.effect((c) => c.scheduler.kick(task.agentId!));
   });
 }
 
@@ -384,23 +348,32 @@ export async function currentSession(db: Executor, taskId: string): Promise<{ ta
 
 /** The Stop button: interrupts the current Turn; the Session stays valid. */
 export async function stopTurn(tx: Executor, after: AfterCommit, taskId: string): Promise<void> {
-  const { task, session } = await currentSession(tx, taskId);
-  if (!session || !task.agentId) throw conflict('No agent is working on this task');
-  await lockAgents(tx, [session.agentId]);
+  const { session } = await currentSession(tx, taskId);
+  if (!session) throw conflict('No agent is working on this task');
+  await lockTaskWorker(tx, taskId);
   const job = await activeJob(tx, session.id, true);
-  if (!job || job.state === 'finishing') throw conflict('The agent is not running a turn on this task');
-  after.effect((ctx) => ctx.runners.send(job.agentId, { type: 'job.interrupt', jobId: job.id }));
+  if (!job || job.state === 'finishing' || !job.containerId) throw conflict('The agent is not running a turn on this task');
+  const containerId = job.containerId;
+  after.effect((ctx) => ctx.runners.send(containerId, { type: 'job.interrupt', jobId: job.id }));
 }
 
 /** Retry after a failed Job: releases the held Queue Entry. */
 export async function retrySession(tx: Executor, after: AfterCommit, taskId: string): Promise<void> {
   const { task, session } = await currentSession(tx, taskId);
-  if (!session || !task.agentId || session.agentId !== task.agentId) throw conflict('No agent is assigned to this task');
-  await lockAgents(tx, [session.agentId]);
-  const entry = await getEntry(tx, session.agentId, taskId, true);
+  if (!session || !task.agentId) throw conflict('No agent is assigned to this task');
+  const workerId = await lockTaskWorker(tx, taskId);
+  const entry = await getEntry(tx, taskId, true);
   if (!entry?.held) throw conflict('Nothing is waiting for a retry');
-  await enqueue(tx, after, { agentId: entry.agentId, taskId, sessionId: entry.sessionId, kind: entry.kind, held: false });
-  after.effect((ctx) => ctx.scheduler.kick(entry.agentId));
-  publishSession(after, taskId, []);
+  await enqueue(tx, after, { workerId, taskId, sessionId: entry.sessionId, kind: entry.kind, held: false });
+  publishSession(after, taskId, null);
 }
 
+/** Every Session of the Project that `claude` has started and that is still open, with its Task. */
+export async function startedOpenSessions(db: Executor, projectId: string): Promise<{ taskId: string; number: number }[]> {
+  return db
+    .select({ taskId: tasks.id, number: tasks.number })
+    .from(sessions)
+    .innerJoin(tasks, eq(tasks.id, sessions.taskId))
+    .where(and(eq(tasks.projectId, projectId), eq(sessions.started, true), ne(sessions.state, 'closed')))
+    .orderBy(asc(tasks.number));
+}

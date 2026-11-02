@@ -162,7 +162,7 @@ export async function applyProjection(
         if (!m.turn.isError) await onTurnWorked(tx, after, job.taskId);
         break;
       case 'rate_limit':
-        await tx.insert(rateLimitObservations).values({ credentialId, agentId: job.agentId, payload: m.info });
+        if (credentialId) await tx.insert(rateLimitObservations).values({ credentialId, agentId: job.agentId, payload: m.info });
         break;
       case 'init':
         await tx.update(jobs).set({ claudeVersion: m.claudeVersion, mcpServers: m.mcpServers, slashCommands: m.slashCommands }).where(eq(jobs.id, job.id));

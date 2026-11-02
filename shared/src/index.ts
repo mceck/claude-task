@@ -3,6 +3,7 @@ export * from './api';
 export * from './events';
 export * from './filter';
 export * from './agents';
+export * from './workers';
 export * from './runner';
 export * from './dockerfile';
 export * from './git';

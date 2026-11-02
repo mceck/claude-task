@@ -1,11 +1,11 @@
 # Schedules
 
-Schedules make Agents work on their own. An Admin configures a **Schedule** with a name, an Agent, a cron expression, a time zone and an initial prompt. At every due time the platform starts a **Scheduled Run**: it creates a Task, assigns the Agent and posts the prompt as the first User Comment, so the normal Session, Queue and Timeline machinery does the work. A Schedule is tied to a Repository, and then its runs work on a clean Worktree of it, or it is global, and then its Agent can read the state of every board and act on Tasks. Schedules and their runs live in their own section of the web app, shown as a list with a history table instead of a kanban board. It exists for recurring, unattended work (a nightly review, a morning triage, a weekly report) that would otherwise depend on someone remembering to start it.
+Schedules make Agents work on their own. An Admin configures a **Schedule** with a name, an Agent, a Worker, a cron expression, a time zone and an initial prompt. At every due time the platform starts a **Scheduled Run**: it creates a Task, assigns the Agent and posts the prompt as the first User Comment, so the normal Session, Queue and Timeline machinery does the work. A Schedule is tied to a Repository, and then its runs work on a clean Worktree of it, or it is global, and then its Agent can read the state of every board and act on Tasks. Schedules and their runs live in their own section of the web app, shown as a list with a history table instead of a kanban board. It exists for recurring, unattended work (a nightly review, a morning triage, a weekly report) that would otherwise depend on someone remembering to start it.
 
 ## Concepts
 
-- A **Schedule** is a configured recurring job: name, Agent, cron expression, time zone, initial prompt, an optional Repository with its Base Branch, a read-only flag and an enabled flag.
-- A **Schedule Project** is the Project of kind `schedule` that carries one Schedule. It is hidden from the Projects list and the Boards list, like a Wiki Project, and each Scheduled Run is a Task of it.
+- A **Schedule** is a configured recurring job: name, Agent, Worker, cron expression, time zone, initial prompt, an optional Repository with its Base Branch, a read-only flag and an enabled flag.
+- A **Schedule Project** is the Project of kind `schedule` that carries one Schedule. It is hidden from the Projects list and the Boards list, like a Wiki Project, and each Scheduled Run is a Task of it. It runs on the Schedule's Worker, so every run of the Schedule joins that Worker's Queue (see [Workers](workers.md)).
 - A **Scheduled Run** is one execution of a Schedule: a Task of its Schedule Project with one Session, normally with one Job. Its first User Comment is the Schedule's prompt, posted by the platform as `System` on behalf of the Schedule.
 - A **skipped run** is a due time that did not start a run. It has no Task and appears as a row in the Schedule's history with its reason.
 - A **tied Schedule** has a Repository. A **global Schedule** has none, and its Agent receives the global Task Tools.
@@ -33,6 +33,7 @@ Requests outside these permissions are answered with `403`.
 | --- | --- | --- |
 | Name | 1 to 100 characters, trimmed, unique ignoring case among Schedules (`409` otherwise) | required |
 | Agent | an existing enabled Agent (`400` otherwise) | required |
+| Worker | an existing Worker (`400` otherwise); the form preselects it when exactly one exists | required |
 | Cron expression | five fields (minute, hour, day of month, month, day of week), with lists, ranges and steps; at most one run per minute | required |
 | Time zone | an IANA name such as `Europe/Rome` | `UTC` |
 | Prompt | 1 to 50,000 characters | required |
@@ -40,20 +41,20 @@ Requests outside these permissions are answered with `403`.
 | Read-only | yes or no | no |
 | Enabled | yes or no | yes |
 
-An invalid field is answered with `400` and nothing is stored. The Schedule Project is created in the same transaction, with a Project Key generated from the name and the fixed Statuses below. The creator is recorded. Editing any field applies from the next run; runs already started keep what they started with. Changing the cron expression, the time zone or the enabled flag recomputes the next run time. Deleting a Schedule deletes its Schedule Project, its Tasks and its history. While an Agent is working on one of its runs, the deletion is answered with `409`, as for a Task.
+An invalid field is answered with `400` and nothing is stored. The Schedule Project is created in the same transaction, with a Project Key generated from the name and the fixed Statuses below. The creator is recorded. Editing any field applies from the next run; runs already started keep what they started with. Changing the cron expression, the time zone or the enabled flag recomputes the next run time. Changing the Worker follows the rule of a Project's Worker (see [Board](board.md)): it is accepted while none of the Schedule's runs has a started Session that is not `closed` and no Job of the Schedule is active, and is answered with `409` listing those runs otherwise; once accepted, the Schedule's Queue Entries move to the end of the new Worker's Queue. When no Worker exists, the form shows "Create a Worker first" with a link to the Workers section. Deleting a Schedule deletes its Schedule Project, its Tasks and its history. While an Agent is working on one of its runs, the deletion is answered with `409`, as for a Task.
 
-The list shows each Schedule with its Agent, the cron expression in words, its scope (Repository or global), a read-only badge, the next run time, the outcome of the latest run and an enabled switch.
+The list shows each Schedule with its Agent, its Worker, the cron expression in words, its scope (Repository or global), a read-only badge, the next run time, the outcome of the latest run and an enabled switch.
 
 ### Starting a run
 
 The scheduler's 30-second tick looks for enabled Schedules whose next run time has passed. Each due Schedule goes through these steps in order:
 
-1. **Skip checks.** The tick skips the run, and records the reason, when the Agent is disabled or deleted ("agent unavailable") or when the previous run is still active ("previous run still active"). A run is active while its Task is not in a `closed` Status, which covers a waiting, running or idle Session.
+1. **Skip checks.** The tick skips the run, and records the reason, when the Agent is disabled ("agent unavailable"), when the Worker is disabled ("worker unavailable") or when the previous run is still active ("previous run still active"). A run is active while its Task is not in a `closed` Status, which covers a waiting, running or idle Session.
 2. **Catch-up check.** After downtime, a Schedule that is overdue by less than its own period starts one catch-up run, however many due times it missed. When it is overdue by its period or more, the overdue run is skipped and recorded ("missed"), and the Schedule continues from the next due time.
 3. **Creating the run.** The platform creates a Task titled "<Schedule name> · <date and time in the Schedule's time zone>" in the Schedule Project, created by the Schedule, in the `Running` Status, assigns the Agent (a `pending` Session) and posts the prompt as the first User Comment, authored by `System`. That Comment is the trigger of the first Job, as for any Task.
 4. **Next time.** The next run time is computed from the cron expression in the Schedule's time zone, after every start or skip.
 
-**Run now** starts a run immediately, for Admins, ignoring the "previous run still active" check but not the Agent availability check, and leaves the next run time unchanged. The request is answered with the new run.
+**Run now** starts a run immediately, for Admins, ignoring the "previous run still active" check but not the Agent and Worker availability checks, and leaves the next run time unchanged. The request is answered with the new run.
 
 The cron expression is evaluated in the Schedule's time zone. A time that does not exist on a daylight saving change runs at the first valid minute after the gap; a time that happens twice runs once, at its first occurrence.
 
@@ -83,9 +84,9 @@ A global Schedule has no Repository, so its runs work in a plain directory witho
 | `set_task_status` | Moves any open Task to a Status of its Project. Closed Tasks and Statuses of the `closed` Category are refused: closing is for humans. |
 | `create_task_in_project` | Creates a Task in any ordinary Project, in its first `open` Status, with no assignees and no Agent. |
 | `assign_task_to_me` | Assigns the Agent to an open Task that has no Agent or already has this one. This opens a `pending` Session and starts no work; a Task of another Agent is answered with an error naming it, and a closed Task is refused. |
-| `start_task` | Posts the given prompt as an Agent Comment written by the Agent on an open Task assigned to it, and delivers it, so that Task's Session starts (or receives a Message) after the run, in the Agent's Queue. It is not counted against the start limit of [Board Write Access](agent-sessions.md#writing-to-the-board). |
+| `start_task` | Posts the given prompt as an Agent Comment written by the Agent on an open Task assigned to it, and delivers it, so that Task's Session starts (or receives a Message) in the Queue of the Worker of that Task's Project. It is not counted against the start limit of [Board Write Access](agent-sessions.md#writing-to-the-board). |
 
-A Task started this way is an ordinary Task in an ordinary Project: it joins the Agent's Queue, runs in the same Agent Container one Job at a time, and its Timeline is read there. `update_task_by_key` and `set_task_status` are the tools Board Write Access gives, with the same rules over every Project. Tied Schedules keep the Task Tools of their own Project and receive no global tools. Only ordinary, non-archived Projects appear in the global tools' project list and accept targets; Tasks of Wiki Projects and Schedule Projects are answered with an error.
+A Task started this way is an ordinary Task in an ordinary Project: it joins the Queue of its own Project's Worker, which may differ from the Schedule's Worker, runs on one of that Worker's Worker Containers as soon as one is free (possibly while the Scheduled Run is still working), and its Timeline is read there. `update_task_by_key` and `set_task_status` are the tools Board Write Access gives, with the same rules over every Project. Tied Schedules keep the Task Tools of their own Project and receive no global tools. Only ordinary, non-archived Projects appear in the global tools' project list and accept targets; Tasks of Wiki Projects and Schedule Projects are answered with an error.
 
 ### Read-only Schedules
 
@@ -129,7 +130,7 @@ flowchart LR
 
 ## Data model
 
-- **Schedule**: id, its Schedule Project, name, Agent (cleared when the Agent is deleted), cron expression, time zone, prompt, read-only, enabled, next run time, consecutive skips, creator.
+- **Schedule**: id, its Schedule Project, name, Agent, Worker (kept on the Schedule Project as its Worker), cron expression, time zone, prompt, read-only, enabled, next run time, consecutive skips, creator.
 - **Schedule run**: id, Schedule, due time, state (`started` or `skipped`), manual flag, the Task (null for skipped), skip reason, created at. The outcome of a started run is its Task's Status.
 - The Schedule Project reuses the Project's Repository and Base Branch fields; its Statuses are the three fixed ones.
 - A Task's creator can be a Schedule, and a Comment's author can be a Schedule.
@@ -146,6 +147,8 @@ flowchart LR
 - **A Schedule is a Project of kind `schedule`, and each run is a Task.** Session, Queue, Timeline, Worktree, Git and alerts all assume a Project, so reusing them as the Wiki does costs one more Project kind. Making `project_id` of Tasks nullable would touch every query and invariant, and a separate run entity would need its own Session, Timeline and UI.
 - **The Schedule's prompt is a User Comment, so the first-Comment invariant holds.** The Agent still starts only on a User Comment; the Schedule stands in as the author.
 - **Skipped runs overlap rather than queue.** When the previous run is active, the new one is skipped. Queueing would build a backlog behind a slow Agent and replay stale work.
+- **A disabled Worker skips the run.** A disabled Worker takes no new Jobs while its Queue keeps growing; a run queued there would start late, possibly after the next due time, and replay stale work. Skipping with "worker unavailable" records the problem in the history and, after three in a row, alerts the creator.
+- **Each Schedule chooses its Worker.** Unattended runs need a specific toolchain as much as any Project, and the Schedule Project is the Project its runs belong to. Tasks a global Schedule starts on other boards keep running on their own Project's Worker, where their Worktrees and transcripts live.
 - **At most one catch-up run.** Replaying every missed due time after downtime would start a burst of identical work; one catch-up bounded by the period keeps recent work and drops the rest.
 - **Succeeded and Failed are closed.** Unattended runs need no follow-up conversation. Closing at the end of the first Job frees the Worktree and uses the one existing mechanism that ends a Session.
 - **Read-only means read-only git.** The Push Policy is the only guard that the platform can enforce reliably for every provider, while restricting Claude's tools or Bash would remove most of what a review or report needs. The Task Tools stay available, except `open_pull_request`, which would need a pushed branch, so a read-only global Schedule can still change Tasks.
@@ -157,6 +160,7 @@ flowchart LR
 - [Board](board.md): Project kinds, Statuses and Task creation.
 - [Agent sessions](agent-sessions.md): Sessions, Jobs, the Queue, the Task Tools and the system prompt.
 - [Agents](agents.md): the Agents that Schedules run.
+- [Workers](workers.md): the Worker a Schedule's runs execute on.
 - [Git integration](git-integration.md): the Repository, Worktrees and the Push Policy.
 - [Wikis](wikis.md): the hidden Project pattern that Schedules follow.
 - [Conversation](conversation.md): Notification Events and alert delivery.

@@ -199,7 +199,10 @@ describe('Scheduled Messages', () => {
       admin.post(`/scheduled-messages/${message.id}/send`),
       tick(app, dueTick(message, 3 * HOUR)),
     ]);
-    expect([results[0], results[1]].map((r) => (r as { status: number }).status).sort()).toEqual([200, 409]);
+    // Whichever wins (a request or the tick), the others find it already sent.
+    const statuses = [results[0], results[1]].map((r) => (r as { status: number }).status);
+    expect(statuses.filter((status) => status === 200).length).toBeLessThanOrEqual(1);
+    expect(statuses.every((status) => status === 200 || status === 409)).toBe(true);
     expect(commentsOf(await timeline(admin, task.id)).filter((c) => c.body === 'right now')).toHaveLength(1);
   });
 

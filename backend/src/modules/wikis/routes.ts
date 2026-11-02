@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createWikiBody, renameChatBody, updateWikiBody } from '@claude-task/shared';
+import { createWikiBody, renameChatBody, setChatAgentBody, updateWikiBody } from '@claude-task/shared';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -11,7 +11,8 @@ import { badRequest, parse } from '../../errors';
 import { resolveRepository } from '../../git/service';
 import { createProject } from '../projects/service';
 import { createTask, deleteTask, getTaskRow, updateTask } from '../tasks/service';
-import { changeWikiAgent, clearChat, getChat, getWiki, listChats, listWikis, reserveChat, reservedChat } from './service';
+import { changeWikiAgent, clearChat, getChat, getWiki, listChats, listWikis, reserveChat, reservedChat, setChatAgent } from './service';
+import { assertWorker, changeProjectWorker } from '../workers/assign';
 
 const params = z.object({ id: z.uuid() });
 const chatParams = z.object({ id: z.uuid(), chatId: z.uuid() });
@@ -24,6 +25,7 @@ export function wikiRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(createWikiBody, request.body);
     const repository = await resolveRepository(ctx, body.repository);
     const actor = userActor(currentUser(request));
+    await assertWorker(ctx.db, body.workerId);
     const wiki = await transact(ctx, async (tx, after) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${repository.connectionId}`}))`);
       if (!(await ctx.git.find(repository.connectionId, tx))) throw badRequest('Choose an existing Git Connection');
@@ -32,7 +34,7 @@ export function wikiRoutes(app: FastifyInstance, ctx: AppContext): void {
       do {
         key = 'W' + [...randomUUID().replaceAll('-', '').slice(0, 5)].map((c) => String.fromCharCode(65 + parseInt(c, 16))).join('');
       } while ((await tx.select({ id: projects.id }).from(projects).where(eq(projects.key, key))).length);
-      const project = await createProject(tx, { key, name: body.name, description: body.description });
+      const project = await createProject(tx, { key, name: body.name, description: body.description, workerId: body.workerId });
       await tx.update(projects).set({ kind: 'wiki', repository, agentInstructions: WIKI_INSTRUCTIONS }).where(eq(projects.id, project.id));
       const task = await createTask(
         tx,
@@ -79,7 +81,8 @@ export function wikiRoutes(app: FastifyInstance, ctx: AppContext): void {
           actor,
         );
       }
-      if (body.agentId !== undefined) await changeWikiAgent(tx, after, id, body.agentId);
+      if (body.agentId !== undefined) await changeWikiAgent(tx, id, body.agentId);
+      if (body.workerId !== undefined) await changeProjectWorker(tx, after, id, body.workerId);
       await tx
         .update(projects)
         .set({
@@ -112,6 +115,20 @@ export function wikiRoutes(app: FastifyInstance, ctx: AppContext): void {
       await tx.update(tasks).set({ chatTitle: body.title }).where(eq(tasks.id, chatId));
       after.emit('wikis', { type: 'wiki.changed', wikiId: id });
       return { chat: await getChat(tx, currentUser(request).id, wiki, chatId) };
+    });
+  });
+  /** A Chat's own Agent: the conversation goes on with the new one. */
+  app.put('/wikis/:id/chats/:chatId/agent', async (request) => {
+    const { id, chatId } = parse(chatParams, request.params);
+    const { agentId } = parse(setChatAgentBody, request.body);
+    const actor = userActor(currentUser(request));
+    return transact(ctx, async (tx, after) => {
+      const wiki = await getWiki(tx, id, true);
+      await setChatAgent(tx, after, wiki, chatId, agentId, actor);
+      after.emit('wikis', { type: 'wiki.changed', wikiId: id });
+      const chats = await listChats(tx, currentUser(request).id, wiki);
+      const [task] = await tx.select().from(tasks).where(eq(tasks.id, chatId));
+      return { chat: chats.find((c) => c.id === chatId) ?? reservedChat(id, task!) };
     });
   });
   app.delete('/wikis/:id/chats/:chatId', async (request, reply) => {

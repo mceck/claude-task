@@ -32,7 +32,7 @@ const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 interface Grant {
   jobId: string;
-  agentId: string;
+  agentId: string | null;
   projectId: string;
   repository: ProjectRepository;
   branchName: string | null;

@@ -1,19 +1,24 @@
-// Background work around Agents: dispatching, image builds, the container reconciler, and
+// Background work around Workers: dispatching, image builds, the reconciler that starts and stops
+// Worker Containers between a Worker's minimum and cap, Agent Profile synchronization, and
 // publishing scheduling state to browsers. Everything it starts is tracked so tests can settle.
-import { agentTopic, pinAgentBase, projectTopic, taskTopic } from '@claude-task/shared';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { agentTopic, pinAgentBase, projectTopic, taskTopic, workerTopic } from '@claude-task/shared';
+import type { BackendToRunner } from '@claude-task/shared';
+import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
-import type { ContainerInfo } from './runtime';
-import { agentBuilds, agents, jobs, queueEntries, sessions } from '../db/schema';
-import { ACTIVE_JOB_STATES, agentNeedsContainer, desiredContainerSpec, getAgentRow, loadJobs, publishAgent, serializeBuild } from '../modules/agents/service';
+import { agentProfiles, agents, jobs, queueEntries, sessions, workerBuilds, workerContainers, workers } from '../db/schema';
+import { ACTIVE_JOB_STATES, loadJobs, publishAgent } from '../modules/agents/service';
+import type { JobRow } from '../modules/agents/service';
 import { loadCommentsById } from '../modules/comments/service';
 import { runDueMessages } from '../modules/scheduled-messages/service';
 import { runDueSchedules } from '../modules/schedules/service';
 import { agentExtensions } from '../modules/extensions/service';
 import { loadCard } from '../modules/tasks/service';
+import { containerRows, desiredContainerSpec, ensureContainerRow, getWorkerRow, publishWorker, serializeBuild } from '../modules/workers/service';
+import type { WorkerContainerRow, WorkerRow } from '../modules/workers/service';
 import { recoverAbandonedJobs } from '../runner/handlers';
 import { newToken } from '../secrets';
-import { dispatchNext, runnerWsUrl } from '../sessions/dispatch';
+import { dispatchNext, readyEntries, runnerWsUrl } from '../sessions/dispatch';
+import { repoPathOf } from '../sessions/lifecycle';
 import { loadQueue } from '../sessions/queue';
 import { loadTaskSession } from '../sessions/view';
 
@@ -22,7 +27,7 @@ const isUp = (state: string) => ['running', 'restarting'].includes(state);
 const BUILD_LOG_CAP = 256 * 1024;
 const BUILD_LOG_FLUSH_MS = 500;
 
-/** Docker's final USER for an Agent image must be the non-root `agent`. */
+/** Docker's final USER for a Worker image must be the non-root `agent`. */
 export function isAgentUser(user: string): boolean {
   return ['agent', 'agent:agent', '1000', '1000:1000'].includes(user.trim());
 }
@@ -34,6 +39,7 @@ export class Scheduler {
   private readonly building = new Set<string>();
   private readonly buildAgain = new Set<string>();
   private readonly reconciling = new Map<string, Promise<void>>();
+  private readonly syncing = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private stopping = false;
 
@@ -43,6 +49,7 @@ export class Scheduler {
   private pendingComments = new Map<string, 'created' | 'updated'>();
   private pendingJobs = new Set<string>();
   private pendingAgents = new Set<string>();
+  private pendingWorkers = new Set<string>();
   private flushScheduled = false;
   private flushChain: Promise<void> = Promise.resolve();
 
@@ -93,8 +100,7 @@ export class Scheduler {
     await this.reconcileAll();
     await this.runSchedules();
     await recoverAbandonedJobs(this.ctx);
-    const waiting = await this.ctx.db.selectDistinct({ agentId: queueEntries.agentId }).from(queueEntries);
-    for (const { agentId } of waiting) this.kick(agentId);
+    this.kickWaiting();
   }
 
   /** Starts or skips the Schedules due at `now` (the scheduler's clock, a parameter so tests can move time). */
@@ -107,96 +113,137 @@ export class Scheduler {
 
   private kickWaiting(): void {
     void this.ctx.db
-      .selectDistinct({ agentId: queueEntries.agentId })
+      .selectDistinct({ workerId: queueEntries.workerId })
       .from(queueEntries)
-      .then((waiting) => waiting.forEach(({ agentId }) => this.kick(agentId)))
-      .catch((err) => this.ctx.log.error(err, 'could not dispatch after schedules'));
+      .then((waiting) => waiting.forEach(({ workerId }) => this.kick(workerId)))
+      .catch((err) => this.ctx.log.error(err, 'could not dispatch waiting work'));
   }
 
   // Dispatching
 
-  kick(agentId: string): void {
+  /** Dispatches the Worker's Queue onto its free containers; work left over makes the reconciler scale up. */
+  kick(workerId: string): void {
     if (this.stopping) return;
-    if (this.dispatching.has(agentId)) {
-      this.dispatchAgain.add(agentId);
+    if (this.dispatching.has(workerId)) {
+      this.dispatchAgain.add(workerId);
       return;
     }
     const run = (async () => {
       do {
-        this.dispatchAgain.delete(agentId);
-        const dispatched = await dispatchNext(this.ctx, agentId).catch((err) => {
-          this.ctx.log.error({ err, agentId }, 'dispatch failed');
-          return true;
-        });
-        if (!dispatched) await this.wake(agentId);
-      } while (!this.stopping && this.dispatchAgain.has(agentId));
-    })().finally(() => this.dispatching.delete(agentId));
-    this.dispatching.set(agentId, run);
+        this.dispatchAgain.delete(workerId);
+        for (let i = 0; i < 100 && !this.stopping; i++) {
+          const dispatched = await dispatchNext(this.ctx, workerId).catch((err) => {
+            this.ctx.log.error({ err, workerId }, 'dispatch failed');
+            return false;
+          });
+          if (!dispatched) break;
+        }
+        if (await this.needsCapacity(workerId)) await this.reconcile(workerId);
+      } while (!this.stopping && this.dispatchAgain.has(workerId));
+    })().finally(() => this.dispatching.delete(workerId));
+    this.dispatching.set(workerId, run);
     this.track(run);
   }
 
-  /** Work is waiting for an Agent whose container was stopped for lack of it: start it. */
-  private async wake(agentId: string): Promise<void> {
-    if (this.stopping || !this.ctx.config.agents.stopWhenUnused) return;
-    const { state } = await this.ctx.runtime.inspect(agentId);
-    if (isUp(state)) return;
-    if (await agentNeedsContainer(this.ctx.db, agentId, this.ctx.config.agents.wikiIdleStopMs)) await this.reconcile(agentId);
+  /**
+   * The Agents' Extensions or enabled flag changed: every Worker that holds their Profile, or has
+   * work waiting for them, synchronizes and dispatches again.
+   */
+  refreshAgents(agentIds: string[]): void {
+    if (this.stopping || agentIds.length === 0) return;
+    this.track(
+      (async () => {
+        const ids = sql.join([...new Set(agentIds)].map((id) => sql`${id}::uuid`), sql`, `);
+        const rows = await this.ctx.db.execute<{ worker_id: string }>(sql`
+          select worker_id from agent_profiles where agent_id in (${ids})
+          union select q.worker_id from queue_entries q join tasks t on t.id = q.task_id where t.agent_id in (${ids})`);
+        for (const { worker_id } of rows.rows) {
+          await this.reconcile(worker_id);
+          this.kick(worker_id);
+        }
+      })(),
+    );
   }
 
-  /** A Session changed: the Agent may have gained work (wake it) or lost its last (stop it). */
-  refresh(agentId: string): void {
-    if (this.ctx.config.agents.stopWhenUnused) void this.reconcile(agentId);
+  /** Ready entries still waiting while no container of the Worker is free: a slot may have to start. */
+  private async needsCapacity(workerId: string): Promise<boolean> {
+    return (await readyEntries(this.ctx.db, workerId)).length > 0;
   }
 
-  /** After a Job: a pending container recreation goes first, then the next Queue Entry. */
-  jobEnded(agentId: string): void {
-    this.track(this.reconcile(agentId).finally(() => this.kick(agentId)));
+  /** After a Job: its container is idle from now, a pending recreation goes first, then the next Queue Entry. */
+  jobEnded(job: Pick<JobRow, 'workerId' | 'containerId' | 'agentId'>): void {
+    const { workerId, containerId, agentId } = job;
+    if (!workerId) return;
+    this.track(
+      (async () => {
+        if (containerId) await this.ctx.db.update(workerContainers).set({ idleSince: new Date() }).where(eq(workerContainers.id, containerId));
+        await this.reconcile(workerId);
+        if (agentId) this.pendingAgents.add(agentId);
+        this.kick(workerId);
+      })(),
+    );
+  }
+
+  /** Sends to a connected Runner of the Worker, preferring the given slot. Returns whether one took it. */
+  sendToWorker(workerId: string, msg: BackendToRunner, preferSlot: number | null = null): boolean {
+    for (const containerId of this.ctx.runners.forWorker(workerId, preferSlot)) if (this.ctx.runners.send(containerId, msg)) return true;
+    return false;
   }
 
   removeWorktree(sessionId: string): void {
     this.track(
       (async () => {
-        const [s] = await this.ctx.db.select().from(sessions).where(eq(sessions.id, sessionId));
-        if (!s?.worktreeRemovalPending) return;
-        if (!this.ctx.runners.send(s.agentId, { type: 'worktree.remove', worktreePath: s.worktreePath, repoPath: `repos/${s.worktreePath.split('/')[1]}.git` })) return;
-        await this.ctx.db.update(sessions).set({ worktreeRemovalPending: false }).where(eq(sessions.id, sessionId));
+        const [s] = await this.ctx.db
+          .select({ session: sessions, workerId: workers.id })
+          .from(sessions)
+          .innerJoin(sql`tasks t`, sql`t.id = ${sessions.taskId}`)
+          .innerJoin(sql`projects p`, sql`p.id = t.project_id`)
+          .innerJoin(workers, sql`${workers.id} = p.worker_id`)
+          .where(eq(sessions.id, sessionId));
+        if (!s?.session.worktreeRemovalPending) return;
+        const msg = { type: 'worktree.remove' as const, worktreePath: s.session.worktreePath, repoPath: repoPathOf(s.session.worktreePath) };
+        // A Job still being cancelled works in that Worktree: only its own Runner removes it, after the
+        // Job exits. Any Runner of the Worker can remove an idle one, since the volume is shared.
+        const [busy] = await this.ctx.db
+          .select({ containerId: jobs.containerId })
+          .from(jobs)
+          .where(and(eq(jobs.sessionId, sessionId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
+        const sent = busy ? !!busy.containerId && this.ctx.runners.send(busy.containerId, msg) : this.sendToWorker(s.workerId, msg, s.session.lastSlot);
+        if (sent) await this.ctx.db.update(sessions).set({ worktreeRemovalPending: false }).where(eq(sessions.id, sessionId));
       })(),
     );
   }
 
   // Image builds
 
-  /** Builds the Agent's image from its current Dockerfile; a build already running is followed by another. */
-  build(agentId: string): void {
+  /** Builds the Worker's image from its current Dockerfile; a build already running is followed by another. */
+  build(workerId: string): void {
     if (this.stopping) return;
-    if (this.building.has(agentId)) {
-      this.buildAgain.add(agentId);
+    if (this.building.has(workerId)) {
+      this.buildAgain.add(workerId);
       return;
     }
-    this.building.add(agentId);
+    this.building.add(workerId);
     this.track(
-      this.runBuild(agentId).finally(() => {
-        this.building.delete(agentId);
-        if (this.buildAgain.delete(agentId)) this.build(agentId);
+      this.runBuild(workerId).finally(() => {
+        this.building.delete(workerId);
+        if (this.buildAgain.delete(workerId)) this.build(workerId);
       }),
     );
   }
 
-  private async runBuild(agentId: string): Promise<void> {
+  private async runBuild(workerId: string): Promise<void> {
     const { db, runtime, hub } = this.ctx;
-    const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-    if (!agent) return;
+    const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
+    if (!worker) return;
     const build = await db.transaction(async (tx) => {
-      const [row] = await tx
-        .insert(agentBuilds)
-        .values({ agentId, dockerfile: agent.dockerfile, baseVersion: runtime.baseVersion })
-        .returning();
-      await tx.update(agents).set({ imageState: 'building' }).where(eq(agents.id, agentId));
+      const [row] = await tx.insert(workerBuilds).values({ workerId, dockerfile: worker.dockerfile, baseVersion: runtime.baseVersion }).returning();
+      await tx.update(workers).set({ imageState: 'building' }).where(eq(workers.id, workerId));
       return row!;
     });
     const { log: _log, ...summary } = serializeBuild(build);
-    hub.publish(agentTopic(agentId), { type: 'build.updated', build: summary });
-    await this.publishAgent(agentId);
+    hub.publish(workerTopic(workerId), { type: 'build.updated', build: summary });
+    await this.publishWorkerNow(workerId);
 
     let log = '';
     // The capped log can keep the same length while its content changes; count writes instead.
@@ -209,13 +256,13 @@ export class Scheduler {
       if (flushedVersion === version) return flushing;
       const snapshot = log;
       flushedVersion = version;
-      flushing = flushing.then(() => db.update(agentBuilds).set({ log: snapshot }).where(eq(agentBuilds.id, build.id))).then(() => {});
+      flushing = flushing.then(() => db.update(workerBuilds).set({ log: snapshot }).where(eq(workerBuilds.id, build.id))).then(() => {});
       return flushing;
     };
     const onLog = (chunk: string) => {
       log = (log + chunk).slice(-BUILD_LOG_CAP);
       version++;
-      hub.publish(agentTopic(agentId), { type: 'build.log', agentId, buildId: build.id, chunk });
+      hub.publish(workerTopic(workerId), { type: 'build.log', workerId, buildId: build.id, chunk });
       timer ??= setTimeout(() => void flush().catch(() => {}), BUILD_LOG_FLUSH_MS);
     };
 
@@ -223,8 +270,8 @@ export class Scheduler {
     let error: string | null = null;
     try {
       await runtime.ensureBaseImage((chunk) => onLog(chunk));
-      const result = await runtime.buildAgentImage(
-        { agentId, buildId: build.id, dockerfile: pinAgentBase(agent.dockerfile, runtime.baseVersion, agent.services) },
+      const result = await runtime.buildWorkerImage(
+        { workerId, buildId: build.id, dockerfile: pinAgentBase(worker.dockerfile, runtime.baseVersion, worker.services) },
         onLog,
       );
       if (!isAgentUser(result.user)) {
@@ -240,26 +287,26 @@ export class Scheduler {
 
     const finished = await db.transaction(async (tx) => {
       const [row] = await tx
-        .update(agentBuilds)
+        .update(workerBuilds)
         .set({ status: imageTag ? 'succeeded' : 'failed', imageTag, log, finishedAt: new Date() })
-        .where(eq(agentBuilds.id, build.id))
+        .where(eq(workerBuilds.id, build.id))
         .returning();
-      // A failed build keeps the previous image (and container) in service.
+      // A failed build keeps the previous image (and containers) in service.
       await tx
-        .update(agents)
+        .update(workers)
         .set(imageTag ? { imageState: 'built', imageTag, imageBaseVersion: runtime.baseVersion } : { imageState: 'failed' })
-        .where(eq(agents.id, agentId));
+        .where(eq(workers.id, workerId));
       return row;
     });
     if (!finished) {
-      // The Agent was deleted during the build: clean up the image created meanwhile.
-      if (imageTag) await runtime.removeAgent(agentId).catch(() => {});
+      // The Worker was deleted during the build: clean up the image created meanwhile.
+      if (imageTag) await runtime.removeWorker(workerId).catch(() => {});
       return;
     }
     const { log: _l, ...done } = serializeBuild(finished);
-    hub.publish(agentTopic(agentId), { type: 'build.updated', build: done });
-    await this.publishAgent(agentId);
-    if (imageTag) await this.reconcile(agentId);
+    hub.publish(workerTopic(workerId), { type: 'build.updated', build: done });
+    await this.publishWorkerNow(workerId);
+    if (imageTag) await this.reconcile(workerId);
   }
 
   // Containers
@@ -268,150 +315,262 @@ export class Scheduler {
     if (this.stopping) return Promise.resolve();
     return this.track(
       (async () => {
-        const rows = await this.ctx.db.select({ id: agents.id }).from(agents);
+        const rows = await this.ctx.db.select({ id: workers.id }).from(workers);
         for (const { id } of rows) await this.reconcile(id);
       })(),
     );
   }
 
-  /** Brings one Agent's image and container in line with its configuration. Serialized per Agent. */
-  reconcile(agentId: string): Promise<void> {
+  /** Brings one Worker's image and containers in line with its configuration and its work. Serialized per Worker. */
+  reconcile(workerId: string): Promise<void> {
     if (this.stopping) return Promise.resolve();
-    const previous = this.reconciling.get(agentId) ?? Promise.resolve();
-    const next = previous.then(() => this.reconcileOnce(agentId)).catch((err) => this.ctx.log.error({ err, agentId }, 'reconcile failed'));
-    this.reconciling.set(agentId, next);
+    const previous = this.reconciling.get(workerId) ?? Promise.resolve();
+    const next = previous.then(() => this.reconcileOnce(workerId)).catch((err) => this.ctx.log.error({ err, workerId }, 'reconcile failed'));
+    this.reconciling.set(workerId, next);
     void next.finally(() => {
-      if (this.reconciling.get(agentId) === next) this.reconciling.delete(agentId);
+      if (this.reconciling.get(workerId) === next) this.reconciling.delete(workerId);
     });
     return this.track(next);
   }
 
-  private async reconcileOnce(agentId: string): Promise<void> {
+  private async reconcileOnce(workerId: string): Promise<void> {
     if (this.stopping) return;
     const { db, runtime } = this.ctx;
-    const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-    if (!agent) return;
-    const stale = agent.imageState === 'built' && agent.imageBaseVersion !== runtime.baseVersion;
-    if ((agent.imageState === 'none' || stale) && !this.building.has(agentId)) this.build(agentId);
+    const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
+    if (!worker) return;
+    const stale = worker.imageState === 'built' && worker.imageBaseVersion !== runtime.baseVersion;
+    if ((worker.imageState === 'none' || stale) && !this.building.has(workerId)) this.build(workerId);
 
-    const desired = desiredContainerSpec(agent);
-    let info = await runtime.inspect(agentId);
-    const unused = this.ctx.config.agents.stopWhenUnused && !(await agentNeedsContainer(db, agentId, this.ctx.config.agents.wikiIdleStopMs));
-    // A forced recreate is immediate: only the "when idle" variant waits for work.
-    if (desired && unused && !agent.forceRecreate) {
-      // Recreation and restarts wait for the next wake-up; a missing container is not created.
-      if (isUp(info.state)) info = await this.sleep(agentId, info);
-    } else if (desired) {
-      if (info.state === 'missing' || agent.containerSpec !== desired) {
-        const [busy] = await db
-          .select({ id: jobs.id })
-          .from(jobs)
-          .where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
-        // Recreating kills the running Job, so it waits for the Agent to be idle unless forced.
-        if (info.state === 'missing' || !busy || agent.forceRecreate) {
-          await this.recreate(agent, desired);
-          info = await runtime.inspect(agentId);
-        }
-      } else if (!isUp(info.state)) {
-        await runtime.restartContainer(agentId);
-        info = await runtime.inspect(agentId);
-      }
-    }
-    if (info.state !== agent.containerState) {
-      await db.update(agents).set({ containerState: info.state }).where(eq(agents.id, agentId));
-      await this.publishAgent(agentId);
-      if (info.state === 'running') this.kick(agentId);
-    }
-    if (info.state === 'running') {
-      // No lock is held while Docker works (installs can take minutes and the Agent's row lock
-      // would stall every Comment on its Tasks). Dispatch stays off on its own: it needs the
-      // configured revision to match, and reconciles of one Agent are serialized.
-      const pending = await db.transaction(async (tx) => {
-        const [current] = await tx.select().from(agents).where(eq(agents.id, agentId)).for('update');
-        if (!current || current.extensionsRevision === current.configuredExtensionsRevision) return null;
-        const [busy] = await tx.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
-        if (busy) return null;
-        return { revision: current.extensionsRevision, extensions: await agentExtensions(tx, agentId) };
-      });
-      let configured = false;
-      if (pending) {
-        const { revision, extensions } = pending;
-        try {
-          await runtime.configureSkills(agentId, revision, extensions.skills.map(({ name, files }) => ({ name, files })));
-          await runtime.configurePlugins(agentId, extensions.plugins.map(({ name, source }) => ({ name, source })));
-          await db.update(agents).set({ configuredExtensionsRevision: revision, extensionsError: null }).where(eq(agents.id, agentId));
-          configured = true;
-        } catch (err) {
-          await db.update(agents).set({ extensionsError: (err instanceof Error ? err.message : 'Could not configure skills and plugins').slice(0, 2000) }).where(eq(agents.id, agentId));
+    const desired = desiredContainerSpec(worker);
+    let changed = false;
+    let started = false;
+    const rows = await containerRows(db, workerId);
+    const active = await this.activeJobsByContainer(workerId);
+    const observed = new Map<number, string>();
+    for (const row of rows) observed.set(row.slot, (await runtime.inspect(workerId, row.slot)).state);
+
+    if (desired) {
+      const wanted = await this.wantedSlots(worker, rows, observed, active);
+      // Start what's wanted and not up; recreate what runs an older image or limits once it's free.
+      for (const slot of wanted) {
+        const row = rows.find((r) => r.slot === slot) ?? (await ensureContainerRow(db, workerId, slot));
+        const state = observed.get(slot) ?? 'missing';
+        const busy = active.has(row.id);
+        if (state === 'missing' || row.containerSpec !== desired || row.forceRecreate) {
+          if (state === 'missing' || !busy || row.forceRecreate) {
+            await this.recreate(worker, row, desired);
+            started = true;
+            changed = true;
+          }
+        } else if (!isUp(state)) {
+          await runtime.restartContainer(workerId, slot);
+          await db.update(workerContainers).set({ idleSince: new Date() }).where(eq(workerContainers.id, row.id));
+          started = true;
+          changed = true;
         }
       }
-      await this.publishAgent(agentId);
-      if (configured) this.kick(agentId);
+      // Stop what runs and isn't wanted, once it has no Job.
+      for (const row of rows) {
+        if (wanted.has(row.slot) || !isUp(observed.get(row.slot) ?? 'missing') || active.has(row.id)) continue;
+        if (await this.sleep(worker, row)) changed = true;
+      }
     }
+    for (const row of await containerRows(db, workerId)) {
+      const state = (await runtime.inspect(workerId, row.slot)).state;
+      if (state !== row.containerState) {
+        await db.update(workerContainers).set({ containerState: state }).where(eq(workerContainers.id, row.id));
+        changed = true;
+      }
+    }
+    if (changed) this.publishWorker(workerId);
+    if (started) this.kick(workerId);
+
+    // Agent Profiles the waiting work needs, and the Profiles this Worker holds whose Extensions changed.
+    const agentIds = new Set((await readyEntries(db, workerId)).map((e) => e.agentId));
+    const outdated = await db
+      .select({ agentId: agentProfiles.agentId })
+      .from(agentProfiles)
+      .innerJoin(agents, eq(agents.id, agentProfiles.agentId))
+      .where(and(eq(agentProfiles.workerId, workerId), sql`${agentProfiles.appliedRevision} <> ${agents.extensionsRevision}`));
+    for (const { agentId } of outdated) agentIds.add(agentId);
+    for (const agentId of agentIds) this.syncProfile(workerId, agentId);
   }
 
-  /** Stops the container of an Agent with no work, keeping it (and its volume) for the next wake-up. */
-  private async sleep(agentId: string, info: ContainerInfo): Promise<ContainerInfo> {
-    // Dispatch only starts Jobs on a `running` container and locks this row, so marking it stopped
-    // first closes the window between the check and Docker's stop.
+  private async activeJobsByContainer(workerId: string): Promise<Map<string, string>> {
+    const rows = await this.ctx.db
+      .select({ id: jobs.id, containerId: jobs.containerId })
+      .from(jobs)
+      .where(and(eq(jobs.workerId, workerId), inArray(jobs.state, [...ACTIVE_JOB_STATES]), isNotNull(jobs.containerId)));
+    return new Map(rows.map((r) => [r.containerId!, r.id]));
+  }
+
+  /**
+   * The slots that should run: slots 1 to the minimum, every busy one, every one that runs and
+   * hasn't been idle for the timeout, and as many more as the waiting work needs, up to the cap.
+   * The Task's last slot is preferred for a new start; otherwise the lowest free one.
+   */
+  private async wantedSlots(worker: WorkerRow, rows: WorkerContainerRow[], observed: Map<number, string>, active: Map<string, string>): Promise<Set<number>> {
+    const { stopWhenUnused, idleStopMs } = this.ctx.config.agents;
+    const wanted = new Set<number>();
+    const now = Date.now();
+    for (const row of rows) {
+      const up = isUp(observed.get(row.slot) ?? 'missing');
+      if (active.has(row.id)) wanted.add(row.slot);
+      else if (up && row.slot <= worker.cap) {
+        const idleFor = now - (row.idleSince ?? row.createdAt).getTime();
+        if (!stopWhenUnused || idleFor < idleStopMs) wanted.add(row.slot);
+      }
+    }
+    if (!worker.enabled) return wanted;
+    for (let slot = 1; slot <= Math.min(worker.minimum, worker.cap); slot++) wanted.add(slot);
+    const entries = await readyEntries(this.ctx.db, worker.id);
+    const busy = (slot: number) => {
+      const row = rows.find((r) => r.slot === slot);
+      return !!row && active.has(row.id);
+    };
+    const available = [...wanted].filter((slot) => slot <= worker.cap && !busy(slot)).length;
+    let need = entries.length - available;
+    const candidates = [
+      ...entries.map((e) => e.lastSlot).filter((s): s is number => s !== null),
+      ...Array.from({ length: worker.cap }, (_, i) => i + 1),
+    ];
+    for (const slot of candidates) {
+      if (need <= 0) break;
+      if (slot > worker.cap || wanted.has(slot)) continue;
+      wanted.add(slot);
+      need--;
+    }
+    return wanted;
+  }
+
+  /** Stops a Worker Container that is no longer wanted, keeping it (and its volumes) for the next start. */
+  private async sleep(worker: WorkerRow, row: WorkerContainerRow): Promise<boolean> {
+    // Dispatch only starts Jobs on a `running` container and locks the Worker's row, so marking it
+    // stopped first closes the window between the check and Docker's stop.
     const stopping = await this.ctx.db.transaction(async (tx) => {
-      await getAgentRow(tx, agentId, { lock: true });
-      if (await agentNeedsContainer(tx, agentId, this.ctx.config.agents.wikiIdleStopMs)) return false;
-      await tx.update(agents).set({ containerState: 'exited' }).where(eq(agents.id, agentId));
+      await getWorkerRow(tx, worker.id, { lock: true });
+      const [busy] = await tx.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.containerId, row.id), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
+      if (busy) return false;
+      await tx.update(workerContainers).set({ containerState: 'exited' }).where(eq(workerContainers.id, row.id));
       return true;
     });
-    if (!stopping) return info;
-    this.ctx.runners.disconnect(agentId, 4003, 'container stopped: no work');
+    if (!stopping) return false;
+    this.ctx.runners.disconnect(row.id, 4003, 'container stopped: no work');
     try {
-      await this.ctx.runtime.stopContainer(agentId);
+      await this.ctx.runtime.stopContainer(worker.id, row.slot);
     } catch (err) {
       // Keep the stored state true to Docker's, so the next reconcile decides again.
-      await this.ctx.db.update(agents).set({ containerState: (await this.ctx.runtime.inspect(agentId)).state }).where(eq(agents.id, agentId));
+      await this.ctx.db.update(workerContainers).set({ containerState: (await this.ctx.runtime.inspect(worker.id, row.slot)).state }).where(eq(workerContainers.id, row.id));
       throw err;
     }
-    await this.publishAgent(agentId);
-    // Work may have arrived while Docker was stopping: wake the container now, not at the next tick.
-    if (await agentNeedsContainer(this.ctx.db, agentId, this.ctx.config.agents.wikiIdleStopMs)) this.kick(agentId);
-    return this.ctx.runtime.inspect(agentId);
+    return true;
   }
 
-  private async recreate(agent: typeof agents.$inferSelect, desired: string): Promise<void> {
+  private async recreate(worker: WorkerRow, row: WorkerContainerRow, desired: string): Promise<void> {
     const { token, hash } = newToken();
     // A new token for every container: the old one stops working with the old container.
     // `containerSpec` stays null until the container exists, so a crash or a failed create
     // makes the next reconcile retry instead of believing the old container is current.
     await this.ctx.db
-      .update(agents)
-      .set({ runnerTokenHash: hash, containerSpec: null, forceRecreate: false, configuredExtensionsRevision: -1, updatedAt: new Date() })
-      .where(eq(agents.id, agent.id));
-    this.ctx.runners.disconnect(agent.id, 4002, 'container recreated');
-    await this.ctx.runtime.createContainer(agent.id, {
-      image: agent.imageTag!,
+      .update(workerContainers)
+      .set({ runnerTokenHash: hash, containerSpec: null, forceRecreate: false, idleSince: new Date() })
+      .where(eq(workerContainers.id, row.id));
+    this.ctx.runners.disconnect(row.id, 4002, 'container recreated');
+    await this.ctx.runtime.createContainer(worker.id, row.slot, {
+      image: worker.imageTag!,
       env: {
         CLAUDE_TASK_BACKEND_URL: runnerWsUrl(this.ctx.config.agents.backendUrl),
         CLAUDE_TASK_RUNNER_TOKEN: token,
       },
-      cpuLimit: agent.cpuLimit,
-      memoryMb: agent.memoryMb,
+      cpuLimit: worker.cpuLimit,
+      memoryMb: worker.memoryMb,
     });
-    const [current] = await this.ctx.db.select({ id: agents.id }).from(agents).where(eq(agents.id, agent.id));
+    const [current] = await this.ctx.db.select({ id: workers.id }).from(workers).where(eq(workers.id, worker.id));
     if (!current) {
-      // The Agent was deleted while Docker was creating its container.
-      await this.ctx.runtime.removeAgent(agent.id).catch(() => {});
+      // The Worker was deleted while Docker was creating its container.
+      await this.ctx.runtime.removeWorker(worker.id).catch(() => {});
       return;
     }
-    await this.ctx.db.update(agents).set({ containerSpec: desired }).where(eq(agents.id, agent.id));
-    await this.publishAgent(agent.id);
+    await this.ctx.db.update(workerContainers).set({ containerSpec: desired, containerState: 'running' }).where(eq(workerContainers.id, row.id));
+  }
+
+  // Agent Profiles
+
+  /**
+   * Brings the Agent's Profile on this Worker up to its Extensions revision, from one running
+   * container, while the Agent has no Job on the Worker. Only that Agent's entries wait for it.
+   */
+  syncProfile(workerId: string, agentId: string): void {
+    const key = `${workerId}:${agentId}`;
+    if (this.stopping || this.syncing.has(key)) return;
+    this.syncing.add(key);
+    this.track(
+      (async () => {
+        const { db, runtime } = this.ctx;
+        const pending = await db.transaction(async (tx) => {
+          await getWorkerRow(tx, workerId, { lock: true });
+          const [agent] = await tx.select().from(agents).where(eq(agents.id, agentId));
+          if (!agent) return null;
+          const [profile] = await tx.select().from(agentProfiles).where(and(eq(agentProfiles.workerId, workerId), eq(agentProfiles.agentId, agentId)));
+          if (profile?.appliedRevision === agent.extensionsRevision) return null;
+          const [busy] = await tx
+            .select({ id: jobs.id })
+            .from(jobs)
+            .where(and(eq(jobs.workerId, workerId), eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
+          if (busy) return null;
+          return { revision: agent.extensionsRevision, extensions: await agentExtensions(tx, agentId) };
+        });
+        if (!pending) return;
+        // No lock is held while Docker works: installs can take minutes.
+        const [container] = await db
+          .select()
+          .from(workerContainers)
+          .where(and(eq(workerContainers.workerId, workerId), eq(workerContainers.containerState, 'running')))
+          .orderBy(asc(workerContainers.slot))
+          .limit(1);
+        if (!container) return;
+        let error: string | null = null;
+        try {
+          await runtime.configureProfile(workerId, container.slot, {
+            agentId,
+            revision: pending.revision,
+            skills: pending.extensions.skills.map(({ name, files }) => ({ name, files })),
+            plugins: pending.extensions.plugins.map(({ name, source }) => ({ name, source })),
+          });
+        } catch (err) {
+          error = (err instanceof Error ? err.message : 'Could not configure skills and plugins').slice(0, 2000);
+        }
+        const values = error ? { error } : { appliedRevision: pending.revision, error: null };
+        await db
+          .insert(agentProfiles)
+          .values({ workerId, agentId, appliedRevision: error ? -1 : pending.revision, error, updatedAt: new Date() })
+          .onConflictDoUpdate({ target: [agentProfiles.workerId, agentProfiles.agentId], set: { ...values, updatedAt: new Date() } })
+          .catch(() => {});
+        this.publishWorker(workerId);
+        this.publishAgent(agentId);
+        if (!error) this.kick(workerId);
+      })().finally(() => this.syncing.delete(key)),
+    );
   }
 
   // Real-time publishing
 
-  publishAgent(agentId: string): Promise<void> {
-    return this.track(publishAgent(this.ctx, agentId));
+  publishAgent(agentId: string): void {
+    this.pendingAgents.add(agentId);
+    this.scheduleFlush();
   }
 
-  publishQueue(agentId: string, taskIds: string[]): void {
-    this.pendingQueues.add(agentId);
+  publishWorker(workerId: string): void {
+    this.pendingWorkers.add(workerId);
+    this.scheduleFlush();
+  }
+
+  private publishWorkerNow(workerId: string): Promise<void> {
+    return this.track(publishWorker(this.ctx, workerId));
+  }
+
+  publishQueue(workerId: string, taskIds: string[]): void {
+    this.pendingQueues.add(workerId);
     for (const id of taskIds) this.pendingTasks.add(id);
     this.scheduleFlush();
   }
@@ -453,14 +612,20 @@ export class Scheduler {
     this.pendingJobs.clear();
 
     for (const job of await loadJobs(db, { jobIds })) {
-      hub.publish(agentTopic(job.agentId), { type: 'job.updated', job });
-      this.pendingAgents.add(job.agentId);
+      if (job.agentId) {
+        hub.publish(agentTopic(job.agentId), { type: 'job.updated', job });
+        this.pendingAgents.add(job.agentId);
+      }
+      if (job.workerId) {
+        hub.publish(workerTopic(job.workerId), { type: 'job.updated', job });
+        this.pendingWorkers.add(job.workerId);
+      }
     }
-    for (const agentId of queues) {
-      const entries = await loadQueue(db, agentId);
-      hub.publish(agentTopic(agentId), { type: 'queue.changed', agentId, entries });
+    for (const workerId of queues) {
+      const entries = await loadQueue(db, workerId);
+      hub.publish(workerTopic(workerId), { type: 'queue.changed', workerId, entries });
       for (const e of entries) taskIds.add(e.task.id);
-      this.pendingAgents.add(agentId);
+      this.pendingWorkers.add(workerId);
     }
     const comments = await loadCommentsById(db, [...commentModes.keys()]);
     for (const [id, comment] of comments) {
@@ -485,6 +650,8 @@ export class Scheduler {
     const agentIds = [...this.pendingAgents];
     this.pendingAgents.clear();
     for (const agentId of agentIds) await publishAgent(this.ctx, agentId);
+    const workerIds = [...this.pendingWorkers];
+    this.pendingWorkers.clear();
+    for (const workerId of workerIds) await publishWorker(this.ctx, workerId);
   }
 }
-

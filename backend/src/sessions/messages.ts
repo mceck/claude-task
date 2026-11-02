@@ -232,7 +232,13 @@ export function startMessage(
 }
 
 export const RESUME_MESSAGE = 'The previous run was interrupted by a restart; continue where you left off.';
-export const REASSIGNED_MESSAGE = 'You have been assigned to this task again. Read it with get_task to catch up on any changes.';
+/** What an existing Session receives when its entry carries nothing else to deliver. */
+export const CONTINUE_MESSAGE = 'Read the task with get_task to catch up on any changes, then continue.';
+
+/** The Agent Change Notice: the first Message after the Task's Agent changed opens with it. */
+export function agentChangeNotice(agentName: string, previousName: string | null): string {
+  return `You are now working as agent "${agentName}"${previousName ? ` (previously "${previousName}")` : ''}. Your instructions, tools and skills may have changed; the conversation so far is preserved.`;
+}
 
 export interface PromptInput {
   agentName: string;
@@ -296,7 +302,7 @@ export function systemPrompt(p: PromptInput): string {
   if (p.services.length) {
     platform.push(
       '',
-      'Development services in your container, ready to use and shared by all your tasks (keep projects apart with their own database names, key prefixes or buckets):',
+      'Development services in your current container, ready to use and shared with the other tasks that run there. A later run of this task can land in another container of the same worker, with different data: create what you need instead of assuming it is still there, and keep projects apart with their own database names, key prefixes or buckets:',
       ...p.services.map((service) => `- ${AGENT_SERVICE_INFO[service].name}: ${AGENT_SERVICE_INFO[service].description}`),
     );
   }

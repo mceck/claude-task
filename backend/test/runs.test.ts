@@ -107,7 +107,7 @@ describe('Runs', () => {
   it('serves the Runs of a Wiki Chat like a Task', async () => {
     const admin = await app.admin();
     const { agent, runner } = await createAgent(app, admin);
-    const created = await admin.post('/wikis', { name: 'Team wiki', agentId: agent.id, repository: { connectionId: 'env-github', providerRepoId: '1' } });
+    const created = await admin.post('/wikis', { name: 'Team wiki', agentId: agent.id, workerId: app.workerId, repository: { connectionId: 'env-github', providerRepoId: '1' } });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     const wiki = created.body.wiki as Wiki;
     await comment(admin, wiki.taskId, 'Look around the repository.');

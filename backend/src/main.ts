@@ -1,10 +1,14 @@
-import { loadConfig } from './config';
+import { OBSOLETE_SETTINGS, loadConfig } from './config';
 import { backfillTurnContexts } from './projection/backfill';
 import { createServer } from './server';
 
 const config = loadConfig();
 const server = await createServer(config);
 await server.app.listen({ host: config.host, port: config.port });
+
+for (const [name, replacement] of Object.entries(OBSOLETE_SETTINGS)) {
+  if (process.env[name] !== undefined) server.app.log.warn(`${name} is no longer read: Worker Containers follow ${replacement} instead.`);
+}
 
 // Conversations from before Context Usage existed get their chip without waiting for a new Turn.
 // It runs after the port opens, so a long history never delays the backend becoming ready.

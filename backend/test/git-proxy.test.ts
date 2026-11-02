@@ -57,7 +57,7 @@ describe('Git Proxy', () => {
     const { agent, runner } = await createAgent(app, admin);
     const created = await admin.post('/schedules', {
       name: 'Read only review',
-      agentId: agent.id,
+      agentId: agent.id, workerId: app.workerId,
       cron: '0 3 * * *',
       prompt: 'Look at the code.',
       readOnly: true,

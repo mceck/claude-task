@@ -4,8 +4,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { skills, mcpServers } from '../src/db/schema';
 import * as importer from '../src/modules/extensions/import-skills';
 import { useTestApp } from './helpers/app';
-import { assignAndStart, createAgent, createProject, createTask, createUser } from './helpers/fixtures';
+import type { TestApp } from './helpers/app';
+import type { ApiClient } from './helpers/client';
+import { assignAndStart, createAgent, createProject, createTask, createUser, runnerOf } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
+
+/** The Agent's Profile on the default Worker, as last synchronized. */
+const profileOf = (app: TestApp, agentId: string) => app.runtime.profiles.get(`${app.workerId}:${agentId}`);
+
+/** Gives the Agent one quiet Job on the default Worker, which synchronizes its Profile there first. */
+async function work(app: TestApp, admin: ApiClient, agentId: string): Promise<void> {
+  const { project } = await createProject(admin);
+  const task = await createTask(admin, project.id);
+  await assignAndStart(admin, task.id, agentId);
+  const s = new Stream();
+  await (await runnerOf(app)).runJob([s.init(), s.result()]);
+  await app.settle();
+}
 
 const imported = (name = 'review', text = 'Review carefully', userInvocable = true): importer.ImportedSkill => ({
   name,
@@ -30,15 +45,19 @@ describe('shared skills and MCP catalog', () => {
     const entries = response.body.skills;
     expect(entries[0]).toMatchObject({ name: 'review', fileCount: 2 });
     expect(entries[0].files).toBeUndefined();
-    const { agent } = await createAgent(app, admin, { body: { skillIds: entries.map((s: { id: string }) => s.id) }, connect: false });
+    const { agent } = await createAgent(app, admin, { body: { skillIds: entries.map((s: { id: string }) => s.id) } });
     expect(agent.skillCommands).toEqual([{ name: 'review', description: 'Review code' }]);
-    const before = app.runtime.containers.get(agent.id);
-    expect(app.runtime.configuredSkills.get(agent.id)!.skills).toHaveLength(2);
+    // Synchronized on the Worker before the Agent's first Job there.
+    expect(profileOf(app, agent.id)).toBeUndefined();
+    await work(app, admin, agent.id);
+    const before = app.runtime.container(app.workerId, 1);
+    expect(profileOf(app, agent.id)!.skills).toHaveLength(2);
     const changed = await admin.patch(`/agents/${agent.id}`, { skillIds: [] });
     expect(changed.status).toBe(200);
     await app.settle();
-    expect(app.runtime.containers.get(agent.id)).toBe(before);
-    expect(app.runtime.configuredSkills.get(agent.id)!.skills).toEqual([]);
+    // A Worker holding the Profile synchronizes it again right away, without recreating anything.
+    expect(app.runtime.container(app.workerId, 1)).toBe(before);
+    expect(profileOf(app, agent.id)!.skills).toEqual([]);
     await admin.patch(`/agents/${agent.id}`, { skillIds: [entries[0].id] });
     const copy = await admin.post(`/agents/${agent.id}/duplicate`, {});
     expect(copy.body.agent.skillIds).toEqual([entries[0].id]);
@@ -73,16 +92,17 @@ describe('shared skills and MCP catalog', () => {
     const first = await runner.next('job.start');
     runner.accept(first.jobId);
     await runner.drain();
-    const configured = app.runtime.configuredSkills.get(agent.id);
+    const configured = profileOf(app, agent.id);
     await admin.patch(`/agents/${agent.id}`, { skillIds: [skill.id], mcpServerIds: [remote.body.mcpServer.id, stdio.body.mcpServer.id] });
     await app.settle();
-    expect(app.runtime.configuredSkills.get(agent.id)).toBe(configured);
+    // The Agent has a Job on the Worker: its Profile waits for it to end.
+    expect(profileOf(app, agent.id)).toBe(configured);
     expect((await admin.get(`/agents/${agent.id}`)).body.agent.extensionsPending).toBe(true);
     const stream = new Stream();
     await runner.play(first.jobId, [stream.init(), stream.result()]);
     await runner.exit(first.jobId);
     await app.settle();
-    expect(app.runtime.configuredSkills.get(agent.id)!.skills[0]!.name).toBe('review');
+    expect(profileOf(app, agent.id)!.skills[0]!.name).toBe('review');
     await admin.post(`/tasks/${task.id}/comments`, { body: '/review authentication' });
     const next = await runner.next('job.start', (m) => m.jobId !== first.jobId);
     expect(next.claudeArgs.appendSystemPrompt).not.toContain('/home/agent/.claude/skills/');
@@ -143,16 +163,18 @@ describe('shared skills and MCP catalog', () => {
     const admin = await app.admin();
     const cli = vi.spyOn(importer, 'importSkills').mockResolvedValue([imported()]);
     const skill = (await admin.post('/skills/import', { source: 'org/repo' })).body.skills[0];
-    const a = await createAgent(app, admin, { body: { skillIds: [skill.id] }, connect: false });
-    const b = await createAgent(app, admin, { body: { skillIds: [skill.id] }, connect: false });
-    const containers = [app.runtime.containers.get(a.agent.id), app.runtime.containers.get(b.agent.id)];
+    const a = await createAgent(app, admin, { body: { skillIds: [skill.id] } });
+    const b = await createAgent(app, admin, { body: { skillIds: [skill.id] } });
+    await work(app, admin, a.agent.id);
+    await work(app, admin, b.agent.id);
+    const container = app.runtime.container(app.workerId, 1);
     cli.mockResolvedValue([imported('review', 'Updated instructions')]);
     const updated = await admin.post('/skills/import', { source: 'org/repo', skills: ['review'] });
     expect(updated.body.skills[0].id).toBe(skill.id);
     await app.settle();
-    for (const [index, { agent }] of [a, b].entries()) {
-      expect(app.runtime.containers.get(agent.id)).toBe(containers[index]);
-      const file = app.runtime.configuredSkills.get(agent.id)!.skills[0]!.files[0]!;
+    expect(app.runtime.container(app.workerId, 1)).toBe(container);
+    for (const { agent } of [a, b]) {
+      const file = profileOf(app, agent.id)!.skills[0]!.files[0]!;
       expect(Buffer.from(file.content, 'base64').toString()).toBe('Updated instructions');
     }
     expect(await app.server.ctx.db.select().from(skills)).toHaveLength(1);
@@ -200,22 +222,23 @@ describe('plugin catalog', () => {
     const admin = await app.admin();
     const a = (await admin.post('/plugins', { name: 'frontend-design', source: 'anthropics/claude-plugins-official' })).body.plugin;
     const b = (await admin.post('/plugins', { name: 'superpowers@anthropic-plugin-directory' })).body.plugin;
-    const { agent } = await createAgent(app, admin, { body: { pluginIds: [a.id, b.id] }, connect: false });
+    const { agent } = await createAgent(app, admin, { body: { pluginIds: [a.id, b.id] } });
     expect(agent.pluginIds.sort()).toEqual([a.id, b.id].sort());
-    expect(app.runtime.configuredPlugins.get(agent.id)).toEqual([
+    await work(app, admin, agent.id);
+    expect(profileOf(app, agent.id)!.plugins).toEqual([
       { name: 'frontend-design', source: 'anthropics/claude-plugins-official' },
       { name: 'superpowers@anthropic-plugin-directory', source: '' },
     ]);
-    const container = app.runtime.containers.get(agent.id);
+    const container = app.runtime.container(app.workerId, 1);
     await admin.patch(`/agents/${agent.id}`, { pluginIds: [b.id] });
     await app.settle();
-    expect(app.runtime.containers.get(agent.id)).toBe(container);
-    expect(app.runtime.configuredPlugins.get(agent.id)).toEqual([{ name: 'superpowers@anthropic-plugin-directory', source: '' }]);
+    expect(app.runtime.container(app.workerId, 1)).toBe(container);
+    expect(profileOf(app, agent.id)!.plugins).toEqual([{ name: 'superpowers@anthropic-plugin-directory', source: '' }]);
 
-    const sync = vi.spyOn(app.runtime, 'configurePlugins');
+    const sync = vi.spyOn(app.runtime, 'configureProfile');
     expect((await admin.post(`/plugins/${b.id}/update`, {})).status).toBe(204);
     await app.settle();
-    expect(sync).toHaveBeenCalledWith(agent.id, [{ name: 'superpowers@anthropic-plugin-directory', source: '' }]);
+    expect(sync).toHaveBeenCalledWith(app.workerId, 1, expect.objectContaining({ agentId: agent.id, plugins: [{ name: 'superpowers@anthropic-plugin-directory', source: '' }] }));
     expect((await admin.post(`/plugins/${a.id}/update`, {})).status).toBe(204);
     await app.settle();
     expect(sync).toHaveBeenCalledTimes(1);
@@ -232,17 +255,16 @@ describe('plugin catalog', () => {
     const { agent, runner } = await createAgent(app, admin);
     app.runtime.pluginFailure = 'Plugin missing: Plugin "missing" not found in marketplace "market".';
     await admin.patch(`/agents/${agent.id}`, { pluginIds: [plugin.id] });
-    await app.settle();
-    const failed = (await admin.get(`/agents/${agent.id}`)).body.agent;
-    expect(failed).toMatchObject({ extensionsPending: true, extensionsError: app.runtime.pluginFailure });
     const { project } = await createProject(admin);
     const task = await createTask(admin, project.id);
     await assignAndStart(admin, task.id, agent.id);
     await app.settle();
+    const failed = (await admin.get(`/agents/${agent.id}`)).body.agent;
+    expect(failed).toMatchObject({ extensionsError: app.runtime.pluginFailure });
     expect(runner.messages('job.start')).toHaveLength(0);
 
     app.runtime.pluginFailure = null;
-    await app.server.ctx.scheduler.reconcile(agent.id);
+    await app.server.ctx.scheduler.reconcile(app.workerId);
     await runner.next('job.start');
     expect((await admin.get(`/agents/${agent.id}`)).body.agent).toMatchObject({ extensionsPending: false, extensionsError: null });
   });
@@ -257,16 +279,18 @@ describe('plugin catalog', () => {
     const installing = new Promise<void>((r) => (release = r));
     let started!: () => void;
     const began = new Promise<void>((r) => (started = r));
-    const original = app.runtime.configurePlugins.bind(app.runtime);
-    vi.spyOn(app.runtime, 'configurePlugins').mockImplementation(async (...args) => {
+    const original = app.runtime.configureProfile.bind(app.runtime);
+    vi.spyOn(app.runtime, 'configureProfile').mockImplementation(async (...args) => {
       started();
       await installing;
       return original(...args);
     });
     await admin.patch(`/agents/${agent.id}`, { pluginIds: [plugin.id] });
+    await assignAndStart(admin, task.id, agent.id);
     await began;
 
-    const posted = assignAndStart(admin, task.id, agent.id).then(() => 'posted');
+    // The installation holds no lock: more Comments reach the Task meanwhile.
+    const posted = admin.post(`/tasks/${task.id}/comments`, { body: 'And another thing.' }).then(() => 'posted');
     expect(await Promise.race([posted, new Promise((r) => setTimeout(() => r('blocked'), 1500))])).toBe('posted');
     expect(runner.messages('job.start')).toHaveLength(0);
 

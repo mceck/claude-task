@@ -22,9 +22,9 @@ import {
   tasks,
   turns,
 } from '../../db/schema';
-import { badRequest, conflict, notFound } from '../../errors';
-import { ACTIVE_JOB_STATES, lockAgents } from '../agents/service';
-import { pauseTaskSession, resumeTaskSession } from '../../sessions/lifecycle';
+import { badRequest, notFound } from '../../errors';
+import { ACTIVE_JOB_STATES } from '../agents/service';
+import { lockTaskWorker } from '../../sessions/lifecycle';
 import { createTask, emitTasksChanged, updateTask } from '../tasks/service';
 
 export async function listWikis(db: Executor, id?: string): Promise<Wiki[]> {
@@ -41,6 +41,7 @@ export async function listWikis(db: Executor, id?: string): Promise<Wiki[]> {
     repository: p.repository!,
     taskId: t.id,
     agentId: p.defaultAgentId,
+    workerId: p.workerId,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   }));
@@ -64,11 +65,8 @@ export async function getWiki(db: Executor, id: string, lock = false): Promise<W
  */
 export async function clearChat(tx: Executor, after: AfterCommit, chatId: string): Promise<void> {
   const [task] = await tx.select().from(tasks).where(eq(tasks.id, chatId)).for('update');
-  const allSessions = await tx.select().from(sessions).where(eq(sessions.taskId, chatId));
-  await lockAgents(
-    tx,
-    allSessions.map((s) => s.agentId),
-  );
+  const workerId = await lockTaskWorker(tx, chatId);
+  const allSessions = await tx.select().from(sessions).where(eq(sessions.taskId, chatId)).for('update');
   const active = await tx
     .select()
     .from(jobs)
@@ -80,7 +78,7 @@ export async function clearChat(tx: Executor, after: AfterCommit, chatId: string
     .update(jobs)
     .set({ cancelRequested: true, discardOutput: true, projection: null, stderr: '', setupOutput: '' })
     .where(eq(jobs.taskId, chatId));
-  for (const job of active) after.effect((c) => c.runners.send(job.agentId, { type: 'job.cancel', jobId: job.id }));
+  for (const job of active) if (job.containerId) after.effect((c) => c.runners.send(job.containerId!, { type: 'job.cancel', jobId: job.id }));
   await tx.delete(queueEntries).where(eq(queueEntries.taskId, chatId));
   const blobs = await tx
     .select({ blobId: attachments.blobId })
@@ -101,7 +99,7 @@ export async function clearChat(tx: Executor, after: AfterCommit, chatId: string
       .set({
         claudeSessionId: randomUUID(),
         started: false,
-        state: s.agentId === task!.agentId ? 'pending' : 'paused',
+        state: task!.agentId ? 'pending' : 'paused',
         lastSeenTaskVersion: 0,
         lastJobAt: null,
         closedAt: null,
@@ -117,7 +115,7 @@ export async function clearChat(tx: Executor, after: AfterCommit, chatId: string
   await emitTasksChanged(tx, after, [chatId], 'task.updated');
   after.effect((c) => {
     c.scheduler.publishTask(chatId);
-    for (const s of allSessions) c.scheduler.publishQueue(s.agentId, [chatId]);
+    c.scheduler.publishQueue(workerId, [chatId]);
   });
   for (const b of blobs) after.run(() => after.ctx.blobs.delete(b.blobId));
 }
@@ -142,7 +140,7 @@ export async function listChats(db: Executor, userId: string, wiki: Wiki): Promi
     lastActivityAt: Date;
   }>(sql`select t.id, t.agent_id as "agentId",
       ${chatTitle(sql`t`)} as title,
-      (select s.state from sessions s where s.task_id = t.id and s.agent_id = t.agent_id) as "sessionState",
+      (select s.state from sessions s where s.task_id = t.id) as "sessionState",
       exists (select 1 from jobs j where j.task_id = t.id and j.state in ('dispatched', 'running', 'finishing')) as running,
       a.first as "createdAt", a.last as "lastActivityAt"
     from tasks t
@@ -202,23 +200,23 @@ export async function reserveChat(tx: Executor, after: AfterCommit, wiki: Wiki, 
   return chatId;
 }
 
-/**
- * A Chat belongs to the Agent that was the Wiki's when it was created. An empty Chat, or one whose Agent was
- * deleted, takes the current one; a Chat with a conversation can only continue with its own Agent, though
- * Internal Notes, which no Agent receives, are accepted in any Chat.
- */
+/** A Chat without an Agent (its Agent was unassigned) takes the Wiki's default Agent when the next Comment arrives. */
 export async function ensureChatAgent(tx: Executor, after: AfterCommit, task: typeof tasks.$inferSelect, actor: Actor, internal: boolean): Promise<void> {
+  if (internal || task.agentId) return;
   const [project] = await tx.select().from(projects).where(eq(projects.id, task.projectId));
-  if (project?.kind !== 'wiki' || !project.defaultAgentId || task.agentId === project.defaultAgentId) return;
-  const [used] = await tx.select({ id: comments.id }).from(comments).where(eq(comments.taskId, task.id)).limit(1);
-  if (!used || !task.agentId) {
-    const [fresh] = await tx.select({ version: tasks.version }).from(tasks).where(eq(tasks.id, task.id));
-    await updateTask(tx, after, task.id, { version: fresh!.version, agentId: project.defaultAgentId }, actor);
-    return;
-  }
-  if (internal) return;
-  const [agent] = await tx.select({ name: agents.name }).from(agents).where(eq(agents.id, task.agentId));
-  throw conflict(`This chat is run by ${agent?.name ?? 'another agent'}: assign the wiki back to that agent to continue it.`);
+  if (project?.kind !== 'wiki' || !project.defaultAgentId) return;
+  const [fresh] = await tx.select({ version: tasks.version }).from(tasks).where(eq(tasks.id, task.id));
+  await updateTask(tx, after, task.id, { version: fresh!.version, agentId: project.defaultAgentId }, actor);
+}
+
+/** A Chat's own Agent, changed from the Chat: its conversation goes on with the new Agent. */
+export async function setChatAgent(tx: Executor, after: AfterCommit, wiki: Wiki, chatId: string, agentId: string, actor: Actor): Promise<void> {
+  const [agent] = await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId));
+  if (!agent) throw badRequest('Unknown agent');
+  const [task] = await tx.select().from(tasks).where(and(eq(tasks.id, chatId), eq(tasks.projectId, wiki.id))).for('update');
+  if (!task) throw notFound('Chat');
+  if (task.agentId === agentId) return;
+  await updateTask(tx, after, task.id, { version: task.version, agentId }, actor);
 }
 
 /** A reserved Chat as the New Chat call describes it: it is not listed until its first Comment. */
@@ -236,19 +234,11 @@ export function reservedChat(wikiId: string, task: typeof tasks.$inferSelect): W
   };
 }
 
-/**
- * A new Wiki Agent pauses the Sessions of the Chats run by the previous one, which stay readable, and wakes
- * the Sessions of its own earlier Chats. Chats keep the Agent they were created with.
- */
-export async function changeWikiAgent(tx: Executor, after: AfterCommit, wikiId: string, agentId: string): Promise<void> {
+/** The Wiki's default Agent, which new Chats start with. Existing Chats keep their own. */
+export async function changeWikiAgent(tx: Executor, wikiId: string, agentId: string): Promise<void> {
   const [agent] = await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId));
   if (!agent) throw badRequest('Unknown agent');
   const [project] = await tx.select().from(projects).where(eq(projects.id, wikiId));
   if (project!.defaultAgentId === agentId) return;
   await tx.update(projects).set({ defaultAgentId: agentId, updatedAt: new Date() }).where(eq(projects.id, wikiId));
-  const chats = await tx.select().from(tasks).where(eq(tasks.projectId, wikiId)).orderBy(asc(tasks.id)).for('update');
-  for (const chat of chats) {
-    if (chat.agentId === agentId) await resumeTaskSession(tx, after, chat);
-    else await pauseTaskSession(tx, after, chat);
-  }
 }

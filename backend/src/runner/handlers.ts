@@ -1,13 +1,15 @@
 // The backend side of the Runner Protocol: every message is processed exactly once and in
-// order (per-Job seq), inside a transaction that locks task → agent → session → job.
+// order (per-Job seq), inside a transaction that locks task → worker → session → job. Each
+// connection is one Worker Container's Runner.
 import type { JobFailureStage, RunnerJobMessage, RunnerToBackend } from '@claude-task/shared';
 import { taskTopic } from '@claude-task/shared';
 import { and, eq, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { AfterCommit, AppContext } from '../context';
 import { transactWithRetry } from '../context';
 import type { Executor } from '../db/client';
-import { agents, comments, jobs, sessionEvents, sessions, tasks } from '../db/schema';
-import { ACTIVE_JOB_STATES, getAgentRow } from '../modules/agents/service';
+import { agents, comments, jobs, projects, sessionEvents, sessions, tasks, workerContainers } from '../db/schema';
+import { ACTIVE_JOB_STATES } from '../modules/agents/service';
+import { getWorkerRow, workerOfTask } from '../modules/workers/service';
 import type { JobRow } from '../modules/agents/service';
 import { settleRun } from '../modules/schedules/service';
 import { jobEventId, setAlertComment } from '../notifications/alerts';
@@ -24,33 +26,32 @@ const ACTIVITY_TOUCH_MS = 10_000;
 
 const appendCapped = (column: typeof jobs.setupOutput | typeof jobs.stderr, chunk: string) => sql`right(${column} || ${chunk}, ${OUTPUT_CAP})`;
 
-export async function handleRunnerMessage(ctx: AppContext, agentId: string, msg: RunnerToBackend): Promise<void> {
-  if (msg.type === 'hello') return handleHello(ctx, agentId, msg);
-  if (msg.type === 'pong') return;
-  if (msg.type === 'project_skills.result') {
-    ctx.skillRequests.settle(agentId, String(msg.requestId), Array.isArray(msg.files) ? msg.files : []);
-    return;
-  }
-  if (typeof msg.jobId === 'string' && typeof msg.seq === 'number') return handleJobMessage(ctx, agentId, msg);
-  ctx.log.warn({ agentId, type: (msg as { type?: string }).type }, 'unknown runner message');
+/** The Worker Container a Runner connection belongs to. */
+export interface RunnerIdentity {
+  containerId: string;
+  workerId: string;
+  slot: number;
 }
 
-async function handleHello(ctx: AppContext, agentId: string, msg: Extract<RunnerToBackend, { type: 'hello' }>): Promise<void> {
+export async function handleRunnerMessage(ctx: AppContext, runner: RunnerIdentity, msg: RunnerToBackend): Promise<void> {
+  if (msg.type === 'hello') return handleHello(ctx, runner, msg);
+  if (msg.type === 'pong') return;
+  if (msg.type === 'project_skills.result') {
+    ctx.skillRequests.settle(runner.containerId, String(msg.requestId), Array.isArray(msg.files) ? msg.files : []);
+    return;
+  }
+  if (typeof msg.jobId === 'string' && typeof msg.seq === 'number') return handleJobMessage(ctx, runner, msg);
+  ctx.log.warn({ containerId: runner.containerId, type: (msg as { type?: string }).type }, 'unknown runner message');
+}
+
+async function handleHello(ctx: AppContext, runner: RunnerIdentity, msg: Extract<RunnerToBackend, { type: 'hello' }>): Promise<void> {
+  const { containerId, workerId } = runner;
   const { keep, pendingRemovals, keepSession } = await transactWithRetry(ctx, async (tx, after) => {
-    await getAgentRow(tx, agentId, { lock: true });
-    await tx
-      .update(agents)
-      .set({
-        runnerConnectedAt: new Date(),
-        runnerDisconnectedAt: null,
-        runnerVersion: String(msg.runnerVersion ?? ''),
-        claudeVersion: String(msg.claudeVersion ?? ''),
-      })
-      .where(eq(agents.id, agentId));
+    await getWorkerRow(tx, workerId, { lock: true });
     const active = await tx
       .select()
       .from(jobs)
-      .where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES])))
+      .where(and(eq(jobs.containerId, containerId), inArray(jobs.state, [...ACTIVE_JOB_STATES])))
       .for('update');
     let keep: JobRow | null = null;
     for (const job of active) {
@@ -58,10 +59,23 @@ async function handleHello(ctx: AppContext, agentId: string, msg: Extract<Runner
       // The Runner restarted without it: the process is gone (container restart or crash).
       else await recoverJob(tx, after, job);
     }
+    await tx
+      .update(workerContainers)
+      .set({
+        runnerConnectedAt: new Date(),
+        runnerDisconnectedAt: null,
+        runnerVersion: String(msg.runnerVersion ?? ''),
+        claudeVersion: String(msg.claudeVersion ?? ''),
+        ...(keep ? {} : { idleSince: new Date() }),
+      })
+      .where(eq(workerContainers.id, containerId));
+    // Worktree removals wait for a Runner of the Worker; the Worker Volume is shared.
     const pendingRemovals = await tx
       .select({ id: sessions.id })
       .from(sessions)
-      .where(and(eq(sessions.agentId, agentId), eq(sessions.worktreeRemovalPending, true)));
+      .innerJoin(tasks, eq(tasks.id, sessions.taskId))
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(and(eq(projects.workerId, workerId), eq(sessions.worktreeRemovalPending, true)));
     const keepSession = keep
       ? (await tx.select({ state: sessions.state }).from(sessions).where(eq(sessions.id, keep.sessionId)))[0] ?? null
       : null;
@@ -69,45 +83,46 @@ async function handleHello(ctx: AppContext, agentId: string, msg: Extract<Runner
   });
 
   // The `hello` is the handshake: dispatch and mid-Turn writes wait for it.
-  ctx.runners.markReady(agentId);
-  await ctx.scheduler.publishAgent(agentId);
+  ctx.runners.markReady(containerId);
+  ctx.scheduler.publishWorker(workerId);
   if (msg.activeJobId && keep) {
-    ctx.runners.send(agentId, { type: 'ack', jobId: keep.id, seq: keep.lastSeq });
+    ctx.runners.send(containerId, { type: 'ack', jobId: keep.id, seq: keep.lastSeq });
     // After-commit messages are fire-and-forget: replay the control intent that the
     // disconnected socket could have missed.
     if (keep.discardOutput || keep.cancelRequested) {
-      ctx.runners.send(agentId, { type: 'job.cancel', jobId: keep.id });
+      ctx.runners.send(containerId, { type: 'job.cancel', jobId: keep.id });
     } else {
       const paused = keepSession?.state === 'paused';
-      if (paused) ctx.runners.send(agentId, { type: 'job.interrupt', jobId: keep.id });
-      if (paused || keep.state === 'finishing') ctx.runners.send(agentId, { type: 'job.end', jobId: keep.id });
+      if (paused) ctx.runners.send(containerId, { type: 'job.interrupt', jobId: keep.id });
+      if (paused || keep.state === 'finishing') ctx.runners.send(containerId, { type: 'job.end', jobId: keep.id });
     }
   } else if (msg.activeJobId) {
     // A Job we've already settled: drop its backlog and stop whatever is left of it.
-    ctx.runners.send(agentId, { type: 'ack', jobId: msg.activeJobId, seq: Number.MAX_SAFE_INTEGER });
-    ctx.runners.send(agentId, { type: 'job.cancel', jobId: msg.activeJobId });
+    ctx.runners.send(containerId, { type: 'ack', jobId: msg.activeJobId, seq: Number.MAX_SAFE_INTEGER });
+    ctx.runners.send(containerId, { type: 'job.cancel', jobId: msg.activeJobId });
   }
   for (const s of pendingRemovals) ctx.scheduler.removeWorktree(s.id);
-  await ctx.scheduler.reconcile(agentId);
-  ctx.scheduler.kick(agentId);
+  await ctx.scheduler.reconcile(workerId);
+  ctx.scheduler.kick(workerId);
 }
 
-export async function handleRunnerClosed(ctx: AppContext, agentId: string): Promise<void> {
+export async function handleRunnerClosed(ctx: AppContext, runner: RunnerIdentity): Promise<void> {
   // The Runner may already be back on a new connection, whose hello must not be overwritten.
-  if (ctx.runners.isConnected(agentId)) return;
-  await ctx.db.update(agents).set({ runnerDisconnectedAt: new Date() }).where(eq(agents.id, agentId));
-  await ctx.scheduler.publishAgent(agentId);
+  if (ctx.runners.isConnected(runner.containerId)) return;
+  await ctx.db.update(workerContainers).set({ runnerDisconnectedAt: new Date() }).where(eq(workerContainers.id, runner.containerId));
+  ctx.scheduler.publishWorker(runner.workerId);
 }
 
-async function handleJobMessage(ctx: AppContext, agentId: string, msg: RunnerJobMessage): Promise<void> {
-  const [peek] = await ctx.db.select({ taskId: jobs.taskId, agentId: jobs.agentId }).from(jobs).where(eq(jobs.id, msg.jobId));
-  if (!peek || peek.agentId !== agentId) {
-    ctx.runners.send(agentId, { type: 'ack', jobId: msg.jobId, seq: msg.seq });
+async function handleJobMessage(ctx: AppContext, runner: RunnerIdentity, msg: RunnerJobMessage): Promise<void> {
+  const { containerId, workerId } = runner;
+  const [peek] = await ctx.db.select({ taskId: jobs.taskId, containerId: jobs.containerId }).from(jobs).where(eq(jobs.id, msg.jobId));
+  if (!peek || peek.containerId !== containerId) {
+    ctx.runners.send(containerId, { type: 'ack', jobId: msg.jobId, seq: msg.seq });
     return;
   }
   const settled = await transactWithRetry(ctx, async (tx, after) => {
     await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, peek.taskId)).for('key share');
-    const agent = await getAgentRow(tx, agentId, { lock: true });
+    await getWorkerRow(tx, workerId, { lock: true });
     const [job] = await tx.select().from(jobs).where(eq(jobs.id, msg.jobId)).for('update');
     if (!job) return true;
     const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
@@ -119,15 +134,15 @@ async function handleJobMessage(ctx: AppContext, agentId: string, msg: RunnerJob
         await tx.update(jobs).set({ state: 'finished', finishedAt: new Date() }).where(eq(jobs.id, job.id));
         after.effect((c) => {
           c.scheduler.publishJob(job.id);
-          c.scheduler.jobEnded(agentId);
+          c.scheduler.jobEnded(job);
           c.runs.endJob(job.id);
         });
       }
-    } else await processJobMessage(tx, after, job, session!, agent, msg);
+    } else await processJobMessage(tx, after, job, session!, msg);
     await tx.update(jobs).set({ lastSeq: msg.seq }).where(eq(jobs.id, job.id));
     return true;
   });
-  if (settled) ctx.runners.send(agentId, { type: 'ack', jobId: msg.jobId, seq: msg.seq });
+  if (settled) ctx.runners.send(containerId, { type: 'ack', jobId: msg.jobId, seq: msg.seq });
 }
 
 async function processJobMessage(
@@ -135,7 +150,6 @@ async function processJobMessage(
   after: AfterCommit,
   job: JobRow,
   session: typeof sessions.$inferSelect,
-  agent: typeof agents.$inferSelect,
   msg: RunnerJobMessage,
 ): Promise<void> {
   switch (msg.type) {
@@ -185,20 +199,23 @@ async function processJobMessage(
         .returning({ receivedAt: sessionEvents.receivedAt });
       if (!stored) return;
       if (!session.started) await tx.update(sessions).set({ started: true }).where(eq(sessions.id, session.id));
-      const [{ name: credentialName } = { name: 'unknown' }] = await tx
-        .execute<{ name: string }>(sql`select name from credentials where id = ${agent.credentialId}`)
-        .then((r) => r.rows);
+      // The Job's Agent may have been deleted meanwhile: its output still lands on the Timeline.
+      const [agent] = job.agentId ? await tx.select().from(agents).where(eq(agents.id, job.agentId)) : [];
+      const [{ name: credentialName } = { name: 'unknown' }] = agent
+        ? await tx.execute<{ name: string }>(sql`select name from credentials where id = ${agent.credentialId}`).then((r) => r.rows)
+        : [];
       const prev = (job.projection as ProjectionState | null) ?? initialProjection();
       const result = project(prev, parsed, { jobId: job.id, credentialName, receivedAt: stored.receivedAt.toISOString() });
-      await applyProjection(tx, after, job, agent.credentialId, result.mutations, result.broadcasts);
+      await applyProjection(tx, after, job, agent?.credentialId ?? '', result.mutations, result.broadcasts);
       if (result.state !== prev) {
         await tx
           .update(jobs)
           .set({ projection: result.state as unknown as Record<string, unknown> })
           .where(eq(jobs.id, job.id));
       }
-      if (!agent.lastActivityAt || Date.now() - agent.lastActivityAt.getTime() > ACTIVITY_TOUCH_MS) {
+      if (agent && (!agent.lastActivityAt || Date.now() - agent.lastActivityAt.getTime() > ACTIVITY_TOUCH_MS)) {
         await tx.update(agents).set({ lastActivityAt: new Date() }).where(eq(agents.id, agent.id));
+        if (job.containerId) await tx.update(workerContainers).set({ lastActivityAt: new Date() }).where(eq(workerContainers.id, job.containerId));
       }
       if (result.mutations.some((m) => m.op === 'turn')) after.effect((ctx) => ctx.scheduler.publishJob(job.id));
       return;
@@ -209,7 +226,7 @@ async function processJobMessage(
       if (job.state === 'running' || job.state === 'dispatched') {
         await tx.update(jobs).set({ state: 'finishing' }).where(eq(jobs.id, job.id));
         after.effect((ctx) => {
-          ctx.runners.send(job.agentId, { type: 'job.end', jobId: job.id });
+          if (job.containerId) ctx.runners.send(job.containerId, { type: 'job.end', jobId: job.id });
           ctx.scheduler.publishJob(job.id);
         });
       }
@@ -237,7 +254,7 @@ async function processJobMessage(
           .set({ state: restingState(session) })
           .where(eq(sessions.id, session.id));
       if (!job.cancelRequested && missing) {
-        // The transcript is gone (e.g. the Agent Volume was reset): the next Job starts over with the Task's history.
+        // The transcript is gone (e.g. the Worker Volume was reset): the next Job starts over with the Task's history.
         // State and `started` must agree: a Session without a conversation is `pending`, not `idle`.
         await tx
           .update(sessions)
@@ -279,7 +296,7 @@ async function processJobMessage(
       after.effect((ctx) => {
         ctx.scheduler.publishJob(job.id);
         ctx.scheduler.publishTask(job.taskId);
-        ctx.scheduler.jobEnded(job.agentId);
+        ctx.scheduler.jobEnded(job);
       });
       return;
     }
@@ -290,7 +307,7 @@ async function processJobMessage(
         await tx.update(jobs).set({ state: 'finished', finishedAt: new Date() }).where(eq(jobs.id, job.id));
         after.effect((ctx) => {
           ctx.scheduler.publishJob(job.id);
-          ctx.scheduler.jobEnded(job.agentId);
+          ctx.scheduler.jobEnded(job);
         });
         return;
       }
@@ -327,7 +344,7 @@ async function failJob(
   after.effect((ctx) => {
     ctx.scheduler.publishJob(job.id);
     ctx.scheduler.publishTask(job.taskId);
-    ctx.scheduler.jobEnded(job.agentId);
+    ctx.scheduler.jobEnded(job);
   });
 }
 
@@ -342,6 +359,7 @@ export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow):
   await tx.update(jobs).set({ state: 'interrupted', finishedAt: new Date() }).where(eq(jobs.id, job.id));
   const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
   if (!job.discardOutput && session?.state === 'running') {
+    const workerId = await workerOfTask(tx, job.taskId);
     await tx
       .update(sessions)
       .set({ state: restingState(session) })
@@ -350,7 +368,7 @@ export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow):
     // output proves the Turn actually started. Otherwise the Job had not run yet and
     // its Comments must go back to the Queue instead of being retired as delivered.
     if (job.projection !== null && session.started && job.state !== 'finishing') {
-      await enqueue(tx, after, { agentId: job.agentId, taskId: job.taskId, sessionId: session.id, kind: 'resume_interrupted', front: true });
+      await enqueue(tx, after, { workerId, taskId: job.taskId, sessionId: session.id, kind: 'resume_interrupted', front: true });
       await systemComment(tx, after, job.taskId, "The agent's container restarted in the middle of a turn. Resuming where it left off.");
     } else if (job.state !== 'finishing') {
       // Nothing ran yet: the same work goes back to the front.
@@ -382,7 +400,7 @@ async function settleProjection(tx: Executor, after: AfterCommit, job: JobRow): 
 /** Puts a Job's Messages back in a Queue Entry at the front (they become `queued` again). */
 async function requeue(tx: Executor, after: AfterCommit, job: JobRow, session: typeof sessions.$inferSelect, opts: { held: boolean }) {
   const entry = await enqueue(tx, after, {
-    agentId: job.agentId,
+    workerId: await workerOfTask(tx, job.taskId),
     taskId: job.taskId,
     sessionId: session.id,
     kind: session.started ? job.kind : 'start',
@@ -429,15 +447,18 @@ export async function recoverAbandonedJobs(ctx: AppContext): Promise<void> {
   const stale = await ctx.db
     .select({ job: jobs })
     .from(jobs)
-    .innerJoin(agents, eq(agents.id, jobs.agentId))
-    .where(and(inArray(jobs.state, [...ACTIVE_JOB_STATES]), lt(agents.runnerDisconnectedAt, cutoff)));
+    .innerJoin(workerContainers, eq(workerContainers.id, jobs.containerId))
+    .where(and(inArray(jobs.state, [...ACTIVE_JOB_STATES]), lt(workerContainers.runnerDisconnectedAt, cutoff)));
   for (const { job } of stale) {
-    if (ctx.runners.isConnected(job.agentId)) continue;
+    if (!job.containerId || !job.workerId || ctx.runners.isConnected(job.containerId)) continue;
+    const containerId = job.containerId;
+    const workerId = job.workerId;
     await transactWithRetry(ctx, async (tx, after) => {
       await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, job.taskId)).for('key share');
-      const agent = await getAgentRow(tx, job.agentId, { lock: true });
+      await getWorkerRow(tx, workerId, { lock: true });
+      const [container] = await tx.select().from(workerContainers).where(eq(workerContainers.id, containerId));
       // A Runner that reconnected while this transaction waited must keep its Job.
-      if (!agent.runnerDisconnectedAt || agent.runnerDisconnectedAt >= cutoff || ctx.runners.isConnected(job.agentId)) return;
+      if (!container?.runnerDisconnectedAt || container.runnerDisconnectedAt >= cutoff || ctx.runners.isConnected(containerId)) return;
       const [current] = await tx.select().from(jobs).where(eq(jobs.id, job.id)).for('update');
       if (current && (ACTIVE_JOB_STATES as readonly string[]).includes(current.state)) await recoverJob(tx, after, current);
     });

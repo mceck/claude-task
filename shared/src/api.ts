@@ -1,6 +1,6 @@
 // Request payloads, validated server-side and typed client-side.
 import { z } from 'zod';
-import { AGENT_SERVICES, DEFAULT_AGENT_SERVICES, CREDENTIAL_KINDS, EFFORT_LEVELS, PERMISSION_MODES } from './agents';
+import { CREDENTIAL_KINDS, EFFORT_LEVELS, PERMISSION_MODES } from './agents';
 import { CATEGORIES, PRIORITIES, QUESTION_LIMITS, ROLES } from './domain';
 import type { Tag, Project, Status, Task, User } from './domain';
 
@@ -67,6 +67,8 @@ export const createProjectBody = z.strictObject({
   description: z.string().max(10_000).default(''),
   repository: repositoryBody.nullable().optional(),
   defaultAgentId: id.nullable().optional(),
+  /** Where the Project's Jobs run. */
+  workerId: id,
 });
 export type CreateProjectBody = z.input<typeof createProjectBody>;
 
@@ -256,7 +258,7 @@ export const ENV_VALUE_MAX = 100_000;
 export const AGENT_ENV_MAX = 100;
 
 /** Names the platform sets itself; Project and Agent env vars can't override them. */
-export const RESERVED_ENV_NAME = /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_RESUME_INTERRUPTED_TURN|CLAUDE_TASK_.*|HOME|PATH|USER)$/;
+export const RESERVED_ENV_NAME = /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_RESUME_INTERRUPTED_TURN|CLAUDE_CONFIG_DIR|CLAUDE_TASK_.*|HOME|PATH|USER)$/;
 
 const agentEnv = z.record(z.string(), z.string().max(ENV_VALUE_MAX)).superRefine((env, ctx) => {
   const names = Object.keys(env);
@@ -273,9 +275,6 @@ const agentEnv = z.record(z.string(), z.string().max(ENV_VALUE_MAX)).superRefine
 });
 
 const agentFields = {
-  services: z.array(z.enum(AGENT_SERVICES)).max(AGENT_SERVICES.length)
-    .refine((v) => new Set(v).size === v.length, 'Duplicate service')
-    .transform((v) => AGENT_SERVICES.filter((service) => v.includes(service))),
   skillIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate skill'),
   mcpServerIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate MCP server'),
   pluginIds: z.array(id).max(100).refine((v) => new Set(v).size === v.length, 'Duplicate plugin'),
@@ -283,7 +282,6 @@ const agentFields = {
   avatarEmoji: z.string().trim().min(1).max(16),
   avatarColor: color,
   description: z.string().max(2000),
-  dockerfile: z.string().min(1).max(100_000),
   /** Plain values, applied to every Job of this Agent; they win over the Project's. */
   env: agentEnv,
   credentialId: id,
@@ -291,15 +289,11 @@ const agentFields = {
   effort: z.enum(EFFORT_LEVELS).nullable(),
   permissionMode: z.enum(PERMISSION_MODES),
   systemPrompt: z.string().max(50_000),
-  /** CPUs, e.g. 2 or 0.5. */
-  cpuLimit: z.number().positive().max(256).nullable(),
-  memoryMb: z.int().min(256).max(1_048_576).nullable(),
   enabled: z.boolean(),
 };
 
 export const createAgentBody = z.strictObject({
   ...agentFields,
-  services: agentFields.services.default(DEFAULT_AGENT_SERVICES),
   skillIds: agentFields.skillIds.default([]),
   mcpServerIds: agentFields.mcpServerIds.default([]),
   pluginIds: agentFields.pluginIds.default([]),
@@ -311,14 +305,11 @@ export const createAgentBody = z.strictObject({
   effort: agentFields.effort.default(null),
   permissionMode: agentFields.permissionMode.default('bypassPermissions'),
   systemPrompt: agentFields.systemPrompt.default(''),
-  cpuLimit: agentFields.cpuLimit.default(null),
-  memoryMb: agentFields.memoryMb.default(null),
   enabled: agentFields.enabled.default(true),
 });
 export type CreateAgentBody = z.input<typeof createAgentBody>;
 
 export const updateAgentBody = z.strictObject({
-  services: agentFields.services.optional(),
   skillIds: agentFields.skillIds.optional(),
   mcpServerIds: agentFields.mcpServerIds.optional(),
   pluginIds: agentFields.pluginIds.optional(),
@@ -326,15 +317,12 @@ export const updateAgentBody = z.strictObject({
   avatarEmoji: agentFields.avatarEmoji.optional(),
   avatarColor: agentFields.avatarColor.optional(),
   description: agentFields.description.optional(),
-  dockerfile: agentFields.dockerfile.optional(),
   env: agentFields.env.optional(),
   credentialId: agentFields.credentialId.optional(),
   model: agentFields.model.optional(),
   effort: agentFields.effort.optional(),
   permissionMode: agentFields.permissionMode.optional(),
   systemPrompt: agentFields.systemPrompt.optional(),
-  cpuLimit: agentFields.cpuLimit.optional(),
-  memoryMb: agentFields.memoryMb.optional(),
   enabled: agentFields.enabled.optional(),
 });
 export type UpdateAgentBody = z.infer<typeof updateAgentBody>;
@@ -348,8 +336,6 @@ export const PROJECT_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 
 export const duplicateAgentBody = z.strictObject({ name: name.optional() });
 
-/** Recreate the container now even if the Agent is working (kills the running Job). */
-export const recreateAgentBody = z.strictObject({ force: z.boolean().default(false) });
 
 /** Same convention as moving Tasks: below `afterEntryId` or above `beforeEntryId`. */
 export const moveQueueEntryBody = z.strictObject({
@@ -388,6 +374,8 @@ export const updateAgentSettingsBody = z.strictObject({
   setupScript: z.string().max(100_000).optional(),
   agentInstructions: z.string().max(100_000).optional(),
   defaultAgentId: id.nullable().optional(),
+  /** Refused with 409 while the Project has started, open Sessions. */
+  workerId: id.optional(),
   autoResume: z.boolean().optional(),
   boardWriteAccess: z.boolean().optional(),
 });

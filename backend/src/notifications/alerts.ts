@@ -32,7 +32,7 @@ export async function buildAlert(db: Executor, eventId: string): Promise<PushAle
   const rows = await db.execute<AlertRow>(sql`select e.kind, p.kind as project_kind,
       p.key || '-' || t.number as task_key, t.title as task_title, p.name as wiki_name,
       case when p.kind = 'wiki' then ${chatTitle(sql`t`)} end as chat_title,
-      s.name as schedule_name, a.name as agent_name, u.display_name as author_name,
+      s.name as schedule_name, coalesce(a.name, nullif(j.agent_name, '')) as agent_name, u.display_name as author_name,
       c.body, (select count(*)::int from attachments f where f.comment_id = c.id) as files
     from notification_events e
     left join tasks t on t.id = e.task_id

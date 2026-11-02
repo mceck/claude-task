@@ -1,48 +1,15 @@
 import { AGENTS_TOPIC, agentTopic, API_PREFIX, taskKey } from '@claude-task/shared';
-import type { Agent, AgentRef, AgentState, AgentBuild, Job, QueueEntryKind, TaskRef } from '@claude-task/shared';
-import { and, asc, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
+import type { Agent, AgentRef, AgentState, Job, QueueEntryKind, TaskRef } from '@claude-task/shared';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentBuilds, agentMcpServers, agentPlugins, agents, agentSkills, credentials, jobs, projects, queueEntries, sessions, skills, tasks, turns } from '../../db/schema';
+import { agentMcpServers, agentPlugins, agentProfiles, agents, agentSkills, credentials, jobs, projects, skills, tasks, turns, workers } from '../../db/schema';
 import { notFound } from '../../errors';
 
 export type AgentRow = typeof agents.$inferSelect;
 export type JobRow = typeof jobs.$inferSelect;
 
 export const ACTIVE_JOB_STATES = ['dispatched', 'running', 'finishing'] as const;
-
-/**
- * Whether the Agent has work its container must be running for: an active Job, a Queue Entry, or
- * a Session that can still receive Comments (`idle` or `running`). A `pending` Session waits for its
- * first Comment, which queues an entry, and a `closed` or `paused` one takes no Comments. A Wiki's
- * Session never closes, so it counts only for `wikiIdleMs` after its last Job ended.
- */
-export async function agentNeedsContainer(db: Executor, agentId: string, wikiIdleMs: number): Promise<boolean> {
-  const [job] = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.agentId, agentId), inArray(jobs.state, [...ACTIVE_JOB_STATES]))).limit(1);
-  if (job) return true;
-  const [entry] = await db.select({ id: queueEntries.id }).from(queueEntries).where(eq(queueEntries.agentId, agentId)).limit(1);
-  if (entry) return true;
-  const lastUse = sql`coalesce((select max(${jobs.finishedAt}) from ${jobs} where ${jobs.sessionId} = ${sessions.id}), ${sessions.lastJobAt}, ${sessions.createdAt})`;
-  const [session] = await db
-    .select({ id: sessions.id })
-    .from(sessions)
-    .innerJoin(tasks, eq(tasks.id, sessions.taskId))
-    .innerJoin(projects, eq(projects.id, tasks.projectId))
-    .where(
-      and(
-        eq(sessions.agentId, agentId),
-        inArray(sessions.state, ['idle', 'running']),
-        or(ne(projects.kind, 'wiki'), sql`${lastUse} > now() - ${wikiIdleMs} * interval '1 millisecond'`),
-      ),
-    )
-    .limit(1);
-  return !!session;
-}
-
-/** What the container should be: compared with what it was created with to spot pending recreations. */
-export function desiredContainerSpec(a: Pick<AgentRow, 'imageTag' | 'cpuLimit' | 'memoryMb'>): string | null {
-  return a.imageTag ? JSON.stringify({ image: a.imageTag, cpu: a.cpuLimit, mem: a.memoryMb }) : null;
-}
 
 export function agentRef(a: Pick<AgentRow, 'id' | 'name' | 'avatarEmoji' | 'avatarColor' | 'avatarBlobId'>): AgentRef {
   return {
@@ -75,7 +42,7 @@ export async function taskRefs(db: Executor, taskIds: string[]): Promise<Map<str
   return new Map(rows.map((r) => [r.id, { id: r.id, key: taskKey(r.key, r.number), title: r.title, projectId: r.projectId }]));
 }
 
-export async function loadAgents(db: Executor, isConnected: (agentId: string) => boolean, ids?: string[]): Promise<Agent[]> {
+export async function loadAgents(db: Executor, ids?: string[]): Promise<Agent[]> {
   if (ids && ids.length === 0) return [];
   const rows = await db
     .select({ agent: agents, credentialName: credentials.name })
@@ -89,32 +56,32 @@ export async function loadAgents(db: Executor, isConnected: (agentId: string) =>
     .select({ agentId: jobs.agentId, taskId: jobs.taskId })
     .from(jobs)
     .where(and(inArray(jobs.agentId, agentIds), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
-  const queued = await db
-    .select({ agentId: queueEntries.agentId, n: sql<number>`count(*)::int` })
-    .from(queueEntries)
-    .where(inArray(queueEntries.agentId, agentIds))
-    .groupBy(queueEntries.agentId);
   const refs = await taskRefs(db, active.map((a) => a.taskId));
   const assignedSkills = await db.select({ agentId: agentSkills.agentId, id: skills.id, name: skills.name, description: skills.description, userInvocable: skills.userInvocable })
     .from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId)).where(inArray(agentSkills.agentId, agentIds)).orderBy(asc(skills.name));
   const assignedMcp = await db.select().from(agentMcpServers).where(inArray(agentMcpServers.agentId, agentIds));
   const assignedPlugins = await db.select().from(agentPlugins).where(inArray(agentPlugins.agentId, agentIds));
+  const profiles = await db
+    .select({ agentId: agentProfiles.agentId, workerId: agentProfiles.workerId, workerName: workers.name, applied: agentProfiles.appliedRevision, error: agentProfiles.error, updatedAt: agentProfiles.updatedAt })
+    .from(agentProfiles)
+    .innerJoin(workers, eq(workers.id, agentProfiles.workerId))
+    .where(inArray(agentProfiles.agentId, agentIds))
+    .orderBy(desc(agentProfiles.updatedAt));
 
   return rows.map(({ agent: a, credentialName }) => {
-    const job = active.find((j) => j.agentId === a.id);
-    const runnerConnected = isConnected(a.id);
-    const desired = desiredContainerSpec(a);
+    const mine = active.filter((j) => j.agentId === a.id);
+    const mineProfiles = profiles.filter((p) => p.agentId === a.id);
+    const errors = mineProfiles.filter((p) => p.error).map((p) => ({ workerId: p.workerId, workerName: p.workerName, error: p.error! }));
     return {
       ...agentRef(a),
       skillIds: assignedSkills.filter((s) => s.agentId === a.id).map((s) => s.id),
       mcpServerIds: assignedMcp.filter((s) => s.agentId === a.id).map((s) => s.mcpServerId),
       pluginIds: assignedPlugins.filter((p) => p.agentId === a.id).map((p) => p.pluginId),
       skillCommands: assignedSkills.filter((s) => s.agentId === a.id && s.userInvocable).map(({ name, description }) => ({ name, description })),
-      extensionsPending: a.extensionsRevision !== a.configuredExtensionsRevision,
-      extensionsError: a.extensionsError,
+      extensionsPending: mineProfiles.some((p) => p.applied !== a.extensionsRevision),
+      extensionsError: errors[0]?.error ?? null,
+      extensionErrors: errors,
       description: a.description,
-      dockerfile: a.dockerfile,
-      services: a.services,
       env: a.env,
       credentialId: a.credentialId,
       credentialName,
@@ -122,16 +89,10 @@ export async function loadAgents(db: Executor, isConnected: (agentId: string) =>
       effort: a.effort,
       permissionMode: a.permissionMode,
       systemPrompt: a.systemPrompt,
-      cpuLimit: a.cpuLimit,
-      memoryMb: a.memoryMb,
       enabled: a.enabled,
-      imageState: a.imageState,
-      containerState: a.containerState,
-      runnerConnected,
-      recreatePending: desired !== null && a.containerSpec !== null && a.containerSpec !== desired,
-      state: agentState(a, runnerConnected, !!job),
-      currentTask: job ? (refs.get(job.taskId) ?? null) : null,
-      queueLength: queued.find((q) => q.agentId === a.id)?.n ?? 0,
+      state: agentState(a, mine.length),
+      activeJobs: mine.length,
+      activeTasks: [...new Set(mine.map((j) => j.taskId))].map((id) => refs.get(id)!).filter(Boolean),
       lastActivityAt: a.lastActivityAt?.toISOString() ?? null,
       createdAt: a.createdAt.toISOString(),
       updatedAt: a.updatedAt.toISOString(),
@@ -139,16 +100,13 @@ export async function loadAgents(db: Executor, isConnected: (agentId: string) =>
   });
 }
 
-function agentState(a: AgentRow, runnerConnected: boolean, working: boolean): AgentState {
+function agentState(a: AgentRow, activeJobs: number): AgentState {
   if (!a.enabled) return 'disabled';
-  if (a.imageState === 'building') return 'building';
-  if (a.imageState === 'failed') return 'build_failed';
-  if (!runnerConnected) return 'offline';
-  return working ? 'working' : 'idle';
+  return activeJobs > 0 ? 'working' : 'idle';
 }
 
-export async function loadAgent(db: Executor, isConnected: (agentId: string) => boolean, id: string): Promise<Agent> {
-  const [agent] = await loadAgents(db, isConnected, [id]);
+export async function loadAgent(db: Executor, id: string): Promise<Agent> {
+  const [agent] = await loadAgents(db, [id]);
   if (!agent) throw notFound('Agent');
   return agent;
 }
@@ -160,16 +118,9 @@ export async function getAgentRow(db: Executor, id: string, opts: { lock?: boole
   return row;
 }
 
-/** Locks several Agents in id order, the order every scheduling transaction uses. */
-export async function lockAgents(db: Executor, ids: string[]): Promise<AgentRow[]> {
-  const unique = [...new Set(ids)].sort();
-  if (unique.length === 0) return [];
-  return db.select().from(agents).where(inArray(agents.id, unique)).orderBy(asc(agents.id)).for('update');
-}
-
 /** Publishes the Agent's current state on the Agents topics (loaded after commit). */
 export async function publishAgent(ctx: AppContext, agentId: string): Promise<void> {
-  const [agent] = await loadAgents(ctx.db, (id) => ctx.runners.isReady(id), [agentId]);
+  const [agent] = await loadAgents(ctx.db, [agentId]);
   if (!agent) {
     ctx.hub.publish(AGENTS_TOPIC, { type: 'agent.deleted', agentId });
     ctx.hub.publish(agentTopic(agentId), { type: 'agent.deleted', agentId });
@@ -179,31 +130,9 @@ export async function publishAgent(ctx: AppContext, agentId: string): Promise<vo
   ctx.hub.publish(agentTopic(agentId), { type: 'agent.updated', agent });
 }
 
-export function serializeBuild(b: typeof agentBuilds.$inferSelect): AgentBuild {
-  return {
-    id: b.id,
-    agentId: b.agentId,
-    status: b.status,
-    baseVersion: b.baseVersion,
-    log: b.log,
-    startedAt: b.startedAt.toISOString(),
-    finishedAt: b.finishedAt?.toISOString() ?? null,
-  };
-}
-
-export async function loadBuilds(db: Executor, agentId: string, limit = 20): Promise<AgentBuild[]> {
-  const rows = await db
-    .select()
-    .from(agentBuilds)
-    .where(eq(agentBuilds.agentId, agentId))
-    .orderBy(desc(agentBuilds.startedAt))
-    .limit(limit);
-  return rows.map(serializeBuild);
-}
-
 // Jobs
 
-export async function loadJobs(db: Executor, where: { agentId?: string; jobIds?: string[]; limit?: number }): Promise<Job[]> {
+export async function loadJobs(db: Executor, where: { agentId?: string; workerId?: string; jobIds?: string[]; limit?: number }): Promise<Job[]> {
   if (where.jobIds && where.jobIds.length === 0) return [];
   const rows = await db
     .select()
@@ -211,6 +140,7 @@ export async function loadJobs(db: Executor, where: { agentId?: string; jobIds?:
     .where(
       and(
         where.agentId ? eq(jobs.agentId, where.agentId) : undefined,
+        where.workerId ? eq(jobs.workerId, where.workerId) : undefined,
         where.jobIds ? inArray(jobs.id, where.jobIds) : undefined,
       ),
     )
@@ -231,9 +161,13 @@ export async function loadJobs(db: Executor, where: { agentId?: string; jobIds?:
     .where(inArray(turns.jobId, rows.map((r) => r.id)))
     .groupBy(turns.jobId);
   const refs = await taskRefs(db, rows.map((r) => r.taskId));
+  const workerIds = [...new Set(rows.map((r) => r.workerId).filter((id): id is string => !!id))];
+  const workerNames = new Map(
+    workerIds.length ? (await db.select({ id: workers.id, name: workers.name }).from(workers).where(inArray(workers.id, workerIds))).map((w) => [w.id, w.name]) : [],
+  );
   return rows.map((r) => {
     const t = totals.find((x) => x.jobId === r.id);
-    return serializeJob(r, refs.get(r.taskId)!, t);
+    return serializeJob(r, refs.get(r.taskId)!, t, r.workerId ? (workerNames.get(r.workerId) ?? null) : null);
   });
 }
 
@@ -241,11 +175,16 @@ export function serializeJob(
   r: JobRow,
   task: TaskRef,
   t?: { turns: number; cost: number; input: number; output: number; cacheRead: number; cacheCreation: number },
+  workerName: string | null = null,
 ): Job {
   return {
     id: r.id,
     sessionId: r.sessionId,
     agentId: r.agentId,
+    agentName: r.agentName,
+    workerId: r.workerId,
+    workerName,
+    slot: r.slot,
     task,
     kind: r.kind as QueueEntryKind,
     state: r.state,

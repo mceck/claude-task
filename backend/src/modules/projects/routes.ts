@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { transact } from '../../context';
 import type { AfterCommit, AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agents, attachments, comments, projects, tasks } from '../../db/schema';
+import { agents, attachments, comments, projects, tasks, workers } from '../../db/schema';
 import { badRequest, HttpError, notFound, parse } from '../../errors';
 import { removeDeletedWorktrees } from '../../sessions/lifecycle';
 import { listTags } from '../tags/service';
@@ -37,6 +37,8 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
         const [agent] = await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, body.defaultAgentId)).for('key share');
         if (!agent) throw badRequest('Unknown agent');
       }
+      const [worker] = await tx.select({ id: workers.id }).from(workers).where(eq(workers.id, body.workerId)).for('key share');
+      if (!worker) throw badRequest('Unknown worker');
       return createProject(tx, { ...body, repository });
     });
     return reply.status(201).send(await bundle(ctx, project.id));

@@ -44,6 +44,8 @@ export type CategoryCounts = Record<Category, number>;
 export interface Project {
   logoUrl: string | null;
   repository: ProjectRepository | null;
+  /** Where the Project's Jobs run. */
+  workerId: string;
   id: string;
   key: string;
   name: string;
@@ -107,7 +109,7 @@ export interface TaskCard {
   /** The assigned Agent, if any. */
   agentId: string | null;
   /** The current Session's state on the card (agent avatar + state dot) and, once measured, its Context Usage. */
-  session: { agentId: string; state: SessionState; queuePosition: number | null; context: ContextUsage | null } | null;
+  session: { agentId: string | null; state: SessionState; queuePosition: number | null; context: ContextUsage | null } | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -282,7 +284,8 @@ export interface AgentItem {
   taskId: string;
   sessionId: string;
   jobId: string;
-  agentId: string;
+  /** Null once the Agent is deleted. */
+  agentId: string | null;
   payload: AgentItemPayload;
   createdAt: string;
   updatedAt: string;

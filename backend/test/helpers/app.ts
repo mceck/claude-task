@@ -11,6 +11,8 @@ import type { Config } from '../../src/config';
 import { SecretBox } from '../../src/secrets';
 import { bootstrapAdmin } from '../../src/modules/users/service';
 import { createServer } from '../../src/server';
+import { workers } from '../../src/db/schema';
+import { DEFAULT_AGENT_DOCKERFILE } from '@claude-task/shared';
 import type { Server } from '../../src/server';
 import { ApiClient } from './client';
 
@@ -48,6 +50,13 @@ export interface TestApp {
   gitlab: FakeGitProvider;
   /** Waits until the backend's background work (dispatch, builds, publishing) is done. */
   settle(): Promise<void>;
+  /**
+   * The Worker every test starts with (minimum 1, cap 1), so slot 1 is always up and
+   * Projects created without a Worker run there. Null with `defaultWorker: false`.
+   */
+  workerId: string;
+  /** Fake Runners connected per Worker Container, reused by the fixtures. */
+  runners: Map<string, import('./runner').FakeRunner>;
 }
 
 export interface TestAppOptions {
@@ -59,6 +68,25 @@ export interface TestAppOptions {
   agents?: Partial<Config['agents']>;
   /** Keep data between tests in the file (default: truncate before each test). */
   keepData?: boolean;
+  /** Start each test without the default Worker. */
+  defaultWorker?: boolean;
+  /** Minimum and cap of the default Worker (1 and 1): more slots let Agents work in parallel. */
+  worker?: { minimum?: number; cap?: number };
+}
+
+export const TEST_WORKER = 'Test worker';
+
+/** The default Worker: one always-on Worker Container, like a single teammate. */
+async function createDefaultWorker(t: TestApp, options: TestAppOptions): Promise<void> {
+  t.workerId = null as unknown as string;
+  if (options.defaultWorker === false) return;
+  const [row] = await t.server.ctx.db
+    .insert(workers)
+    .values({ name: TEST_WORKER, dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: options.worker?.minimum ?? 1, cap: options.worker?.cap ?? 1 })
+    .returning();
+  t.workerId = row!.id;
+  t.server.ctx.scheduler.build(row!.id);
+  await t.server.ctx.scheduler.settle();
 }
 
 /**
@@ -80,7 +108,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       staticDir: null,
       cookieSecure: false,
       trustProxy: false,
-      logLevel: 'silent',
+      logLevel: (process.env.TEST_LOG_LEVEL as Config['logLevel']) ?? 'silent',
       bootstrapAdmin: ADMIN,
       loginRateLimit: { max: 1000, windowMs: 60_000 },
       secrets: new SecretBox(Buffer.alloc(32, 7)),
@@ -93,9 +121,9 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
         commitEmailDomain: 'agents.test',
         reconcileIntervalMs: 60 * 60_000,
         runnerReconnectTimeoutMs: 5 * 60_000,
-        // Most tests keep Agents running; the idle-stop tests turn it on.
+        // Most tests keep Worker Containers running; the autoscaling tests turn it on.
         stopWhenUnused: false,
-        wikiIdleStopMs: 30 * 60_000,
+        idleStopMs: 10 * 60_000,
         ...options.agents,
       },
       github: { appId: '1', privateKey: 'unused by the fake provider' },
@@ -106,7 +134,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
     t.git = new FakeGitProvider();
     t.gitlab = new FakeGitProvider('gitlab', '');
     const git = options.git ?? FakeGitProvider.factory(() => ({ github: t.git, gitlab: t.gitlab }));
-    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: false, runtime: t.runtime, git, push: options.push });
+    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: process.env.TEST_LOG_LEVEL ? undefined : false, runtime: t.runtime, git, push: options.push });
     await server.app.listen({ host: '127.0.0.1', port: 0 });
     const address = server.app.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');
@@ -119,6 +147,8 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       return c;
     };
     t.settle = () => server.ctx.scheduler.settle();
+    t.runners = new Map();
+    if (options.keepData) await createDefaultWorker(t, options);
   });
 
   afterAll(async () => {
@@ -136,8 +166,10 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       t.gitlab = new FakeGitProvider('gitlab', '');
       t.runtime.containers.clear();
       t.runtime.onContainerCreated = null;
+      t.runners.clear();
       await truncateAll(t.server);
       await bootstrapAdmin(t.server.ctx.db, t.server.ctx.config.bootstrapAdmin);
+      await createDefaultWorker(t, options);
     });
   }
 

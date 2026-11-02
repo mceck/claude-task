@@ -2,7 +2,7 @@ import type { ProjectSkillFile, SkillCommand } from '@claude-task/shared';
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
 import { parse as parseYaml } from 'yaml';
 import type { AppContext } from '../context';
-import { jobs, sessions, tasks } from '../db/schema';
+import { jobs, projects, sessions, tasks } from '../db/schema';
 import { SKILL_NAME } from '../modules/extensions/import-skills';
 
 /** At most this many project skills are kept per Job. */
@@ -46,9 +46,10 @@ export function projectSkills(files: unknown): SkillCommand[] {
  */
 export async function refreshProjectSkills(ctx: AppContext, taskId: string): Promise<void> {
   const [row] = await ctx.db
-    .select({ id: sessions.id, agentId: sessions.agentId, worktreePath: sessions.worktreePath, skills: sessions.projectSkills })
+    .select({ id: sessions.id, workerId: projects.workerId, lastSlot: sessions.lastSlot, worktreePath: sessions.worktreePath, skills: sessions.projectSkills })
     .from(tasks)
     .innerJoin(sessions, eq(sessions.id, tasks.currentSessionId))
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(eq(tasks.id, taskId));
   if (!row || row.skills) return;
   // A Session without a Job has no Worktree yet; the first Job reports the real set.
@@ -65,7 +66,10 @@ export async function refreshProjectSkills(ctx: AppContext, taskId: string): Pro
     .where(and(eq(jobs.sessionId, row.id), isNotNull(jobs.projectSkills)))
     .limit(1);
   if (reported) return;
-  void ctx.skillRequests.request(row.agentId, row.worktreePath).then(async (files) => {
+  // Any Runner of the Worker reads the shared Worker Volume; the Session's last slot first.
+  const [containerId] = ctx.runners.forWorker(row.workerId, row.lastSlot);
+  if (!containerId) return;
+  void ctx.skillRequests.request(containerId, row.worktreePath).then(async (files) => {
     if (!files?.length) return;
     await ctx.db.update(sessions).set({ projectSkills: projectSkills(files) }).where(eq(sessions.id, row.id));
     ctx.scheduler.publishTask(taskId);

@@ -105,7 +105,7 @@ describe('native commands in managed conversations', () => {
     await app.settle();
     const next = await runner.next('job.start', (m) => m.jobId !== first.jobId);
     expect(next.initialMessage).toEqual([{ type: 'text', text: '/compact keep decisions' }]);
-    const queued = (await admin.get(`/agents/${agent.id}/queue`)).body.entries;
+    const queued = (await admin.get(`/workers/${app.workerId}/queue`)).body.entries;
     expect(queued).toHaveLength(1);
     expect(queued[0].pendingMessages).toBe(1);
     runner.accept(next.jobId);

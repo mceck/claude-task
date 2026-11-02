@@ -18,7 +18,9 @@ const git = new FakeGitProvider();
 const gitlab = new FakeGitProvider('gitlab', '');
 const server = await createServer(config, { runtime, git: FakeGitProvider.factory(() => ({ github: git, gitlab })) });
 const runners = new Map<string, { socket: WebSocket; received: BackendToRunner[]; seqs: Map<string, number> }>();
-runtime.onContainerCreated = (agentId, spec) => {
+// Keyed by Worker id: the e2e Workers run one container each, slot 1.
+runtime.onContainerCreated = (workerId, slot, spec) => {
+  const agentId = slot === 1 ? workerId : `${workerId}:${slot}`;
   const socket = new WebSocket(`ws://127.0.0.1:${config.port}${RUNNER_WS_PATH}`, { headers: { authorization: `Bearer ${spec.env.CLAUDE_TASK_RUNNER_TOKEN}` } });
   const runner = { socket, received: [] as BackendToRunner[], seqs: new Map<string, number>() };
   runners.set(agentId, runner);
@@ -80,7 +82,7 @@ server.app.post<{ Body: { taskId: string } }>(`${API_PREFIX}/__test/git/pull-req
   git.branches.get('1')!.add(task!.branchName!);
   return openPullRequest(
     server.ctx,
-    { taskId: task!.id, agentId: job!.agentId, jobId: job!.id, actor: { type: 'agent', id: job!.agentId, displayName: 'Git agent' } },
+    { taskId: task!.id, agentId: job!.agentId!, jobId: job!.id, actor: { type: 'agent', id: job!.agentId!, displayName: 'Git agent' } },
     { title: 'Fix', body: 'Test body', draft: true },
   );
 });

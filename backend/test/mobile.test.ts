@@ -561,7 +561,7 @@ describe('Alert content', () => {
     const { admin } = await setup();
     await register(admin);
     const { agent, runner } = await createAgent(app, admin, { name: 'Scribe' });
-    const created = await admin.post('/wikis', { name: 'Team wiki', agentId: agent.id, repository: { connectionId: 'env-github', providerRepoId: '1' } });
+    const created = await admin.post('/wikis', { name: 'Team wiki', agentId: agent.id, workerId: app.workerId, repository: { connectionId: 'env-github', providerRepoId: '1' } });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     await comment(admin, created.body.wiki.taskId, 'How do we onboard people?');
     const stream = new Stream();
