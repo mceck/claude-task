@@ -1,24 +1,22 @@
 import { agentTopic } from '@claude-task/shared';
-import type { Agent, AgentBuild, QueueEntry } from '@claude-task/shared';
-import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, ArrowUp, GripVertical, Trash2 } from 'lucide-react';
+import type { Agent, Job } from '@claude-task/shared';
+import { useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { del, errorMessage, get, patch, post } from '../api/client';
-import { keys, useAgent, useBuilds, useContainerLogs, useJob, useJobs, useMe, useQueue, useUsage } from '../api/queries';
+import { del, errorMessage, patch, post } from '../api/client';
+import { keys, useAgent, useJob, useJobs, useMe, useUsage } from '../api/queries';
 import { AgentAvatar, AgentStateBadge, formatCost, formatDuration, formatTokens } from '../components/agents';
-import { AgentForm, applyAvatarChange, LogView } from '../components/AgentForm';
-import { ErrorText, Loading, Time, useConfirm } from '../components/common';
+import { AgentForm, applyAvatarChange } from '../components/AgentForm';
+import { ErrorText, Loading, LogView, Time, useConfirm } from '../components/common';
 import { useTopic } from '../lib/realtime';
 import { NotFoundPage } from './NotFoundPage';
+
+const ACTIVE_JOB_STATES: Job['state'][] = ['dispatched', 'running', 'finishing'];
 
 export function AgentPage() {
   const { agentId } = useParams();
@@ -42,34 +40,13 @@ function AgentDetail({ agent }: { agent: Agent }) {
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState('work');
   const refresh = async () => {
-    await Promise.all([keys.agents, keys.agent(agent.id), keys.queue(agent.id), keys.builds(agent.id)].map((key) => qc.invalidateQueries({ queryKey: key })));
-  };
-  const action = async (name: string, force = false) => {
-    if (
-      (name === 'restart' || force) &&
-      !(await confirm({
-        title: force ? 'Force recreate this container?' : 'Restart this container?',
-        description: 'This interrupts the current job. Its session will be resumed after reconnecting.',
-        confirmLabel: force ? 'Force recreate' : 'Restart',
-        destructive: true,
-      }))
-    )
-      return;
-    setBusy(true);
-    try {
-      await post(`/agents/${agent.id}/${name}`, name === 'recreate' ? { force } : undefined);
-      await refresh();
-    } catch (err) {
-      toast.error(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
+    await Promise.all([keys.agents, keys.agent(agent.id)].map((key) => qc.invalidateQueries({ queryKey: key })));
   };
   const remove = async () => {
     if (
       !(await confirm({
         title: `Delete ${agent.name}?`,
-        description: 'Its container, images, volume and Claude transcripts are deleted. Unassign all open tasks first.',
+        description: 'Its past jobs keep its name. Unassign it from open tasks, wikis and schedules first.',
         confirmLabel: 'Delete agent',
         destructive: true,
       }))
@@ -96,41 +73,33 @@ function AgentDetail({ agent }: { agent: Agent }) {
           <h1 className="text-2xl font-semibold tracking-tight">{agent.name}</h1>
           <p className="text-sm text-muted-foreground">{agent.description}</p>
         </div>
-        <AgentStateBadge state={agent.state} taskKey={agent.currentTask?.key} />
+        <AgentStateBadge state={agent.state} activeJobs={agent.activeJobs} />
       </header>
       <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-card p-4 text-sm">
-        <span>
-          Container: <b>{agent.containerState}</b>
-        </span>
-        <span>Runner: {agent.runnerConnected ? 'connected' : 'disconnected'}</span>
         <span>Credential: {agent.credentialName}</span>
-        <span>{agent.queueLength} queued</span>
+        <span>
+          {agent.activeJobs} active {agent.activeJobs === 1 ? 'job' : 'jobs'}
+        </span>
         {agent.lastActivityAt && (
           <span className="text-muted-foreground">
             Active <Time iso={agent.lastActivityAt} />
           </span>
         )}
-        {agent.recreatePending && (
-          <p role="status" className="w-full text-amber-400">
-            Container recreation is waiting for the current job to finish.
-          </p>
+        {agent.extensionsPending && <p role="status" className="w-full text-muted-foreground">Skill, MCP and plugin changes apply on each worker before the agent’s next job there.</p>}
+        {agent.extensionErrors.length > 0 && (
+          <ul aria-label="Extension errors" className="w-full space-y-1">
+            {agent.extensionErrors.map((e) => (
+              <li key={e.workerId} role="alert" className="text-destructive">
+                <Link className="font-medium underline" to={`/workers/${e.workerId}`}>
+                  {e.workerName}
+                </Link>
+                : {e.error}
+              </li>
+            ))}
+          </ul>
         )}
-        {agent.extensionsPending && <p role="status" className="w-full text-muted-foreground">Skill, MCP and plugin changes will apply before the next job.</p>}
-        {agent.extensionsError && <p role="alert" className="w-full text-destructive">{agent.extensionsError}</p>}
         {admin && (
           <div className="flex w-full flex-wrap gap-2 border-t pt-3">
-            <Button variant="outline" size="sm" disabled={busy || agent.state === 'building'} onClick={() => action('rebuild')}>
-              Rebuild image
-            </Button>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => action('restart')}>
-              Restart
-            </Button>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => action('recreate')}>
-              Recreate when idle
-            </Button>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => action('recreate', true)}>
-              Force recreate
-            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -158,253 +127,72 @@ function AgentDetail({ agent }: { agent: Agent }) {
       </div>
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
-          <TabsTrigger value="work">Work & queue</TabsTrigger>
-          <TabsTrigger value="builds">Builds</TabsTrigger>
+          <TabsTrigger value="work">Jobs</TabsTrigger>
           <TabsTrigger value="usage">Usage</TabsTrigger>
-          {admin && (
-            <>
-              <TabsTrigger value="logs">Container logs</TabsTrigger>
-              <TabsTrigger value="config">Configuration</TabsTrigger>
-            </>
-          )}
+          {admin && <TabsTrigger value="config">Configuration</TabsTrigger>}
         </TabsList>
         <TabsContent value="work">
-          <QueuePanel agent={agent} />
           <JobsPanel agentId={agent.id} />
-        </TabsContent>
-        <TabsContent value="builds">
-          <BuildsPanel agentId={agent.id} />
         </TabsContent>
         <TabsContent value="usage">
           <UsagePanel agentId={agent.id} />
         </TabsContent>
         {admin && (
-          <>
-            <TabsContent value="logs">
-              <ContainerLogs agentId={agent.id} />
-            </TabsContent>
-            <TabsContent value="config">
-              <div className="rounded-xl border bg-card p-5">
-                <AgentForm
-                  key={agent.id}
-                  agent={agent}
-                  onUpdate={async (body, avatar) => {
-                    if (Object.keys(body).length) await patch(`/agents/${agent.id}`, body);
-                    await applyAvatarChange(agent.id, avatar);
-                    await refresh();
-                    if (body.dockerfile !== undefined) toast.success('Docker configuration saved');
-                  }}
-                />
-              </div>
-            </TabsContent>
-          </>
+          <TabsContent value="config">
+            <div className="rounded-xl border bg-card p-5">
+              <AgentForm
+                key={agent.id}
+                agent={agent}
+                onUpdate={async (body, avatar) => {
+                  if (Object.keys(body).length) await patch(`/agents/${agent.id}`, body);
+                  await applyAvatarChange(agent.id, avatar);
+                  await refresh();
+                }}
+              />
+            </div>
+          </TabsContent>
         )}
       </Tabs>
     </div>
   );
 }
 
-function QueuePanel({ agent }: { agent: Agent }) {
-  const query = useQueue(agent.id);
-  const qc = useQueryClient();
-  const confirm = useConfirm();
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-  const [busy, setBusy] = useState(false);
-  const entries = query.data ?? [];
-  const move = async (id: string, to: number) => {
-    const other = entries.filter((e) => e.id !== id);
-    setBusy(true);
-    try {
-      const result = await post<{ entries: QueueEntry[] }>(`/agents/${agent.id}/queue/${id}/move`, { beforeEntryId: other[to]?.id ?? null });
-      qc.setQueryData(keys.queue(agent.id), result.entries);
-    } catch (err) {
-      toast.error(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
-    if (over && active.id !== over.id)
-      void move(
-        String(active.id),
-        entries.findIndex((e) => e.id === over.id),
-      );
-  };
-  const remove = async (entry: QueueEntry) => {
-    if (
-      !(await confirm({
-        title: `Remove ${entry.task.key} from the queue?`,
-        description: 'Pending comments will be marked not delivered.',
-        confirmLabel: 'Remove',
-      }))
-    )
-      return;
-    setBusy(true);
-    try {
-      await del(`/agents/${agent.id}/queue/${entry.id}`);
-      await qc.invalidateQueries({ queryKey: keys.queue(agent.id) });
-    } catch (err) {
-      toast.error(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className="mb-6 space-y-3">
-      <h2 className="font-semibold">Current work & queue</h2>
-      {agent.currentTask && (
-        <Link className="block rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm" to={`/t/${agent.currentTask.key}`}>
-          Working on <b>{agent.currentTask.key}</b> · {agent.currentTask.title}
-        </Link>
-      )}
-      {query.isPending ? (
-        <Loading />
-      ) : query.error ? (
-        <ErrorText>{errorMessage(query.error)}</ErrorText>
-      ) : !entries.length ? (
-        <p className="text-sm text-muted-foreground">The queue is empty.</p>
-      ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={entries.map((e) => e.id)} strategy={verticalListSortingStrategy}>
-            <ol aria-label="Agent queue" className="divide-y rounded-lg border">
-              {entries.map((entry, index) => (
-                <QueueRow
-                  key={entry.id}
-                  entry={entry}
-                  index={index}
-                  length={entries.length}
-                  disabled={busy}
-                  onMove={(to) => move(entry.id, to)}
-                  onRemove={() => remove(entry)}
-                />
-              ))}
-            </ol>
-          </SortableContext>
-        </DndContext>
-      )}
-    </section>
-  );
-}
-
-function QueueRow({
-  entry,
-  index,
-  length,
-  disabled,
-  onMove,
-  onRemove,
-}: {
-  entry: QueueEntry;
-  index: number;
-  length: number;
-  disabled: boolean;
-  onMove: (to: number) => void;
-  onRemove: () => void;
-}) {
-  const sortable = useSortable({ id: entry.id, disabled });
-  return (
-    <li
-      ref={sortable.setNodeRef}
-      style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }}
-      className="flex items-center gap-2 bg-card p-3 text-sm"
-    >
-      <button type="button" aria-label={`Drag ${entry.task.key}`} className="touch-none cursor-grab" {...sortable.attributes} {...sortable.listeners}>
-        <GripVertical className="size-4 text-muted-foreground" />
-      </button>
-      <span className="text-xs text-muted-foreground">#{index + 1}</span>
-      <Link className="min-w-0 flex-1 truncate" to={`/t/${entry.task.key}`}>
-        <b>{entry.task.key}</b> · {entry.task.title}
-      </Link>
-      <span className="text-xs text-muted-foreground">
-        {entry.held ? 'Waiting for retry' : entry.kind.replace(/_/g, ' ')} · {entry.pendingMessages} messages
-      </span>
-      <Button variant="ghost" size="icon-xs" aria-label={`Move ${entry.task.key} up`} disabled={disabled || index === 0} onClick={() => onMove(index - 1)}>
-        <ArrowUp />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label={`Move ${entry.task.key} down`}
-        disabled={disabled || index === length - 1}
-        onClick={() => onMove(index + 1)}
-      >
-        <ArrowDown />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label={`Remove ${entry.task.key}`}
-        title={entry.kind === 'start' ? 'Unassign the agent to remove a session start.' : undefined}
-        disabled={disabled || entry.kind === 'start'}
-        onClick={onRemove}
-      >
-        <Trash2 />
-      </Button>
-    </li>
-  );
-}
-
-function BuildsPanel({ agentId }: { agentId: string }) {
-  const query = useBuilds(agentId);
-  const [selected, setSelected] = useState<string | null>(null);
-  const chosen = query.data?.find((b) => b.id === selected) ?? query.data?.[0];
-  const detail = useQuery({
-    queryKey: ['build', agentId, chosen?.id],
-    queryFn: () => get<{ build: AgentBuild }>(`/agents/${agentId}/builds/${chosen!.id}`).then((r) => r.build),
-    enabled: !!chosen && chosen !== query.data?.[0],
-  });
-  if (query.isPending) return <Loading />;
-  if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
-  if (!chosen) return <p className="text-sm text-muted-foreground">No builds yet.</p>;
-  return (
-    <div className="space-y-4">
-      <h2 className="font-semibold">Build history</h2>
-      <select aria-label="Build" className="w-full rounded-md border bg-background p-2 text-sm" value={chosen.id} onChange={(e) => setSelected(e.target.value)}>
-        {query.data.map((b) => (
-          <option key={b.id} value={b.id}>
-            {b.status} · {new Date(b.startedAt).toLocaleString()} · {b.baseVersion}
-          </option>
-        ))}
-      </select>
-      <p role="status" className="text-sm text-muted-foreground">
-        {chosen.status === 'building' ? 'Building image… output updates live.' : `Build ${chosen.status}`}
-      </p>
-      {detail.error ? (
-        <ErrorText>{errorMessage(detail.error)}</ErrorText>
-      ) : (
-        <LogView label="Build output">{chosen === query.data[0] ? chosen.log : (detail.data?.log ?? '')}</LogView>
-      )}
-    </div>
-  );
-}
-
-function ContainerLogs({ agentId }: { agentId: string }) {
-  const query = useContainerLogs(agentId, true);
-  return (
-    <div className="space-y-3">
-      <h2 className="font-semibold">Container logs</h2>
-      <p className="text-xs text-muted-foreground">Latest 500 lines, refreshed every three seconds.</p>
-      {query.isPending ? (
-        <Loading />
-      ) : query.error ? (
-        <ErrorText>{errorMessage(query.error)}</ErrorText>
-      ) : (
-        <LogView label="Container logs">{query.data}</LogView>
-      )}
-    </div>
-  );
+/** Where a Job runs: "Worker · slot 2". */
+function placement(job: Job): string {
+  if (!job.workerName) return 'No worker';
+  return job.slot ? `${job.workerName} · slot ${job.slot}` : job.workerName;
 }
 
 function JobsPanel({ agentId }: { agentId: string }) {
   const query = useJobs(agentId);
   const [selected, setSelected] = useState<string | null>(null);
   const job = useJob(selected);
+  const active = (query.data ?? []).filter((j) => ACTIVE_JOB_STATES.includes(j.state));
   return (
     <section className="space-y-3">
-      <h2 className="font-semibold">Recent jobs</h2>
+      <h2 className="font-semibold">Active jobs</h2>
+      {query.data && !active.length ? (
+        <p className="text-sm text-muted-foreground">No job running right now.</p>
+      ) : (
+        <ul aria-label="Active jobs" className="divide-y rounded-lg border border-emerald-500/30">
+          {active.map((j) => (
+            <li key={j.id} className="flex items-center gap-3 bg-emerald-500/5 p-3 text-sm">
+              <Link className="min-w-0 flex-1 truncate" to={`/t/${j.task.key}`}>
+                <b>{j.task.key}</b> · {j.task.title}
+              </Link>
+              {j.workerId ? (
+                <Link className="text-xs text-muted-foreground underline" to={`/workers/${j.workerId}`}>
+                  {placement(j)}
+                </Link>
+              ) : (
+                <span className="text-xs text-muted-foreground">{placement(j)}</span>
+              )}
+              <span className="text-xs">{j.state}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h2 className="pt-3 font-semibold">Recent jobs</h2>
       {query.isPending ? (
         <Loading />
       ) : query.error ? (
@@ -419,6 +207,7 @@ function JobsPanel({ agentId }: { agentId: string }) {
                 {j.task.key}
               </Link>
               <span>{j.state}</span>
+              <span className="text-xs text-muted-foreground">{placement(j)}</span>
               <span className="text-xs text-muted-foreground">
                 {j.turns} turns · {formatCost(j.usage.costUsd)} · <Time iso={j.createdAt} />
               </span>
@@ -443,7 +232,7 @@ function JobsPanel({ agentId }: { agentId: string }) {
             job.data && (
               <div className="space-y-3">
                 <p className="text-sm">
-                  {job.data.task.key} · {job.data.state} · Claude {job.data.claudeVersion ?? 'unknown'}
+                  {job.data.task.key} · {job.data.state} · {placement(job.data)} · Claude {job.data.claudeVersion ?? 'unknown'}
                   {job.data.startedAt && job.data.finishedAt && ` · ${formatDuration(Date.parse(job.data.finishedAt) - Date.parse(job.data.startedAt))}`}
                 </p>
                 {job.data.error && (

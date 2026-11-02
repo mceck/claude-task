@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { APIRequestContext, Browser, BrowserContext } from '@playwright/test';
-import { HEADERS, createProject, createTask, login } from './helpers';
+import { HEADERS, createProject, createTask, login, seedWorker } from './helpers';
 
 const H = HEADERS;
 
@@ -13,7 +13,7 @@ async function seedWiki(request: APIRequestContext, name: string) {
   const { agent } = await (
     await request.post('/api/v1/agents', {
       headers: H,
-      data: { name, credentialId: credential.id, enabled: false, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+      data: { name, credentialId: credential.id, enabled: false },
     })
   ).json();
   const { connection } = await (
@@ -22,9 +22,10 @@ async function seedWiki(request: APIRequestContext, name: string) {
       data: { provider: 'gitlab', name, baseUrl: 'https://gitlab.example.com', token: 'glpat-e2e-token-1234' },
     })
   ).json();
+  const worker = await seedWorker(request, 'Wiki worker');
   const wikiResponse = await request.post('/api/v1/wikis', {
     headers: H,
-    data: { name, description: 'Shared documentation', agentId: agent.id, repository: { connectionId: connection.id, providerRepoId: '101' } },
+    data: { name, description: 'Shared documentation', agentId: agent.id, workerId: worker.id, repository: { connectionId: connection.id, providerRepoId: '101' } },
   });
   expect(wikiResponse.status()).toBe(201);
   const { wiki } = await wikiResponse.json();

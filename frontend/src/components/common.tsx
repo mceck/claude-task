@@ -119,6 +119,17 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   );
 }
 
+export function LogView({ children, label = 'Log' }: { children: string; label?: string }) {
+  return (
+    <pre
+      aria-label={label}
+      className="max-h-96 overflow-auto rounded-lg border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"
+    >
+      {children || 'No output yet.'}
+    </pre>
+  );
+}
+
 export function Loading({ className }: { className?: string }) {
   return (
     <div className={cn('flex items-center justify-center p-10 text-muted-foreground', className)}>

@@ -11,13 +11,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { del, errorMessage, patch, post } from '../api/client';
+import { del, errorMessage, patch, post, put } from '../api/client';
 import { Combobox } from '../components/Combobox';
-import { keys, useAgents, useRepositoryGroups, useTask, useTaskSession, useUsers, useWiki, useWikiChats, useWikis } from '../api/queries';
+import { keys, useAgents, useRepositoryGroups, useTask, useTaskSession, useUsers, useWiki, useWikiChats, useWikis, useWorkers } from '../api/queries';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { defaultWorkerId, WorkerPicker } from '../components/workers';
 import { ErrorText, Field, Loading, Time, useConfirm } from '../components/common';
 import { BranchLink, PullRequestBadge } from '../components/Git';
 import { TaskActivity } from '../components/TaskActivity';
-import { ContextBadge, SessionChip } from '../components/agents';
+import { AgentAvatar, AgentStateDot, ContextBadge, SessionChip } from '../components/agents';
 import { useTopic } from '../lib/realtime';
 import { applyEvent } from '../lib/cache';
 import { minimizeInDock, resumeInDock, suspendInDock, useDockAvailable } from '../lib/dock';
@@ -33,7 +35,7 @@ export function WikisPage() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Wiki</h1>
-          <p className="mt-1 text-sm text-muted-foreground">LLM wiki with a shared conversation and an assigned agent.</p>
+          <p className="mt-1 text-sm text-muted-foreground">LLM wiki with shared chats, each with its own agent.</p>
         </div>
         <Button onClick={() => setCreating(true)}>
           <Plus /> New wiki
@@ -215,11 +217,28 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
       setBusy(false);
     }
   };
-  const owner = chat?.agentId && chat.agentId !== wiki.agentId ? agents.data?.find((a) => a.id === chat.agentId) : undefined;
-  const readOnly =
-    chat?.agentId && chat.agentId !== wiki.agentId
-      ? `This chat is run by ${owner?.name ?? 'another agent'}: assign the wiki back to that agent to continue it.`
-      : undefined;
+  // The Chat's own Agent: the listed Chat's, else its Task's (an empty Chat starts with the Wiki's default Agent).
+  const chatAgentId = (chat && task.data?.id === chat.id ? task.data.agentId : undefined) ?? chat?.agentId ?? null;
+  const [changingAgent, setChangingAgent] = useState(false);
+  const changeChatAgent = async (agentId: string) => {
+    if (!chat || agentId === chatAgentId) return;
+    setChangingAgent(true);
+    setError('');
+    try {
+      const r = await put<{ chat: WikiChat }>(`/wikis/${wiki.id}/chats/${chat.id}/agent`, { agentId });
+      qc.setQueryData<WikiChat[]>(keys.wikiChats(wiki.id), (list) => list?.map((c) => (c.id === r.chat.id ? r.chat : c)));
+      if (reserved?.id === r.chat.id) setReserved(r.chat);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: keys.wikiChats(wiki.id) }),
+        qc.invalidateQueries({ queryKey: keys.task(chat.id) }),
+        qc.invalidateQueries({ queryKey: keys.session(chat.id) }),
+      ]);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setChangingAgent(false);
+    }
+  };
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b p-4">
@@ -278,6 +297,21 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
           {chat && (
             <div className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
               <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{list?.find((c) => c.id === chat.id)?.title ?? 'New chat'}</h2>
+              <Select value={chatAgentId ?? undefined} onValueChange={(id) => void changeChatAgent(id)} disabled={changingAgent || agents.isPending}>
+                <SelectTrigger size="sm" aria-label="Chat agent" className="w-fit min-w-40">
+                  <SelectValue placeholder="Choose an agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(agents.data ?? [])
+                    .filter((a) => a.enabled || a.id === chatAgentId)
+                    .map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        <AgentAvatar agent={a} size="xs" /> {a.name}
+                        {!a.enabled && ' (disabled)'} <AgentStateDot agent={a} />
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
               {session.data && <SessionChip session={session.data} />}
               {chat && <ContextBadge taskId={chat.id} context={session.data?.context} />}
               {session.data?.state === 'running' && (
@@ -340,7 +374,6 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
               tags={[]}
               users={users.data ?? []}
               session={session.data}
-              readOnly={readOnly}
               reserveDockSpace
             />
           )}
@@ -439,6 +472,9 @@ function RenameChatForm({ wikiId, chat, onDone }: { wikiId: string; chat: WikiCh
 
 function WikiForm({ wiki, onSaved }: { wiki?: Wiki; onSaved: () => void }) {
   const agents = useAgents();
+  const workers = useWorkers();
+  const [pickedWorker, setPickedWorker] = useState(wiki?.workerId ?? '');
+  const workerId = pickedWorker || defaultWorkerId(workers.data);
   const groups = useRepositoryGroups();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -458,7 +494,7 @@ function WikiForm({ wiki, onSaved }: { wiki?: Wiki; onSaved: () => void }) {
     setError('');
     try {
       const choice = repositories.find((r) => `${r.connectionId}:${r.providerRepoId}` === selected);
-      const body = { name, description, agentId };
+      const body = { name, description, agentId, ...(!wiki || workerId !== wiki.workerId ? { workerId } : {}) };
       const result = wiki
         ? await patch<{ wiki: Wiki }>(`/wikis/${wiki.id}`, body)
         : await post<{ wiki: Wiki }>('/wikis', {
@@ -488,9 +524,16 @@ function WikiForm({ wiki, onSaved }: { wiki?: Wiki; onSaved: () => void }) {
       <Field label="Description">
         <Textarea aria-label="Wiki description" value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
-      <Field label="Agent">
+      <div className="space-y-1.5">
+        <span className="text-sm font-medium">Worker</span>
+        <WorkerPicker value={workerId} onChange={setPickedWorker} disabled={busy} />
+        <span className="block text-xs text-muted-foreground">
+          Where the wiki’s agents run. It changes only while the wiki has no started chat: delete them first.
+        </span>
+      </div>
+      <Field label="Default agent" hint="New chats start with it; each chat can change its own agent.">
         <select
-          aria-label="Agent"
+          aria-label="Default agent"
           className="h-9 w-full rounded-md border bg-background px-3 text-sm"
           required
           value={agentId}
@@ -542,7 +585,7 @@ function WikiForm({ wiki, onSaved }: { wiki?: Wiki; onSaved: () => void }) {
         </>
       )}
       {(error || agents.error || (!wiki && groups.error)) && <ErrorText>{error || errorMessage(agents.error ?? groups.error)}</ErrorText>}
-      <Button type="submit" disabled={busy || !name.trim() || !agentId || (!wiki && !selected)}>
+      <Button type="submit" disabled={busy || !name.trim() || !agentId || !workerId || (!wiki && !selected)}>
         {busy ? 'Saving…' : wiki ? 'Save wiki' : 'Create wiki'}
       </Button>
     </form>

@@ -23,6 +23,8 @@ import { TaskPage } from './pages/TaskPage';
 import { UsersPage } from './pages/UsersPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { AgentPage } from './pages/AgentPage';
+import { WorkersPage } from './pages/WorkersPage';
+import { WorkerPage } from './pages/WorkerPage';
 import { CredentialsPage } from './pages/CredentialsPage';
 import { ExtensionsPage } from './pages/ExtensionsPage';
 
@@ -68,6 +70,8 @@ const router = createBrowserRouter([
       { path: '/schedules/:scheduleId/runs/:taskKey', element: <ScheduleRunPage /> },
       { path: '/agents', element: <AgentsPage /> },
       { path: '/agents/:agentId', element: <AgentPage /> },
+      { path: '/workers', element: <WorkersPage /> },
+      { path: '/workers/:workerId', element: <WorkerPage /> },
       { path: '/admin/credentials', element: <CredentialsPage /> },
       { path: '/admin/extensions', element: <ExtensionsPage /> },
       { path: '/admin/git', element: <GitConnectionsPage /> },

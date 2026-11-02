@@ -126,16 +126,9 @@ function useDockEntryData(entry: DockEntry) {
   // The Project (or Wiki) and the Task Key stay visible, collapsed too, so a bar is identifiable at a glance.
   const owner = entry.wikiId ? wiki.data?.name : project.data?.project.name;
   const subtitle = [owner, task.data?.key].filter(Boolean).join(' · ') || undefined;
-  const otherAgent =
-    chat?.agentId && wiki.data && chat.agentId !== wiki.data.agentId
-      ? agents.data?.find((a) => a.id === chat.agentId)
-      : undefined;
-  const readOnly = otherAgent
-    ? `This chat is run by ${otherAgent.name}: assign the wiki back to that agent to continue it.`
-    : undefined;
   const href = entry.wikiId ? `/wikis/${entry.wikiId}/chats/${entry.taskId}` : task.data ? `/t/${task.data.key}` : undefined;
 
-  return { task, session, users, agent, state, running, unread, title, subtitle, readOnly, href, isWiki: entry.wikiId !== undefined };
+  return { task, session, users, agent, state, running, unread, title, subtitle, href, isWiki: entry.wikiId !== undefined };
 }
 
 type DockEntryData = ReturnType<typeof useDockEntryData>;
@@ -150,7 +143,7 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
   const collapsed = collapsedIds.includes(entry.taskId);
   const navigate = useNavigate();
   const info = useDockEntryData(entry);
-  const { task, session, users, title, readOnly, href } = info;
+  const { task, session, users, title, href } = info;
   useTopic(taskTopic(entry.taskId));
   // Comments also reach the Project topic, which is what keeps this panel's unread dot current off the Board.
   useTopic(!entry.wikiId && task.data ? projectTopic(task.data.projectId) : null);
@@ -272,7 +265,6 @@ function DockPanel({ entry, width, height }: { entry: DockEntry; width: number; 
                 tags={[]}
                 users={users.data ?? []}
                 session={session.data}
-                readOnly={readOnly}
               />
             </InDockContext.Provider>
           )

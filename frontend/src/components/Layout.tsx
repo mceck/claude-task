@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { BookOpen, CalendarClock, GitBranch, Bot, ChevronsUpDown, FolderKanban, KeyRound, LogOut, Monitor, Moon, Sun, Users } from 'lucide-react';
+import { BookOpen, CalendarClock, GitBranch, Bot, ChevronsUpDown, FolderKanban, KeyRound, LogOut, Monitor, Moon, Server, Sun, Users } from 'lucide-react';
 import { PROJECTS_TOPIC, userTopic } from '@claude-task/shared';
 import { useTheme } from '@/lib/theme';
 import type { Theme } from '@/lib/theme';
@@ -91,6 +91,7 @@ function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
       <NavLink to="/wikis" className={navItem}><BookOpen className="size-4" /> Wiki</NavLink>
       <NavLink to="/schedules" className={navItem}><CalendarClock className="size-4" /> Schedules</NavLink>
       <NavLink to="/agents" className={navItem}><Bot className="size-4" /> Agents</NavLink>
+      <NavLink to="/workers" className={navItem}><Server className="size-4" /> Workers</NavLink>
       {isAdmin && <NavLink to="/admin/extensions" className={navItem}><Bot className="size-4" /> Extensions</NavLink>}
       {isAdmin && <NavLink to="/admin/credentials" className={navItem}><KeyRound className="size-4" /> Credentials</NavLink>}
       {isAdmin && <NavLink to="/admin/git" className={navItem}><GitBranch className="size-4" /> Git</NavLink>}

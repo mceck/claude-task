@@ -24,15 +24,16 @@ for (const list of ['builds', 'jobs'] as const) test(`loads the complete initial
   if (list === 'jobs') {
     await page.request.patch(`/api/v1/tasks/${previous.id}`, { headers, data: { version: 1, agentId: agent.id } });
     await page.request.post(`/api/v1/tasks/${previous.id}/comments`, { headers, data: { body: 'First Job' } });
-    const start = await jobStart(page.request, agent.id, previous.id);
+    const start = await jobStart(page.request, project.workerId, previous.id);
     const stream = new Stream(start.sessionId);
-    await replay(page.request, agent.id, start.jobId, [stream.init(), stream.result()], true);
+    await replay(page.request, project.workerId, start.jobId, [stream.init(), stream.result()], true);
   }
   let release!: () => void, captured!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const snapshot = new Promise<void>((resolve) => { captured = resolve; });
   let held = false, subscribed = false, eventReceived = false;
-  await page.route(`**/api/v1/agents/${agent.id}/${list}`, async (route) => {
+  const owner = list === 'builds' ? `workers/${project.workerId}` : `agents/${agent.id}`;
+  await page.route(`**/api/v1/${owner}/${list}`, async (route) => {
     if (held) return route.fallback();
     held = true;
     const response = await route.fetch();
@@ -44,7 +45,7 @@ for (const list of ['builds', 'jobs'] as const) test(`loads the complete initial
     const server = ws.connectToServer();
     server.onMessage((raw) => {
       const message = JSON.parse(String(raw));
-      if (message.type === 'subscribed' && message.topics.includes(`agent:${agent.id}`)) subscribed = true;
+      if (message.type === 'subscribed' && message.topics.includes(list === 'builds' ? `worker:${project.workerId}` : `agent:${agent.id}`)) subscribed = true;
       if (message.type === 'event' && (list === 'builds'
         ? message.event.type === 'build.log'
         : message.event.type === 'job.updated' && message.event.job.task.id === next.id)) eventReceived = true;
@@ -53,11 +54,11 @@ for (const list of ['builds', 'jobs'] as const) test(`loads the complete initial
   });
   const next = await createTask(page.request, project, 'Next work');
   try {
-    await page.goto(`/agents/${agent.id}`);
+    await page.goto(list === 'builds' ? `/workers/${project.workerId}` : `/agents/${agent.id}`);
     if (list === 'builds') await page.getByRole('tab', { name: 'Builds', exact: true }).click();
     await snapshot;
     await expect.poll(() => subscribed).toBe(true);
-    if (list === 'builds') await page.request.post(`/api/v1/agents/${agent.id}/rebuild`, { headers });
+    if (list === 'builds') await page.request.post(`/api/v1/workers/${project.workerId}/rebuild`, { headers });
     else {
       await page.request.patch(`/api/v1/tasks/${next.id}`, { headers, data: { version: 1, agentId: agent.id } });
       await page.request.post(`/api/v1/tasks/${next.id}/comments`, { headers, data: { body: 'Next Job' } });
@@ -171,7 +172,7 @@ test('adds a marketplace plugin to the catalog and assigns it to an agent', asyn
   await expect(plugin).toBeVisible();
 });
 
-test('creates and rotates write-only credentials, configures an agent and reads build/container logs', async ({ page }) => {
+test('creates and rotates write-only credentials, and configures an agent', async ({ page }) => {
   await login(page.request);
   await page.goto('/admin/credentials');
   await page.getByRole('button', { name: 'New credential' }).click();
@@ -189,45 +190,25 @@ test('creates and rotates write-only credentials, configures an agent and reads 
 
   await page.getByRole('link', { name: 'Agents', exact: true }).click();
   await page.getByRole('button', { name: 'New agent' }).click();
-  await expect(page.getByRole('checkbox', { name: 'PostgreSQL', exact: true })).toBeChecked();
-  await expect(page.getByRole('checkbox', { name: 'Redis', exact: true })).toBeChecked();
-  for (const name of ['MySQL', 'Mailpit', 'RustFS/MinIO']) {
-    await expect(page.getByRole('checkbox', { name, exact: true })).not.toBeChecked();
-  }
+  await expect(page.getByRole('dialog').getByLabel('Dockerfile')).toHaveCount(0);
   await page.getByLabel('Agent name').fill('Release agent');
   await page.getByLabel('Credential', { exact: true }).selectOption({ label: 'Release credential · …4321' });
   await page.getByRole('button', { name: 'Create agent' }).click();
   await expect(page.getByRole('heading', { name: 'Release agent' })).toBeVisible();
-  await expect(page.getByText('Runner: connected')).toBeVisible();
-  await page.getByRole('tab', { name: 'Builds', exact: true }).click();
-  await expect(page.getByLabel('Build output')).toContainText('Step 1/1');
-  await page.getByRole('tab', { name: 'Container logs' }).click();
-  await expect(page.getByRole('tabpanel', { name: 'Container logs' })).toContainText('runner started');
+  await expect(page.getByText('No job running right now.')).toBeVisible();
   await page.getByRole('tab', { name: 'Configuration' }).click();
-  await page.getByRole('checkbox', { name: 'PostgreSQL', exact: true }).uncheck();
-  await page.getByRole('checkbox', { name: 'Redis', exact: true }).uncheck();
-  for (const name of ['MySQL', 'Mailpit', 'RustFS/MinIO']) {
-    await page.getByRole('checkbox', { name, exact: true }).check();
-  }
   await page.getByLabel('Model', { exact: true }).fill('claude-sonnet-5-5');
   await page.getByLabel('Effort').selectOption('high');
-  await page.getByRole('button', { name: 'Save Docker configuration', exact: true }).click();
-  await expect(page.getByText('Docker configuration saved', { exact: true })).toBeVisible();
+  await page.getByLabel('Model', { exact: true }).blur();
   await expect(page.getByRole('status', { name: 'Agent configuration save status' })).toHaveText('All changes saved');
   await page.reload();
   await page.getByRole('tab', { name: 'Configuration' }).click();
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('claude-sonnet-5-5');
-  await expect(page.getByRole('checkbox', { name: 'PostgreSQL', exact: true })).not.toBeChecked();
-  await expect(page.getByRole('checkbox', { name: 'Redis', exact: true })).not.toBeChecked();
-  for (const name of ['MySQL', 'Mailpit', 'RustFS/MinIO']) {
-    await expect(page.getByRole('checkbox', { name, exact: true })).toBeChecked();
-  }
+  await expect(page.getByLabel('Effort')).toHaveValue('high');
   await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Release agent (copy)' })).toBeVisible();
   await page.getByRole('tab', { name: 'Configuration' }).click();
-  for (const name of ['MySQL', 'Mailpit', 'RustFS/MinIO']) {
-    await expect(page.getByRole('checkbox', { name, exact: true })).toBeChecked();
-  }
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('claude-sonnet-5-5');
   await page.goto('/admin/credentials');
   await expect(credential.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
   await expect(credential).toContainText('Release agent (copy)');
@@ -241,11 +222,11 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await page.goto(`/t/${task.key}`);
   await assignAndStart(page, agent.name);
   await expect(page.getByLabel('Session: running')).toBeVisible();
-  const job = await jobStart(page.request, agent.id, task.id);
+  const job = await jobStart(page.request, project.workerId, task.id);
   const s = new Stream(job.sessionId);
-  await replay(page.request, agent.id, job.jobId, [s.delta('Checking the redirect now.')]);
+  await replay(page.request, project.workerId, job.jobId, [s.delta('Checking the redirect now.')]);
   await expect(page.getByLabel('Agent is writing')).toContainText('Checking the redirect now.');
-  await replay(page.request, agent.id, job.jobId, [
+  await replay(page.request, project.workerId, job.jobId, [
     s.thinking('Inspect the failing case.'),
     s.text('Checking the redirect now.'),
     s.toolUse('tool-1', 'Bash', { command: 'npm test' }),
@@ -254,7 +235,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await expect(page.getByLabel('Agent is writing')).toHaveCount(0);
   // Thinking is an entry of an Activity group.
   await page.getByLabel('Activity', { exact: true }).first().getByRole('button', { name: /1 action/ }).click();
-  await page.getByRole('button', { name: 'Thinking', exact: true }).click();
+  await page.getByRole('button', { name: /^Thinking/ }).click();
   await expect(page.getByText('Inspect the failing case.')).toBeVisible();
   await page.getByLabel('Activity', { exact: true }).last().getByRole('button', { name: /1 action/ }).click();
   await page.getByRole('button', { name: /Ran.*npm test/ }).click();
@@ -277,11 +258,11 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please check logout too.');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
   await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Delivered to Runtime agent/)).toBeVisible();
-  await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.input')).toBe(true);
+  await expect.poll(async () => (await messages(page.request, project.workerId)).some((m) => m.type === 'job.input')).toBe(true);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
-  await expect.poll(async () => (await messages(page.request, agent.id)).some((m) => m.type === 'job.interrupt')).toBe(true);
+  await expect.poll(async () => (await messages(page.request, project.workerId)).some((m) => m.type === 'job.interrupt')).toBe(true);
   // The Comment reaches the model with the next tool results, so this Turn reads it.
-  await replay(page.request, agent.id, job.jobId, [
+  await replay(page.request, project.workerId, job.jobId, [
     s.toolUse('tool-2', 'Bash', { command: 'npm test -- logout' }),
     s.toolResult('tool-2', 'Logout passed'),
     s.text('Stopped after checking logout.'),
@@ -289,7 +270,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   ]);
   await expect(page.getByLabel('Turn summary')).toContainText('Turn finished');
   await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Handled by Runtime agent/)).toBeVisible();
-  await replay(page.request, agent.id, job.jobId, [], true);
+  await replay(page.request, project.workerId, job.jobId, [], true);
   await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -309,17 +290,17 @@ test('keeps a long streamed answer anchored at its top and expanded once it is s
   await page.goto(`/t/${task.key}`);
   await assignAndStart(page, agent.name);
   await expect(page.getByLabel('Session: running')).toBeVisible();
-  const job = await jobStart(page.request, agent.id, task.id);
+  const job = await jobStart(page.request, project.workerId, task.id);
   const s = new Stream(job.sessionId);
   const answer = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1} of the explanation.`).join('\n\n');
-  await replay(page.request, agent.id, job.jobId, [s.delta(answer)]);
+  await replay(page.request, project.workerId, job.jobId, [s.delta(answer)]);
 
   const live = page.getByLabel('Agent is writing');
   await expect(live.getByText('Paragraph 1 of', { exact: false })).toBeInViewport();
   await live.getByRole('button', { name: 'Show more' }).click();
   await expect(live.getByRole('button', { name: 'Show less' })).toBeVisible();
 
-  await replay(page.request, agent.id, job.jobId, [s.text(answer)]);
+  await replay(page.request, project.workerId, job.jobId, [s.text(answer)]);
   await expect(live).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
   await expect(page.getByText('Paragraph 40 of the explanation.')).toBeVisible();
@@ -336,12 +317,12 @@ test('shows card state and lets a member reorder the queue without managing agen
     expect((await admin.request.patch(`/api/v1/tasks/${task.id}`, { headers, data: { version: current.version, agentId: agent.id } })).ok()).toBe(true);
     expect((await admin.request.post(`/api/v1/tasks/${task.id}/comments`, { headers, data: { body: 'Please get started.' } })).ok()).toBe(true);
     if (task.id !== tasks[0]!.id) {
-      const job = await jobStart(admin.request, agent.id, task.id);
-      await replay(admin.request, agent.id, job.jobId, [new Stream(job.sessionId).result()], true);
+      const job = await jobStart(admin.request, project.workerId, task.id);
+      await replay(admin.request, project.workerId, job.jobId, [new Stream(job.sessionId).result()], true);
       await expect.poll(async () => (await (await admin.request.get(`/api/v1/tasks/${task.id}/session`)).json()).session.state).toBe('idle');
     }
   }
-  const running = await jobStart(admin.request, agent.id, tasks[0]!.id);
+  const running = await jobStart(admin.request, project.workerId, tasks[0]!.id);
   for (const task of tasks.slice(1)) {
     expect((await admin.request.post(`/api/v1/tasks/${task.id}/comments`, { headers, data: { body: `Follow up on ${task.key}` } })).ok()).toBe(true);
   }
@@ -357,17 +338,23 @@ test('shows card state and lets a member reorder the queue without managing agen
   await expect(page.getByRole('article', { name: tasks[1]!.key }).getByLabel(`Agent ${agent.name}: queued #1`)).toBeVisible();
   await page.goto(`/agents/${agent.id}`);
   await expect(page.getByRole('tab', { name: 'Configuration' })).toHaveCount(0);
+  await expect(page.getByRole('list', { name: 'Active jobs' })).toContainText(tasks[0]!.key);
+  await page.goto(`/workers/${project.workerId}`);
+  await expect(page.getByRole('list', { name: 'Worker containers' }).getByRole('listitem').first()).toContainText(tasks[0]!.key);
   await expect(page.getByRole('button', { name: 'Restart', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Rebuild image', exact: true })).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Queue', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'Worker queue' }).getByRole('listitem').first()).toContainText(agent.name);
   await page.getByRole('button', { name: `Move ${tasks[2]!.key} up` }).click();
-  await expect(page.getByRole('list', { name: 'Agent queue' }).getByRole('listitem').first()).toContainText(tasks[2]!.key);
+  await expect(page.getByRole('list', { name: 'Worker queue' }).getByRole('listitem').first()).toContainText(tasks[2]!.key);
   await page.getByRole('button', { name: `Remove ${tasks[2]!.key}`, exact: true }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Remove', exact: true }).click();
-  await expect(page.getByRole('list', { name: 'Agent queue' }).getByRole('listitem')).toHaveCount(1);
+  await expect(page.getByRole('list', { name: 'Worker queue' }).getByRole('listitem')).toHaveCount(1);
   await page.goto(`/t/${tasks[2]!.key}`);
   await expect(page.getByLabel(/^Delivery: Not delivered/)).toBeVisible();
   await page.goto(`/t/${tasks[1]!.key}`);
   await expect(page.getByLabel(/^Delivery: Queued/)).toBeVisible();
-  await replay(admin.request, agent.id, running.jobId, [new Stream(running.sessionId).result()], true);
+  await replay(admin.request, project.workerId, running.jobId, [new Stream(running.sessionId).result()], true);
   await expect(page.getByLabel(/^Delivery: Delivered/)).toBeVisible();
   await page.goto('/admin/credentials');
   await expect(page.getByText('Page not found')).toBeVisible();
@@ -425,16 +412,16 @@ test('shows setup failures and retries the same session only on request', async 
   const agent = await seedAgent(page.request, 'Retry agent');
   await page.goto(`/t/${task.key}`);
   await assignAndStart(page, agent.name);
-  const start = await jobStart(page.request, agent.id, task.id);
+  const start = await jobStart(page.request, project.workerId, task.id);
   expect(
     (
-      await page.request.post(`/api/v1/__test/runners/${agent.id}`, { headers, data: { jobId: start.jobId, failure: 'npm ci failed: lockfile is missing' } })
+      await page.request.post(`/api/v1/__test/runners/${project.workerId}`, { headers, data: { jobId: start.jobId, failure: 'npm ci failed: lockfile is missing' } })
     ).ok(),
   ).toBe(true);
   await expect(page.getByLabel('System comment')).toContainText('lockfile is missing');
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect.poll(async () => (await messages(page.request, agent.id)).filter((m) => m.type === 'job.start').length).toBe(2);
-  const starts = (await messages(page.request, agent.id)).filter((m) => m.type === 'job.start');
+  await expect.poll(async () => (await messages(page.request, project.workerId)).filter((m) => m.type === 'job.start').length).toBe(2);
+  const starts = (await messages(page.request, project.workerId)).filter((m) => m.type === 'job.start');
   expect(starts[1]!.sessionId).toBe(start.sessionId);
   await expect(page.getByLabel('Session: running')).toBeVisible();
 });
@@ -471,7 +458,7 @@ test('keeps the live session state when an older HTTP snapshot arrives late', as
     await page.goto(`/t/${task.key}`);
     await ready;
     await assignAndStart(page, agent.name);
-    await jobStart(page.request, agent.id, task.id);
+    await jobStart(page.request, project.workerId, task.id);
     await expect(page.getByLabel('Session: running')).toBeVisible();
     release();
     await done;

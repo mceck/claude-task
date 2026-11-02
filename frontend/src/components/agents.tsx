@@ -42,7 +42,7 @@ const DOT: Record<string, string> = {
   build_failed: 'bg-red-500',
 };
 
-function StateDot({ state, className }: { state: string; className?: string }) {
+export function StateDot({ state, className }: { state: string; className?: string }) {
   const live = state === 'running' || state === 'working' || state === 'building';
   return (
     <span className={cn('relative flex size-2.5 rounded-full ring-2 ring-background', DOT[state] ?? 'bg-muted-foreground', className)}>
@@ -51,7 +51,7 @@ function StateDot({ state, className }: { state: string; className?: string }) {
   );
 }
 
-/** Next to an Agent in a select: its state with the same dot as everywhere else (hollow green when free, pulsing green when busy, pulsing blue while building, red when failed or disabled, grey when offline). */
+/** Next to an Agent in a select: its state with the same dot as everywhere else (hollow green when free, pulsing green when busy, hollow red when disabled). */
 export function AgentStateDot({ agent }: { agent: { state: AgentState } }) {
   return <StateDot state={agent.state} className="shrink-0 ring-0" />;
 }
@@ -59,26 +59,17 @@ export function AgentStateDot({ agent }: { agent: { state: AgentState } }) {
 const AGENT_STATE_LABEL: Record<AgentState, string> = {
   idle: 'Idle',
   working: 'Working',
-  offline: 'Offline',
   disabled: 'Disabled',
-  building: 'Building',
-  build_failed: 'Build failed',
 };
 
-export function AgentStateBadge({ state, taskKey }: { state: AgentState; taskKey?: string | null }) {
-  const tone =
-    state === 'working'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-      : state === 'build_failed'
-        ? 'border-red-500/30 bg-red-500/10 text-red-400'
-        : state === 'building'
-          ? 'border-sky-500/30 bg-sky-500/10 text-sky-400'
-          : 'border-border bg-muted/40 text-muted-foreground';
+/** The Agent State, with the number of its active Jobs while it works. */
+export function AgentStateBadge({ state, activeJobs }: { state: AgentState; activeJobs?: number }) {
+  const tone = state === 'working' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-border bg-muted/40 text-muted-foreground';
   return (
     <span className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', tone)}>
       <StateDot state={state} className="size-1.5 ring-0" />
       {AGENT_STATE_LABEL[state]}
-      {state === 'working' && taskKey && <span className="font-mono opacity-80">{taskKey}</span>}
+      {state === 'working' && activeJobs !== undefined && <span className="opacity-80">· {activeJobs} {activeJobs === 1 ? 'job' : 'jobs'}</span>}
     </span>
   );
 }

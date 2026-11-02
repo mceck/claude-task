@@ -23,7 +23,7 @@ export function AgentsPage() {
   useTopic(AGENTS_TOPIC);
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
-      <PageHeader title="Agents" description="Reusable teammates, their current work and queued tasks.">
+      <PageHeader title="Agents" description="Reusable teammates: their Claude Code configuration and the tasks they work on.">
         {me.data?.role === 'admin' && (
           <Button onClick={() => setCreating(true)}>
             <Plus /> New agent
@@ -48,11 +48,13 @@ export function AgentsPage() {
                   <h2 className="truncate font-semibold">{agent.name}</h2>
                   <p className="truncate text-sm text-muted-foreground">{agent.description || agent.credentialName}</p>
                 </div>
-                <AgentStateBadge state={agent.state} />
+                <AgentStateBadge state={agent.state} activeJobs={agent.activeJobs} />
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                <span>{agent.currentTask ? `Working on ${agent.currentTask.key}` : 'No current task'}</span>
-                <span>{agent.queueLength} queued</span>
+                <span>
+                  {agent.activeJobs} active {agent.activeJobs === 1 ? 'job' : 'jobs'}
+                  {agent.activeTasks.length > 0 && `: ${agent.activeTasks.map((t) => t.key).join(', ')}`}
+                </span>
                 <span>Credential: {agent.credentialName}</span>
                 {agent.lastActivityAt && (
                   <span>
@@ -68,7 +70,7 @@ export function AgentsPage() {
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>New agent</DialogTitle>
-            <DialogDescription>Choose its identity, credential and environment.</DialogDescription>
+            <DialogDescription>Choose its identity, credential and Claude Code configuration.</DialogDescription>
           </DialogHeader>
           <AgentForm
             onSave={async (body, avatar) => {

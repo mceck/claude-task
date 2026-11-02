@@ -1,23 +1,10 @@
-import {
-  AGENT_ENV_MAX,
-  AGENT_SERVICES,
-  AGENT_SERVICE_INFO,
-  DEFAULT_AGENT_SERVICES,
-  ENV_VALUE_MAX,
-  EFFORT_LEVELS,
-  PERMISSION_MODES,
-  RESERVED_ENV_NAME,
-  checkAgentDockerfile,
-  parseDotenv,
-  updateAgentBody,
-} from '@claude-task/shared';
-import type { Agent, AgentService, CreateAgentBody, EffortLevel, PermissionMode, UpdateAgentBody } from '@claude-task/shared';
+import { AGENT_ENV_MAX, ENV_VALUE_MAX, EFFORT_LEVELS, PERMISSION_MODES, RESERVED_ENV_NAME, parseDotenv, updateAgentBody } from '@claude-task/shared';
+import type { Agent, CreateAgentBody, EffortLevel, PermissionMode, UpdateAgentBody } from '@claude-task/shared';
 import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { Link } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useCredentials, useMcpServers, usePlugins } from '../api/queries';
 import { AgentAvatar } from './agents';
@@ -78,54 +65,6 @@ function textToEnv(text: string): { env: Record<string, string>; errors: string[
   return { env, errors };
 }
 
-export function LogView({ children, label = 'Log' }: { children: string; label?: string }) {
-  return (
-    <pre
-      aria-label={label}
-      className="max-h-96 overflow-auto rounded-lg border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"
-    >
-      {children || 'No output yet.'}
-    </pre>
-  );
-}
-
-/** Highlight Dockerfile instructions and comments without changing the editable plain text. */
-function DockerfileEditor({ value, onChange }: { value: string; onChange: (s: string) => void }) {
-  const lines = value.split('\n');
-  const style = 'm-0 w-full border-0 p-3 font-mono text-xs leading-6 whitespace-pre-wrap break-words';
-  return (
-    <div className="relative rounded-lg border bg-muted/30 focus-within:ring-2 focus-within:ring-ring">
-      <pre aria-hidden className={`${style} pointer-events-none min-h-48`}>
-        {lines.map((line, i) => {
-          const match = /^(\s*)(#.*|[A-Za-z]+)(.*)$/.exec(line);
-          return (
-            <span key={i}>
-              {match ? (
-                <>
-                  {match[1]}
-                  <span className={match[2]!.startsWith('#') ? 'text-muted-foreground' : 'text-violet-400'}>{match[2]}</span>
-                  {match[3]}
-                </>
-              ) : (
-                line
-              )}
-              {i < lines.length - 1 ? '\n' : ''}
-            </span>
-          );
-        })}
-        {'\n'}
-      </pre>
-      <textarea
-        aria-label="Dockerfile"
-        spellCheck={false}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`${style} absolute inset-0 h-full resize-none bg-transparent text-transparent caret-foreground outline-none selection:bg-primary/30`}
-      />
-    </div>
-  );
-}
-
 export function AgentForm({ agent, onSave, onUpdate }: {
   agent?: Agent;
   onSave?: (body: CreateAgentBody, avatar: AvatarChange) => Promise<void>;
@@ -141,8 +80,6 @@ export function AgentForm({ agent, onSave, onUpdate }: {
   const [emoji, setEmoji] = useState(agent?.avatarEmoji ?? '🤖');
   const [color, setColor] = useState(agent?.avatarColor ?? '#6366f1');
   const [description, setDescription] = useState(agent?.description ?? '');
-  const [dockerfile, setDockerfile] = useState(agent?.dockerfile ?? 'FROM claude-task/agent-base\nUSER agent\n');
-  const [services, setServices] = useState<AgentService[]>(agent?.services ?? DEFAULT_AGENT_SERVICES);
   const [credentialId, setCredentialId] = useState(agent?.credentialId ?? '');
   const [envText, setEnvText] = useState(envToText(agent?.env ?? {}));
   const [env, setEnv] = useState<Record<string, string>>(agent?.env ?? {});
@@ -151,8 +88,6 @@ export function AgentForm({ agent, onSave, onUpdate }: {
   const [effort, setEffort] = useState<EffortLevel | ''>(agent?.effort ?? '');
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(agent?.permissionMode ?? 'bypassPermissions');
   const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt ?? '');
-  const [cpu, setCpu] = useState(agent?.cpuLimit?.toString() ?? '');
-  const [memory, setMemory] = useState(agent?.memoryMb?.toString() ?? '');
   const [enabled, setEnabled] = useState(agent?.enabled ?? true);
   const [avatar, setAvatar] = useState<AvatarChange>(null);
   const [avatarRevision, setAvatarRevision] = useState(0);
@@ -186,8 +121,6 @@ export function AgentForm({ agent, onSave, onUpdate }: {
     event.preventDefault();
     if (agent) return;
     if (envErrors.length) return setError(envErrors.join(' '));
-    const check = checkAgentDockerfile(dockerfile);
-    if (!check.ok) return setError(check.error);
     setSaving(true);
     setError('');
     try {
@@ -199,33 +132,14 @@ export function AgentForm({ agent, onSave, onUpdate }: {
         avatarEmoji: emoji,
         avatarColor: color,
         description,
-        dockerfile,
-        services,
         env,
         credentialId,
         model: model.trim() || null,
         effort: effort || null,
         permissionMode,
         systemPrompt,
-        cpuLimit: cpu ? Number(cpu) : null,
-        memoryMb: memory ? Number(memory) : null,
         enabled,
       }, avatar);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-  const saveDocker = async () => {
-    const check = checkAgentDockerfile(dockerfile);
-    if (!check.ok) return setError(check.error);
-    const body = updateAgentBody.safeParse({ dockerfile, services, cpuLimit: cpu ? Number(cpu) : null, memoryMb: memory ? Number(memory) : null });
-    if (!body.success) return setError(body.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', '));
-    setSaving(true);
-    setError('');
-    try {
-      await onUpdate!(body.data, null);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -393,48 +307,6 @@ export function AgentForm({ agent, onSave, onUpdate }: {
           </label>
         ))}
         <Link to="/admin/extensions" className="text-xs underline">Manage shared plugins</Link>
-      </fieldset>
-      <fieldset className="flex flex-col gap-4 rounded-lg border p-3" disabled={saving}>
-        <legend className="px-1 text-sm font-medium">Docker configuration</legend>
-        <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-medium">Services</legend>
-          <p className="text-xs text-muted-foreground">
-            Installed and started inside this agent’s container. Data persists across rebuilds.
-            Changes rebuild the image and apply when the agent is idle.
-          </p>
-          {AGENT_SERVICES.map((service) => (
-            <label key={service} className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                aria-label={AGENT_SERVICE_INFO[service].name}
-                checked={services.includes(service)}
-                onChange={(e) => setServices(e.target.checked ? [...services, service] : services.filter((value) => value !== service))}
-              />
-              <span>
-                <b>{AGENT_SERVICE_INFO[service].name}</b>
-                <span className="block text-xs text-muted-foreground">{AGENT_SERVICE_INFO[service].description}</span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-        <div className="space-y-1.5">
-          <Label>Dockerfile</Label>
-          <DockerfileEditor value={dockerfile} onChange={setDockerfile} />
-          <p className="text-xs text-muted-foreground">
-            Start FROM claude-task/agent-base and finish as USER agent. Saving a new Dockerfile builds an image automatically.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="CPU limit" hint="Empty means no limit.">
-            <Input aria-label="CPU limit" type="number" min="0.01" step="0.01" max="256" value={cpu} onChange={(e) => setCpu(e.target.value)} />
-          </Field>
-          <Field label="Memory (MB)">
-            <Input aria-label="Memory (MB)" type="number" min="256" max="1048576" value={memory} onChange={(e) => setMemory(e.target.value)} />
-          </Field>
-        </div>
-        {agent && <Button type="button" className="self-start" disabled={saving} onClick={() => void saveDocker()}>
-          {saving ? 'Saving…' : 'Save Docker configuration'}
-        </Button>}
       </fieldset>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled

@@ -46,8 +46,19 @@ test('shows a description file uploaded from another page without reloading', as
   await login(page.request);
   const project = await createProject(page.request, 'Live attachments');
   const task = await createTask(page.request, project, 'Files arrive');
+  // The upload's event only reaches a page already subscribed to the Task.
+  let subscribed = false;
+  await page.routeWebSocket('**/api/v1/ws', (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === 'subscribed' && message.topics.includes(`task:${task.id}`)) subscribed = true;
+      ws.send(raw);
+    });
+  });
   await page.goto(`/t/${task.key}`);
   await expect(page.getByRole('region', { name: 'Attachments' })).toHaveCount(0);
+  await expect.poll(() => subscribed).toBe(true);
 
   const peer = await page.context().newPage();
   try {

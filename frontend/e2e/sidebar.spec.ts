@@ -8,15 +8,15 @@ test('summarises Task counts and unread Turn Summaries in the sidebar Boards lis
   const task = await createTask(page.request, project, 'Open task');
   await createTask(page.request, project, 'Done task', 'Done');
   const agent = await seedAgent(page.request);
-  const start = await startJob(page.request, agent.id, task.id);
+  const start = await startJob(page.request, agent.id, task.id, project.workerId);
   const stream = new Stream(start.sessionId);
-  await replay(page.request, agent.id, start.jobId, [stream.init(), stream.result()], true);
+  await replay(page.request, project.workerId, start.jobId, [stream.init(), stream.result()], true);
   await expect
     .poll(async () => (await (await page.request.get('/api/v1/projects')).json()).projects.find((p: { id: string }) => p.id === project.id).activity.unreadTasks)
     .toBe(1);
 
   await page.goto('/');
-  await expect(page.getByTestId('project-unread')).toHaveText('1');
+  await expect(page.locator(`main a[href="/p/${project.key}"]`).getByTestId('project-unread')).toHaveText('1');
   const entry = page.locator(`nav a[href="/p/${project.key}"]`);
   await expect(entry).toContainText('1/2');
   await expect(entry.locator('[aria-label^="Task counts:"]')).toHaveAttribute('aria-label', 'Task counts: 1 open · 1 done');
@@ -33,9 +33,9 @@ test('updates the sidebar unread badge live when a Turn finishes, without waitin
   await expect(entry).toBeVisible();
   await expect(entry.getByTestId('sidebar-project-unread')).toHaveCount(0);
 
-  const start = await startJob(page.request, agent.id, task.id);
+  const start = await startJob(page.request, agent.id, task.id, project.workerId);
   const stream = new Stream(start.sessionId);
-  await replay(page.request, agent.id, start.jobId, [stream.init(), stream.result()], true);
+  await replay(page.request, project.workerId, start.jobId, [stream.init(), stream.result()], true);
   await expect(entry.getByTestId('sidebar-project-unread')).toHaveText('1', { timeout: 10000 });
 
   const timeline = (await (await page.request.get(`/api/v1/tasks/${task.id}/timeline`)).json()).items;
@@ -49,7 +49,7 @@ test('shows the running Agent dot in the sidebar Boards list', async ({ page }) 
   const agent = await seedAgent(page.request);
   const project = await createProject(page.request, 'Sidebar running');
   const task = await createTask(page.request, project, 'Agent task');
-  await startJob(page.request, agent.id, task.id);
+  await startJob(page.request, agent.id, task.id, project.workerId);
 
   await page.goto('/');
   const entry = page.locator(`nav a[href="/p/${project.key}"]`);

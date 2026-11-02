@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { login } from './helpers';
+import { login, seedAgent, seedWorker } from './helpers';
 
 const headers = { 'x-claude-task': '1' };
 
@@ -13,9 +13,11 @@ test('creates a wiki, chats from two browsers and manages chats: new, switch, re
   const { credential } = await credentialResult.json();
   const agentResult = await page.request.post('/api/v1/agents', {
     headers,
-    data: { name, credentialId: credential.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+    data: { name, credentialId: credential.id },
   });
   const { agent } = await agentResult.json();
+  const second = await seedAgent(page.request, 'Second wiki agent');
+  const worker = await seedWorker(page.request, 'Wiki worker');
   const connectionResult = await page.request.post('/api/v1/git/connections', {
     headers,
     data: { provider: 'gitlab', name, baseUrl: 'https://gitlab.example.com', token: 'glpat-e2e-token-1234' },
@@ -26,12 +28,17 @@ test('creates a wiki, chats from two browsers and manages chats: new, switch, re
   await page.getByRole('button', { name: 'New wiki' }).click();
   await page.getByLabel('Wiki name').fill(name);
   await page.getByLabel('Wiki description').fill('Documentation shared by the team');
-  await page.getByLabel('Agent', { exact: true }).selectOption(agent.id);
+  await page.getByRole('combobox', { name: 'Worker', exact: true }).click();
+  await page.getByRole('option', { name: worker.name, exact: true }).click();
+  await page.getByLabel('Default agent', { exact: true }).selectOption(agent.id);
   await page.getByRole('combobox', { name: 'Repository', exact: true }).click();
   await page.locator(`[cmdk-item][data-value="${connection.id}:101"]`).click();
   await page.getByRole('button', { name: 'Create wiki' }).click();
   await expect(page).toHaveURL(/\/wikis\/[0-9a-f-]+$/);
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+  const wikiId = page.url().split('/wikis/')[1]!;
+  expect((await (await page.request.get(`/api/v1/wikis/${wikiId}`)).json()).wiki.workerId).toBe(worker.id);
+  await expect(page.getByRole('combobox', { name: 'Chat agent' })).toContainText(agent.name);
   const other = await browser.newContext();
   try {
     await login(other.request);
@@ -56,6 +63,18 @@ test('creates a wiki, chats from two browsers and manages chats: new, switch, re
     await send(page, 'How do we release?');
     await expect(chatRow(page, 'How do we release?')).toBeVisible();
     await expect(chatRow(peer, 'How do we release?')).toBeVisible();
+
+    // Each Chat has its own Agent: changing it keeps the conversation and leaves the other Chats alone.
+    await page.getByRole('combobox', { name: 'Chat agent' }).click();
+    await page.getByRole('option', { name: second.name }).click();
+    await expect(page.getByRole('combobox', { name: 'Chat agent' })).toContainText(second.name);
+    const chatAgents = async () =>
+      Object.fromEntries(
+        ((await (await page.request.get(`/api/v1/wikis/${wikiId}/chats`)).json()).chats as { title: string; agentId: string }[]).map((c) => [c.title, c.agentId]),
+      );
+    await expect.poll(async () => (await chatAgents())['How do we release?']).toBe(second.id);
+    expect((await chatAgents())['What do we know about onboarding?']).toBe(agent.id);
+    await expect(conversation(page).getByText('How do we release?', { exact: true })).toBeVisible();
 
     await chatRow(page, 'What do we know about onboarding?').click();
     await expect(conversation(page).getByText('Please include the deployment guide.', { exact: true })).toBeVisible();

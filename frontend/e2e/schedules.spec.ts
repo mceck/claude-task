@@ -1,28 +1,33 @@
 import { expect, test } from '@playwright/test';
 import type { APIRequestContext } from '@playwright/test';
 import { Stream } from '../../backend/test/helpers/stream';
-import { HEADERS, login, replay, seedAgent, waitForStart } from './helpers';
+import { HEADERS, login, replay, seedAgent, seedWorker, waitForStart } from './helpers';
 
 const H = HEADERS;
 
+/** A Schedule on its own new Worker, unless `extra.workerId` names one. */
 async function createSchedule(request: APIRequestContext, agentId: string, name: string, extra: Record<string, unknown> = {}) {
+  const workerId = (extra.workerId as string | undefined) ?? (await seedWorker(request, 'Schedule worker')).id;
   const res = await request.post('/api/v1/schedules', {
     headers: H,
-    data: { name, agentId, cron: '0 9 * * *', timeZone: 'UTC', prompt: 'Do the thing.', ...extra },
+    data: { name, agentId, workerId, cron: '0 9 * * *', timeZone: 'UTC', prompt: 'Do the thing.', ...extra },
   });
   expect(res.status()).toBe(201);
-  return (await res.json()).schedule as { id: string; name: string };
+  return (await res.json()).schedule as { id: string; name: string; workerId: string };
 }
 
 test('creates a global schedule, runs it now and opens the run from its history', async ({ page }) => {
   await login(page.request);
   const agent = await seedAgent(page.request, 'Scheduler agent');
+  const worker = await seedWorker(page.request, 'Scheduler worker');
   const name = `Morning triage ${Date.now()}`;
   await page.goto('/schedules');
   await expect(page.getByText('No schedules yet.')).toBeVisible();
   await page.getByRole('button', { name: 'New schedule' }).click();
   await page.getByLabel('Schedule name').fill(name);
   await page.getByLabel('Agent', { exact: true }).selectOption(agent.id);
+  await page.getByRole('combobox', { name: 'Worker', exact: true }).click();
+  await page.getByRole('option', { name: worker.name, exact: true }).click();
   await page.getByLabel('Cron expression').fill('0 9 * * 1-5');
   await expect(page.getByText('Monday to Friday at 09:00')).toBeVisible();
   await page.getByLabel('Prompt').fill('Look at every board and report what is stuck.');
@@ -43,6 +48,7 @@ test('creates a global schedule, runs it now and opens the run from its history'
   await page.getByRole('link', { name: 'Back to schedules' }).click();
   await expect(page.getByRole('row', { name: new RegExp(name) })).toContainText('Global');
   await expect(page.getByRole('row', { name: new RegExp(name) })).toContainText('Monday to Friday at 09:00');
+  await expect(page.getByRole('row', { name: new RegExp(name) })).toContainText(worker.name);
 });
 
 test('does not show a run page for a Task of another Schedule', async ({ page }) => {
@@ -62,9 +68,9 @@ test('a finished run is read-only', async ({ page }) => {
   const agent = await seedAgent(page.request, 'Closed run agent');
   const schedule = await createSchedule(page.request, agent.id, `Finished ${Date.now()}`);
   const run = (await (await page.request.post(`/api/v1/schedules/${schedule.id}/run`, { headers: H })).json()).run;
-  const { jobId, sessionId } = await waitForStart(page.request, agent.id, run.taskId);
+  const { jobId, sessionId } = await waitForStart(page.request, schedule.workerId, run.taskId);
   const s = new Stream(sessionId);
-  await replay(page.request, agent.id, jobId, [s.init(), s.text('Done.'), s.result()], true);
+  await replay(page.request, schedule.workerId, jobId, [s.init(), s.text('Done.'), s.result()], true);
   await expect
     .poll(async () => (await (await page.request.get(`/api/v1/schedules/${schedule.id}/runs`)).json()).runs[0].state)
     .toBe('succeeded');

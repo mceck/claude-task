@@ -1,5 +1,5 @@
 // Applies real-time events to the TanStack Query caches.
-import type { Agent, AgentBuild, Job, ProjectBundle, RealtimeEvent, ScheduledMessage, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic, WikiChat } from '@claude-task/shared';
+import type { Agent, Job, Worker, WorkerBuild, ProjectBundle, RealtimeEvent, ScheduledMessage, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic, WikiChat } from '@claude-task/shared';
 import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { keys } from '../api/queries';
 import { removeFromDock } from './dock';
@@ -282,29 +282,39 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       qc.setQueryData<Agent[]>(keys.agents, (list) => list?.filter((a) => a.id !== event.agentId));
       qc.removeQueries({ queryKey: keys.agent(event.agentId) });
       return;
+    case 'worker.updated':
+      return upsertWorker(qc, event.worker);
+    case 'worker.deleted':
+      qc.setQueryData<Worker[]>(keys.workers, (list) => list?.filter((w) => w.id !== event.workerId));
+      qc.removeQueries({ queryKey: keys.worker(event.workerId) });
+      return;
     case 'queue.changed':
-      qc.setQueryData(keys.queue(event.agentId), event.entries);
+      qc.setQueryData(keys.queue(event.workerId), event.entries);
       return;
     case 'build.updated':
-      updateCachedList<AgentBuild>(qc, keys.builds(event.build.agentId), (list) => {
+      updateCachedList<WorkerBuild>(qc, keys.builds(event.build.workerId), (list) => {
         const existing = list.find((b) => b.id === event.build.id);
         if (existing) return list.map((b) => (b.id === event.build.id ? { ...b, ...event.build } : b));
         return [{ ...event.build, log: '' }, ...list];
       });
-      if (event.build.status !== 'building') void qc.invalidateQueries({ queryKey: keys.builds(event.build.agentId) });
+      if (event.build.status !== 'building') void qc.invalidateQueries({ queryKey: keys.builds(event.build.workerId) });
       return;
     case 'build.log':
-      updateCachedList<AgentBuild>(qc, keys.builds(event.agentId), (list) =>
+      updateCachedList<WorkerBuild>(qc, keys.builds(event.workerId), (list) =>
         list.map((b) => (b.id === event.buildId ? { ...b, log: b.log + event.chunk } : b)),
       );
       return;
-    case 'job.updated':
-      updateCachedList<Job>(qc, keys.jobs(event.job.agentId), (list) => {
+    case 'job.updated': {
+      // The same event reaches the Agent topic and the Worker topic; only the Agent's lists keep Jobs.
+      const agentId = event.job.agentId;
+      if (!agentId) return;
+      updateCachedList<Job>(qc, keys.jobs(agentId), (list) => {
         return list.some((j) => j.id === event.job.id) ? list.map((j) => (j.id === event.job.id ? event.job : j)) : [event.job, ...list];
       });
-      void qc.invalidateQueries({ queryKey: keys.usage(event.job.agentId) });
+      void qc.invalidateQueries({ queryKey: keys.usage(agentId) });
       void qc.invalidateQueries({ queryKey: keys.job(event.job.id) });
       return;
+    }
   }
 }
 
@@ -317,6 +327,14 @@ function upsertAgent(qc: QueryClient, agent: Agent): void {
   qc.setQueryData(keys.agent(agent.id), agent);
 }
 
+function upsertWorker(qc: QueryClient, worker: Worker): void {
+  qc.setQueryData<Worker[]>(keys.workers, (list) => {
+    if (!list) return list;
+    const next = list.some((w) => w.id === worker.id) ? list.map((w) => (w.id === worker.id ? worker : w)) : [...list, worker];
+    return next.sort((a, b) => a.name.localeCompare(b.name));
+  });
+  qc.setQueryData(keys.worker(worker.id), worker);
+}
 
 let projectsTimer: ReturnType<typeof setTimeout> | null = null;
 /** Refetches the Projects list, and with it every Project's indicators, once a burst of events settles. */
@@ -347,11 +365,15 @@ export function refreshTopic(qc: QueryClient, topic: Topic): void {
     refreshTaskPreferences(qc);
     return;
   }
-  const [kind, id] = topic.split(':') as ['project' | 'task' | 'agents' | 'agent', string];
+  const [kind, id] = topic.split(':') as ['project' | 'task' | 'agents' | 'agent' | 'workers' | 'worker', string];
   if (kind === 'agents') {
     void qc.invalidateQueries({ queryKey: keys.agents });
   } else if (kind === 'agent') {
-    for (const key of [keys.agent(id), keys.queue(id), keys.builds(id), keys.jobs(id), keys.usage(id)]) void qc.invalidateQueries({ queryKey: key });
+    for (const key of [keys.agent(id), keys.jobs(id), keys.usage(id)]) void qc.invalidateQueries({ queryKey: key });
+  } else if (kind === 'workers') {
+    void qc.invalidateQueries({ queryKey: keys.workers });
+  } else if (kind === 'worker') {
+    for (const key of [keys.worker(id), keys.queue(id), keys.builds(id)]) void qc.invalidateQueries({ queryKey: key });
   } else if (kind === 'project') {
     void qc.invalidateQueries({ queryKey: keys.tasks(id) });
     refreshTaskPreferences(qc, id);

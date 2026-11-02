@@ -36,7 +36,7 @@ test('groups agent skills by source, selects hidden skills in bulk and persists 
   const { credential } = await credentialResponse.json();
   const agentResponse = await page.request.post('/api/v1/agents', {
     headers,
-    data: { name: 'Design teammate', credentialId: credential.id, skillIds: [entries[0]!.id], dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+    data: { name: 'Design teammate', credentialId: credential.id, skillIds: [entries[0]!.id] },
   });
   expect(agentResponse.status()).toBe(201);
   const { agent } = await agentResponse.json();

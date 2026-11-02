@@ -10,9 +10,9 @@ test('shows how full the conversation context is beside the Session chip', async
   const task = await createTask(page.request, project, 'Long conversation');
   await page.request.patch(`/api/v1/tasks/${task.id}`, { headers, data: { version: 1, agentId: agent.id } });
   await page.request.post(`/api/v1/tasks/${task.id}/comments`, { headers, data: { body: 'Please get started.' } });
-  const start = await waitForStart(page.request, agent.id, task.id);
+  const start = await waitForStart(page.request, project.workerId, task.id);
   const stream = new Stream(start.sessionId);
-  await replay(page.request, agent.id, start.jobId, [
+  await replay(page.request, project.workerId, start.jobId, [
     stream.init(),
     // A tool call, so the Board card shows the tool count beside the context.
     stream.toolUse('toolu_1', 'Bash', { command: 'ls' }),

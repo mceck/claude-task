@@ -8,9 +8,9 @@ test('shows a Subagent Run in the bar with its live transcript in the dialog', a
   const agent = await seedAgent(page.request, 'Runs agent');
   const project = await createProject(page.request);
   const task = await createTask(page.request, project, 'Delegated work');
-  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id);
+  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id, project.workerId);
   const s = new Stream(sessionId);
-  await replay(page.request, agent.id, jobId, [
+  await replay(page.request, project.workerId, jobId, [
     s.init(),
     s.text('Starting.'),
     s.toolUse('toolu_run', 'Agent', { description: 'Explore the repo', subagent_type: 'Explore', prompt: 'Look around' }),
@@ -37,11 +37,11 @@ test('shows a Subagent Run in the bar with its live transcript in the dialog', a
   await expect(dialog).toContainText('Look around');
 
   // A message landing while the dialog is open shows up live.
-  await replay(page.request, agent.id, jobId, [s.text('Found the entry point', 'toolu_run')]);
+  await replay(page.request, project.workerId, jobId, [s.text('Found the entry point', 'toolu_run')]);
   await expect(dialog.getByLabel('Run transcript')).toContainText('Found the entry point');
 
   // Once the subagent hands back, its chip leaves the bar and its Timeline trace stays.
-  await replay(page.request, agent.id, jobId, [s.toolResult('toolu_read', 'export const a = 1;', { parent: 'toolu_run' }), s.toolResult('toolu_run', 'Done')]);
+  await replay(page.request, project.workerId, jobId, [s.toolResult('toolu_read', 'export const a = 1;', { parent: 'toolu_run' }), s.toolResult('toolu_run', 'Done')]);
   await expect(dialog).toContainText('finished');
   await expect(chip).toBeHidden();
   await page.keyboard.press('Escape');
@@ -59,15 +59,15 @@ test('keeps a failed Background Command in the bar until the reader dismisses it
   const agent = await seedAgent(page.request, 'Command agent');
   const project = await createProject(page.request);
   const task = await createTask(page.request, project, 'Install');
-  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id);
+  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id, project.workerId);
   const s = new Stream(sessionId);
-  await replay(page.request, agent.id, jobId, [s.init(), s.taskStarted({ taskId: 'bg1', taskType: 'local_bash', description: 'npm ci', backgrounded: true })]);
+  await replay(page.request, project.workerId, jobId, [s.init(), s.taskStarted({ taskId: 'bg1', taskType: 'local_bash', description: 'npm ci', backgrounded: true })]);
 
   await page.goto(`/t/${task.key}`);
   const bar = page.getByLabel('Active runs');
   await expect(bar.getByRole('button', { name: /^npm ci/ })).toHaveAccessibleName(/npm ci running/);
 
-  await replay(page.request, agent.id, jobId, [s.taskNotification({ taskId: 'bg1', status: 'failed', summary: 'npm ci failed: lockfile is missing' })]);
+  await replay(page.request, project.workerId, jobId, [s.taskNotification({ taskId: 'bg1', status: 'failed', summary: 'npm ci failed: lockfile is missing' })]);
   const failed = bar.getByRole('button', { name: /^npm ci/ });
   await expect(failed).toHaveAccessibleName(/npm ci failed/);
 
@@ -95,9 +95,9 @@ test('lists a running Run before an older failed one and opens it without a dial
   const agent = await seedAgent(page.request, 'Order agent');
   const project = await createProject(page.request);
   const task = await createTask(page.request, project, 'Ordered runs');
-  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id);
+  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id, project.workerId);
   const s = new Stream(sessionId);
-  await replay(page.request, agent.id, jobId, [
+  await replay(page.request, project.workerId, jobId, [
     s.init(),
     s.toolUse('run_old', 'Agent', { description: 'First run', subagent_type: 'Explore', prompt: 'One' }),
     s.toolUse('run_new', 'Agent', { description: 'Second run', subagent_type: 'Explore', prompt: 'Two' }),
@@ -112,7 +112,7 @@ test('lists a running Run before an older failed one and opens it without a dial
   await expect(bar.getByRole('button')).toHaveCount(2);
 
   // While the page is open the older Run fails: the newer running one must move to the front.
-  await replay(page.request, agent.id, jobId, [s.toolResult('run_old', 'boom', { isError: true })]);
+  await replay(page.request, project.workerId, jobId, [s.toolResult('run_old', 'boom', { isError: true })]);
   await expect(bar.getByRole('button').first()).toContainText('Second run');
   await bar.getByRole('button').first().click();
   await expect(page.getByRole('dialog')).toBeVisible();

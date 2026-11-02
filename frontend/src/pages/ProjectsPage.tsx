@@ -17,7 +17,8 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { errorMessage, post } from '../api/client';
 import { Combobox } from '../components/Combobox';
-import { keys, useAgents, useProjects, useRepositoryGroups } from '../api/queries';
+import { keys, useAgents, useProjects, useRepositoryGroups, useWorkers } from '../api/queries';
+import { defaultWorkerId, WorkerPicker } from '../components/workers';
 import { ErrorText } from '../components/common';
 import { progressCounts } from '../lib/progress';
 
@@ -156,6 +157,9 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [selected, setSelected] = useState('none');
   const [baseBranch, setBaseBranch] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pickedWorker, setPickedWorker] = useState('');
+  const workers = useWorkers();
+  const workerId = pickedWorker || defaultWorkerId(workers.data);
   const agents = useAgents();
   const groups = useRepositoryGroups();
   const repositories = (groups.data ?? []).flatMap((g) => g.repositories);
@@ -178,11 +182,12 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     if (busy) return;
     if (!PROJECT_KEY_PATTERN.test(effectiveKey)) return setError('The key must be 2–6 uppercase letters');
     if (selected !== 'none' && !choice) return setError('Choose an available repository');
+    if (!workerId) return setError('Choose a worker');
     setBusy(true);
     setError(null);
     try {
       const bundle = await post<ProjectBundle>('/projects', {
-        key: effectiveKey, name, description,
+        key: effectiveKey, name, description, workerId,
         defaultAgentId: defaultAgentId === 'none' ? null : defaultAgentId,
         ...(choice ? { repository: {
           connectionId: choice.connectionId,
@@ -239,6 +244,11 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                 <Textarea id="project-description" rows={3} maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} />
               </Field>
               <Field>
+                <FieldLabel htmlFor="project-worker">Worker</FieldLabel>
+                <WorkerPicker id="project-worker" value={workerId} onChange={setPickedWorker} disabled={busy} />
+                <FieldDescription>Where the project’s agents run.</FieldDescription>
+              </Field>
+              <Field>
                 <FieldLabel htmlFor="project-default-agent">Default Agent</FieldLabel>
                 <Select value={defaultAgentId} onValueChange={setDefaultAgentId} disabled={busy || agents.isPending}>
                   <SelectTrigger id="project-default-agent" className="w-full"><SelectValue /></SelectTrigger>
@@ -288,7 +298,7 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           <ErrorText>{error}</ErrorText>
           <DialogFooter>
             <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create project'}</Button>
+            <Button type="submit" disabled={busy || !workerId}>{busy ? 'Creating…' : 'Create project'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

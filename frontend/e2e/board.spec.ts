@@ -43,9 +43,9 @@ test('shows the tool call count next to the comment count on the card', async ({
   const project = await createProject(page.request);
   const task = await createTask(page.request, project, 'Checked the release');
   const agent = await seedAgent(page.request, 'Counting agent');
-  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id);
+  const { jobId, sessionId } = await startJob(page.request, agent.id, task.id, project.workerId);
   const s = new Stream(sessionId);
-  await replay(page.request, agent.id, jobId, [
+  await replay(page.request, project.workerId, jobId, [
     s.init(),
     s.toolUse('toolu_bash', 'Bash', { command: 'npm test' }),
     s.toolResult('toolu_bash', 'ok'),

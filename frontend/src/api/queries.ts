@@ -4,7 +4,6 @@ import type {
   Wiki,
   WikiChat,
   Agent,
-  AgentBuild,
   AgentUsage,
   Credential,
   GitConnection,
@@ -29,6 +28,8 @@ import type {
   TaskPreference,
   TimelinePage,
   User,
+  Worker,
+  WorkerBuild,
 } from '@claude-task/shared';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { get } from './client';
@@ -62,12 +63,14 @@ export const keys = {
   run: (taskId: string, runId: string) => ['runs', taskId, runId] as const,
   agents: ['agents'] as const,
   agent: (id: string) => ['agent', id] as const,
-  builds: (agentId: string) => ['builds', agentId] as const,
-  queue: (agentId: string) => ['queue', agentId] as const,
   jobs: (agentId: string) => ['jobs', agentId] as const,
   job: (id: string) => ['job', id] as const,
   usage: (agentId: string) => ['usage', agentId] as const,
-  logs: (agentId: string) => ['logs', agentId] as const,
+  workers: ['workers'] as const,
+  worker: (id: string) => ['worker', id] as const,
+  builds: (workerId: string) => ['builds', workerId] as const,
+  queue: (workerId: string) => ['queue', workerId] as const,
+  logs: (workerId: string, slot: number) => ['logs', workerId, slot] as const,
   credentials: ['credentials'] as const,
   skills: ['skills'] as const,
   mcpServers: ['mcp-servers'] as const,
@@ -179,14 +182,6 @@ export function useAgent(id: string | undefined) {
   });
 }
 
-export function useBuilds(agentId: string) {
-  return useQuery({ queryKey: keys.builds(agentId), queryFn: () => get<{ builds: AgentBuild[] }>(`/agents/${agentId}/builds`).then((r) => r.builds) });
-}
-
-export function useQueue(agentId: string) {
-  return useQuery({ queryKey: keys.queue(agentId), queryFn: () => get<{ entries: QueueEntry[] }>(`/agents/${agentId}/queue`).then((r) => r.entries) });
-}
-
 export function useJobs(agentId: string) {
   return useQuery({ queryKey: keys.jobs(agentId), queryFn: () => get<{ jobs: Job[] }>(`/agents/${agentId}/jobs`).then((r) => r.jobs) });
 }
@@ -202,11 +197,33 @@ export function useUsage(agentId: string) {
   });
 }
 
-/** Container logs, polled while shown. */
-export function useContainerLogs(agentId: string, enabled: boolean) {
+// Workers (docs/specs/workers.md)
+
+export function useWorkers() {
+  return useQuery({ queryKey: keys.workers, queryFn: () => get<{ workers: Worker[] }>('/workers').then((r) => r.workers), staleTime: 30_000 });
+}
+
+export function useWorker(id: string | undefined) {
   return useQuery({
-    queryKey: keys.logs(agentId),
-    queryFn: () => get<{ logs: string }>(`/agents/${agentId}/logs?tail=500`).then((r) => r.logs),
+    queryKey: keys.worker(id ?? ''),
+    queryFn: () => get<{ worker: Worker }>(`/workers/${id}`).then((r) => r.worker),
+    enabled: !!id,
+  });
+}
+
+export function useBuilds(workerId: string) {
+  return useQuery({ queryKey: keys.builds(workerId), queryFn: () => get<{ builds: WorkerBuild[] }>(`/workers/${workerId}/builds`).then((r) => r.builds) });
+}
+
+export function useQueue(workerId: string) {
+  return useQuery({ queryKey: keys.queue(workerId), queryFn: () => get<{ entries: QueueEntry[] }>(`/workers/${workerId}/queue`).then((r) => r.entries) });
+}
+
+/** One Worker Container's logs, polled while shown. */
+export function useContainerLogs(workerId: string, slot: number, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.logs(workerId, slot),
+    queryFn: () => get<{ logs: string }>(`/workers/${workerId}/containers/${slot}/logs?tail=500`).then((r) => r.logs),
     enabled,
     refetchInterval: enabled ? 3000 : false,
   });

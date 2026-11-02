@@ -37,7 +37,7 @@ const child = spawn(path.join(backendDir, 'node_modules/.bin/tsx'), ['test/e2e/s
     SECRETS_MASTER_KEY: Buffer.alloc(32, 42).toString('base64'),
     AGENT_RUNTIME: 'fake',
     // The UI suite creates Agents before assigning work and expects them online.
-    AGENT_STOP_WHEN_UNUSED: 'false',
+    WORKER_STOP_WHEN_UNUSED: 'false',
   },
 });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));

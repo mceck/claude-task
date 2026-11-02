@@ -23,17 +23,43 @@ export async function loggedInContext(browser: Browser): Promise<BrowserContext>
   return context;
 }
 
+export const DOCKERFILE = 'FROM claude-task/agent-base\nUSER agent\n';
+
+export interface SeededWorker {
+  id: string;
+  name: string;
+}
+
+/**
+ * A Worker with one always-on Worker Container, so its fake Runner connects (the e2e server keys it by Worker id).
+ * `wait` polls until its image is built and its Runner is connected.
+ */
+export async function seedWorker(request: APIRequestContext, name = 'E2E worker', { wait = false } = {}): Promise<SeededWorker> {
+  const res = await request.post('/api/v1/workers', {
+    data: { name: `${name} ${Date.now()} ${Math.random().toString(36).slice(2, 6)}`, dockerfile: DOCKERFILE, minimum: 1, cap: 1 },
+    headers: H,
+  });
+  expect(res.status()).toBe(201);
+  const { worker } = await res.json();
+  if (wait) await expect.poll(async () => (await (await request.get(`/api/v1/workers/${worker.id}`)).json()).worker.state).toBe('idle');
+  return { id: worker.id, name: worker.name };
+}
+
 export interface SeededProject {
   id: string;
   key: string;
+  /** The Worker it runs on: the id the fake Runner helpers take. */
+  workerId: string;
   statuses: { id: string; name: string }[];
 }
 
-export async function createProject(request: APIRequestContext, name = 'E2E project'): Promise<SeededProject> {
-  const res = await request.post('/api/v1/projects', { data: { key: uniqueKey(), name }, headers: H });
+/** A Project on its own new Worker, unless one is given. */
+export async function createProject(request: APIRequestContext, name = 'E2E project', workerId?: string): Promise<SeededProject> {
+  const worker = workerId ?? (await seedWorker(request)).id;
+  const res = await request.post('/api/v1/projects', { data: { key: uniqueKey(), name, workerId: worker }, headers: H });
   expect(res.status()).toBe(201);
   const body = await res.json();
-  return { id: body.project.id, key: body.project.key, statuses: body.statuses };
+  return { id: body.project.id, key: body.project.key, workerId: worker, statuses: body.statuses };
 }
 
 export async function createTask(
@@ -54,7 +80,7 @@ export interface SeededAgent {
   name: string;
 }
 
-/** A Credential and an enabled Agent, waiting idle with its image built. */
+/** A Credential and an enabled Agent. */
 export async function seedAgent(request: APIRequestContext, name = 'Test agent'): Promise<SeededAgent> {
   const res = await request.post('/api/v1/credentials', {
     data: { name: `Key ${Date.now()}`, kind: 'anthropic_api_key', secret: 'test-secret-1234' },
@@ -63,18 +89,17 @@ export async function seedAgent(request: APIRequestContext, name = 'Test agent')
   expect(res.status()).toBe(201);
   const { credential } = await res.json();
   const result = await request.post('/api/v1/agents', {
-    data: { name: `${name} ${Date.now()}`, credentialId: credential.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+    data: { name: `${name} ${Date.now()}`, credentialId: credential.id },
     headers: H,
   });
   expect(result.status()).toBe(201);
   const { agent } = await result.json();
-  await expect.poll(async () => (await (await request.get(`/api/v1/agents/${agent.id}`)).json()).agent.state).toBe('idle');
   return agent as SeededAgent;
 }
 
-/** The messages the fake backend received from an Agent's Runner. */
-export async function runnerMessages(request: APIRequestContext, agentId: string): Promise<Record<string, unknown>[]> {
-  return (await (await request.get(`/api/v1/__test/runners/${agentId}`)).json()).received;
+/** The messages the fake Runner of a Worker's slot 1 received from the backend. */
+export async function runnerMessages(request: APIRequestContext, workerId: string): Promise<Record<string, unknown>[]> {
+  return (await (await request.get(`/api/v1/__test/runners/${workerId}`)).json()).received;
 }
 
 export interface StartedJob {
@@ -85,30 +110,30 @@ export interface StartedJob {
 }
 
 /** Waits for the Runner to receive the Task's `job.start`. */
-export async function waitForStart(request: APIRequestContext, agentId: string, taskId: string): Promise<StartedJob> {
+export async function waitForStart(request: APIRequestContext, workerId: string, taskId: string): Promise<StartedJob> {
   let start: Record<string, unknown> | undefined;
   await expect
     .poll(async () => {
-      const { jobs } = await (await request.get(`/api/v1/agents/${agentId}/jobs`)).json();
+      const { jobs } = await (await request.get(`/api/v1/workers/${workerId}/jobs`)).json();
       const job = jobs.find((j: { task: { id: string } }) => j.task.id === taskId);
-      start = (await runnerMessages(request, agentId)).find((m) => m.type === 'job.start' && m.jobId === job?.id);
+      start = (await runnerMessages(request, workerId)).find((m) => m.type === 'job.start' && m.jobId === job?.id);
       return !!start;
     })
     .toBe(true);
   return { jobId: start!.jobId as string, sessionId: start!.sessionId as string, start: start! };
 }
 
-/** Assigns the Agent and sends the first User Comment, which starts the first Job. */
-export async function startJob(request: APIRequestContext, agentId: string, taskId: string): Promise<StartedJob> {
+/** Assigns the Agent and sends the first User Comment, which starts the first Job on the Project's Worker. */
+export async function startJob(request: APIRequestContext, agentId: string, taskId: string, workerId: string): Promise<StartedJob> {
   const { task } = await (await request.get(`/api/v1/tasks/${taskId}`)).json();
   expect((await request.patch(`/api/v1/tasks/${taskId}`, { data: { version: task.version, agentId }, headers: H })).ok()).toBe(true);
   expect((await request.post(`/api/v1/tasks/${taskId}/comments`, { data: { body: 'Please get started.' }, headers: H })).ok()).toBe(true);
-  return waitForStart(request, agentId, taskId);
+  return waitForStart(request, workerId, taskId);
 }
 
-/** Replays stream-json events as the fake Runner; `exit: false` keeps the Job alive. */
-export async function replay(request: APIRequestContext, agentId: string, jobId: string, events: Record<string, unknown>[], exit = false) {
-  expect((await request.post(`/api/v1/__test/runners/${agentId}`, { data: { jobId, events, exit }, headers: H })).ok()).toBe(true);
+/** Replays stream-json events as the Worker's fake Runner; `exit: false` keeps the Job alive. */
+export async function replay(request: APIRequestContext, workerId: string, jobId: string, events: Record<string, unknown>[], exit = false) {
+  expect((await request.post(`/api/v1/__test/runners/${workerId}`, { data: { jobId, events, exit }, headers: H })).ok()).toBe(true);
 }
 
 export const column = (page: Page, name: string): Locator => page.getByRole('region', { name, exact: true });

@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { del, errorMessage, patch, post, put } from '../api/client';
 import { AgentStateDot } from './agents';
+import { WorkerPicker } from './workers';
 import { keys, useAgents, useAgentSettings, useMe } from '../api/queries';
 import { Field, ErrorText, Loading, useConfirm } from './common';
 import { useAutosave } from '../lib/useAutosave';
@@ -35,6 +36,23 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
   const [secret, setSecret] = useState(false);
   const [editing, setEditing] = useState<ProjectEnvVar | null>(null);
   const [busy, setBusy] = useState(false);
+  const [workerError, setWorkerError] = useState('');
+  const [workerSaving, setWorkerSaving] = useState(false);
+  const changeWorker = async (workerId: string) => {
+    if (workerId === settings.workerId) return;
+    setWorkerSaving(true);
+    setWorkerError('');
+    try {
+      const r = await patch<{ settings: Settings }>(`/projects/${projectId}/agent-settings`, { workerId });
+      qc.setQueryData(keys.agentSettings(projectId), r.settings);
+      void qc.invalidateQueries({ queryKey: keys.workers });
+      toast.success('Worker changed');
+    } catch (err) {
+      setWorkerError(errorMessage(err));
+    } finally {
+      setWorkerSaving(false);
+    }
+  };
   const autosave = useAutosave({ setupScript, agentInstructions }, async (changes) => {
     await patch(`/projects/${projectId}/agent-settings`, changes);
     qc.setQueryData<Settings>(keys.agentSettings(projectId), (current) => current ? { ...current, ...changes } : current);
@@ -77,6 +95,14 @@ function SettingsForm({ projectId, settings }: { projectId: string; settings: Se
     <div className="space-y-4">
       <section onBlur={() => void autosave.flush()} className="flex flex-col gap-4 rounded-xl border bg-card p-5">
         <h2 className="font-medium">Agent setup</h2>
+        <div className="space-y-1.5">
+          <span className="text-sm font-medium">Worker</span>
+          <WorkerPicker value={settings.workerId} onChange={(id) => void changeWorker(id)} disabled={workerSaving} className="w-fit min-w-48" />
+          <span className="block text-xs text-muted-foreground">
+            Where the project’s agents run. It changes only while no session of the project is started and open.
+          </span>
+          <ErrorText>{workerError}</ErrorText>
+        </div>
         <Field label="Default agent" hint="Assigned to every new task. Tasks are created without an agent if it is disabled or removed.">
           <Select
             value={settings.defaultAgentId ?? 'none'}

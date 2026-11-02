@@ -79,14 +79,14 @@ test('serializes autosaves and preserves edits made while a request is in flight
   } finally { release(); }
 });
 
-test('autosaves agent configuration and images while Docker settings need their own save', async ({ page }) => {
+test('autosaves agent configuration and images', async ({ page }) => {
   await login(page.request);
   const headers = { 'x-claude-task': '1' };
   const { credential } = await (await page.request.post('/api/v1/credentials', {
     headers, data: { name: `Autosave credential ${Date.now()}`, kind: 'anthropic_api_key', secret: 'test-secret-1234' },
   })).json();
   const { agent } = await (await page.request.post('/api/v1/agents', {
-    headers, data: { name: `Autosave agent ${Date.now()}`, credentialId: credential.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+    headers, data: { name: `Autosave agent ${Date.now()}`, credentialId: credential.id },
   })).json();
   const path = `/api/v1/agents/${agent.id}`;
   const read = async () => (await (await page.request.get(path)).json()).agent;
@@ -97,28 +97,15 @@ test('autosaves agent configuration and images while Docker settings need their 
   await page.goto(`/agents/${agent.id}`);
   await page.getByRole('tab', { name: 'Configuration', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Save agent', exact: true })).toHaveCount(0);
-  await page.getByLabel('Dockerfile', { exact: true }).fill('FROM unfinished');
-  await page.getByRole('checkbox', { name: 'PostgreSQL', exact: true }).uncheck();
-  await page.getByLabel('CPU limit', { exact: true }).fill('2');
-  await page.getByLabel('Memory (MB)', { exact: true }).fill('512');
+  await expect(page.getByLabel('Dockerfile', { exact: true })).toHaveCount(0);
   await page.getByLabel('Model', { exact: true }).fill('claude-sonnet-5-5');
   await page.getByLabel('Effort', { exact: true }).selectOption('high');
   await expect(page.getByRole('status', { name: 'Agent configuration save status' })).toHaveText('All changes saved');
-  const saved = await read();
-  expect(saved).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high', dockerfile: agent.dockerfile, cpuLimit: null, memoryMb: null, services: agent.services });
+  expect(await read()).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high' });
   expect(patches.length).toBeGreaterThan(0);
   for (const body of patches) {
     expect(Object.keys(body).every((key) => ['model', 'effort'].includes(key))).toBe(true);
   }
-
-  await page.getByRole('button', { name: 'Save Docker configuration', exact: true }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
-  expect((await read()).dockerfile).toBe(agent.dockerfile);
-  await page.getByLabel('Dockerfile', { exact: true }).fill('FROM claude-task/agent-base\n# Updated environment\nUSER agent\n');
-  await page.getByRole('button', { name: 'Save Docker configuration', exact: true }).click();
-  await expect(page.getByText('Docker configuration saved', { exact: true })).toBeVisible();
-  expect(await read()).toMatchObject({ cpuLimit: 2, memoryMb: 512, services: ['redis'] });
-  expect(Object.keys(patches.at(-1)!).sort()).toEqual(['cpuLimit', 'dockerfile', 'memoryMb', 'services']);
 
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
   await page.getByLabel('Avatar image', { exact: true }).setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: png });
@@ -126,4 +113,47 @@ test('autosaves agent configuration and images while Docker settings need their 
   await page.getByRole('button', { name: 'Remove image', exact: true }).click();
   await expect(page.getByRole('status', { name: 'Agent image save status' })).toHaveText('All changes saved');
   await expect.poll(async () => (await read()).avatarImageUrl).toBeNull();
+});
+
+test('autosaves worker capacity while Docker settings need their own save', async ({ page }) => {
+  await login(page.request);
+  const headers = { 'x-claude-task': '1' };
+  const { worker } = await (await page.request.post('/api/v1/workers', {
+    headers, data: { name: `Autosave worker ${Date.now()}`, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+  })).json();
+  const path = `/api/v1/workers/${worker.id}`;
+  const read = async () => (await (await page.request.get(path)).json()).worker;
+  const patches: Record<string, unknown>[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'PATCH' && request.url().endsWith(path)) patches.push(request.postDataJSON());
+  });
+  await page.goto(`/workers/${worker.id}`);
+  await page.getByRole('tab', { name: 'Configuration', exact: true }).click();
+  await page.getByLabel('Dockerfile', { exact: true }).fill('FROM unfinished');
+  await page.getByRole('checkbox', { name: 'PostgreSQL', exact: true }).uncheck();
+  await page.getByLabel('CPU limit', { exact: true }).fill('2');
+  await page.getByLabel('Memory (MB)', { exact: true }).fill('512');
+  await page.getByLabel('Cap', { exact: true }).fill('3');
+  await page.getByLabel('Worker description', { exact: true }).fill('Flutter toolchain');
+  await expect(page.getByRole('status', { name: 'Worker configuration save status' })).toHaveText('All changes saved');
+  const saved = await read();
+  expect(saved).toMatchObject({ cap: 3, description: 'Flutter toolchain', dockerfile: worker.dockerfile, cpuLimit: null, memoryMb: null, services: worker.services });
+  expect(patches.length).toBeGreaterThan(0);
+  for (const body of patches) {
+    expect(Object.keys(body).every((key) => ['cap', 'description'].includes(key))).toBe(true);
+  }
+
+  await page.getByLabel('Minimum', { exact: true }).fill('5');
+  await expect(page.getByRole('status', { name: 'Worker configuration save status' })).toContainText('The minimum cannot exceed the cap');
+  await page.getByLabel('Minimum', { exact: true }).fill('0');
+  await expect(page.getByRole('status', { name: 'Worker configuration save status' })).toHaveText('All changes saved');
+
+  await page.getByRole('button', { name: 'Save Docker configuration', exact: true }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  expect((await read()).dockerfile).toBe(worker.dockerfile);
+  await page.getByLabel('Dockerfile', { exact: true }).fill('FROM claude-task/agent-base\n# Updated environment\nUSER agent\n');
+  await page.getByRole('button', { name: 'Save Docker configuration', exact: true }).click();
+  await expect(page.getByText('Docker configuration saved', { exact: true })).toBeVisible();
+  expect(await read()).toMatchObject({ cpuLimit: 2, memoryMb: 512, services: ['redis'] });
+  expect(Object.keys(patches.at(-1)!).sort()).toEqual(['cpuLimit', 'dockerfile', 'memoryMb', 'services']);
 });

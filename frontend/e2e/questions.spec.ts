@@ -3,8 +3,8 @@ import { expect, test } from '@playwright/test';
 import { HEADERS as headers, createProject, createTask, loggedInContext, seedAgent, startJob } from './helpers';
 
 /** Starts the Agent and returns the Job's Task Tools bearer token. */
-async function startAgent(request: APIRequestContext, taskId: string, agentId: string): Promise<string> {
-  const { start } = await startJob(request, agentId, taskId);
+async function startAgent(request: APIRequestContext, taskId: string, agentId: string, workerId: string): Promise<string> {
+  const { start } = await startJob(request, agentId, taskId, workerId);
   return JSON.parse((start.claudeArgs as { mcpConfig: string }).mcpConfig).mcpServers['claude-task'].headers.Authorization;
 }
 
@@ -35,7 +35,7 @@ test('a Question answered in one browser shows as answered in the other', async 
   const project = await createProject(a.request);
   const task = await createTask(a.request, project, 'Pick a database');
   const agent = await seedAgent(a.request);
-  const token = await startAgent(a.request, task.id, agent.id);
+  const token = await startAgent(a.request, task.id, agent.id, project.workerId);
 
   const pageA = await a.newPage();
   const pageB = await b.newPage();
@@ -66,7 +66,7 @@ test('a Survey collects answers and Send now delivers the results', async ({ bro
   const luca = (await created.json()).user;
   const task = await createTask(a.request, project, 'Team vote', 'Todo', { assigneeIds: [me.id, luca.id] });
   const agent = await seedAgent(a.request);
-  const token = await startAgent(a.request, task.id, agent.id);
+  const token = await startAgent(a.request, task.id, agent.id, project.workerId);
 
   const page = await a.newPage();
   await page.goto(`/t/${task.key}`);

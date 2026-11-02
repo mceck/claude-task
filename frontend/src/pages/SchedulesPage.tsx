@@ -14,7 +14,8 @@ import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { del, errorMessage, patch, post } from '../api/client';
-import { keys, useAgents, useMe, useRepositoryGroups, useSchedule, useScheduleRuns, useSchedules, useTask, useTaskSession, useUsers } from '../api/queries';
+import { keys, useAgents, useMe, useRepositoryGroups, useSchedule, useScheduleRuns, useSchedules, useTask, useTaskSession, useUsers, useWorkers } from '../api/queries';
+import { defaultWorkerId, WorkerPicker } from '../components/workers';
 import { Combobox } from '../components/Combobox';
 import { ErrorText, Field, Loading, Time, useConfirm } from '../components/common';
 import { TaskActivity } from '../components/TaskActivity';
@@ -48,6 +49,7 @@ function useIsAdmin(): boolean {
 export function SchedulesPage() {
   const query = useSchedules();
   const agents = useAgents();
+  const workers = useWorkers();
   const admin = useIsAdmin();
   const [creating, setCreating] = useState(false);
   const [toggling, setToggling] = useState<string[]>([]);
@@ -92,7 +94,7 @@ export function SchedulesPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Agent</TableHead>
+                <TableHead>Agent · Worker</TableHead>
                 <TableHead>When</TableHead>
                 <TableHead>Scope</TableHead>
                 <TableHead>Next run</TableHead>
@@ -109,8 +111,13 @@ export function SchedulesPage() {
                       <span className="truncate">{s.name}</span>
                     </Link>
                   </TableCell>
-                  <TableCell className="max-w-32 truncate" title={agents.data?.find((a) => a.id === s.agentId)?.name}>
-                    {agents.data?.find((a) => a.id === s.agentId)?.name ?? '—'}
+                  <TableCell>
+                    <span className="block max-w-32 truncate" title={agents.data?.find((a) => a.id === s.agentId)?.name}>
+                      {agents.data?.find((a) => a.id === s.agentId)?.name ?? '—'}
+                    </span>
+                    <span className="block max-w-32 truncate text-xs text-muted-foreground" title={workers.data?.find((w) => w.id === s.workerId)?.name}>
+                      {workers.data?.find((w) => w.id === s.workerId)?.name ?? '—'}
+                    </span>
                   </TableCell>
                   <TableCell title={s.timeZone}>{describeCron(s.cron)}</TableCell>
                   <TableCell className="max-w-56 truncate" title={s.repository ? `${s.repository.owner}/${s.repository.name}` : 'Global'}>
@@ -156,6 +163,7 @@ export function SchedulePage() {
   const query = useSchedule(scheduleId);
   const runs = useScheduleRuns(scheduleId);
   const agents = useAgents();
+  const workers = useWorkers();
   const admin = useIsAdmin();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -215,6 +223,7 @@ export function SchedulePage() {
           <h1 className="truncate text-2xl font-semibold">{schedule.name}</h1>
           <p className="text-sm text-muted-foreground">
             {describeCron(schedule.cron)} ({schedule.timeZone}) · {agents.data?.find((a) => a.id === schedule.agentId)?.name ?? 'No agent'} ·{' '}
+            {workers.data?.find((w) => w.id === schedule.workerId)?.name ?? 'No worker'} ·{' '}
             {schedule.repository ? `${schedule.repository.owner}/${schedule.repository.name}` : 'Global'}
             {schedule.readOnly ? ' · read-only' : ''}
           </p>
@@ -357,6 +366,9 @@ export function ScheduleRunPage() {
 
 function ScheduleForm({ schedule, onSaved }: { schedule?: Schedule; onSaved: () => void }) {
   const agents = useAgents();
+  const workers = useWorkers();
+  const [pickedWorker, setPickedWorker] = useState(schedule?.workerId ?? '');
+  const workerId = pickedWorker || defaultWorkerId(workers.data);
   const groups = useRepositoryGroups();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -396,6 +408,7 @@ function ScheduleForm({ schedule, onSaved }: { schedule?: Schedule; onSaved: () 
         prompt,
         readOnly,
         ...(agentChanged ? { agentId } : {}),
+        ...(!schedule || schedule.workerId !== workerId ? { workerId } : {}),
         ...(schedule && unchanged ? {} : { repository }),
       };
       const result = schedule
@@ -423,11 +436,16 @@ function ScheduleForm({ schedule, onSaved }: { schedule?: Schedule; onSaved: () 
             .map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
-                {a.enabled ? '' : ' (disabled)'}{a.enabled && a.state === 'idle' ? ' ○' : a.enabled && a.state === 'working' ? ' ●' : a.state === 'building' ? ' (building)' : a.state === 'build_failed' ? ' (build failed)' : a.state === 'offline' ? ' (offline)' : ''}
+                {a.enabled ? '' : ' (disabled)'}{a.state === 'idle' ? ' ○' : a.state === 'working' ? ' ●' : ''}
               </option>
             ))}
         </select>
       </Field>
+      <div className="space-y-1.5">
+        <span className="text-sm font-medium">Worker</span>
+        <WorkerPicker value={workerId} onChange={setPickedWorker} disabled={busy} />
+        <span className="block text-xs text-muted-foreground">Where the runs work.</span>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Cron expression" hint={describeCron(cron)}>
           <Input aria-label="Cron expression" value={cron} onChange={(e) => setCron(e.target.value)} required className="font-mono" />
@@ -480,7 +498,7 @@ function ScheduleForm({ schedule, onSaved }: { schedule?: Schedule; onSaved: () 
         </span>
       </label>
       {(error || agents.error) && <ErrorText>{error || errorMessage(agents.error)}</ErrorText>}
-      <Button type="submit" disabled={busy || !name.trim() || !agentId || !cron.trim() || !prompt.trim()}>
+      <Button type="submit" disabled={busy || !name.trim() || !agentId || !workerId || !cron.trim() || !prompt.trim()}>
         {busy ? 'Saving…' : schedule ? 'Save schedule' : 'Create schedule'}
       </Button>
     </form>

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { login, uniqueKey } from './helpers';
+import { login, seedWorker, uniqueKey } from './helpers';
 
 const headers = { 'x-claude-task': '1' };
 
@@ -12,10 +12,11 @@ async function setup(page: Page) {
   });
   const { credential } = await credentialResponse.json();
   const agentResponse = await page.request.post('/api/v1/agents', {
-    headers, data: { name, credentialId: credential.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+    headers, data: { name, credentialId: credential.id },
   });
   expect(agentResponse.status()).toBe(201);
   const { agent } = await agentResponse.json();
+  const worker = await seedWorker(page.request, 'Project setup worker');
   const connectionResponse = await page.request.post('/api/v1/git/connections', {
     headers, data: { provider: 'gitlab', name, baseUrl: 'https://gitlab.example.com', token: 'glpat-e2e-token-1234' },
   });
@@ -27,6 +28,8 @@ async function setup(page: Page) {
   await dialog.getByLabel('Name', { exact: true }).fill(name);
   const key = uniqueKey();
   await dialog.getByLabel('Key', { exact: true }).fill(key);
+  await dialog.getByRole('combobox', { name: 'Worker', exact: true }).click();
+  await page.getByRole('option', { name: worker.name, exact: true }).click();
   await dialog.getByLabel('Default Agent', { exact: true }).click();
   await page.getByRole('option', { name, exact: true }).click();
   await dialog.getByLabel('Repository', { exact: true }).click();
@@ -34,11 +37,11 @@ async function setup(page: Page) {
   await page.locator('[cmdk-group]').filter({ hasText: name })
     .getByRole('option', { name: /acme\/platform\/service/ }).click();
   await expect(dialog.getByLabel('Base branch')).toHaveValue('main');
-  return { name, key, agent, connection, dialog };
+  return { name, key, agent, worker, connection, dialog };
 }
 
 test('creates a Project with Git and default Agent, preserving input after a branch error', async ({ page }) => {
-  const { name, key, agent, connection, dialog } = await setup(page);
+  const { name, key, agent, worker, connection, dialog } = await setup(page);
   await dialog.getByLabel('Base branch').fill('missing-branch');
   await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
   await expect(dialog.getByText('The base branch "missing-branch" does not exist in this repository', { exact: true })).toBeVisible();
@@ -51,6 +54,7 @@ test('creates a Project with Git and default Agent, preserving input after a bra
   await expect(page).toHaveURL(`/p/${key}`);
   const { project } = await (await page.request.get(`/api/v1/projects/${key}`)).json();
   expect(project.repository).toMatchObject({ connectionId: connection.id, providerRepoId: '101', baseBranch: 'main' });
+  expect(project.workerId).toBe(worker.id);
   const { settings } = await (await page.request.get(`/api/v1/projects/${key}/agent-settings`)).json();
   expect(settings.defaultAgentId).toBe(agent.id);
   const response = await page.request.post(`/api/v1/projects/${key}/tasks`, { headers, data: { title: 'First Task' } });

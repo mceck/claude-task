@@ -54,7 +54,7 @@ test('links a repository, validates its base branch, shows protection for inform
     await (
       await page.request.post('/api/v1/agents', {
         headers,
-        data: { name: `Git agent ${Date.now()}`, credentialId: credential.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent\n' },
+        data: { name: `Git agent ${Date.now()}`, credentialId: credential.id },
       })
     ).json()
   ).agent;
