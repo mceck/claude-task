@@ -71,7 +71,7 @@ The git spec holds the Git Proxy clone URL (without credentials), the Job token 
 
 **Which Runner gets what.** Job messages (`job.start`, `job.input`, `job.interrupt`, `job.end`, `job.cancel`, `job.upload`, `ack`) go to the Runner of the Worker Container that runs the Job. `worktree.remove` and `project_skills.request` belong to no Job, and any Runner of the Worker can serve them, since every one sees the same Worker Volume:
 
-- `worktree.remove` is sent once the Session has no active Job, to a connected Runner of the Worker, the Runner of the Session's last Worker Slot first. While no Runner of the Worker is connected, the removal stays pending in the backend and is sent to the first one that says hello.
+- `worktree.remove` goes to the Runner of the Job still working in that Worktree (a cancelled Job that has not exited yet), which removes it once that Job ends. With no such Job, it goes to a connected Runner of the Worker, the Runner of the Session's last Worker Slot first. While no suitable Runner is connected, the removal stays pending in the backend and is sent to the first one that says hello.
 - `project_skills.request` goes to any connected Runner of the Worker.
 
 Runner to backend:
@@ -234,7 +234,7 @@ When `claude` exits, the Runner:
 
 ### Removing a Worktree
 
-`worktree.remove` names a Worktree path and, for Projects with a Repository, the bare clone path. The backend sends it once the Session has no active Job, to a connected Runner of the Worker, preferring the Session's last Worker Slot (see [Runner Protocol](#runner-protocol)), so the Runner that removes a Worktree can be another one than the Runner that created it. The removal waits for any earlier Worktree work of this Runner and for every unfinished Job of this Runner on that Worktree, without holding up the connection. Then, under the Bare Clone lock, the Runner runs `git worktree remove --force` in the bare clone, deletes the directory and prunes the clone's Worktree list. Local and remote branches stay. Errors are logged. A removal sent to a Runner before a later `job.start` for the same Worktree happens first, so the new Job recreates the Worktree.
+`worktree.remove` names a Worktree path and, for Projects with a Repository, the bare clone path. The backend sends it to the Runner of a Job still working in the Worktree, otherwise to a connected Runner of the Worker, preferring the Session's last Worker Slot (see [Runner Protocol](#runner-protocol)), so the Runner that removes a Worktree can be another one than the Runner that created it. The removal waits for any earlier Worktree work of this Runner and for every unfinished Job of this Runner on that Worktree, without holding up the connection. Then, under the Bare Clone lock, the Runner runs `git worktree remove --force` in the bare clone, deletes the directory and prunes the clone's Worktree list. Local and remote branches stay. Errors are logged. A removal sent to a Runner before a later `job.start` for the same Worktree happens first, so the new Job recreates the Worktree.
 
 ### Git credentials
 
@@ -289,7 +289,7 @@ The Runner reads its settings from the container environment. Besides the backen
 | --- | --- |
 | `claude` executable | `claude` on the path |
 | Home | the user's home directory, where the Worker Volume is mounted |
-| Container-local directory | a fixed directory outside the home |
+| Container-local directory | `claude-task` in the container's temporary directory (`/tmp/claude-task`), outside the home |
 | Cancel: SIGTERM after | 10 seconds |
 | Cancel: SIGKILL after | 20 seconds |
 | Tool install and Setup Script limit, each | 30 minutes |
@@ -372,7 +372,7 @@ In the container-local directory, private to its Worker Container, it keeps:
 - **A setup-pending mark instead of "the Worktree was just created".** A Setup Script that failed or was interrupted leaves a Worktree that exists but isn't ready. The mark makes the next Job run the setup again, and a successful setup runs exactly once.
 - **The Runner token stays inside the Runner process.** It outlives every Job, while `claude`, its tools, the Setup Script and git hooks run Agent-controlled code whose output reaches the Timeline. Handing it over on a pipe, removing it from the environment and making the Runner non-dumpable keep it out of their environments and memory.
 - **The Git credential helper is answered locally from the current Job.** The Job token already lives in the container for the MCP server, so using it for the Git Proxy adds no secret. Answering from the Runner's memory, only for the exact proxy URL of the current Job, needs no backend round trip, cache or expiry handling. Provider credentials stay in the backend.
-- **Worktree work runs one at a time per Runner, in arrival order.** A removal and a new Job for the same Task can arrive back to back; ordering them, and making a removal wait for the Jobs on its Worktree, keeps a reopened Task from losing a freshly created Worktree. Across Runners, the backend sends a removal only once the Session has no active Job, and runs one Job per Worktree.
+- **Worktree work runs one at a time per Runner, in arrival order.** A removal and a new Job for the same Task can arrive back to back; ordering them, and making a removal wait for the Jobs on its Worktree, keeps a reopened Task from losing a freshly created Worktree. Across Runners, the backend sends a removal to the Runner whose Job still works in the Worktree, or to any Runner once no Job does, and runs one Job per Worktree.
 - **Files go up on request, over HTTP.** The backend asks with a small `job.upload` message and the Runner streams the files in a multipart POST, the mirror of attachment downloads. Large bytes stay off the WebSocket, whose messages are capped and resent after reconnects, and the request needs no seq because a lost one simply times out the tool call that asked for it.
 - **A Job arriving during a cancel waits for it.** The backend dispatches the next Queue Entry as soon as it cancels a Job, so the Runner lets the new Job wait out the cancel escalation rather than refusing it.
 - **Project Skills are read from the Worktree right before `claude` starts.** The Setup Script, or the Agent itself in an earlier Job, may add skills, and the Worktree can differ from the Base Branch, so reading the repository through the Git Provider would show a different set from the one `claude` loads. `system/init` lists command names, but with no descriptions and no way to tell a Project Skill from a bundled one. The Runner sends the files' beginnings rather than parsed fields because the backend already parses `SKILL.md` frontmatter for the catalog.

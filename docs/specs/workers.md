@@ -226,7 +226,7 @@ The reconciler keeps running the slots that work needs, between the Worker's min
 - **Scaling up.** While the ready entries of the Worker's Queue outnumber its free running Worker Containers (running, with no active Job, including those whose Runner is still connecting), the reconciler starts one more slot per waiting entry, up to the cap. An entry is ready as described in [Agent sessions](agent-sessions.md#dispatch); an entry waiting for its Agent's [synchronization](#agent-profiles-and-extension-synchronization) counts as ready, since the synchronization needs a running container. For each entry beyond the free containers, in Queue order, the new slot is the entry's affine slot (the slot of its Session's latest Job) when that slot is stopped and within the cap, otherwise the lowest-numbered stopped slot within the cap.
 - **Idle stop.** A slot above the minimum whose Worker Container has had no Job for `WORKER_IDLE_MINUTES` (10 by default), counted from its last Job's end or from its Runner connecting, whichever is later, is stopped. A disabled Worker stops every slot this way, the minimum included.
 - **Cap decrease.** Slots above the cap stop as soon as each has no active Job.
-- **`WORKER_STOP_WHEN_UNUSED=false`.** The reconciler starts slots only when work needs them, within the cap, and keeps every running Worker Container running: the idle stop is off, and the slots within the minimum start with the first work they receive.
+- **`WORKER_STOP_WHEN_UNUSED=false`.** The idle stop is off: every running Worker Container within the cap keeps running. Slots 1 to the minimum still start on their own, and the others start when work needs them, within the cap.
 
 ```mermaid
 stateDiagram-v2
@@ -326,7 +326,7 @@ The Worker Volume is the agent user's home in every Worker Container of the Work
 - the mise tools installed for Repositories;
 - the Agent Profiles.
 
-Several Worker Containers work on one Bare Clone at once, so the Runner holds an exclusive file lock per Bare Clone, kept next to the clone in the Worker Volume, around every git command that updates it (fetch, worktree add, worktree remove, prune). Removing a Worktree is sent once its Session has no active Job, to a connected Runner of the Worker, the Session's last slot first; it stays pending until a Runner connects. Reading a Worktree's Project Skills goes to any connected Runner of the Worker (see [Runner](runner.md)).
+Several Worker Containers work on one Bare Clone at once, so the Runner holds an exclusive file lock per Bare Clone, kept next to the clone in the Worker Volume, around every git command that updates it (fetch, worktree add, worktree remove, prune). Removing a Worktree goes to the Runner of the Job still working in it (a cancelled Job that has not exited yet), which removes it once that Job ends; with no such Job, to any connected Runner of the Worker, the Session's last slot first. It stays pending until a suitable Runner connects. Reading a Worktree's Project Skills goes to any connected Runner of the Worker (see [Runner](runner.md)).
 
 **Tool versions.** When a Job prepares a Worktree whose repository declares tool versions for mise (a `.tool-versions` file or a standard mise configuration file at the repository root), the Runner runs `mise install` before the Setup Script, trusting the repository's configuration. Installed tools persist in the Worker Volume, so every Worker Container of the Worker reuses them, and are on the `PATH` for the Runner, `claude` and login shells. Application packages stay the Setup Script's job. When this step runs, how its output is shown and how its failure is retried are described in [Runner](runner.md).
 
@@ -389,7 +389,7 @@ sequenceDiagram
   end
 ```
 
-When the dispatcher meets a ready entry whose pair is out of date, it starts a synchronization, provided none is running for the pair and the Agent has no active Job on the Worker, and skips the entry; the entries of other Agents keep dispatching. The synchronization runs through `docker exec` in one running Worker Container of the Worker, the lowest-numbered first, as the `agent` user with the Runner token blanked. That container keeps taking Jobs while it runs. When no Worker Container runs, the waiting entry still counts as ready, so the reconciler starts one and the synchronization follows. It:
+A Worker synchronizes the pairs its work needs and the pairs it already holds that fell behind: when an Agent's Extensions change, every Worker that holds the Agent's Profile synchronizes it on its next reconcile, right away when the Agent has no Job there. When the dispatcher meets a ready entry whose pair is out of date, it starts a synchronization, provided none is running for the pair and the Agent has no active Job on the Worker, and skips the entry; the entries of other Agents keep dispatching. The synchronization runs through `docker exec` in one running Worker Container of the Worker, the lowest-numbered first, as the `agent` user with the Runner token blanked. That container keeps taking Jobs while it runs. When no Worker Container runs, the waiting entry still counts as ready, so the reconciler starts one and the synchronization follows. It:
 
 1. creates the Agent Profile and its links to the shared session data, when missing;
 2. **Skills**: writes the assigned Skills' files into a snapshot for this revision inside the Agent Profile, then links each Skill into the profile's `skills` directory. Links to earlier snapshots and earlier snapshots themselves are removed. Entries in that directory that the platform did not create stay in place; a Skill whose name matches one of them fails the synchronization with "Skill name conflicts with an unmanaged skill". Claude discovers the Skills natively; the platform's system prompt lists none;
@@ -480,7 +480,7 @@ When the backend stops, the scheduler stops and Runner connections close. Worker
 | `AGENT_NETWORK` | Docker network Worker Containers join | Docker's default bridge |
 | `AGENT_COMMIT_EMAIL_DOMAIN` | Domain of Agents' commit email addresses (see [Git integration](git-integration.md)) | `agents.claude-task.local` |
 | `WORKER_IDLE_MINUTES` | Minutes a Worker Container above the minimum stays running without a Job | `10` |
-| `WORKER_STOP_WHEN_UNUSED` | `false` keeps every running Worker Container running and starts slots only for work | `true` |
+| `WORKER_STOP_WHEN_UNUSED` | `false` turns off the idle stop: running Worker Containers within the cap keep running | `true` |
 | `WORKER_STOP_ON_SHUTDOWN` | Stops every Worker Container on a graceful backend shutdown | enabled in development, disabled when `NODE_ENV=production` |
 | `DOCKER_GID` | Docker Compose only: group that owns the Docker socket on the host | `0` |
 | `AGENT_BASE_DOCKERFILE`, `RUNNER_SOURCE_DIR` | Locations of the Base Image recipe and the Runner sources, when they differ from the bundled ones | bundled |

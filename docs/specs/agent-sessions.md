@@ -296,7 +296,7 @@ The backend keeps all scheduling state, so a restart of either side resumes from
 - the Job is already settled (or unknown): the backend acknowledges everything and cancels it;
 - every other active Job of that Worker Container lost its process (container restart or crash) and is recovered as below. Jobs of the Worker's other Worker Containers are untouched.
 
-The backend then sends the Worker's pending Worktree removals whose Session has no active Job, reconciles the Worker and runs its dispatcher.
+The backend then sends the Worker's pending Worktree removals (see [Runner](runner.md#removing-a-worktree)), reconciles the Worker and runs its dispatcher.
 
 **Recovering a lost Job.** The Job's pending tool calls are settled as interrupted and the Job becomes `interrupted`. If the Session was running:
 
