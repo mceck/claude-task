@@ -24,11 +24,22 @@ type Response struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// SocketPath is where the Runner answers the credential helper. It lives in the container's own
+// run directory, never in the home: every Worker Container of a Worker shares that volume.
 func SocketPath(home string) string {
 	if path := os.Getenv("CLAUDE_TASK_GIT_SOCKET"); path != "" {
 		return path
 	}
-	return filepath.Join(home, ".git-credentials.sock")
+	return filepath.Join(RunDir(), "git-credentials.sock")
+}
+
+// RunDir is the container-local directory for the Runner's own state (socket, outbox spill files),
+// outside the Worker Volume that every Worker Container of a Worker mounts as its home.
+func RunDir() string {
+	if dir := os.Getenv("CLAUDE_TASK_RUN_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.TempDir(), "claude-task")
 }
 
 // Valid rejects requests that can never match a Git Proxy URL, before contacting the Runner.

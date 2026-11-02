@@ -64,6 +64,9 @@ RUN claude --version \
 RUN mise --version \
  && MISE_DATA_DIR=/opt/mise mise plugins add flutter \
  && chown -R agent: /opt/mise /usr/local/share/mise
+# A Worker Slot's Service Volume mounts here, owned by agent like the image directory it starts from.
+# The Runner's own socket and spill files stay in the container's /tmp, outside the shared home.
+RUN mkdir -p /var/lib/claude-task/services && chown -R agent: /var/lib/claude-task
 USER agent
 WORKDIR /home/agent
 ENTRYPOINT ["/usr/local/bin/claude-task-entrypoint"]

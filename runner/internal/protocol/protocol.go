@@ -3,7 +3,7 @@ package protocol
 
 import "encoding/json"
 
-const Version = 3
+const Version = 4
 
 type GitSpec struct {
 	CloneURL     string `json:"cloneUrl"`
@@ -58,6 +58,7 @@ type Incoming struct {
 	Mode               string            `json:"mode"`
 	ResumeInterrupted  bool              `json:"resumeInterrupted"`
 	WorktreePath       string            `json:"worktreePath"`
+	AgentProfilePath   string            `json:"agentProfilePath"`
 	Git                *GitSpec          `json:"git"`
 	SetupScript        string            `json:"setupScript"`
 	Env                map[string]string `json:"env"`

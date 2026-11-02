@@ -376,6 +376,7 @@ func startRunner(t *testing.T, b *backend, env ...string) string {
 		"CLAUDE_TASK_CLAUDE_PATH="+fakeClaudeBin,
 		"CLAUDE_TASK_HOME="+home,
 		"CLAUDE_TASK_GIT_SOCKET="+filepath.Join(socketDir, "git.sock"),
+		"CLAUDE_TASK_RUN_DIR="+filepath.Join(socketDir, "run"),
 		"CLAUDE_TASK_CANCEL_TERM_MS=300",
 		"CLAUDE_TASK_CANCEL_KILL_MS=900",
 	)
@@ -424,6 +425,7 @@ type jobOpts struct {
 	git                                msg
 	attachments                        []msg
 	forwardSubagentText                bool
+	profile                            string
 }
 
 func jobStart(o jobOpts) msg {
@@ -450,7 +452,7 @@ func jobStart(o jobOpts) msg {
 	}
 	return msg{
 		"type": "job.start", "jobId": o.id, "sessionId": o.session, "mode": o.mode,
-		"resumeInterrupted": false, "worktreePath": o.worktree, "git": git, "setupScript": o.setup,
+		"resumeInterrupted": false, "worktreePath": o.worktree, "agentProfilePath": o.profile, "git": git, "setupScript": o.setup,
 		"env": o.env,
 		"claudeArgs": msg{
 			"model": o.model, "effort": o.effort, "permissionMode": "bypassPermissions",

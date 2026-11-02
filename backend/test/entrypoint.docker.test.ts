@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 const image = process.env.AGENT_BASE_IMAGE;
 const docker = (...args: string[]) => execFileSync('docker', args, { encoding: 'utf8' }).trim();
 
-describe.skipIf(!image)('Agent Container entrypoint (real Docker)', () => {
+describe.skipIf(!image)('Worker Container entrypoint (real Docker)', () => {
   it('gives the Runner token only to the Runner, not to PID 1, services or docker execs', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'ct-entrypoint-'));
     const entrypoint = path.join(dir, 'entrypoint.sh');
@@ -34,4 +34,37 @@ describe.skipIf(!image)('Agent Container entrypoint (real Docker)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it('keeps each slot service data in its own Service Volume, so two containers share one home', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'ct-services-'));
+    const entrypoint = path.join(dir, 'entrypoint.sh');
+    copyFileSync(path.join(import.meta.dirname, '../agent-base/entrypoint.sh'), entrypoint);
+    chmodSync(entrypoint, 0o755);
+    const runner = path.join(dir, 'runner.sh');
+    writeFileSync(runner, '#!/bin/bash\ntouch /tmp/runner-started\nexec sleep 300\n', { mode: 0o755 });
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const home = `ct-test-home-${suffix}`;
+    const ids: string[] = [];
+    try {
+      for (const slot of [1, 2]) {
+        ids.push(docker(
+          'run', '-d', '-e', 'CLAUDE_TASK_RUNNER_TOKEN=t', '-e', 'CLAUDE_TASK_SERVICES=redis',
+          '-v', `${home}:/home/agent`, '-v', `ct-test-services-${suffix}-${slot}:/var/lib/claude-task/services`,
+          '-v', `${entrypoint}:/usr/local/bin/claude-task-entrypoint:ro`, '-v', `${runner}:/usr/local/bin/claude-task-runner:ro`, image!,
+        ));
+      }
+      for (const id of ids) {
+        for (let i = 0; i < 100 && docker('exec', id, 'bash', '-c', 'test -e /tmp/runner-started && echo ok || true') !== 'ok'; i++) await new Promise((r) => setTimeout(r, 200));
+        expect(docker('exec', id, 'redis-cli', 'ping')).toBe('PONG');
+        expect(docker('exec', id, 'bash', '-c', 'test -d /var/lib/claude-task/services/redis && echo ok')).toBe('ok');
+      }
+      docker('exec', ids[0]!, 'redis-cli', 'set', 'slot', '1');
+      expect(docker('exec', ids[1]!, 'redis-cli', 'get', 'slot')).toBe('');
+      expect(docker('exec', ids[0]!, 'bash', '-c', 'ls -A /home/agent/.local/share/claude-task 2>/dev/null || true')).toBe('');
+    } finally {
+      for (const id of ids) docker('rm', '-f', id);
+      for (const v of [home, `ct-test-services-${suffix}-1`, `ct-test-services-${suffix}-2`]) docker('volume', 'rm', '-f', v);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

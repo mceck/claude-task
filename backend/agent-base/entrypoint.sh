@@ -31,7 +31,9 @@ for bin in "$HOME"/.local/share/mise/installs/node/*/bin; do
   fi
 done
 if $reshim; then mise reshim || true; fi
-data="$HOME/.local/share/claude-task"
+# Each Worker Slot keeps its Development Services' data in its own Service Volume: the home is the
+# Worker Volume, shared by every Worker Container of the Worker, and two databases cannot share a data dir.
+data="${CLAUDE_TASK_SERVICE_DIR:-/var/lib/claude-task/services}"
 mkdir -p "$data/run"
 chmod 700 "$data/run"
 

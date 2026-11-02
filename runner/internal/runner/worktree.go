@@ -91,6 +91,11 @@ func (j *job) prepareGitWorktreeWithRetry(out *utf8Chunks, repo, wt string, g *p
 }
 
 func prepareGitWorktree(out io.Writer, repo, wt string, g *protocol.GitSpec, cancelled func() bool) (bool, error) {
+	unlock, err := lockRepo(repo)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
 	check := func() error {
 		if cancelled() {
 			return errCancelled
@@ -308,19 +313,25 @@ func (r *Runner) removeWorktree(m *protocol.Incoming) {
 		log.Printf("worktree.remove: %v", err)
 		return
 	}
+	// Another Worker Container may be updating the same Bare Clone.
+	repo := ""
 	if m.RepoPath != nil {
-		if repo, err := within(r.cfg.Home, *m.RepoPath); err == nil {
-			if err := runGit(io.Discard, repo, "worktree", "remove", "--force", wt); err != nil {
-				log.Printf("worktree.remove: %v", err)
+		if p, err := within(r.cfg.Home, *m.RepoPath); err == nil {
+			repo = p
+			if unlock, err := lockRepo(repo); err == nil {
+				defer unlock()
 			}
+		}
+	}
+	if repo != "" {
+		if err := runGit(io.Discard, repo, "worktree", "remove", "--force", wt); err != nil {
+			log.Printf("worktree.remove: %v", err)
 		}
 	}
 	if err := os.RemoveAll(wt); err != nil {
 		log.Printf("worktree.remove: %v", err)
 	}
-	if m.RepoPath != nil {
-		if repo, err := within(r.cfg.Home, *m.RepoPath); err == nil {
-			runGit(io.Discard, repo, "worktree", "prune")
-		}
+	if repo != "" {
+		runGit(io.Discard, repo, "worktree", "prune")
 	}
 }

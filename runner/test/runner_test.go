@@ -14,7 +14,7 @@ func TestHelloAndArgumentsForANewSession(t *testing.T) {
 	b := newBackend(t)
 	home := startRunner(t, b)
 	hello := b.waitHello(1)
-	if hello.str("claudeVersion") != "9.9.9" || hello["activeJobId"] != nil || hello.num("protocolVersion") != 3 {
+	if hello.str("claudeVersion") != "9.9.9" || hello["activeJobId"] != nil || hello.num("protocolVersion") != 4 {
 		t.Fatalf("unexpected hello %v", hello)
 	}
 
@@ -182,14 +182,21 @@ func TestCancelEscalatesToKill(t *testing.T) {
 
 func TestResendAfterBackendDisconnect(t *testing.T) {
 	t.Run("in memory", func(t *testing.T) { testResend(t) })
-	// A tiny memory budget makes the outbox spill to the Agent Volume.
+	// A tiny memory budget makes the outbox spill to the container's own run directory.
 	t.Run("spilled to disk", func(t *testing.T) { testResend(t, "CLAUDE_TASK_OUTBOX_MEMORY_BYTES=100") })
 }
 
 func testResend(t *testing.T, env ...string) {
 	b := newBackend(t)
-	home := startRunner(t, b, env...)
-	spill := filepath.Join(home, ".claude-task/outbox/j1.jsonl")
+	run := t.TempDir()
+	home := startRunner(t, b, append([]string{"CLAUDE_TASK_RUN_DIR=" + run}, env...)...)
+	spill := filepath.Join(run, "outbox/j1.jsonl")
+	// The Worker Volume, shared with the other Worker Containers, never holds it.
+	defer func() {
+		if _, err := os.Stat(filepath.Join(home, ".claude-task/outbox")); err == nil {
+			t.Fatal("outbox spilled into the home")
+		}
+	}()
 	b.waitHello(1)
 	// Nothing gets acked before the drop, so everything sent so far must come again.
 	b.setAutoAck(false)

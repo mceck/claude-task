@@ -3,6 +3,7 @@
 package runner
 
 import (
+	"claude-task/runner/internal/credentials"
 	"context"
 	"encoding/json"
 	"errors"
@@ -429,7 +430,7 @@ func (t *turns) enter() (<-chan struct{}, func()) {
 }
 
 func (r *Runner) spillPath(jobID string) string {
-	return filepath.Join(r.cfg.Home, ".claude-task", "outbox", jobID+".jsonl")
+	return filepath.Join(credentials.RunDir(), "outbox", jobID+".jsonl")
 }
 
 func claudeVersion(path string) string {

@@ -26,6 +26,8 @@ type job struct {
 	r     *Runner
 	id    string
 	start *protocol.Incoming
+	// The Agent Profile claude runs with, resolved inside the home when the Job spawns.
+	profileDir string
 
 	// Guarded by r.mu.
 	seq      int64
@@ -127,6 +129,11 @@ func (j *job) env() []string {
 	for k, v := range j.start.Env {
 		env = append(env, k+"="+v)
 	}
+	// The Agent's own Claude Code configuration: its Skills, Plugins and settings, sharing the
+	// Session transcripts with every other Agent Profile of the Worker Volume.
+	if j.profileDir != "" {
+		env = append(env, "CLAUDE_CONFIG_DIR="+j.profileDir)
+	}
 	return env
 }
 
@@ -164,6 +171,16 @@ func (j *job) args(forwardSubagentText bool) []string {
 }
 
 func (j *job) spawn(worktree string) error {
+	if j.start.AgentProfilePath != "" {
+		dir, err := within(j.r.cfg.Home, j.start.AgentProfilePath)
+		if err != nil {
+			return fmt.Errorf("agent profile: %w", err)
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("agent profile: %w", err)
+		}
+		j.profileDir = dir
+	}
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
 		return err
