@@ -29,6 +29,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
   final description = TextEditingController();
   final baseBranch = TextEditingController();
   String? agentId, error, repositoryError;
+  late String? workerId = soleWorkerId(widget.controller.workers);
   Json? repository;
   List<Json> groups = [];
   bool loading = true, saving = false;
@@ -36,7 +37,13 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
   @override
   void initState() {
     super.initState();
+    // Workers arrive and change live: the Worker field and Create follow.
+    widget.controller.addListener(_changed);
     _loadRepositories();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadRepositories() async {
@@ -59,6 +66,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_changed);
     keyText.dispose();
     name.dispose();
     description.dispose();
@@ -113,6 +121,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
           'key': keyText.text.trim().toUpperCase(),
           'name': name.text.trim(),
           'description': description.text,
+          'workerId': workerId,
           if (agentId != null) 'defaultAgentId': agentId,
           if (repository != null)
             'repository': {
@@ -143,6 +152,9 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
   @override
   Widget build(BuildContext context) {
     final agent = widget.controller.agents.byId(agentId);
+    final workers = widget.controller.workers;
+    // A Worker created meanwhile is preselected when it is the only one.
+    workerId ??= soleWorkerId(workers);
     return SheetScaffold(
       title: 'New project',
       body: Column(
@@ -185,6 +197,12 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
               maxLines: 3,
               enabled: !saving,
             ),
+          ),
+          WorkerField(
+            controller: widget.controller,
+            workerId: workerId,
+            description: 'Where the Project’s Agents run.',
+            onChanged: saving ? null : (id) => setState(() => workerId = id),
           ),
           LabeledField(
             label: 'Default Agent',
@@ -253,7 +271,10 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
           label: 'Create project',
           busy: saving,
           onPressed:
-              saving || keyText.text.trim().isEmpty || name.text.trim().isEmpty
+              saving ||
+                  keyText.text.trim().isEmpty ||
+                  name.text.trim().isEmpty ||
+                  workers.byId(workerId) == null
               ? null
               : _save,
         ),

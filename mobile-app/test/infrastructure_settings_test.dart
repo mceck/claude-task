@@ -80,14 +80,21 @@ class InfrastructureApi extends FakeApi {
     'enabled': true,
     'avatarEmoji': '🤖',
     'state': 'idle',
-    'containerState': 'running',
-    'runnerConnected': true,
-    'recreatePending': false,
+    'activeJobs': 0,
+    'activeTasks': <Json>[],
+    'credentialName': 'Team token',
     'skillIds': ['skill-1'],
     'mcpServerIds': ['mcp-1'],
     'pluginIds': <String>[],
     'extensionsPending': true,
     'extensionsError': 'Marketplace unavailable',
+    'extensionErrors': [
+      {
+        'workerId': 'worker-1',
+        'workerName': 'Default worker',
+        'error': 'Marketplace unavailable',
+      },
+    ],
   };
   Json repository = {
     'connectionId': 'connection-1',
@@ -105,6 +112,7 @@ class InfrastructureApi extends FakeApi {
       'settingsUrl': 'https://gitlab.example.com/team/api/settings',
     },
   };
+  List<Json> credentials = [];
   bool locked = false,
       failList = false,
       failSave = false,
@@ -123,7 +131,18 @@ class InfrastructureApi extends FakeApi {
         'agents': [agent],
       };
     }
-    if (path == '/credentials') return {'credentials': <Json>[]};
+    if (path == '/credentials') return {'credentials': credentials};
+    if (method == 'POST' && path.startsWith('/workers/')) {
+      writes.add((method, path, body));
+      if (failSave) {
+        throw const ApiException(
+          409,
+          'conflict',
+          'This worker container is stopped; it starts when work arrives',
+        );
+      }
+      return {'worker': workers.first};
+    }
     if (method != 'GET' &&
         (path.startsWith('/skills') ||
             path.startsWith('/plugins') ||
@@ -224,6 +243,7 @@ Future<Harness> openSettings(
   Future<void> Function(BuildContext, TaskController) open, {
   bool admin = true,
   Size size = const Size(800, 2000),
+  bool settle = true,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -236,7 +256,7 @@ Future<Harness> openSettings(
   await tester.pumpWidget(TaskApp(controller: h.controller));
   await tester.pumpAndSettle();
   open(tester.element(find.byType(Scaffold).first), h.controller);
-  await tester.pumpAndSettle();
+  settle ? await tester.pumpAndSettle() : await frames(tester);
   return h;
 }
 
@@ -245,6 +265,23 @@ Future<void> tap(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder.last);
   await tester.tap(finder.last);
   await tester.pumpAndSettle();
+}
+
+/// Lets transitions finish while a pulsing state dot keeps animating, which
+/// `pumpAndSettle` would wait on forever.
+Future<void> frames(WidgetTester tester) async {
+  for (var i = 0; i < 8; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+/// [tap] for screens with a pulsing state dot.
+Future<void> tapLive(WidgetTester tester, Finder finder) async {
+  await tester.pump();
+  await tester.ensureVisible(finder.last);
+  await frames(tester);
+  await tester.tap(finder.last);
+  await frames(tester);
 }
 
 /// The text field labelled [label], above it or inside it.
@@ -503,6 +540,7 @@ void main() {
         ...api.agent,
         'extensionsPending': false,
         'extensionsError': null,
+        'extensionErrors': <Json>[],
       };
       h.live.eventController.add({'type': 'agent.updated', 'agent': api.agent});
       await tester.pump(const Duration(milliseconds: 200));
@@ -512,49 +550,155 @@ void main() {
     },
   );
 
-  testWidgets('Admins rebuild and recreate an Agent container', (tester) async {
+  testWidgets('the Agent sheet holds its configuration only', (tester) async {
     final api = InfrastructureApi();
-    await openSettings(tester, api, showAgentsSettings);
-    await tap(tester, find.text('Ada Bot'));
-    expect(find.text('running · Runner connected'), findsOneWidget);
-
-    api.agent = {...api.agent, 'recreatePending': true};
-    await tap(tester, find.text('Rebuild image'));
-    expect(api.writes.last.$1, 'POST');
-    expect(api.writes.last.$2, '/agents/agent-1/rebuild');
+    api.agent = {...api.agent, 'state': 'working', 'activeJobs': 2};
+    await openSettings(tester, api, showAgentsSettings, settle: false);
+    expect(find.text('working · 2 Jobs · Team token'), findsOneWidget);
     expect(
-      find.text(
-        'Container recreation is waiting for the current Job to finish.',
-      ),
+      find.textContaining('Default worker: Marketplace unavailable'),
+      findsOneWidget,
+    );
+    await tapLive(tester, find.text('Ada Bot'));
+    expect(find.text('Save agent'), findsOneWidget);
+    for (final action in [
+      'Rebuild image',
+      'Restart',
+      'Recreate when idle',
+      'Force recreate',
+    ]) {
+      expect(find.text(action), findsNothing);
+    }
+  });
+
+  testWidgets('new Agents are created without Docker fields', (tester) async {
+    final api = InfrastructureApi()
+      ..credentials = [
+        {'id': 'credential-1', 'name': 'Team token'},
+      ];
+    await openSettings(tester, api, showAgentsSettings);
+    await tap(tester, find.byTooltip('New agent'));
+    await tester.enterText(input('Name'), 'Reviewer');
+    await tap(tester, find.text('Create agent'));
+    final body = api.bodies['POST /agents']!;
+    expect(body['name'], 'Reviewer');
+    expect(body['credentialId'], 'credential-1');
+    expect(body.containsKey('dockerfile'), isFalse);
+  });
+
+  testWidgets('Workers list their state and slots, and follow their topics', (
+    tester,
+  ) async {
+    final api = InfrastructureApi();
+    final h = await openSettings(
+      tester,
+      api,
+      showWorkersSettings,
+      admin: false,
+    );
+    expect(find.text('Default worker'), findsOneWidget);
+    expect(
+      find.textContaining('idle · 1 busy · 1/2 running · queue 3'),
+      findsOneWidget,
+    );
+    expect(h.live.topics, contains('workers'));
+    await tapLive(tester, find.text('Default worker'));
+    expect(h.live.topics, contains('worker:worker-1'));
+    expect(find.text('Slot 1'), findsOneWidget);
+    expect(find.text('Slot 2'), findsOneWidget);
+    expect(
+      find.textContaining('working · Docker running · Runner connected'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('API-1 Fix login · Ada Bot'), findsOneWidget);
+    expect(
+      find.textContaining('stopped · Docker missing · Runner disconnected'),
+      findsOneWidget,
+    );
+    // Members read the Worker; its actions are for Admins.
+    expect(find.text('Rebuild image'), findsNothing);
+    expect(find.text('Restart'), findsNothing);
+
+    final updated = workerData(
+      containers: [
+        workerSlotData(1, state: 'idle', recreatePending: true),
+        workerSlotData(2),
+      ],
+    );
+    h.live.eventController.add({'type': 'worker.updated', 'worker': updated});
+    await frames(tester);
+    expect(find.textContaining('API-1 Fix login'), findsNothing);
+    expect(
+      find.textContaining('Recreation waits for the current Job to finish.'),
       findsOneWidget,
     );
 
-    await tap(tester, find.text('Recreate when idle'));
-    expect(api.writes.last.$2, '/agents/agent-1/recreate');
-    expect(api.writes.last.$3, isNull);
+    Navigator.of(tester.element(find.text('Slot 1'))).pop();
+    await frames(tester);
+    expect(h.live.topics, isNot(contains('worker:worker-1')));
+    expect(h.live.topics, contains('workers'));
   });
 
   testWidgets(
-    'Restart and Force recreate confirm before interrupting the Job',
+    'Admins rebuild, recreate and restart Worker Slots with confirmations',
     (tester) async {
       final api = InfrastructureApi();
-      await openSettings(tester, api, showAgentsSettings);
-      await tap(tester, find.text('Ada Bot'));
+      await openSettings(tester, api, showWorkersSettings);
+      await tapLive(tester, find.text('Default worker'));
 
-      await tap(tester, find.text('Restart'));
-      expect(find.text('Restart this container?'), findsOneWidget);
-      await tap(tester, find.text('Cancel'));
-      expect(api.writes, isEmpty);
+      await tapLive(tester, find.text('Rebuild image'));
+      expect(api.writes.last.$1, 'POST');
+      expect(api.writes.last.$2, '/workers/worker-1/rebuild');
 
-      await tap(tester, find.text('Restart'));
-      await tap(tester, find.text('Restart').last);
-      expect(api.writes.last.$2, '/agents/agent-1/restart');
+      await tapLive(tester, find.text('Recreate when idle'));
+      expect(api.writes.last.$2, '/workers/worker-1/recreate');
+      final before = api.writes.length;
 
-      await tap(tester, find.text('Force recreate'));
-      expect(find.text('Force recreate this container?'), findsOneWidget);
-      await tap(tester, find.text('Force recreate').last);
-      expect(api.writes.last.$2, '/agents/agent-1/recreate');
-      expect(api.writes.last.$3, {'force': true});
+      final slot1 = find.byKey(const ValueKey('worker-slot:1'));
+      await tapLive(
+        tester,
+        find.descendant(of: slot1, matching: find.text('Restart')),
+      );
+      expect(find.text('Restart slot 1?'), findsOneWidget);
+      await tapLive(tester, find.text('Cancel'));
+      expect(api.writes, hasLength(before));
+
+      await tapLive(
+        tester,
+        find.descendant(of: slot1, matching: find.text('Restart')),
+      );
+      await tapLive(tester, find.text('Restart').last);
+      expect(api.writes.last.$2, '/workers/worker-1/containers/1/restart');
+
+      // A stopped slot can't restart: it starts when work arrives.
+      final slot2 = find.byKey(const ValueKey('worker-slot:2'));
+      final restart2 = tester.widget<AppButton>(
+        find.ancestor(
+          of: find.descendant(of: slot2, matching: find.text('Restart')),
+          matching: find.byType(AppButton),
+        ),
+      );
+      expect(restart2.onPressed, isNull);
+
+      await tapLive(
+        tester,
+        find.descendant(of: slot2, matching: find.text('Force recreate')),
+      );
+      expect(find.text('Force recreate slot 2?'), findsOneWidget);
+      await tapLive(tester, find.text('Force recreate').last);
+      expect(
+        api.writes.last.$2,
+        '/workers/worker-1/containers/2/force-recreate',
+      );
+
+      api.failSave = true;
+      await tapLive(tester, find.text('Recreate when idle'));
+      expect(
+        find.text(
+          'This worker container is stopped; it starts when work arrives',
+        ),
+        findsOneWidget,
+      );
     },
   );
 

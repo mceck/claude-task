@@ -435,6 +435,12 @@ class AppDrawer extends StatelessWidget {
                 'Agents',
                 showAgentsSettings,
               ),
+              setting(
+                Icons.dns_outlined,
+                Palette.info,
+                'Workers',
+                showWorkersSettings,
+              ),
               if (admin) ...[
                 setting(
                   Icons.group_outlined,

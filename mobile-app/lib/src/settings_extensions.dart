@@ -14,9 +14,17 @@ class _AgentExtensionStatus extends StatelessWidget {
       final live = controller.agents.byId(agent['id'] as String);
       final pending =
           live?.extensionsPending ?? agent['extensionsPending'] == true;
-      final error = live == null
+      // Errors per Worker; data without them falls back to the latest one.
+      final errors = live != null
+          ? [for (final e in live.extensionErrors) '${e.name}: ${e.error}']
+          : [
+              for (final e in objects(agent['extensionErrors']))
+                '${e['workerName']}: ${e['error']}',
+            ];
+      final latest = live == null
           ? agent['extensionsError'] as String?
           : live.extensionsError;
+      if (errors.isEmpty && latest != null) errors.add(latest);
       return Column(
         children: [
           if (pending)
@@ -28,7 +36,7 @@ class _AgentExtensionStatus extends StatelessWidget {
               icon: Icons.schedule_rounded,
             ),
           if (pending) const SizedBox(height: Space.row),
-          if (error != null) ...[
+          for (final error in errors) ...[
             Notice(
               message: '${agent['name']}: $error',
               color: Palette.danger,

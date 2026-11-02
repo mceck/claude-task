@@ -65,6 +65,9 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
   late bool _savedAutoResume = _autoResume;
   late bool _boardWriteAccess = _settings['boardWriteAccess'] == true;
   late bool _savedBoardWriteAccess = _boardWriteAccess;
+  late String? _workerId = _settings['workerId'] as String?;
+  String? _workerError;
+  bool _workerSaving = false;
   Timer? _debounce;
   Future<bool>? _saveFuture;
   String? _saveError, _envError;
@@ -120,6 +123,7 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
       _boardWriteAccess = _savedBoardWriteAccess =
           _settings['boardWriteAccess'] == true;
     }
+    if (!_workerSaving) _workerId = _settings['workerId'] as String?;
   }
 
   @override
@@ -171,6 +175,9 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
           if (changes.containsKey('autoResume')) {
             _savedAutoResume = changes['autoResume'] as bool;
           }
+          if (changes.containsKey('boardWriteAccess')) {
+            _savedBoardWriteAccess = changes['boardWriteAccess'] as bool;
+          }
         });
       }
       return true;
@@ -202,6 +209,38 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
     if (selected == null || !mounted) return;
     setState(() => _defaultAgentId = selected.isEmpty ? null : selected);
     await _flush();
+  }
+
+  /// The Worker saves on its own, at once: the backend refuses it with the
+  /// Tasks to close while Sessions of the Project are started and open, and
+  /// that must not hold back the other fields.
+  Future<void> _changeWorker(String workerId) async {
+    if (workerId == _workerId) return;
+    final previous = _workerId;
+    setState(() {
+      _workerId = workerId;
+      _workerSaving = true;
+      _workerError = null;
+    });
+    try {
+      final result = await widget.controller.settingsRequest(
+        'PATCH',
+        '$_path/agent-settings',
+        body: {'workerId': workerId},
+      );
+      final saved = (result['settings'] as Map?)?['workerId'] as String?;
+      if (mounted) setState(() => _workerId = saved ?? workerId);
+      unawaited(widget.controller.refresh().catchError((Object _) {}));
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _workerId = previous;
+          _workerError = e.toString();
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _workerSaving = false);
+    }
   }
 
   Future<void> _envChange(String method, String suffix, [Json? body]) async {
@@ -280,6 +319,27 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
         Section(
           title: 'Agent setup',
           children: [
+            ListenableBuilder(
+              listenable: widget.controller,
+              builder: (context, _) => WorkerField(
+                controller: widget.controller,
+                workerId: _workerId,
+                description:
+                    'Where the Project’s Jobs run. It changes only while no '
+                    'Session of the Project is started and open.',
+                onChanged: _workerSaving || !widget.controller.online
+                    ? null
+                    : _changeWorker,
+              ),
+            ),
+            if (_workerError != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: Space.field),
+                child: Notice.error(
+                  _workerError!,
+                  key: const Key('worker-error'),
+                ),
+              ),
             LabeledField(
               label: 'Default Agent',
               description: 'Assigned to new Tasks while enabled. The first User Comment starts the Agent.',

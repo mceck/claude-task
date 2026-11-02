@@ -46,6 +46,76 @@ Json taskData({
   'agentId': null,
 };
 
+/// A Worker, as the API sends it, with one Worker Slot per state given.
+Json workerData({
+  String id = 'worker-1',
+  String name = 'Default worker',
+  String state = 'idle',
+  int cap = 2,
+  List<Json>? containers,
+  List<Json> profileErrors = const [],
+}) => {
+  'id': id,
+  'name': name,
+  'description': '',
+  'dockerfile': 'FROM claude-task/agent-base\nUSER agent\n',
+  'services': ['postgres'],
+  'cpuLimit': null,
+  'memoryMb': null,
+  'minimum': 1,
+  'cap': cap,
+  'enabled': state != 'disabled',
+  'imageState': 'built',
+  'state': state,
+  'containers':
+      containers ??
+      [workerSlotData(1, state: 'working', task: true), workerSlotData(2)],
+  'busy': 1,
+  'running': 1,
+  'queueLength': 3,
+  'projects': [
+    {'id': 'project-1', 'name': 'Payments', 'kind': 'project'},
+  ],
+  'profileErrors': profileErrors,
+  'createdAt': '2026-11-01T10:00:00.000Z',
+  'updatedAt': '2026-11-01T10:00:00.000Z',
+};
+
+/// One Worker Slot of [workerData]; [task] gives it a running Job.
+Json workerSlotData(
+  int slot, {
+  String state = 'stopped',
+  bool task = false,
+  bool recreatePending = false,
+}) => {
+  'slot': slot,
+  'state': state,
+  'containerState': state == 'stopped' ? 'missing' : 'running',
+  'runnerConnected': state != 'stopped',
+  'recreatePending': recreatePending,
+  'job': task
+      ? {
+          'id': 'job-1',
+          'task': {
+            'id': 'task-1',
+            'key': 'API-1',
+            'title': 'Fix login',
+            'projectId': 'project-1',
+          },
+          'agent': {
+            'id': 'agent-1',
+            'name': 'Ada Bot',
+            'avatarEmoji': '🤖',
+            'avatarColor': '#6366f1',
+            'avatarImageUrl': null,
+          },
+        }
+      : null,
+  'runnerVersion': null,
+  'claudeVersion': null,
+  'lastActivityAt': null,
+};
+
 /// Later positions were created later, as on the server.
 String at(String position) => DateTime.utc(
   2026,
@@ -431,6 +501,9 @@ class FakeApi implements TaskApi {
       partialCreate = false;
   bool hasOlder = false;
   List<Json> projectList = [projectData];
+
+  /// The Workers `GET /workers` lists.
+  List<Json> workers = [workerData()];
   Json? session;
   int createCount = 0, sendCount = 0, readCount = 0;
   final createdTags = <Json>[];
@@ -493,6 +566,15 @@ class FakeApi implements TaskApi {
     }
     if (path == '/wikis') return {'wikis': <Json>[]};
     if (path == '/schedules') return {'schedules': <Json>[]};
+    if (path == '/workers') return {'workers': workers};
+    final worker = RegExp(r'^/workers/([^/]+)(/.*)?$').firstMatch(path);
+    if (worker != null) {
+      final found = workers.firstWhere(
+        (w) => w['id'] == worker.group(1),
+        orElse: () => throw const ApiException(404, 'not_found', 'Worker'),
+      );
+      return {'worker': found};
+    }
     if (path == '/projects') {
       return {'projects': projectList};
     }

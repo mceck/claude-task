@@ -133,6 +133,8 @@ void main() {
           'key': 'DOC',
           'name': 'Documentation',
           'description': 'Team docs',
+          // The only Worker is preselected.
+          'workerId': 'worker-1',
         });
         expect(h.controller.projects.last.key, 'DOC');
         expect(h.controller.project!.id, 'created-project');
@@ -190,6 +192,86 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  for (final admin in [true, false]) {
+    testWidgets('without Workers creation waits for one (admin: $admin)', (
+      tester,
+    ) async {
+      final api = _ProjectApi()
+        ..workers = []
+        ..user = {...userData, 'role': admin ? 'admin' : 'member'};
+      final h = Harness(api: api);
+      addTearDown(h.dispose);
+      await h.login();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('New project'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).at(0), 'NEW');
+      await tester.enterText(find.byType(TextField).at(1), 'New');
+      await tester.pump();
+      expect(
+        find.text(
+          admin
+              ? "Create a Worker first, in the web app's Workers section."
+              : 'Ask an Admin to create a Worker.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('No Workers'), findsOneWidget);
+      final create = tester.widget<AppButton>(
+        find.widgetWithText(AppButton, 'Create project'),
+      );
+      expect(create.onPressed, isNull);
+
+      // A Worker created meanwhile arrives live and is preselected.
+      h.live.eventController.add({
+        'type': 'worker.updated',
+        'worker': workerData(),
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Default worker'), findsOneWidget);
+      await tester.ensureVisible(find.text('Create project'));
+      await tester.tap(find.text('Create project'));
+      await tester.pumpAndSettle();
+      expect(api.submitted!['workerId'], 'worker-1');
+    });
+  }
+
+  testWidgets('with several Workers one must be picked', (tester) async {
+    final api = _ProjectApi()
+      ..workers = [
+        workerData(),
+        workerData(id: 'worker-2', name: 'GPU worker', state: 'offline'),
+      ];
+    final h = Harness(api: api);
+    addTearDown(h.dispose);
+    await h.login();
+    await tester.pumpWidget(TaskApp(controller: h.controller));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('New project'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(0), 'GPU');
+    await tester.enterText(find.byType(TextField).at(1), 'Models');
+    await tester.pump();
+    expect(
+      tester
+          .widget<AppButton>(find.widgetWithText(AppButton, 'Create project'))
+          .onPressed,
+      isNull,
+    );
+    await tester.ensureVisible(find.text('Choose a Worker'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a Worker'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('offline · 1 busy'), findsOneWidget);
+    await tester.tap(find.text('GPU worker'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Create project'));
+    await tester.tap(find.text('Create project'));
+    await tester.pumpAndSettle();
+    expect(api.submitted!['workerId'], 'worker-2');
+  });
 
   testWidgets('clears optional choices and retries Repository list loading', (
     tester,

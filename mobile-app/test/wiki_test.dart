@@ -39,6 +39,7 @@ class WikiApi extends FakeApi {
     'description': 'Shared documentation',
     'taskId': 'task-1',
     'agentId': 'agent-1',
+    'workerId': 'worker-1',
     'repository': {
       'connectionId': 'git-1',
       'providerRepoId': '1',
@@ -81,6 +82,22 @@ class WikiApi extends FakeApi {
       newChats++;
       return {'chat': chat('task-1', 'Chat', '2026-10-27T10:00:00.000Z')};
     }
+    final chatAgent = RegExp(
+      r'^/wikis/wiki-1/chats/([^/]+)/agent$',
+    ).firstMatch(path);
+    if (chatAgent != null && method == 'PUT') {
+      calls.add('$method $path');
+      bodies['$method $path'] = body;
+      final id = chatAgent.group(1)!;
+      chats = [
+        for (final c in chats)
+          if (c['id'] == id) {...c, 'agentId': body!['agentId']} else c,
+      ];
+      if (id == 'task-1') {
+        currentTask = {...currentTask, 'agentId': body!['agentId']};
+      }
+      return {'chat': chats.firstWhere((c) => c['id'] == id)};
+    }
     final chatPath = RegExp(r'^/wikis/wiki-1/chats/([^/]+)$').firstMatch(path);
     if (chatPath != null) {
       calls.add('$method $path');
@@ -113,6 +130,7 @@ class WikiApi extends FakeApi {
     }
     if ((path == '/wikis' && method == 'POST') ||
         (path == '/wikis/wiki-1' && method == 'PATCH')) {
+      bodies['$method $path'] = body;
       empty = false;
       wiki = {...wiki, ...body!};
       return {'wiki': wiki};
@@ -301,22 +319,29 @@ void main() {
     expect(h.controller.timeline, isNotEmpty);
   });
 
-  test("another Agent's Chat is read-only with the reason", () async {
+  test('a Chat of another Agent takes Messages and can change Agent', () async {
     final h = Harness(api: WikiApi());
     addTearDown(h.dispose);
     await h.login();
     await h.controller.selectWiki(h.controller.wikis.single);
-    await h.controller.selectChat(h.controller.chats.first);
-    expect(h.controller.chatReadOnlyReason, isNull);
     await h.controller.selectChat(h.controller.chats.last);
-    expect(
-      h.controller.chatReadOnlyReason,
-      'This chat is run by another agent: assign the wiki back to that agent '
-      'to continue it.',
-    );
+    expect(h.controller.openChat!.agentId, 'agent-2');
     await h.controller.setDraft(const Draft(text: 'Hi'));
     await h.controller.send();
-    expect(h.api.sendCount, 0);
+    expect(h.api.sendCount, 1);
+
+    await h.controller.selectChat(h.controller.chats.first);
+    await h.controller.setChatAgent('agent-2');
+    expect(h.api.bodies['PUT /wikis/wiki-1/chats/task-1/agent'], {
+      'agentId': 'agent-2',
+    });
+    expect(h.controller.openChat!.agentId, 'agent-2');
+    expect(h.controller.chats.first.agentId, 'agent-2');
+    expect(h.controller.task!.agentId, 'agent-2');
+    expect(
+      (h.storage.read('chats:wiki-1')!['chats'] as List).first['agentId'],
+      'agent-2',
+    );
   });
 
   test('a notification opens the Chat within its Wiki', () async {
@@ -444,31 +469,34 @@ void main() {
     });
   }
 
-  testWidgets(
-    "the composer of another Agent's Chat is replaced by the reason",
-    (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final h = Harness(api: WikiApi());
-      addTearDown(h.dispose);
-      await h.login();
-      await tester.pumpWidget(TaskApp(controller: h.controller));
-      await tester.pumpAndSettle();
-      await h.controller.selectWiki(h.controller.wikis.single);
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('chat-row:task-2')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('comment-composer')), findsNothing);
-      expect(find.textContaining('This chat is run by'), findsOneWidget);
-      await tester.tap(find.byTooltip('Back'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('chat-row:task-1')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('comment-composer')), findsOneWidget);
-    },
-  );
+  testWidgets('the Chat header picks the Chat\'s Agent', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = WikiApi();
+    final h = Harness(api: api);
+    addTearDown(h.dispose);
+    await h.login();
+    await tester.pumpWidget(TaskApp(controller: h.controller));
+    await tester.pumpAndSettle();
+    await h.controller.selectWiki(h.controller.wikis.single);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-row:task-2')));
+    await tester.pumpAndSettle();
+    // Another Agent's Chat keeps its composer.
+    expect(find.byKey(const Key('comment-composer')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('chat-agent')));
+    await tester.pumpAndSettle();
+    expect(find.text('Chat agent'), findsOneWidget);
+    await tester.tap(find.text('Ada Bot').last);
+    await tester.pumpAndSettle();
+    expect(api.bodies['PUT /wikis/wiki-1/chats/task-2/agent'], {
+      'agentId': 'agent-1',
+    });
+    expect(h.controller.openChat!.agentId, 'agent-1');
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('Wiki creation selects an agent and repository on the phone', (
     tester,
@@ -503,6 +531,8 @@ void main() {
     await tester.tap(find.text('Create wiki'));
     await tester.pumpAndSettle();
     expect(h.controller.wiki!.name, 'Product wiki');
+    // The only Worker is preselected.
+    expect(h.api.bodies['POST /wikis']!['workerId'], 'worker-1');
     expect(find.byType(Conversation), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

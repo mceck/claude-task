@@ -57,6 +57,9 @@ class _ProjectAgentApi extends FakeApi {
     'setupScript': 'pnpm install',
     'agentInstructions': 'Run tests before review.',
     'defaultAgentId': 'agent-disabled',
+    'workerId': 'worker-1',
+    'autoResume': false,
+    'boardWriteAccess': false,
     'env': <Json>[
       {
         'id': 'env-1',
@@ -75,7 +78,7 @@ class _ProjectAgentApi extends FakeApi {
     ],
   };
   final writes = <(String, String, Json?)>[];
-  bool failLoad = false, failSave = false;
+  bool failLoad = false, failSave = false, rejectWorker = false;
   Completer<void>? holdSave;
 
   @override
@@ -111,6 +114,14 @@ class _ProjectAgentApi extends FakeApi {
       writes.add((method, path, body == null ? null : {...body}));
       if (failSave) {
         throw const ApiException(503, 'unavailable', 'Save unavailable');
+      }
+      if (rejectWorker && body?['workerId'] != null) {
+        throw const ApiException(
+          409,
+          'conflict',
+          'These tasks still have a conversation on the current worker: '
+              'API-1. Close them first.',
+        );
       }
       if (method == 'PATCH') {
         await holdSave?.future;
@@ -235,6 +246,55 @@ void main() {
       {'autoResume': true},
     ));
     expect(tester.widget<Switch>(find.byType(Switch).first).value, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the Board Write Access switch saves once', (tester) async {
+    final api = _ProjectAgentApi();
+    await _open(tester, api);
+    await _tap(tester, find.text('Agents may write to the board'));
+    expect(api.writes, hasLength(1));
+    expect(api.writes.single.$3, {'boardWriteAccess': true});
+    expect(find.text('Saved'), findsOneWidget);
+  });
+
+  testWidgets('the Worker saves at once and a refusal names the Tasks', (
+    tester,
+  ) async {
+    final api = _ProjectAgentApi()
+      ..workers = [
+        workerData(),
+        workerData(id: 'worker-2', name: 'GPU worker'),
+      ];
+    await _open(tester, api);
+    expect(find.text('Default worker'), findsOneWidget);
+    await _tap(tester, find.byKey(const Key('worker-field')));
+    await _tap(tester, find.text('GPU worker'));
+    _expectWrite(api.writes.last, (
+      'PATCH',
+      '/projects/project-1/agent-settings',
+      {'workerId': 'worker-2'},
+    ));
+    expect(find.text('GPU worker'), findsOneWidget);
+
+    api.rejectWorker = true;
+    await _tap(tester, find.byKey(const Key('worker-field')));
+    await _tap(tester, find.text('Default worker'));
+    expect(
+      find.text(
+        'These tasks still have a conversation on the current worker: '
+        'API-1. Close them first.',
+      ),
+      findsOneWidget,
+    );
+    // The refused choice is undone.
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('worker-field')),
+        matching: find.text('GPU worker'),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

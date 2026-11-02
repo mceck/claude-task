@@ -48,9 +48,16 @@ Color tagColor(Tag tag) =>
     tag.color == null ? tint(tag.name) : hexColor(tag.color!, tint(tag.name));
 
 /// Next to an Agent in a picker: its state with the same dot as the web app
-/// (hollow green when free, pulsing green when busy, pulsing blue while
-/// building, red when the build failed or it is disabled, grey when offline).
-Widget? agentStateDot(Agent agent) {
+/// (hollow green when idle, pulsing green while working, hollow red when
+/// disabled).
+Widget? agentStateDot(Agent agent) => stateDot(agent.state);
+
+/// Next to a Worker in a picker or a list, with the Agents' palette: pulsing
+/// blue while building, red when the build failed, grey when offline.
+Widget? workerStateDot(Worker worker) => stateDot(worker.state);
+
+/// The state dot shared by Agents, Workers and Worker Slots.
+Widget? stateDot(String state) {
   Widget hollow(Color color) => Container(
     width: 11,
     height: 11,
@@ -59,13 +66,13 @@ Widget? agentStateDot(Agent agent) {
       border: Border.all(color: color, width: 1.5),
     ),
   );
-  return switch (agent.state) {
+  return switch (state) {
     'idle' => hollow(Palette.success),
     'working' => const PulseDot(color: Palette.success, size: 11),
-    'building' => const PulseDot(color: Palette.info, size: 11),
+    'building' || 'starting' => const PulseDot(color: Palette.info, size: 11),
     'build_failed' => const Dot(color: Palette.danger, size: 11),
     'disabled' => hollow(Palette.danger),
-    'offline' => hollow(Palette.fgSubtle),
+    'offline' || 'stopped' => hollow(Palette.fgSubtle),
     _ => null,
   };
 }

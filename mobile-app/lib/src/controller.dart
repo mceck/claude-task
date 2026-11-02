@@ -82,6 +82,12 @@ class TaskController extends ChangeNotifier {
   List<Tag> tags = [];
   List<User> users = [];
   List<Agent> agents = [];
+
+  /// Every Worker, for the Workers screen and the Worker pickers.
+  List<Worker> workers = [];
+
+  /// The Worker whose sheet is open: its topic is followed while it shows.
+  String? _watchedWorkerId;
   Map<String, TaskPreference> preferences = {};
   Project? project;
   Task? task;
@@ -374,6 +380,8 @@ class TaskController extends ChangeNotifier {
     tasks = [];
     users = [];
     agents = [];
+    workers = [];
+    _watchedWorkerId = null;
     projects = [];
     wikis = [];
     wiki = null;
@@ -408,6 +416,12 @@ class TaskController extends ChangeNotifier {
       schedule = schedules.byId(schedule!.id) ?? schedule;
     }
     agents = _unlessSame('agents', agents, cached['agents'], Agent.fromJson);
+    workers = _unlessSame(
+      'workers',
+      workers,
+      cached['workers'],
+      Worker.fromJson,
+    );
     users = _unlessSame('users', users, cached['users'], User.fromJson);
   }
 
@@ -447,8 +461,10 @@ class TaskController extends ChangeNotifier {
   void _subscribe() => _socket?.subscribe({
     'user:${user!.id}',
     'agents',
+    'workers',
     'wikis',
     'projects',
+    if (_watchedWorkerId != null) 'worker:$_watchedWorkerId',
     if (scheduleSection) 'schedules',
     if (project != null) 'project:${project!.id}',
     if (task != null) 'task:${task!.id}',
@@ -606,6 +622,8 @@ class TaskController extends ChangeNotifier {
     tags = [];
     users = [];
     agents = [];
+    workers = [];
+    _watchedWorkerId = null;
     preferences = {};
     task = null;
     project = null;
@@ -663,6 +681,7 @@ class TaskController extends ChangeNotifier {
       _request('GET', '/users'),
       _request('GET', '/wikis'),
       _request('GET', '/schedules'),
+      _request('GET', '/workers'),
     ]);
     if (user == null) return;
     await storage.write('global', {
@@ -670,6 +689,7 @@ class TaskController extends ChangeNotifier {
       'agents': results[1]['agents'],
       'users': results[2]['users'],
       'wikis': results[3]['wikis'],
+      'workers': results[5]['workers'],
     });
     await storage.write('schedules', {'schedules': results[4]['schedules']});
     _hydrateGlobal();
@@ -887,14 +907,24 @@ class TaskController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Why the open Chat can't be written to: another Agent runs it.
-  String? get chatReadOnlyReason {
-    final chat = openChat, w = wiki;
-    if (chat == null || w == null || task?.id != chat.id) return null;
-    if (chat.agentId == null || chat.agentId == w.agentId) return null;
-    final name = agents.byId(chat.agentId)?.name ?? 'another agent';
-    return 'This chat is run by $name: assign the wiki back to that agent '
-        'to continue it.';
+  /// Changes the open Chat's Agent. The conversation goes on with the new
+  /// one: its next Message opens with the Agent Change Notice.
+  Future<void> setChatAgent(String agentId) async {
+    final current = wiki, chat = openChat;
+    if (current == null || chat == null) return;
+    final result = await _request(
+      'PUT',
+      '/wikis/${current.id}/chats/${chat.id}/agent',
+      body: {'agentId': agentId},
+    );
+    if (wiki?.id != current.id) return;
+    final changed = WikiChat.fromJson(result['chat'] as Json);
+    chats = [for (final c in chats) c.id == changed.id ? changed : c];
+    if (openChat?.id == changed.id) openChat = changed;
+    await _cacheChats(current.id);
+    notifyListeners();
+    if (task?.id == changed.id) await _fetchTask(changed.id);
+    notifyListeners();
   }
 
   /// Whether the open Task is the conversation of a Scheduled Run.
@@ -1661,10 +1691,7 @@ class TaskController extends ChangeNotifier {
   /// Plans a Comment for [dueAt] from the draft. Scheduling needs the
   /// connection and is never queued: offline, the draft stays as it is.
   Future<bool> scheduleDraft(DateTime dueAt) async {
-    if (sending ||
-        task == null ||
-        chatReadOnlyReason != null ||
-        scheduleRunReadOnlyReason != null) {
+    if (sending || task == null || scheduleRunReadOnlyReason != null) {
       return false;
     }
     if (!online) {
@@ -1835,10 +1862,7 @@ class TaskController extends ChangeNotifier {
   }
 
   Future<void> send() async {
-    if (sending ||
-        task == null ||
-        chatReadOnlyReason != null ||
-        scheduleRunReadOnlyReason != null) {
+    if (sending || task == null || scheduleRunReadOnlyReason != null) {
       return;
     }
     if (!online) {
@@ -2315,6 +2339,13 @@ class TaskController extends ChangeNotifier {
       _refreshProjectsSoon();
       return;
     }
+    if (type == 'worker.updated' || type == 'worker.deleted') {
+      _applyWorkerEvent(type, event);
+      return;
+    }
+    // The app shows no Worker Queue or Build history; the Worker's Queue
+    // length and state come with `worker.updated`.
+    if (type == 'queue.changed' || type.startsWith('build.')) return;
     if (type == 'scheduled_message.updated') {
       final message = Json.from(event['message'] as Map);
       if (message['taskId'] == task?.id) {
@@ -2486,6 +2517,68 @@ class TaskController extends ChangeNotifier {
           liveStatus = '';
           liveSetup = null;
       }
+    }
+  }
+
+  /// Workers carry their whole state, so their events apply directly.
+  void _applyWorkerEvent(String type, Json event) {
+    final raw = objects((storage.read('global') ?? {})['workers']);
+    final List<Json> next;
+    if (type == 'worker.deleted') {
+      final id = event['workerId'] as String?;
+      next = [
+        for (final w in raw)
+          if (w['id'] != id) w,
+      ];
+    } else {
+      final worker = Json.from(event['worker'] as Map);
+      final known = raw.any((w) => w['id'] == worker['id']);
+      next =
+          [
+            for (final w in raw) w['id'] == worker['id'] ? worker : w,
+            if (!known) worker,
+          ]..sort(
+            (a, b) => (a['name'] as String? ?? '').toLowerCase().compareTo(
+              (b['name'] as String? ?? '').toLowerCase(),
+            ),
+          );
+    }
+    workers = _unlessSame('workers', workers, next, Worker.fromJson);
+    final cached = storage.read('global') ?? {};
+    unawaited(storage.write('global', {...cached, 'workers': next}));
+    notifyListeners();
+  }
+
+  /// Follows one Worker's topic while its sheet shows; null stops.
+  void watchWorker(String? id) {
+    if (_watchedWorkerId == id) return;
+    _watchedWorkerId = id;
+    if (user != null) _subscribe();
+  }
+
+  /// Refetches the Workers list, for the Workers screen.
+  Future<void> fetchWorkers() async {
+    final raw = objects((await _request('GET', '/workers'))['workers']);
+    if (user == null) return;
+    workers = _unlessSame('workers', workers, raw, Worker.fromJson);
+    final cached = storage.read('global') ?? {};
+    await storage.write('global', {...cached, 'workers': raw});
+    notifyListeners();
+  }
+
+  /// Refetches one Worker, after an action on it.
+  Future<Worker> fetchWorker(String id) async {
+    final result = await _request('GET', '/workers/$id');
+    _applyWorkerEvent('worker.updated', {'worker': result['worker']});
+    return workers.byId(id)!;
+  }
+
+  /// An Admin action on a Worker or one of its Worker Slots; the answer
+  /// carries the Worker as it is now.
+  Future<void> workerAction(String path) async {
+    final result = await _request('POST', path);
+    if (result['worker'] is Map) {
+      _applyWorkerEvent('worker.updated', {'worker': result['worker']});
     }
   }
 

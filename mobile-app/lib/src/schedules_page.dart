@@ -8,6 +8,7 @@ import 'task_forms.dart';
 import 'time_zones.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
+import 'worker_picker.dart';
 
 /// The Schedules section of the native app (docs/specs/schedules.md): Agents
 /// that work on their own, their configuration and their run history. Everyone
@@ -61,6 +62,11 @@ String _duration(ScheduleRun run) {
 String _agentName(TaskController c, Schedule s) {
   if (s.agentId == null) return 'No agent';
   return c.agents.byId(s.agentId)?.name ?? 'Deleted agent';
+}
+
+String _workerName(TaskController c, Schedule s) {
+  if (s.workerId == null) return 'No worker';
+  return c.workers.byId(s.workerId)?.name ?? 'Unknown worker';
 }
 
 String _scope(Schedule s) => s.global ? 'Global' : s.repositoryName;
@@ -156,7 +162,7 @@ class _ScheduleRow extends StatelessWidget {
       title: s.name,
       subtitle: [
         describeCron(s.cron),
-        '${_agentName(c, s)} · ${_scope(s)}${s.readOnly ? ' · read-only' : ''}',
+        '${_agentName(c, s)} · ${_workerName(c, s)} · ${_scope(s)}${s.readOnly ? ' · read-only' : ''}',
         '$next · $outcome',
       ].join('\n'),
       subtitleLines: 4,
@@ -312,6 +318,7 @@ class _SchedulePageState extends State<SchedulePage> {
                       value: s.enabled ? _when(s.nextRunAt) : 'Paused',
                     ),
                     _InfoLine(label: 'Agent', value: _agentName(c, s)),
+                    _InfoLine(label: 'Worker', value: _workerName(c, s)),
                     _InfoLine(
                       label: 'Scope',
                       value: s.global
@@ -493,6 +500,8 @@ class _ScheduleFormState extends State<_ScheduleForm> {
   );
   final base = TextEditingController();
   late String agentId = widget.schedule?.agentId ?? '';
+  late String? workerId =
+      widget.schedule?.workerId ?? soleWorkerId(widget.controller.workers);
   late String timeZone = widget.schedule?.timeZone ?? 'UTC';
   late Json? repository = widget.schedule?.repository;
   late bool readOnly = widget.schedule?.readOnly ?? false;
@@ -500,9 +509,15 @@ class _ScheduleFormState extends State<_ScheduleForm> {
   String? error;
   bool loading = true, saving = false;
 
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
+    // Workers arrive and change live: the Worker field and Save follow.
+    widget.controller.addListener(_changed);
     base.text = widget.schedule?.repository?['baseBranch'] as String? ?? '';
     _loadRepositories();
   }
@@ -533,6 +548,7 @@ class _ScheduleFormState extends State<_ScheduleForm> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_changed);
     name.dispose();
     cron.dispose();
     prompt.dispose();
@@ -634,6 +650,8 @@ class _ScheduleFormState extends State<_ScheduleForm> {
         // A disabled Agent stays valid while it isn't being changed.
         if (widget.schedule == null || widget.schedule!.agentId != agentId)
           'agentId': agentId,
+        if (widget.schedule == null || widget.schedule!.workerId != workerId)
+          'workerId': workerId,
         if (_repositoryChanged)
           'repository': repository == null
               ? null
@@ -659,11 +677,15 @@ class _ScheduleFormState extends State<_ScheduleForm> {
   @override
   Widget build(BuildContext context) {
     final c = widget.controller, agent = c.agents.byId(agentId);
+    // A Worker created meanwhile is preselected when it is the only one.
+    workerId ??= soleWorkerId(c.workers);
     final cronText = cron.text.trim(), validCron = parseCron(cronText) != null;
     final canSave =
         !saving &&
         name.text.trim().isNotEmpty &&
         agentId.isNotEmpty &&
+        workerId != null &&
+        (widget.schedule != null || c.workers.byId(workerId) != null) &&
         cronText.isNotEmpty &&
         validCron &&
         prompt.text.trim().isNotEmpty;
@@ -700,6 +722,12 @@ class _ScheduleFormState extends State<_ScheduleForm> {
               placeholder: agent == null,
               onTap: saving ? null : _pickAgent,
             ),
+          ),
+          WorkerField(
+            controller: c,
+            workerId: workerId,
+            description: 'Where its runs go.',
+            onChanged: saving ? null : (id) => setState(() => workerId = id),
           ),
           LabeledField(
             label: 'Cron expression',

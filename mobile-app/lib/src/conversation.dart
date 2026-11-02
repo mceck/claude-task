@@ -252,15 +252,7 @@ class _ConversationState extends State<Conversation> {
           ),
         ),
         _ActiveRunsBar(controller: c),
-        if (c.chatReadOnlyReason != null)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Notice(
-              key: const Key('chat-read-only'),
-              message: c.chatReadOnlyReason!,
-            ),
-          )
-        else if (c.scheduleRunReadOnlyReason != null)
+        if (c.scheduleRunReadOnlyReason != null)
           Padding(
             padding: const EdgeInsets.all(12),
             child: Notice(
@@ -717,6 +709,8 @@ class _Header extends StatelessWidget {
         ],
       ),
       actions: [
+        if (c.wiki != null && c.openChat?.id == t.id)
+          _ChatAgentSelector(controller: c),
         if (closeStatus != null)
           IconAction(
             icon: Icons.check_circle_outline_rounded,
@@ -828,6 +822,54 @@ class _Header extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The open Chat's Agent, changeable at any time (online): the conversation
+/// goes on with the new one. An empty Chat shows the Wiki's default Agent.
+class _ChatAgentSelector extends StatelessWidget {
+  final TaskController controller;
+  const _ChatAgentSelector({required this.controller});
+
+  Future<void> _pick(BuildContext context, String? current) async {
+    final c = controller;
+    final selected = await showPicker<String>(
+      context,
+      title: 'Chat agent',
+      selected: current ?? '',
+      options: [
+        for (final agent in c.agents.where((a) => a.enabled || a.id == current))
+          PickerOption(
+            agent.id,
+            agent.name,
+            detail: agent.enabled ? null : 'Disabled',
+            leading: agentAvatar(c.api, agent),
+            trailing: agentStateDot(agent),
+          ),
+      ],
+    );
+    if (selected == null || selected == current || !context.mounted) return;
+    await perform(context, () => c.setChatAgent(selected));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    final id = c.openChat?.agentId ?? c.task?.agentId ?? c.wiki?.agentId;
+    final agent = c.agents.byId(id);
+    return Tooltip(
+      message: 'Chat agent: ${agent?.name ?? 'none'}',
+      child: Pressable(
+        key: const Key('chat-agent'),
+        onTap: c.online ? () => _pick(context, id) : null,
+        borderRadius: BorderRadius.circular(8),
+        semanticLabel: 'Chat agent: ${agent?.name ?? 'none'}',
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: agentAvatar(c.api, agent, size: 26),
+        ),
+      ),
     );
   }
 }

@@ -35,6 +35,9 @@ class Project {
   final String id, key, name, description;
   final String? logoUrl;
 
+  /// Where the Project's Jobs run; null in data cached before Workers.
+  final String? workerId;
+
   /// Task counts per Status category, from the Projects list.
   final Map<String, int> taskCounts;
 
@@ -46,6 +49,7 @@ class Project {
       name = json['name'] as String,
       description = json['description'] as String? ?? '',
       logoUrl = json['logoUrl'] as String?,
+      workerId = json['workerId'] as String?,
       taskCounts = {
         for (final e in (json['taskCounts'] as Map? ?? {}).entries)
           e.key as String: (e.value as num).toInt(),
@@ -88,16 +92,18 @@ class Agent implements Identified {
   final String name, emoji;
   final String? avatarImageUrl;
   final bool enabled;
+
+  /// `disabled`, `idle` or `working`.
   final String state;
 
-  /// Last observed container state (`running`, `exited`, `missing`, …).
-  final String containerState;
-  final bool runnerConnected;
-
-  /// A newer image is built but the container still runs the old one.
-  final bool recreatePending;
+  /// Jobs running right now, on any Worker, and their Tasks.
+  final int activeJobs;
+  final List<TaskRef> activeTasks;
   final bool extensionsPending;
   final String? extensionsError;
+
+  /// Extension synchronization errors, per Worker.
+  final List<ProfileError> extensionErrors;
   final List<SkillCommand> skillCommands;
 
   Agent.fromJson(Json json)
@@ -107,14 +113,117 @@ class Agent implements Identified {
       avatarImageUrl = json['avatarImageUrl'] as String?,
       enabled = json['enabled'] == true,
       state = json['state'] as String? ?? '',
+      activeJobs = (json['activeJobs'] as num?)?.toInt() ?? 0,
+      activeTasks = objects(json['activeTasks']).map(TaskRef.fromJson).toList(),
+      extensionsPending = json['extensionsPending'] == true,
+      extensionsError = json['extensionsError'] as String?,
+      extensionErrors = objects(
+        json['extensionErrors'],
+      ).map(ProfileError.ofWorker).toList(),
+      skillCommands = objects(
+        json['skillCommands'],
+      ).map(SkillCommand.fromJson).toList();
+}
+
+/// Enough of a Task to name it next to an Agent, a Job or a Queue Entry.
+class TaskRef implements Identified {
+  @override
+  final String id;
+  final String key, title, projectId;
+  TaskRef.fromJson(Json json)
+    : id = json['id'] as String,
+      key = json['key'] as String? ?? '',
+      title = json['title'] as String? ?? '',
+      projectId = json['projectId'] as String? ?? '';
+}
+
+/// An Agent Profile that failed to synchronize on a Worker. [id] and [name]
+/// are the Worker's on an Agent, and the Agent's on a Worker.
+class ProfileError {
+  final String id, name, error;
+  ProfileError.ofWorker(Json json)
+    : id = json['workerId'] as String? ?? '',
+      name = json['workerName'] as String? ?? '',
+      error = json['error'] as String? ?? '';
+  ProfileError.ofAgent(Json json)
+    : id = json['agentId'] as String? ?? '',
+      name = json['agentName'] as String? ?? '',
+      error = json['error'] as String? ?? '';
+}
+
+/// An execution environment: an image and up to [cap] Worker Containers that
+/// run the Jobs of the Projects, Wikis and Schedules assigned to it.
+class Worker implements Identified {
+  @override
+  final String id;
+  final String name, description;
+
+  /// `disabled`, `building`, `build_failed`, `offline`, `idle` or `working`.
+  final String state;
+
+  /// `none`, `building`, `built` or `failed`.
+  final String imageState;
+  final bool enabled;
+  final int minimum, cap, busy, running, queueLength;
+  final List<WorkerContainer> containers;
+
+  /// The Projects, Wikis and Schedule Projects that run on it.
+  final List<Json> projects;
+
+  /// Agent Profiles that failed to synchronize on this Worker.
+  final List<ProfileError> profileErrors;
+  Worker.fromJson(Json json)
+    : id = json['id'] as String,
+      name = json['name'] as String? ?? '',
+      description = json['description'] as String? ?? '',
+      state = json['state'] as String? ?? '',
+      imageState = json['imageState'] as String? ?? 'none',
+      enabled = json['enabled'] != false,
+      minimum = (json['minimum'] as num?)?.toInt() ?? 0,
+      cap = (json['cap'] as num?)?.toInt() ?? 1,
+      busy = (json['busy'] as num?)?.toInt() ?? 0,
+      running = (json['running'] as num?)?.toInt() ?? 0,
+      queueLength = (json['queueLength'] as num?)?.toInt() ?? 0,
+      containers = objects(
+        json['containers'],
+      ).map(WorkerContainer.fromJson).toList(),
+      projects = objects(json['projects']),
+      profileErrors = objects(
+        json['profileErrors'],
+      ).map(ProfileError.ofAgent).toList();
+}
+
+/// One Worker Slot and the container that fills it.
+class WorkerContainer {
+  final int slot;
+
+  /// `stopped`, `starting`, `idle` or `working`.
+  final String state;
+
+  /// Last observed Docker state (`running`, `exited`, `missing`, …).
+  final String containerState;
+  final bool runnerConnected;
+
+  /// Recreated with the current image and limits once it is free.
+  final bool recreatePending;
+
+  /// The Job it runs right now.
+  final String? jobId;
+  final TaskRef? task;
+  final Json? agent;
+  WorkerContainer.fromJson(Json json)
+    : slot = (json['slot'] as num?)?.toInt() ?? 0,
+      state = json['state'] as String? ?? 'stopped',
       containerState = json['containerState'] as String? ?? '',
       runnerConnected = json['runnerConnected'] == true,
       recreatePending = json['recreatePending'] == true,
-      extensionsPending = json['extensionsPending'] == true,
-      extensionsError = json['extensionsError'] as String?,
-      skillCommands = objects(json['skillCommands'])
-          .map(SkillCommand.fromJson)
-          .toList();
+      jobId = (json['job'] as Map?)?['id'] as String?,
+      task = (json['job'] as Map?)?['task'] is Map
+          ? TaskRef.fromJson(Json.from((json['job'] as Map)['task'] as Map))
+          : null,
+      agent = (json['job'] as Map?)?['agent'] is Map
+          ? Json.from((json['job'] as Map)['agent'] as Map)
+          : null;
 }
 
 class SkillCommand {
@@ -130,7 +239,12 @@ class Wiki implements Identified {
   @override
   final String id;
   final String name, description, taskId;
+
+  /// The default Agent of new Chats.
   final String? agentId;
+
+  /// Where the Wiki's Jobs run; null in data cached before Workers.
+  final String? workerId;
   final Json repository;
   Wiki.fromJson(Json json)
     : id = json['id'] as String,
@@ -138,6 +252,7 @@ class Wiki implements Identified {
       description = json['description'] as String? ?? '',
       taskId = json['taskId'] as String,
       agentId = json['agentId'] as String?,
+      workerId = json['workerId'] as String?,
       repository = Map<String, dynamic>.from(json['repository'] as Map);
   String get repositoryName => '${repository['owner']}/${repository['name']}';
 }
@@ -363,6 +478,9 @@ class Schedule implements Identified {
   final String projectId, name, cron, timeZone, prompt;
   final String? agentId;
 
+  /// Where its runs go; null in data cached before Workers.
+  final String? workerId;
+
   /// Null for a global Schedule: its Agent works on the boards.
   final Json? repository;
   final bool readOnly, enabled;
@@ -379,6 +497,7 @@ class Schedule implements Identified {
       projectId = json['projectId'] as String? ?? '',
       name = json['name'] as String? ?? '',
       agentId = json['agentId'] as String?,
+      workerId = json['workerId'] as String?,
       cron = json['cron'] as String? ?? '',
       timeZone = json['timeZone'] as String? ?? 'UTC',
       prompt = json['prompt'] as String? ?? '',

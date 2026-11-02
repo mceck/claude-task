@@ -6,6 +6,7 @@ import 'models.dart';
 import 'task_forms.dart';
 import 'ui/theme.dart';
 import 'ui/widgets.dart';
+import 'worker_picker.dart';
 
 class WikiList extends StatelessWidget {
   final TaskController controller;
@@ -104,6 +105,8 @@ class _WikiFormState extends State<_WikiForm> {
   );
   final base = TextEditingController();
   late String? agentId = widget.wiki?.agentId;
+  late String? workerId =
+      widget.wiki?.workerId ?? soleWorkerId(widget.controller.workers);
   List<Json> repositories = [];
   Json? repository;
   String? error;
@@ -111,6 +114,8 @@ class _WikiFormState extends State<_WikiForm> {
   @override
   void initState() {
     super.initState();
+    // Workers arrive and change live: the Worker field and Save follow.
+    widget.controller.addListener(_changed);
     if (widget.wiki == null) {
       widget.controller
           .wikiRepositories()
@@ -135,8 +140,13 @@ class _WikiFormState extends State<_WikiForm> {
     }
   }
 
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    widget.controller.removeListener(_changed);
     name.dispose();
     description.dispose();
     base.dispose();
@@ -147,7 +157,7 @@ class _WikiFormState extends State<_WikiForm> {
     final c = widget.controller;
     final selected = await showPicker<String>(
       context,
-      title: 'Agent',
+      title: 'Default Agent',
       selected: agentId ?? '',
       options: [
         for (final agent in c.agents.where((a) => a.enabled || a.id == agentId))
@@ -202,6 +212,9 @@ class _WikiFormState extends State<_WikiForm> {
         'name': name.text.trim(),
         'description': description.text,
         'agentId': agentId,
+        // Changing it is refused while the Wiki has started Chats.
+        if (widget.wiki == null || widget.wiki!.workerId != workerId)
+          'workerId': workerId,
         if (widget.wiki == null)
           'repository': {
             'connectionId': repository!['connectionId'],
@@ -223,6 +236,8 @@ class _WikiFormState extends State<_WikiForm> {
   @override
   Widget build(BuildContext context) {
     final c = widget.controller, agent = c.agents.byId(agentId);
+    // A Worker created meanwhile is preselected when it is the only one.
+    workerId ??= soleWorkerId(c.workers);
     return SheetScaffold(
       title: widget.wiki == null ? 'New wiki' : 'Wiki settings',
       subtitle:
@@ -256,8 +271,18 @@ class _WikiFormState extends State<_WikiForm> {
               enabled: !saving,
             ),
           ),
+          WorkerField(
+            controller: c,
+            workerId: workerId,
+            description: widget.wiki == null
+                ? 'Where the Wiki’s Agents run.'
+                : 'Where the Wiki’s Agents run. It changes only while no '
+                      'Chat has started; delete them first.',
+            onChanged: saving ? null : (id) => setState(() => workerId = id),
+          ),
           LabeledField(
-            label: 'Agent',
+            label: 'Default Agent',
+            description: 'New Chats start with it; each Chat can change Agent.',
             child: SelectField(
               key: const Key('wiki-agent'),
               leading: agent == null
@@ -341,6 +366,8 @@ class _WikiFormState extends State<_WikiForm> {
               saving ||
                   name.text.trim().isEmpty ||
                   agentId == null ||
+                  workerId == null ||
+                  (widget.wiki == null && c.workers.byId(workerId) == null) ||
                   (widget.wiki == null && repository == null)
               ? null
               : _save,
@@ -427,6 +454,7 @@ class _ChatRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller, open = c.task?.id == chat.id;
+    final agent = c.agents.byId(chat.agentId);
     final unread = open
         ? (c.preferences[chat.id]?.unread ?? chat.unread)
         : chat.unread;
@@ -437,6 +465,8 @@ class _ChatRow extends StatelessWidget {
               dimension: 32,
               child: Center(child: Spinner(size: 18)),
             )
+          : agent != null
+          ? agentAvatar(c.api, agent, size: 32)
           : const IconBadge(
               Icons.chat_bubble_outline_rounded,
               color: Palette.primary,

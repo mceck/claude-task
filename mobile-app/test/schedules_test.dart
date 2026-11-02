@@ -23,6 +23,7 @@ Json scheduleData({
   'projectId': 'project-$id',
   'name': name,
   'agentId': agentId,
+  'workerId': 'worker-1',
   'cron': cron,
   'timeZone': timeZone,
   'prompt': 'Review the repository and report.',
@@ -475,6 +476,7 @@ void main() {
       // The cadence is shown in words, with the scope and the pause state.
       expect(find.textContaining('Every day at 03:00'), findsOneWidget);
       expect(find.textContaining('Paused'), findsOneWidget);
+      expect(find.textContaining('Default worker'), findsNWidgets(2));
 
       await tester.tap(find.byKey(const ValueKey('schedule-row:schedule-1')));
       await tester.pumpAndSettle();
@@ -522,9 +524,46 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('schedule-name')), findsOneWidget);
       expect(find.text('Monday to Friday at 09:00'), findsOneWidget);
+      // The only Worker is preselected.
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('worker-field')),
+          matching: find.text('Default worker'),
+        ),
+        findsOneWidget,
+      );
       await tester.enterText(find.byKey(const Key('schedule-cron')), 'bad');
       await tester.pumpAndSettle();
       expect(find.text('not valid'), findsOneWidget);
+    });
+
+    testWidgets('the form sends the Worker with the new Schedule', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final h = await _login(admin: true);
+      addTearDown(h.dispose);
+      h.controller.showSchedules();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('New schedule'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('schedule-name')), 'Digest');
+      await tester.enterText(
+        find.byKey(const Key('schedule-prompt')),
+        'Summarise the day.',
+      );
+      await tester.tap(find.byKey(const Key('schedule-agent')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ada Bot').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Create schedule'));
+      await tester.tap(find.text('Create schedule'));
+      await tester.pumpAndSettle();
+      expect(h.api.bodies['POST /schedules']!['workerId'], 'worker-1');
+      expect(h.controller.schedule!.name, 'Digest');
     });
 
     testWidgets('an Admin opens, pauses and runs a Schedule', (tester) async {
