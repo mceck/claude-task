@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { currentUser, userActor } from '../../auth/guard';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
+import { copyName } from '../copy-name';
 import type { Executor } from '../../db/client';
 import { agents, credentials, jobs, projects, schedules, statuses, tasks } from '../../db/schema';
 import { badRequest, conflict, notFound, parse } from '../../errors';
@@ -158,7 +159,7 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
         const [created] = await tx
           .insert(agents)
           .values({
-            name: name ?? (await copyName(tx, source.name)),
+            name: name ?? copyName(source.name, (await tx.select({ name: agents.name }).from(agents)).map((r) => r.name)),
             avatarEmoji: source.avatarEmoji,
             avatarColor: source.avatarColor,
             avatarBlobId,
@@ -258,14 +259,4 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     await transact(ctx, (tx, after) => notifyAgent(tx, after, task.id, actor));
     return { session: await loadTaskSession(ctx.db, task.id) };
   });
-}
-
-/** `<name> (copy)`, then `(copy 2)`, … : the first one free, within the 100-character limit. */
-async function copyName(db: Executor, source: string): Promise<string> {
-  const taken = new Set((await db.select({ name: agents.name }).from(agents)).map((a) => a.name.toLowerCase()));
-  for (let n = 1; ; n++) {
-    const suffix = n === 1 ? ' (copy)' : ` (copy ${n})`;
-    const candidate = `${source.slice(0, 100 - suffix.length).trimEnd()}${suffix}`;
-    if (!taken.has(candidate.toLowerCase())) return candidate;
-  }
 }

@@ -205,18 +205,12 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
       // `claude` runs the last text block as the input and keeps earlier blocks as context, so a
       // first command (/init, a skill) stays native when the Task context comes before it.
       const command = commandIndex === 0 ? batch[0]! : null;
-      // Earlier Jobs of another Agent (a conversation that had to start over): the messages below are partly theirs.
-      const previousAgent = await tx
-        .select({ id: jobs.id })
-        .from(jobs)
-        .where(and(eq(jobs.sessionId, session!.id), or(isNull(jobs.agentId), ne(jobs.agentId, agentId))))
-        .limit(1);
       const seenFiles = new Set<string>();
       // One inline-image budget for the whole first Message.
       const budget = inlineBudget();
       const files = await renderTaskFiles(ctx, tx, task!.id, snapshot.description, seenFiles, budget);
       const context = await renderComments(ctx, tx, included.filter((c) => c.id !== command?.id), seenFiles, budget);
-      message = startMessage(snapshot, context, { branch, previousAgent: previousAgent.length > 0, files });
+      message = startMessage(snapshot, context, { branch, files });
       if (command) {
         const input = await renderComments(ctx, tx, [command], seenFiles, budget);
         message = { blocks: [...message.blocks, ...input.blocks], fetch: [...message.fetch, ...input.fetch] };

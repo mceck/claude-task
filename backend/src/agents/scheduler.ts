@@ -13,7 +13,7 @@ import { runDueMessages } from '../modules/scheduled-messages/service';
 import { runDueSchedules } from '../modules/schedules/service';
 import { agentExtensions } from '../modules/extensions/service';
 import { loadCard } from '../modules/tasks/service';
-import { containerRows, desiredContainerSpec, ensureContainerRow, getWorkerRow, publishWorker, serializeBuild } from '../modules/workers/service';
+import { containerRows, desiredContainerSpec, ensureContainerRow, getWorkerRow, isUp, publishWorker, serializeBuild, workerOfTask } from '../modules/workers/service';
 import type { WorkerContainerRow, WorkerRow } from '../modules/workers/service';
 import { recoverAbandonedJobs } from '../runner/handlers';
 import { newToken } from '../secrets';
@@ -21,8 +21,6 @@ import { dispatchNext, readyEntries, runnerWsUrl } from '../sessions/dispatch';
 import { repoPathOf } from '../sessions/lifecycle';
 import { loadQueue } from '../sessions/queue';
 import { loadTaskSession } from '../sessions/view';
-
-const isUp = (state: string) => ['running', 'restarting'].includes(state);
 
 const BUILD_LOG_CAP = 256 * 1024;
 const BUILD_LOG_FLUSH_MS = 500;
@@ -40,6 +38,8 @@ export class Scheduler {
   private readonly buildAgain = new Set<string>();
   private readonly reconciling = new Map<string, Promise<void>>();
   private readonly syncing = new Set<string>();
+  /** Worker Containers running an Agent Profile synchronization, which the reconciler keeps up. */
+  private readonly syncingIn = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private stopping = false;
 
@@ -193,22 +193,17 @@ export class Scheduler {
   removeWorktree(sessionId: string): void {
     this.track(
       (async () => {
-        const [s] = await this.ctx.db
-          .select({ session: sessions, workerId: workers.id })
-          .from(sessions)
-          .innerJoin(sql`tasks t`, sql`t.id = ${sessions.taskId}`)
-          .innerJoin(sql`projects p`, sql`p.id = t.project_id`)
-          .innerJoin(workers, sql`${workers.id} = p.worker_id`)
-          .where(eq(sessions.id, sessionId));
-        if (!s?.session.worktreeRemovalPending) return;
-        const msg = { type: 'worktree.remove' as const, worktreePath: s.session.worktreePath, repoPath: repoPathOf(s.session.worktreePath) };
+        const [session] = await this.ctx.db.select().from(sessions).where(eq(sessions.id, sessionId));
+        if (!session?.worktreeRemovalPending) return;
+        const workerId = await workerOfTask(this.ctx.db, session.taskId);
+        const msg = { type: 'worktree.remove' as const, worktreePath: session.worktreePath, repoPath: repoPathOf(session.worktreePath) };
         // A Job still being cancelled works in that Worktree: only its own Runner removes it, after the
         // Job exits. Any Runner of the Worker can remove an idle one, since the volume is shared.
         const [busy] = await this.ctx.db
           .select({ containerId: jobs.containerId })
           .from(jobs)
           .where(and(eq(jobs.sessionId, sessionId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
-        const sent = busy ? !!busy.containerId && this.ctx.runners.send(busy.containerId, msg) : this.sendToWorker(s.workerId, msg, s.session.lastSlot);
+        const sent = busy ? !!busy.containerId && this.ctx.runners.send(busy.containerId, msg) : this.sendToWorker(workerId, msg, session.lastSlot);
         if (sent) await this.ctx.db.update(sessions).set({ worktreeRemovalPending: false }).where(eq(sessions.id, sessionId));
       })(),
     );
@@ -371,7 +366,7 @@ export class Scheduler {
       }
       // Stop what runs and isn't wanted, once it has no Job.
       for (const row of rows) {
-        if (wanted.has(row.slot) || !isUp(observed.get(row.slot) ?? 'missing') || active.has(row.id)) continue;
+        if (wanted.has(row.slot) || !isUp(observed.get(row.slot) ?? 'missing') || active.has(row.id) || this.syncingIn.has(row.id)) continue;
         if (await this.sleep(worker, row)) changed = true;
       }
     }
@@ -530,6 +525,7 @@ export class Scheduler {
           .limit(1);
         if (!container) return;
         let error: string | null = null;
+        this.syncingIn.add(container.id);
         try {
           await runtime.configureProfile(workerId, container.slot, {
             agentId,
@@ -539,13 +535,16 @@ export class Scheduler {
           });
         } catch (err) {
           error = (err instanceof Error ? err.message : 'Could not configure skills and plugins').slice(0, 2000);
+        } finally {
+          this.syncingIn.delete(container.id);
         }
         const values = error ? { error } : { appliedRevision: pending.revision, error: null };
         await db
           .insert(agentProfiles)
           .values({ workerId, agentId, appliedRevision: error ? -1 : pending.revision, error, updatedAt: new Date() })
           .onConflictDoUpdate({ target: [agentProfiles.workerId, agentProfiles.agentId], set: { ...values, updatedAt: new Date() } })
-          .catch(() => {});
+          // The Worker or the Agent may have been deleted meanwhile.
+          .catch((err) => this.ctx.log.warn({ err, workerId, agentId }, 'could not record an Agent Profile synchronization'));
         this.publishWorker(workerId);
         this.publishAgent(agentId);
         if (!error) this.kick(workerId);

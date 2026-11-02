@@ -467,3 +467,32 @@ test('keeps the live session state when an older HTTP snapshot arrives late', as
     release();
   }
 });
+
+test("changing a Task's Agent keeps its Timeline and resumes the same conversation with the new Agent", async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request, 'Agent change');
+  const first = await seedAgent(page.request, 'First');
+  const second = await seedAgent(page.request, 'Second');
+  const task = await createTask(page.request, project, 'Hand over');
+  await page.goto(`/t/${task.key}`);
+  await assignAndStart(page, first.name);
+  const started = await jobStart(page.request, project.workerId, task.id);
+  const s = new Stream(started.sessionId);
+  await replay(page.request, project.workerId, started.jobId, [s.init(), s.text('First agent was here.'), s.result()], true);
+  await expect(page.getByText('First agent was here.')).toBeVisible();
+
+  await assign(page, second.name);
+  await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Second, take over.');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  let next: Record<string, unknown> | undefined;
+  await expect
+    .poll(async () => {
+      next = (await messages(page.request, project.workerId)).find((m) => m.type === 'job.start' && m.jobId !== started.jobId);
+      return !!next;
+    })
+    .toBe(true);
+  expect(next).toMatchObject({ sessionId: started.sessionId, mode: 'resume', agentProfilePath: `.claude-agents/${second.id}` });
+  expect(JSON.stringify(next!.initialMessage)).toContain(`You are now working as agent \\"${second.name}\\"`);
+  // The earlier work stays on the Timeline.
+  await expect(page.getByText('First agent was here.')).toBeVisible();
+});

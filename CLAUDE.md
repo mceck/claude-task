@@ -35,7 +35,7 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 - **One Job at a time per Worker Container, per Session and per Worktree.** An Agent has no concurrency limit. The Queue belongs to the Worker and lives in the backend DB. The Runner is stateless, dials out over WebSocket, and resends events using seq/ack.
 - **One Session per Task** (per Chat in a Wiki), whatever its Agent, resumed with `claude --resume <id>`. Changing the Agent resumes the same conversation under the new Agent's Agent Profile. Worktree paths are deterministic per (project, task) because resume needs the same cwd, and every Worker Container of a Worker shares the Worker Volume that holds them.
 - **Every Project runs on exactly one Worker.** Its Worker can change only while none of its Sessions is started and open, because transcripts and Worktrees live in the Worker Volume.
-- **Agents run `claude -p --input-format stream-json --output-format stream-json`**, not `--bare` (repo CLAUDE.md, `.claude/` and `.mcp.json` must load). Comments for the running Task are written to stdin mid-turn. Everything else waits in the Queue.
+- **Agents run `claude -p --input-format stream-json --output-format stream-json`**, not `--bare` (repo CLAUDE.md, `.claude/` and `.mcp.json` must load). Comments for the running Task are written to stdin mid-turn, while the running Job's Agent is still the Task's. Everything else waits in the Queue.
 - **The Timeline is projected from the stdout stream, never from hooks.** The platform configures no hooks. The projection is a pure function over stored raw events.
 - **The default `claude` version comes from `CLAUDE_CODE_VERSION`**, with the auto-updater off. Repository and user mise configurations can override it through mise's shims. The stream-json format remains a contract for the selected version.
 - **Secrets** (Credentials, project secret env) are encrypted at rest (`SECRETS_MASTER_KEY`), write-only in the API (last4 only), never logged, and sent per Job, never as container env.
@@ -46,7 +46,7 @@ Needs Node 22+, pnpm and a local PostgreSQL (tests create throwaway databases th
 ## Testing
 
 Test external behavior only, at the highest seam:
-1. **Backend public API** (HTTP + WebSocket + MCP) against real Postgres, with a fake runner (replays recorded stream-json fixtures), a fake `AgentRuntime` and a fake `GitProvider`. This is where most tests go.
+1. **Backend public API** (HTTP + WebSocket + MCP) against real Postgres, with a fake runner (replays recorded stream-json fixtures), a fake `WorkerRuntime` and a fake `GitProvider`. This is where most tests go.
 2. **Runner as a black box**: the Go binary against a fake backend WebSocket, a fake `claude` executable (path configurable) and a local bare git repo as origin.
 3. **Opt-in e2e smoke** with real Docker, `claude` and GitHub.
 

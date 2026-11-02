@@ -345,6 +345,13 @@ describe('Limit Resume', () => {
     expect((await list(unassigning.admin, unassigning.task.id))[0]).toMatchObject({ state: 'cancelled' });
   });
 
+  it('keeps the pending resume when the Task changes Agent, since the conversation goes on', async () => {
+    const changing = await limited(true);
+    const { agent: other } = await createAgent(app, changing.admin, { name: 'Bea Bot' });
+    await assignAgent(changing.admin, changing.task.id, other.id);
+    expect((await list(changing.admin, changing.task.id))[0]).toMatchObject({ state: 'pending' });
+  });
+
   it('retires the offer together with its resume when the Task is closed', async () => {
     const answered = await limited();
     await answered.admin.post(`/comments/${answered.offer.id}/limit-resume`, { schedule: true });

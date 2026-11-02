@@ -1,9 +1,10 @@
 // Session lifecycle rules (docs/specs/agent-sessions.md): Assignment, Agent changes, unassignment, closing and
 // reopening a Task, and how a User's Comment reaches the Agent. One Session per Task, whichever Agent
-// works it. Lock order everywhere: project → task → worker → session → job → queue entries.
+// works it. Lock order: project → task → worker → session → job → queue entries. The Worker's row lock
+// serializes every change to its Queue and dispatch, so the dispatcher may take its entry before the Session.
 import { cancelLimitResumes } from '../modules/scheduled-messages/service';
 import { commandName, taskKey } from '@claude-task/shared';
-import { and, asc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, ne, notInArray, sql } from 'drizzle-orm';
 import { transactWithRetry } from '../context';
 import type { AfterCommit, AppContext } from '../context';
 import type { Executor } from '../db/client';
@@ -137,6 +138,8 @@ async function assign(tx: Executor, after: AfterCommit, task: TaskRow, closed: b
             eq(comments.internal, false),
             isNull(comments.deletedAt),
             carriesDelivery,
+            // Comments a Job already read (written to it mid-Turn) are in the conversation.
+            notInArray(comments.deliveryState, ['delivered', 'handled']),
             session.lastJobAt ? gt(comments.createdAt, session.lastJobAt) : undefined,
           ),
         )

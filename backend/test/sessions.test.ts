@@ -155,7 +155,7 @@ describe('assignment and the first Job', () => {
     expect(revisions.at(-1)).toMatchObject({ revision: { changes: [{ field: 'agentId', before: null, after: agent.id }] } });
   });
 
-  it('runs one Job at a time per Agent and queues the next Task', async () => {
+  it('runs one Job at a time per Worker Container and queues the next Task', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const first = await createTask(admin, project.id, { title: 'First' });
     const second = await createTask(admin, project.id, { title: 'Second' });
@@ -987,6 +987,9 @@ describe('Session lifecycle', () => {
     runner.accept(start.jobId);
     const s = new Stream(start.sessionId);
     await runner.play(start.jobId, [s.init(), s.text('On it.')]);
+    // Read by the running Turn: it is in the conversation already.
+    await comment(admin, task.id, 'Heard mid-turn.');
+    await runner.next('job.input', (m) => m.jobId === start.jobId);
 
     await assignAgent(admin, task.id, null);
     await runner.next('job.interrupt', (m) => m.jobId === start.jobId);
@@ -1004,6 +1007,7 @@ describe('Session lifecycle', () => {
     expect(text).toContain('You are now working as agent "Bea Bot" (previously "Ada Bot")');
     expect(text).toContain('That broke staging.');
     expect(text).not.toContain('On it.');
+    expect(text).not.toContain('Heard mid-turn.');
   });
 
   it('a container restart mid-Turn resumes the interrupted Turn from the front of the Queue', async () => {

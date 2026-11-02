@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { useTestApp } from './helpers/app';
 import type { TestApp } from './helpers/app';
 import type { ApiClient } from './helpers/client';
-import { createAgent, createProject, createTag, createTask, createUser, getSession, moveToStatus, statusByName, timeline } from './helpers/fixtures';
+import { createAgent, createProject, createTag, createTask, createUser, getSession, moveToStatus, statusByName, timeline, createWorker } from './helpers/fixtures';
 import { Stream } from './helpers/stream';
 
 const MINUTE = 60_000;
@@ -181,6 +181,23 @@ describe('Schedules', () => {
     await tickAt(app, afterDue(schedule));
     expect((await runsOf(admin, schedule))[0]).toMatchObject({ state: 'skipped', skipReason: 'agent unavailable' });
     expect((await admin.post(`/schedules/${schedule.id}/run`)).status).toBe(409);
+  });
+
+  it('skips runs when the Worker is disabled', async () => {
+    const { admin, schedule } = await setup(app);
+    expect((await admin.patch(`/workers/${app.workerId}`, { enabled: false })).status).toBe(200);
+    await tickAt(app, afterDue(schedule));
+    expect((await runsOf(admin, schedule))[0]).toMatchObject({ state: 'skipped', skipReason: 'worker unavailable' });
+    expect((await admin.post(`/schedules/${schedule.id}/run`)).status).toBe(409);
+  });
+
+  it('moves to another Worker only while no run is active', async () => {
+    const { admin, schedule } = await setup(app);
+    const other = await createWorker(app, admin, { name: 'Nightly worker' });
+    expect((await admin.post(`/schedules/${schedule.id}/run`)).status).toBe(201);
+    await app.settle();
+    expect((await admin.patch(`/schedules/${schedule.id}`, { workerId: other.id })).status).toBe(409);
+    expect((await admin.get(`/schedules/${schedule.id}`)).body.schedule.workerId).toBe(app.workerId);
   });
 
   it('runs on demand without moving the next run, even while another run is active', async () => {

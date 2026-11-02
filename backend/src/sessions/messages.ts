@@ -210,7 +210,7 @@ export function describeTask(t: TaskSnapshot, filesNote = ''): string {
 export function startMessage(
   t: TaskSnapshot,
   conversation: MessageParts,
-  opts: { branch: string | null; previousAgent: boolean; files?: TaskFiles },
+  opts: { branch: string | null; files?: TaskFiles },
 ): MessageParts {
   const intro = [
     `You have been assigned task ${t.key} in project "${t.projectName}".`,
@@ -218,12 +218,6 @@ export function startMessage(
     describeTask(t, opts.files?.note),
   ];
   if (opts.branch) intro.push('', `Task branch: ${opts.branch}`);
-  if (opts.previousAgent) {
-    intro.push(
-      '',
-      'Another agent worked on this task before you' + (opts.branch ? ' on the same branch' : '') + '. Its messages are in the conversation below.',
-    );
-  }
   intro.push('', conversation.blocks.length ? 'Conversation so far (oldest first):' : 'There are no comments yet.');
   return {
     blocks: [{ type: 'text', text: intro.join('\n') }, ...(opts.files?.images ?? []), ...conversation.blocks],

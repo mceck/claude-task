@@ -41,7 +41,8 @@ export async function ensureContainerRow(db: Executor, workerId: string, slot: n
   return row!;
 }
 
-const isUp = (state: string) => ['running', 'restarting'].includes(state);
+/** Docker states in which a container is up (running, or about to be again). */
+export const isUp = (state: string) => ['running', 'restarting'].includes(state);
 
 export async function loadWorkers(db: Executor, isReady: (containerId: string) => boolean, ids?: string[]): Promise<Worker[]> {
   if (ids && ids.length === 0) return [];

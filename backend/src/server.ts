@@ -26,6 +26,7 @@ import type { AppContext } from './context';
 import { createDb, runMigrations } from './db/client';
 import { resetInterruptedBuilds } from './modules/workers/builds';
 import { workerContainers } from './db/schema';
+import { isUp } from './modules/workers/service';
 import { bootstrapAdmin } from './modules/users/service';
 import { seedPlatformSkill } from './modules/extensions/platform-skill';
 import { RealtimeHub } from './realtime/hub';
@@ -113,7 +114,7 @@ export async function createServer(
             if (!config.agents.stopOnShutdown) return;
             const rows = await db.select({ workerId: workerContainers.workerId, slot: workerContainers.slot }).from(workerContainers);
             const results = await Promise.allSettled(rows.map(async ({ workerId, slot }) => {
-              if (onlyRunning && !['running', 'restarting'].includes((await ctx.runtime.inspect(workerId, slot)).state)) return;
+              if (onlyRunning && !isUp((await ctx.runtime.inspect(workerId, slot)).state)) return;
               await ctx.runtime.stopContainer(workerId, slot);
               app.log.info({ workerId, slot }, 'stopped Worker Container for backend shutdown');
             }));

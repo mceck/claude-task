@@ -4,12 +4,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { transact } from '../../context';
 import type { AppContext } from '../../context';
+import { copyName } from '../copy-name';
 import type { Executor } from '../../db/client';
 import { projects, queueEntries, workerBuilds, workerContainers, workers } from '../../db/schema';
 import { badRequest, conflict, notFound, parse } from '../../errors';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { loadJobs } from '../agents/service';
-import { getWorkerRow, loadBuilds, loadWorker, loadWorkers, serializeBuild } from './service';
+import { getWorkerRow, isUp, loadBuilds, loadWorker, loadWorkers, serializeBuild } from './service';
 
 const params = z.object({ id: z.uuid() });
 const slotParams = z.object({ id: z.uuid(), slot: z.coerce.number().int().min(1).max(WORKER_CAP_MAX) });
@@ -104,7 +105,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const [row] = await ctx.db
       .insert(workers)
       .values({
-        name: name ?? (await copyName(ctx.db, source.name)),
+        name: name ?? copyName(source.name, (await ctx.db.select({ name: workers.name }).from(workers)).map((r) => r.name)),
         description: source.description,
         dockerfile: source.dockerfile,
         services: source.services,
@@ -141,7 +142,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     await getWorkerRow(ctx.db, id);
     const row = await getContainerRow(ctx.db, id, slot);
     if (!row || row.containerState === 'missing') throw conflict('This worker container does not exist yet');
-    if (!['running', 'restarting'].includes(row.containerState)) throw conflict('This worker container is stopped; it starts when work arrives');
+    if (!isUp(row.containerState)) throw conflict('This worker container is stopped; it starts when work arrives');
     await ctx.runtime.restartContainer(id, slot).catch((err) => {
       throw conflict(`Could not restart the container: ${(err as Error).message}`);
     });
@@ -219,14 +220,4 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     });
     return reply.status(204).send();
   });
-}
-
-/** `<name> (copy)`, then `(copy 2)`, … : the first one free, within the 100-character limit. */
-async function copyName(db: Executor, source: string): Promise<string> {
-  const taken = new Set((await db.select({ name: workers.name }).from(workers)).map((w) => w.name.toLowerCase()));
-  for (let n = 1; ; n++) {
-    const suffix = n === 1 ? ' (copy)' : ` (copy ${n})`;
-    const candidate = `${source.slice(0, 100 - suffix.length).trimEnd()}${suffix}`;
-    if (!taken.has(candidate.toLowerCase())) return candidate;
-  }
 }
