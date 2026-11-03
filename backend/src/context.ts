@@ -2,6 +2,8 @@ import type { PushTransport } from './notifications/transport';
 import type { PushDispatcher } from './notifications/dispatcher';
 import type { GitConnections } from './git/connections';
 import type { GitSync } from './git/sync';
+import type { ClickUpClientFactory } from './clickup/client';
+import type { ClickUpSync } from './clickup/sync';
 import type { RealtimeEvent, Topic } from '@claude-task/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type { WorkerRuntime } from './agents/runtime';
@@ -31,6 +33,9 @@ export interface AppContext {
   /** Git Connections and their providers. */
   git: GitConnections;
   gitSync: GitSync;
+  /** Builds the ClickUp client for a token; replaced in tests. */
+  clickup: ClickUpClientFactory;
+  clickupSync: ClickUpSync;
   /** Connected Runners, one per Worker Container. */
   runners: RunnerHub;
   /** Live transcripts of the running Jobs' Runs; memory only. */

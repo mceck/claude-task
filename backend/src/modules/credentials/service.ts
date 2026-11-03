@@ -1,7 +1,7 @@
 import type { Credential, RateLimitObservation } from '@claude-task/shared';
 import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client';
-import { agents, credentials, rateLimitObservations } from '../../db/schema';
+import { agents, credentials, projects, rateLimitObservations } from '../../db/schema';
 import { conflict, notFound } from '../../errors';
 import { last4 } from '../../secrets';
 import type { SecretBox } from '../../secrets';
@@ -21,8 +21,18 @@ export async function loadCredentials(db: Executor, ids?: string[]): Promise<Cre
     .from(agents)
     .where(inArray(agents.credentialId, credentialIds))
     .orderBy(asc(agents.name));
+  const linked = await db
+    .select({ id: projects.id, name: projects.name, credentialId: sql<string>`${projects.clickup}->>'credentialId'` })
+    .from(projects)
+    .where(sql`${projects.clickup} is not null`);
   const limits = await latestRateLimits(db, credentialIds);
-  return rows.map((r) => serializeCredential(r, users.filter((u) => u.credentialId === r.id), limits.get(r.id) ?? null));
+  return rows.map((r) =>
+    serializeCredential(
+      r,
+      [...users.filter((u) => u.credentialId === r.id), ...linked.filter((p) => p.credentialId === r.id)],
+      limits.get(r.id) ?? null,
+    ),
+  );
 }
 
 export async function loadCredential(db: Executor, id: string): Promise<Credential> {
@@ -92,8 +102,9 @@ export async function deleteCredential(db: Executor, id: string): Promise<void> 
   const [row] = await db.select().from(credentials).where(eq(credentials.id, id)).for('update');
   if (!row) throw notFound('Credential');
   const users = await db.select({ name: agents.name }).from(agents).where(eq(agents.credentialId, id));
-  if (users.length > 0) {
-    throw conflict(`The credential is used by ${users.map((u) => u.name).join(', ')}`);
+  const linked = await db.select({ name: projects.name }).from(projects).where(sql`${projects.clickup}->>'credentialId' = ${id}`);
+  if (users.length + linked.length > 0) {
+    throw conflict(`The credential is used by ${[...users, ...linked].map((u) => u.name).join(', ')}`);
   }
   await db.delete(credentials).where(eq(credentials.id, id));
 }
@@ -103,12 +114,15 @@ export const CREDENTIAL_ENV: Record<CredentialRow['kind'], string> = {
   claude_oauth_token: 'CLAUDE_CODE_OAUTH_TOKEN',
   anthropic_api_key: 'ANTHROPIC_API_KEY',
   anthropic_auth_token: 'ANTHROPIC_AUTH_TOKEN',
+  /** Not an Agent secret: it never reaches a Job. */
+  clickup_token: '',
 };
 
 /** The decrypted secret as the Job environment variable `claude` reads. */
 export async function credentialEnv(db: Executor, box: SecretBox, id: string): Promise<{ name: string; env: Record<string, string> }> {
   const [row] = await db.select().from(credentials).where(eq(credentials.id, id));
   if (!row) throw notFound('Credential');
+  if (row.kind === 'clickup_token') throw notFound('Credential');
   const secret = box.decrypt(row.secretCiphertext);
   return { name: row.name, env: { [CREDENTIAL_ENV[row.kind]]: secret } };
 }

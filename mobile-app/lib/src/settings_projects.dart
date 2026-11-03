@@ -31,6 +31,9 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
   String? agentId, error, repositoryError;
   late String? workerId = soleWorkerId(widget.controller.workers);
   Json? repository;
+  Json? clickup;
+  String? clickupLabel;
+  List<Json> clickupTokens = [];
   List<Json> groups = [];
   bool loading = true, saving = false;
 
@@ -40,6 +43,21 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
     // Workers arrive and change live: the Worker field and Create follow.
     widget.controller.addListener(_changed);
     _loadRepositories();
+    _loadClickUpTokens();
+  }
+
+  Future<void> _loadClickUpTokens() async {
+    try {
+      final result = await widget.controller.settingsRequest(
+        'GET',
+        '/clickup/credentials',
+      );
+      if (mounted) {
+        setState(() => clickupTokens = objects(result['credentials']));
+      }
+    } catch (_) {
+      // The ClickUp section simply stays hidden.
+    }
   }
 
   void _changed() {
@@ -82,11 +100,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
       options: [
         const PickerOption('', 'No Agent'),
         for (final agent in widget.controller.agents.where((a) => a.enabled))
-          PickerOption(
-            agent.id,
-            agent.name,
-            trailing: agentStateDot(agent),
-          ),
+          PickerOption(agent.id, agent.name, trailing: agentStateDot(agent)),
       ],
     );
     if (selected != null && mounted) {
@@ -123,6 +137,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
           'description': description.text,
           'workerId': workerId,
           if (agentId != null) 'defaultAgentId': agentId,
+          if (clickup != null) 'clickup': clickup,
           if (repository != null)
             'repository': {
               'connectionId': repository!['connectionId'],
@@ -168,8 +183,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
             ),
           LabeledField(
             label: 'Key',
-            description:
-                '2–6 uppercase letters, used in Task keys. It cannot change later.',
+            description: '2–6 uppercase letters, used in Task keys. It cannot change later.',
             child: TextField(
               controller: keyText,
               enabled: !saving,
@@ -249,6 +263,47 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
               ],
             ),
           ),
+          if (clickupTokens.isNotEmpty)
+            LabeledField(
+              label: 'ClickUp',
+              hint: 'optional',
+              description: 'Imports the tasks of a ClickUp List or View now and keeps them in sync; the Statuses follow ClickUp’s.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SelectField(
+                    label: clickupLabel ?? 'Not linked',
+                    placeholder: clickup == null,
+                    onTap: saving
+                        ? null
+                        : () async {
+                            final picked = await _pickClickUp(
+                              context,
+                              widget.controller,
+                              clickupTokens,
+                            );
+                            if (picked != null && mounted) {
+                              setState(() {
+                                clickup = picked.$1;
+                                clickupLabel = picked.$2;
+                              });
+                            }
+                          },
+                  ),
+                  if (clickup != null)
+                    AppButton(
+                      label: 'Remove ClickUp link',
+                      tone: Tone.ghost,
+                      onPressed: saving
+                          ? null
+                          : () => setState(() {
+                              clickup = null;
+                              clickupLabel = null;
+                            }),
+                    ),
+                ],
+              ),
+            ),
           if (repository != null)
             LabeledField(
               label: 'Base branch',
@@ -384,4 +439,163 @@ class _RepositoryGroup extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Walks through token, workspace, List or View and filters; the body for `POST /projects` and a label for the form.
+Future<(Json, String)?> _pickClickUp(
+  BuildContext context,
+  TaskController c,
+  List<Json> tokens,
+) async {
+  Future<List<Json>> options(String path) async =>
+      objects((await c.settingsRequest('GET', path))['options']);
+  Future<String?> choose(String title, List<Json> list) => showPicker<String>(
+    context,
+    title: title,
+    selected: '',
+    options: [
+      for (final o in list)
+        PickerOption(o['id'] as String, o['name'] as String),
+    ],
+  );
+  String nameOf(List<Json> list, String id) =>
+      list.firstWhere((o) => o['id'] == id)['name'] as String;
+  try {
+    var tokenId = tokens.first['id'] as String;
+    if (tokens.length > 1) {
+      final picked = await choose('ClickUp token', [
+        for (final t in tokens) {'id': t['id'], 'name': t['name']},
+      ]);
+      if (picked == null || !context.mounted) return null;
+      tokenId = picked;
+    }
+    final teams = await options('/clickup/teams?credentialId=$tokenId');
+    if (!context.mounted) return null;
+    final teamId = await choose('Workspace', teams);
+    if (teamId == null || !context.mounted) return null;
+    final type = await showPicker<String>(
+      context,
+      title: 'Link to',
+      selected: 'list',
+      options: const [
+        PickerOption('list', 'A List'),
+        PickerOption('view', 'A View'),
+      ],
+    );
+    if (type == null || !context.mounted) return null;
+    String sourceId, sourceName;
+    var query = '';
+    if (type == 'list') {
+      final spaces = await options(
+        '/clickup/spaces?credentialId=$tokenId&teamId=$teamId',
+      );
+      if (!context.mounted) return null;
+      final spaceId = await choose('Space', spaces);
+      if (spaceId == null || !context.mounted) return null;
+      final lists = await options(
+        '/clickup/lists?credentialId=$tokenId&spaceId=$spaceId',
+      );
+      if (!context.mounted) return null;
+      final listId = await choose('List', lists);
+      if (listId == null || !context.mounted) return null;
+      sourceId = listId;
+      sourceName = nameOf(lists, listId);
+      var confirmed = false;
+      await _form(
+        context,
+        title: 'ClickUp filters',
+        fields: const [
+          _Text(
+            'query',
+            'Filters',
+            hint: 'assignees[]=123&tags[]=backend&include_closed=true',
+          ),
+        ],
+        submit: 'Use List',
+        onSubmit: (v) async {
+          query = (v['query'] as String).trim();
+          confirmed = true;
+        },
+      );
+      if (!confirmed) return null;
+    } else {
+      final views = await options(
+        '/clickup/views?credentialId=$tokenId&teamId=$teamId',
+      );
+      if (!context.mounted) return null;
+      final viewId = await choose('View', views);
+      if (viewId == null) return null;
+      sourceId = viewId;
+      sourceName = nameOf(views, viewId);
+    }
+    return (
+      {
+        'credentialId': tokenId,
+        'teamId': teamId,
+        'sourceType': type,
+        'sourceId': sourceId,
+        'query': query,
+      },
+      'ClickUp ${type == 'list' ? 'List' : 'View'}: $sourceName',
+    );
+  } catch (e) {
+    if (context.mounted) toast(context, e.toString());
+    return null;
+  }
+}
+
+Widget _clickUpSection(
+  BuildContext context,
+  TaskController c,
+  Project project,
+  Json info,
+  Future<void> Function(String method, String path, [Json? body]) change,
+) {
+  final link = Json.from(info['clickup'] as Map);
+  final synced = DateTime.tryParse(link['lastSyncedAt'] as String? ?? '');
+  final query = link['query'] as String? ?? '';
+  return Section(
+    title: 'ClickUp',
+    description: 'Synced every 5 minutes. Names, descriptions, attachments and statuses come from ClickUp; the status of a task goes both ways.',
+    children: [
+      AppTile(
+        title: 'Source',
+        subtitle:
+            '${link['sourceType'] == 'view' ? 'View' : 'List'} ${link['sourceId']}${query.isEmpty ? '' : ' · $query'}',
+      ),
+      AppTile(
+        title: 'Last sync',
+        subtitle: synced == null ? 'never' : synced.toLocal().toString(),
+      ),
+      if (link['lastError'] != null) Notice.error(link['lastError'] as String),
+      AppButton(
+        label: 'Sync now',
+        icon: Icons.sync_rounded,
+        tone: Tone.secondary,
+        onPressed: () => _run(
+          context,
+          () => change('POST', '/projects/${project.id}/clickup/sync'),
+        ),
+      ),
+      AppButton(
+        label: 'Remove ClickUp link',
+        tone: Tone.danger,
+        onPressed: () async {
+          if (!await confirm(
+            context,
+            title: 'Remove the ClickUp link?',
+            message: 'The statuses stay and every task becomes a local task: nothing is synced any more.',
+            confirmLabel: 'Remove link',
+          )) {
+            return;
+          }
+          if (!context.mounted) return;
+          await _run(
+            context,
+            () => change('DELETE', '/projects/${project.id}/clickup'),
+          );
+        },
+      ),
+    ],
+  );
 }

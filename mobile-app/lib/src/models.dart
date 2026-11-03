@@ -35,6 +35,9 @@ class Project {
   final String id, key, name, description;
   final String? logoUrl;
 
+  /// The ClickUp Link, when the Project mirrors a ClickUp List or View.
+  final Json? clickup;
+
   /// Where the Project's Jobs run; null in data cached before Workers.
   final String? workerId;
 
@@ -49,6 +52,9 @@ class Project {
       name = json['name'] as String,
       description = json['description'] as String? ?? '',
       logoUrl = json['logoUrl'] as String?,
+      clickup = json['clickup'] == null
+          ? null
+          : Json.from(json['clickup'] as Map),
       workerId = json['workerId'] as String?,
       taskCounts = {
         for (final e in (json['taskCounts'] as Map? ?? {}).entries)
@@ -117,12 +123,12 @@ class Agent implements Identified {
       activeTasks = objects(json['activeTasks']).map(TaskRef.fromJson).toList(),
       extensionsPending = json['extensionsPending'] == true,
       extensionsError = json['extensionsError'] as String?,
-      extensionErrors = objects(
-        json['extensionErrors'],
-      ).map(ProfileError.ofWorker).toList(),
-      skillCommands = objects(
-        json['skillCommands'],
-      ).map(SkillCommand.fromJson).toList();
+      extensionErrors = objects(json['extensionErrors'])
+          .map(ProfileError.ofWorker)
+          .toList(),
+      skillCommands = objects(json['skillCommands'])
+          .map(SkillCommand.fromJson)
+          .toList();
 }
 
 /// Enough of a Task to name it next to an Agent, a Job or a Queue Entry.
@@ -184,13 +190,13 @@ class Worker implements Identified {
       busy = (json['busy'] as num?)?.toInt() ?? 0,
       running = (json['running'] as num?)?.toInt() ?? 0,
       queueLength = (json['queueLength'] as num?)?.toInt() ?? 0,
-      containers = objects(
-        json['containers'],
-      ).map(WorkerContainer.fromJson).toList(),
+      containers = objects(json['containers'])
+          .map(WorkerContainer.fromJson)
+          .toList(),
       projects = objects(json['projects']),
-      profileErrors = objects(
-        json['profileErrors'],
-      ).map(ProfileError.ofAgent).toList();
+      profileErrors = objects(json['profileErrors'])
+          .map(ProfileError.ofAgent)
+          .toList();
 }
 
 /// One Worker Slot and the container that fills it.
@@ -288,6 +294,9 @@ class Task {
   /// The Pull Request as the API sends it (provider, number, url, state, draft).
   final Json? pullRequest;
 
+  /// The ClickUp state of a Task imported from ClickUp (url, linked, descriptionDetached, pushPending, error).
+  final Json? clickup;
+
   /// The Agent Session as the board card shows it.
   final String? sessionState;
   final int? queuePosition;
@@ -325,7 +334,10 @@ class Task {
       pullRequest = json['pullRequest'] == null
           ? null
           : Json.from(json['pullRequest'] as Map),
-      pullRequestUrl = (json['pullRequest'] as Map?)?['url'] as String?;
+      pullRequestUrl = (json['pullRequest'] as Map?)?['url'] as String?,
+      clickup = json['clickup'] == null
+          ? null
+          : Json.from(json['clickup'] as Map);
 
   /// The same Task in another Status, for showing a move before the backend
   /// confirms it.
@@ -349,7 +361,11 @@ class Task {
       branchName = o.branchName,
       branchUrl = o.branchUrl,
       pullRequest = o.pullRequest,
-      pullRequestUrl = o.pullRequestUrl;
+      pullRequestUrl = o.pullRequestUrl,
+      clickup = o.clickup;
+
+  /// Whether the title follows ClickUp.
+  bool get titleManagedByClickUp => clickup?['linked'] == true;
 
   /// Merging works on open Pull Requests that aren't drafts.
   bool get canMergePullRequest =>

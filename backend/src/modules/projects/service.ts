@@ -23,6 +23,7 @@ export function serializeProject(p: ProjectRow): Project {
     logoUrl: p.logoBlobId ? `${API_PREFIX}/projects/${p.id}/logo?v=${p.logoBlobId}` : null,
     key: p.key,
     repository: p.repository,
+    clickup: p.clickup,
     workerId: p.workerId,
     name: p.name,
     description: p.description,
@@ -49,6 +50,11 @@ export async function getBoardProject(db: Executor, idOrKey: string, opts: { loc
   return row;
 }
 
+/** The Statuses of a Project with a ClickUp Link are managed by ClickUp, except each one's Category. */
+export function assertStatusesEditable(project: ProjectRow): void {
+  if (project.clickup) throw forbidden('The statuses of this project are managed by ClickUp', 'clickup_managed');
+}
+
 /** A Wiki's Backing Task changes only through the Wiki API (its name, description and Agent). */
 export async function assertBoardTask(db: Executor, projectId: string): Promise<void> {
   const project = await getProject(db, projectId);
@@ -58,12 +64,16 @@ export async function assertBoardTask(db: Executor, projectId: string): Promise<
 
 export async function createProject(
   db: Executor,
-  input: Pick<ProjectRow, 'key' | 'name' | 'description' | 'workerId'> & Partial<Pick<ProjectRow, 'repository' | 'defaultAgentId'>>,
+  input: Pick<ProjectRow, 'key' | 'name' | 'description' | 'workerId'> & Partial<Pick<ProjectRow, 'repository' | 'defaultAgentId' | 'clickup'>>,
+  opts: { statuses?: boolean } = {},
 ): Promise<ProjectRow> {
   const [project] = await db.insert(projects).values(input).returning();
-  await db
-    .insert(statuses)
-    .values(DEFAULT_STATUSES.map((s, position) => ({ ...s, position, projectId: project!.id })));
+  // A Project linked to ClickUp gets the Statuses of its List instead of the default ones.
+  if (opts.statuses !== false) {
+    await db
+      .insert(statuses)
+      .values(DEFAULT_STATUSES.map((s, position) => ({ ...s, position, projectId: project!.id })));
+  }
   return project!;
 }
 

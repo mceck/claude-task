@@ -58,7 +58,7 @@ A named step in a Project's workflow. Each Status belongs to one Category.
 _Avoid_: column (that's how a Status looks on the Board), state
 
 **Category**:
-The fixed meaning of a Status, independent of its name: backlog, open, active, review, done or closed. `closed` ends the Session; `backlog` holds Tasks without an Agent (assigning one moves the Task to the first open Status, and leaving Backlog assigns the default Agent).
+The fixed meaning of a Status, independent of its name: backlog, open, active, review, done or closed. `closed` ends the Session; `backlog` is only a label for the Board.
 _Avoid_: status type
 
 **Task**:
@@ -448,6 +448,16 @@ _Avoid_: cancel, kill (those end the Job)
 **Repository**:
 The code repository linked to a Project, on GitHub or GitLab, reached through one Git Connection. Several Projects may link the same Repository.
 _Avoid_: repo (in user-facing copy)
+
+**ClickUp Link**:
+The optional connection of a Project to a ClickUp List or View, through a ClickUp token Credential. The Project's Statuses mirror ClickUp's, its matching tasks are imported as Tasks, and the Task Status syncs both ways.
+_Avoid_: integration
+
+**Mirrored Status**:
+A Status of a Project with a ClickUp Link, kept equal to a ClickUp status. Its name, color and place are managed by ClickUp; its Category is set in claude-task.
+
+**Unlinked Task**:
+A Task whose ClickUp task left the filter, was deleted or moved on ClickUp. It stays on the Board as a local Task and relinks if it returns.
 
 **Git Connection**:
 A configured access to one code host: a GitHub App, or a GitLab instance with a token. There can be several Git Connections of any provider. Each Repository is reached through exactly one of them.

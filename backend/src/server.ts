@@ -4,6 +4,9 @@ import { PushDispatcher } from './notifications/dispatcher';
 import { GitConnections, cachedProviderFactory } from './git/connections';
 import type { ProviderFactory } from './git/connections';
 import { GitSync } from './git/sync';
+import { httpClickUpClient } from './clickup/client';
+import type { ClickUpClientFactory } from './clickup/client';
+import { ClickUpSync } from './clickup/sync';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app';
@@ -53,7 +56,7 @@ function createBlobStore(config: Config): BlobStore {
 /** Migrates the database, bootstraps the first admin and builds the app (not listening yet). */
 export async function createServer(
   config: Config,
-  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: WorkerRuntime; startScheduler?: boolean; git?: ProviderFactory; push?: PushTransport } = {},
+  overrides: { blobs?: BlobStore; logger?: boolean; runtime?: WorkerRuntime; startScheduler?: boolean; git?: ProviderFactory; push?: PushTransport; clickup?: ClickUpClientFactory } = {},
 ): Promise<Server> {
   const { db, pool } = createDb(config.databaseUrl);
   let loginRevocations: LoginRevocations | undefined;
@@ -64,6 +67,7 @@ export async function createServer(
       db,
       push: overrides.push ?? new FirebasePushTransport(config.push?.serviceAccountFile),
       git: new GitConnections(db, config, overrides.git ?? cachedProviderFactory()),
+      clickup: overrides.clickup ?? httpClickUpClient,
       hub: new RealtimeHub(),
       blobs: overrides.blobs ?? createBlobStore(config),
       runtime:
@@ -79,6 +83,7 @@ export async function createServer(
     ctx.projectActivity = new ProjectActivity(ctx.hub, db, (err) => ctx.log.warn({ err }, 'Project activity failed'));
     ctx.scheduler = new Scheduler(ctx);
     ctx.gitSync = new GitSync(ctx);
+    ctx.clickupSync = new ClickUpSync(ctx);
     const app = await buildApp(ctx, { logger: overrides.logger });
     ctx.log = app.log;
     await seedPlatformSkill(ctx);
@@ -89,6 +94,7 @@ export async function createServer(
       ctx.pushDispatcher.start();
       ctx.scheduler.start();
       ctx.gitSync.start();
+      ctx.clickupSync.start();
     }
     if (await bootstrapAdmin(db, config.bootstrapAdmin)) {
       app.log.info({ email: config.bootstrapAdmin!.email }, 'created the first admin from ADMIN_EMAIL');
@@ -104,11 +110,13 @@ export async function createServer(
           clearInterval(purge);
           ctx.scheduler.stop();
           ctx.gitSync.stop();
+          ctx.clickupSync.stop();
           ctx.projectActivity.stop();
           ctx.pushDispatcher.stop();
           await ctx.pushDispatcher.settle();
           await ctx.push.close?.();
           await ctx.gitSync.settle();
+          await ctx.clickupSync.settle();
           // Stop containers while the (possibly long) build drain runs: Compose kills the
           // process after stop_grace_period, so stopping only after settle defeats the setting.
           let stopFailure: unknown;

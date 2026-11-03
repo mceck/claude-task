@@ -14,6 +14,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { ClickUpLinkFields, EMPTY_CLICKUP, clickUpBody, useClickUpCredentials } from '../components/ClickUpLink';
+import type { ClickUpDraft } from '../components/ClickUpLink';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { errorMessage, post } from '../api/client';
 import { Combobox } from '../components/Combobox';
@@ -158,6 +160,8 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [baseBranch, setBaseBranch] = useState('');
   const [busy, setBusy] = useState(false);
   const [pickedWorker, setPickedWorker] = useState('');
+  const [clickup, setClickup] = useState<ClickUpDraft>(EMPTY_CLICKUP);
+  const clickupTokens = useClickUpCredentials();
   const workers = useWorkers();
   const workerId = pickedWorker || defaultWorkerId(workers.data);
   const agents = useAgents();
@@ -183,12 +187,15 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     if (!PROJECT_KEY_PATTERN.test(effectiveKey)) return setError('The key must be 2–6 uppercase letters');
     if (selected !== 'none' && !choice) return setError('Choose an available repository');
     if (!workerId) return setError('Choose a worker');
+    const clickupLink = clickUpBody(clickup);
+    if (clickup.credentialId && !clickupLink) return setError('Choose the ClickUp workspace and the List or View to link');
     setBusy(true);
     setError(null);
     try {
       const bundle = await post<ProjectBundle>('/projects', {
         key: effectiveKey, name, description, workerId,
         defaultAgentId: defaultAgentId === 'none' ? null : defaultAgentId,
+        ...(clickupLink ? { clickup: clickupLink } : {}),
         ...(choice ? { repository: {
           connectionId: choice.connectionId,
           providerRepoId: choice.providerRepoId,
@@ -212,7 +219,7 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         <form onSubmit={submit} className="flex min-w-0 flex-col gap-4">
           <DialogHeader>
             <DialogTitle>New project</DialogTitle>
-            <DialogDescription>It starts with a default set of statuses you can change later.</DialogDescription>
+            <DialogDescription>It starts with a default set of statuses you can change later, or ClickUp’s when linked.</DialogDescription>
           </DialogHeader>
           <fieldset disabled={busy} className="min-w-0">
             <FieldGroup>
@@ -288,6 +295,15 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                 {groups.error && <><ErrorText>{errorMessage(groups.error)}</ErrorText><Button type="button" variant="outline" onClick={() => void groups.refetch()}>Retry repositories</Button></>}
                 {(groups.data ?? []).filter((g) => g.error).map((g) => <ErrorText key={g.connection.id}>{g.connection.name}: {g.error}</ErrorText>)}
               </Field>
+              {(clickupTokens.data?.length ?? 0) > 0 && (
+                <Field>
+                  <FieldLabel>ClickUp</FieldLabel>
+                  <FieldDescription>
+                    Optional. The tasks of a ClickUp List or View are imported now and kept in sync; the project’s statuses follow ClickUp’s.
+                  </FieldDescription>
+                  <ClickUpLinkFields value={clickup} onChange={setClickup} disabled={busy} />
+                </Field>
+              )}
               {choice && <Field>
                 <FieldLabel htmlFor="project-base-branch">Base branch</FieldLabel>
                 <Input id="project-base-branch" value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} maxLength={250} />

@@ -277,36 +277,29 @@ describe('project settings for Agents', () => {
     expect((await admin.get(`/projects/${project.id}/agent-settings`)).body.settings.defaultAgentId).toBeNull();
   });
 
-  it('keeps Backlog tasks without an Agent, and links Agents and Backlog both ways', async () => {
+  it('assigns the default Agent on creation whatever the Status, and never changes Agents on Status changes', async () => {
     const admin = await app.admin();
     const bundle = await createProject(admin);
     const project = bundle.project;
     const backlog = bundle.statuses.find((s: { name: string }) => s.name === 'Backlog')!;
     const todo = bundle.statuses.find((s: { name: string }) => s.name === 'Todo')!;
-    const progress = bundle.statuses.find((s: { name: string }) => s.name === 'In Progress')!;
     const { agent } = await createAgent(app, admin);
     const { agent: other } = await createAgent(app, admin);
     await admin.patch(`/projects/${project.id}/agent-settings`, { defaultAgentId: agent.id });
 
-    // Created in Backlog: no Agent.
+    // Created in Backlog: the default Agent, like anywhere else.
     const task = await createTask(admin, project.id, { statusId: backlog.id });
-    expect(task.agentId).toBeNull();
+    expect(task.agentId).toBe(agent.id);
 
-    // Moving it out gives it the default Agent.
+    // Moving it does not touch the Agent.
+    const unassigned = (await admin.patch(`/tasks/${task.id}`, { version: task.version, agentId: null })).body.task;
     const moved = (await admin.post(`/tasks/${task.id}/move`, { statusId: todo.id })).body.task;
-    expect(moved.agentId).toBe(agent.id);
+    expect(moved).toMatchObject({ agentId: null, statusId: todo.id });
+    expect(unassigned.statusId).toBe(backlog.id);
 
-    // An Agent given in Backlog takes the Task to the first open Status.
+    // Assigning an Agent in Backlog leaves the Task where it is.
     const second = await createTask(admin, project.id, { statusId: backlog.id });
     const assigned = (await admin.patch(`/tasks/${second.id}`, { version: second.version, agentId: other.id })).body.task;
-    expect(assigned).toMatchObject({ agentId: other.id, statusId: todo.id });
-
-    // An update that leaves Backlog also gives the default Agent; an explicit Agent wins.
-    const third = await createTask(admin, project.id, { statusId: backlog.id });
-    const left = (await admin.patch(`/tasks/${third.id}`, { version: third.version, statusId: progress.id })).body.task;
-    expect(left.agentId).toBe(agent.id);
-    const fourth = await createTask(admin, project.id, { statusId: backlog.id });
-    const explicit = (await admin.patch(`/tasks/${fourth.id}`, { version: fourth.version, statusId: progress.id, agentId: other.id })).body.task;
-    expect(explicit.agentId).toBe(other.id);
+    expect(assigned).toMatchObject({ agentId: other.id, statusId: backlog.id });
   });
 });

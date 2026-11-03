@@ -438,32 +438,11 @@ class TaskDetails extends StatelessWidget {
                               !context.mounted) {
                             return;
                           }
-                          // An Agent takes a Task out of Backlog, into the first open Status.
-                          final todo = c.statuses
-                              .where((s) => s.category == 'open')
-                              .firstOrNull;
-                          final fromBacklog =
-                              v.isNotEmpty &&
-                              status?.category == 'backlog' &&
-                              todo != null;
-                          if (fromBacklog &&
-                              !await confirm(
-                                context,
-                                title: 'Assign Agent?',
-                                message:
-                                    'Assigning an Agent moves ${t.key} out of “${status!.name}” to “${todo.name}”.',
-                                confirmLabel: 'Assign and move',
-                                destructive: false,
-                              )) {
-                            return;
-                          }
                           if (!context.mounted) return;
                           await perform(
                             context,
-                            () => c.updateTask({
-                              'agentId': v.isEmpty ? null : v,
-                              if (fromBacklog) 'statusId': todo.id,
-                            }),
+                            () =>
+                                c.updateTask({'agentId': v.isEmpty ? null : v}),
                           );
                         }
                       : null,
@@ -617,6 +596,13 @@ class TaskDetails extends StatelessWidget {
             ),
           ),
         ],
+        if (t.clickup != null) ...[
+          const SizedBox(height: 22),
+          section(
+            2,
+            _ClickUpPanel(task: t, controller: c, editable: edit != null),
+          ),
+        ],
         const SizedBox(height: 22),
         section(
           3,
@@ -767,6 +753,7 @@ class _TaskAttachments extends StatelessWidget {
 
   /// Who posted the file: the Comment's author, or the description it is linked from.
   static String _source(Json file) {
+    if (file['fromClickUp'] == true) return 'ClickUp';
     final author = file['author'];
     return author is Map ? 'by ${author['displayName']}' : 'Description';
   }
@@ -936,8 +923,12 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
               ),
             LabeledField(
               label: 'Title',
+              description: task.titleManagedByClickUp
+                  ? 'The title is managed by ClickUp.'
+                  : null,
               child: TextField(
                 controller: title,
+                enabled: !task.titleManagedByClickUp,
                 maxLength: 500,
                 decoration: const InputDecoration(counterText: ''),
                 onChanged: (_) => set(() {}),
@@ -985,7 +976,8 @@ Future<void> showEditTask(BuildContext context, TaskController c) async {
                     set(() => saving = true);
                     try {
                       await c.updateTask({
-                        'title': title.text.trim(),
+                        if (!task.titleManagedByClickUp)
+                          'title': title.text.trim(),
                         'description': description.text,
                       });
                       if (sheet.mounted) Navigator.pop(sheet);
@@ -1063,5 +1055,85 @@ Future<void> confirmDeleteTask(
   );
   if (accepted && context.mounted) {
     await perform(context, controller.deleteTask);
+  }
+}
+
+/// The Task's ClickUp state: the link, a failed Status push and a description that no longer follows ClickUp.
+class _ClickUpPanel extends StatefulWidget {
+  final Task task;
+  final TaskController controller;
+  final bool editable;
+  const _ClickUpPanel({
+    required this.task,
+    required this.controller,
+    required this.editable,
+  });
+  @override
+  State<_ClickUpPanel> createState() => _ClickUpPanelState();
+}
+
+class _ClickUpPanelState extends State<_ClickUpPanel> {
+  bool busy = false;
+
+  Future<void> _run(String action) async {
+    setState(() => busy = true);
+    try {
+      await widget.controller.clickupAction(action);
+    } catch (e) {
+      if (mounted) toast(context, e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final clickup = widget.task.clickup!;
+    final url = clickup['url'] as String?;
+    final error = clickup['error'] as String?;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SectionLabel('ClickUp'),
+        if (url != null)
+          AppTile(
+            leading: const IconBadge(
+              Icons.open_in_new_rounded,
+              color: Palette.primarySoft,
+              size: 28,
+            ),
+            title: 'Open in ClickUp',
+            subtitle: clickup['linked'] == true
+                ? (clickup['pushPending'] == true
+                      ? 'Sending the status to ClickUp…'
+                      : null)
+                : 'No longer in the linked ClickUp source',
+            trailing: externalMark,
+            onTap: () => openLink(url),
+          ),
+        if (error != null) ...[
+          const SizedBox(height: 8),
+          Notice.error(
+            error,
+            actionLabel: widget.editable ? 'Retry' : null,
+            onAction: busy ? null : () => _run('retry'),
+          ),
+        ],
+        if (clickup['descriptionDetached'] == true) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'The description differs from ClickUp.',
+            style: TextStyle(fontSize: 12.5, color: Palette.fgSubtle),
+          ),
+          if (widget.editable)
+            AppButton(
+              label: 'Restore from ClickUp',
+              icon: Icons.restore_rounded,
+              tone: Tone.ghost,
+              onPressed: busy ? null : () => _run('restore-description'),
+            ),
+        ],
+      ],
+    );
   }
 }

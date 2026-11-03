@@ -23,6 +23,8 @@ import { PageHeader } from './ProjectsPage';
 import { CATEGORY_COLOR } from '../lib/progress';
 import { ProjectAgentSettings } from '../components/ProjectAgentSettings';
 import { ProjectLogo } from '../components/ProjectLogo';
+import { ClickUpLinkFields, clickUpBody } from '../components/ClickUpLink';
+import type { ClickUpDraft } from '../components/ClickUpLink';
 
 export function ProjectSettingsPage() {
   const { projectKey } = useParams();
@@ -48,6 +50,7 @@ export function ProjectSettingsPage() {
           <TabsTrigger value="tags">Tags</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
+          {project.clickup && <TabsTrigger value="clickup">ClickUp</TabsTrigger>}
         </TabsList>
         <TabsContent value="general">
           <General project={project} />
@@ -60,6 +63,7 @@ export function ProjectSettingsPage() {
         </TabsContent>
         <TabsContent value="agents"><ProjectAgentSettings projectId={project.id} /></TabsContent>
         <TabsContent value="repository"><RepositorySettings projectId={project.id} /></TabsContent>
+        {project.clickup && <TabsContent value="clickup"><ClickUpSettings project={project} /></TabsContent>}
       </Tabs>
     </div>
   );
@@ -254,6 +258,7 @@ function Statuses({ bundle }: { bundle: ProjectBundle }) {
   const [color, setColor] = useState('#64748b');
   const [category, setCategory] = useState<Category>('active');
   const run = useRun(project);
+  const locked = !!project.clickup;
 
   const swap = (i: number, j: number) => {
     const ids = statuses.map((s) => s.id);
@@ -274,33 +279,35 @@ function Statuses({ bundle }: { bundle: ProjectBundle }) {
           <>
             The category tells the system what a status means. A project always keeps at least one <b>open</b> and one <b>closed</b> status.
             Closed statuses are hidden on the board unless “Show closed” is on.
+            {locked && ' The names, colors and order follow ClickUp; only the category can change here.'}
           </>
         }
       >
         <ul className="divide-y rounded-lg border">
           {statuses.map((s, i) => (
             <li key={`${s.id}:${s.name}:${s.color}:${s.category}`} className="flex items-center gap-2 px-3 py-2">
-              <ColorInput label={`Color of ${s.name}`} value={s.color} onCommit={(c) => run(() => patch(`/statuses/${s.id}`, { color: c }))} />
+              {locked ? <StatusDot color={s.color} className="size-3" /> : <ColorInput label={`Color of ${s.name}`} value={s.color} onCommit={(c) => run(() => patch(`/statuses/${s.id}`, { color: c }))} />}
               <Input
                 aria-label={`Name of ${s.name}`}
                 defaultValue={s.name}
+                readOnly={locked}
                 onBlur={(e) => e.target.value.trim() && e.target.value !== s.name && run(() => patch(`/statuses/${s.id}`, { name: e.target.value }))}
                 className="h-7 flex-1 border-transparent bg-transparent shadow-none hover:border-input dark:bg-transparent"
               />
               <CategoryPicker label={`Category of ${s.name}`} value={s.category} onChange={(c) => run(() => patch(`/statuses/${s.id}`, { category: c }))} />
-              <Button variant="ghost" size="icon-sm" aria-label={`Move ${s.name} up`} disabled={i === 0} onClick={() => swap(i, i - 1)}>
+              <Button variant="ghost" size="icon-sm" aria-label={`Move ${s.name} up`} disabled={locked || i === 0} onClick={() => swap(i, i - 1)}>
                 <ArrowUp />
               </Button>
-              <Button variant="ghost" size="icon-sm" aria-label={`Move ${s.name} down`} disabled={i === statuses.length - 1} onClick={() => swap(i, i + 1)}>
+              <Button variant="ghost" size="icon-sm" aria-label={`Move ${s.name} down`} disabled={locked || i === statuses.length - 1} onClick={() => swap(i, i + 1)}>
                 <ArrowDown />
               </Button>
-              <Button variant="ghost" size="icon-sm" aria-label={`Delete ${s.name}`} className="text-muted-foreground hover:text-destructive" onClick={() => setDeleting(s)}>
+              <Button variant="ghost" size="icon-sm" aria-label={`Delete ${s.name}`} disabled={locked} className="text-muted-foreground hover:text-destructive" onClick={() => setDeleting(s)}>
                 <Trash2 />
               </Button>
             </li>
           ))}
         </ul>
-        <form onSubmit={add} className="mt-3 flex items-center gap-2">
+        {!locked && <form onSubmit={add} className="mt-3 flex items-center gap-2">
           <label className="relative flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border">
             <StatusDot color={color} className="size-3" />
             <input type="color" aria-label="New status color" value={color} onChange={(e) => setColor(e.target.value)} className="absolute inset-0 opacity-0" />
@@ -310,7 +317,7 @@ function Statuses({ bundle }: { bundle: ProjectBundle }) {
           <Button type="submit" variant="outline">
             <Plus /> Add
           </Button>
-        </form>
+        </form>}
       </Section>
       <DeleteStatusDialog
         status={deleting}
@@ -424,5 +431,73 @@ function Tags({ bundle }: { bundle: ProjectBundle }) {
         </Button>
       </form>
     </Section>
+  );
+}
+
+function ClickUpSettings({ project }: { project: Project }) {
+  const link = project.clickup!;
+  const [editing, setEditing] = useState<ClickUpDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = useRun(project);
+  const confirm = useConfirm();
+  const act = async (fn: () => Promise<unknown>, success: string) => {
+    setBusy(true);
+    try {
+      await run(fn, success);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    const ok = await confirm({
+      title: 'Remove the ClickUp link?',
+      description: 'The statuses stay and every task becomes a local task: nothing is synced any more.',
+      confirmLabel: 'Remove link',
+      destructive: true,
+    });
+    if (ok) await act(() => del(`/projects/${project.id}/clickup`), 'ClickUp link removed');
+  };
+  return (
+    <div className="space-y-4">
+      <Section
+        title="ClickUp link"
+        description={`The ${link.sourceType} ${link.sourceId} of workspace ${link.teamId}, synced every 5 minutes. Statuses, names, descriptions and attachments come from ClickUp; the status of a task goes both ways.`}
+      >
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-muted-foreground">Filters</dt>
+          <dd className="font-mono break-all">{link.query || '—'}</dd>
+          <dt className="text-muted-foreground">Last sync</dt>
+          <dd>{link.lastSyncedAt ? new Date(link.lastSyncedAt).toLocaleString() : 'never'}</dd>
+        </dl>
+        {link.lastError && <p role="alert" className="mt-3 text-sm text-destructive">{link.lastError}</p>}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button variant="outline" disabled={busy} onClick={() => act(() => post(`/projects/${project.id}/clickup/sync`), 'Synced with ClickUp')}>
+            {busy ? 'Syncing…' : 'Sync now'}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => setEditing({ credentialId: link.credentialId, teamId: link.teamId, spaceId: '', sourceType: link.sourceType, sourceId: link.sourceId, query: link.query })}
+          >
+            Change source
+          </Button>
+          <Button variant="outline" className="text-destructive" disabled={busy} onClick={remove}>Remove link</Button>
+        </div>
+      </Section>
+      {editing && (
+        <Section title="Change source" description="The tasks that leave the new source stay on the board, unlinked.">
+          <ClickUpLinkFields value={editing} onChange={setEditing} disabled={busy} />
+          <div className="mt-4 flex gap-2">
+            <Button
+              disabled={busy || !clickUpBody(editing)}
+              onClick={() => act(() => patch(`/projects/${project.id}/clickup`, clickUpBody(editing)), 'ClickUp link updated').then(() => setEditing(null))}
+            >
+              Save and sync
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={() => setEditing(null)}>Cancel</Button>
+          </div>
+        </Section>
+      )}
+    </div>
   );
 }

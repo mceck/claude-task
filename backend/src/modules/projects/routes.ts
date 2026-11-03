@@ -27,7 +27,10 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/projects', async (request, reply) => {
     const body = parse(createProjectBody, request.body);
     const repository = body.repository ? await resolveRepository(ctx, body.repository) : null;
-    const project = await ctx.db.transaction(async (tx) => {
+    const { clickup, ...projectBody } = body;
+    const snapshot = clickup ? await ctx.clickupSync.fetch(clickup) : null;
+    let attachmentTasks: Awaited<ReturnType<typeof ctx.clickupSync.apply>> = [];
+    const project = await transact(ctx, async (tx, after) => {
       if (repository) {
         // Serialize the initial link against deletion of its Git Connection.
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`git-connection:${repository.connectionId}`}))`);
@@ -39,8 +42,18 @@ export function projectRoutes(app: FastifyInstance, ctx: AppContext): void {
       }
       const [worker] = await tx.select({ id: workers.id }).from(workers).where(eq(workers.id, body.workerId)).for('key share');
       if (!worker) throw badRequest('Unknown worker');
-      return createProject(tx, { ...body, repository });
+      const created = await createProject(tx, {
+        ...projectBody,
+        repository,
+        clickup: clickup ? { ...clickup, query: clickup.query ?? '', lastSyncedAt: new Date().toISOString(), lastError: null } : null,
+      }, { statuses: !snapshot });
+      if (snapshot) attachmentTasks = await ctx.clickupSync.apply(tx, after, created.id, snapshot, { ensureEntryAndExit: true });
+      return created;
     });
+    if (clickup && attachmentTasks.length > 0) {
+      const notes = await ctx.clickupSync.syncAttachments(project.id, attachmentTasks, await ctx.clickupSync.clientFor(clickup.credentialId));
+      if (notes.length > 0) ctx.log.warn({ notes, projectId: project.id }, 'ClickUp attachments skipped');
+    }
     return reply.status(201).send(await bundle(ctx, project.id));
   });
 

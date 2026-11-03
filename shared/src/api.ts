@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { CREDENTIAL_KINDS, EFFORT_LEVELS, PERMISSION_MODES } from './agents';
 import { CATEGORIES, PRIORITIES, QUESTION_LIMITS, ROLES } from './domain';
+import { clickUpLinkBody } from './clickup';
 import type { Tag, Project, Status, Task, User } from './domain';
 
 export const API_PREFIX = '/api/v1';
@@ -69,6 +70,8 @@ export const createProjectBody = z.strictObject({
   defaultAgentId: id.nullable().optional(),
   /** Where the Project's Jobs run. */
   workerId: id,
+  /** Links the new Project to a ClickUp List or View. */
+  clickup: clickUpLinkBody.optional(),
 });
 export type CreateProjectBody = z.input<typeof createProjectBody>;
 

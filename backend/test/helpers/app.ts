@@ -64,6 +64,8 @@ export interface TestAppOptions {
   config?: Partial<Config>;
   /** Real providers instead of the fakes (provider HTTP contracts). */
   git?: import('../../src/git/connections').ProviderFactory;
+  /** The ClickUp client factory (tests install a fake). */
+  clickup?: import('../../src/clickup/client').ClickUpClientFactory;
   /** Merged into the default Agents settings. */
   agents?: Partial<Config['agents']>;
   /** Keep data between tests in the file (default: truncate before each test). */
@@ -134,7 +136,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
     t.git = new FakeGitProvider();
     t.gitlab = new FakeGitProvider('gitlab', '');
     const git = options.git ?? FakeGitProvider.factory(() => ({ github: t.git, gitlab: t.gitlab }));
-    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: process.env.TEST_LOG_LEVEL ? undefined : false, runtime: t.runtime, git, push: options.push });
+    const server = await createServer(config, { blobs: new FsBlobStore(blobDir), logger: process.env.TEST_LOG_LEVEL ? undefined : false, runtime: t.runtime, git, push: options.push, clickup: options.clickup });
     await server.app.listen({ host: '127.0.0.1', port: 0 });
     const address = server.app.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');
