@@ -91,15 +91,24 @@ Task Branch names are assigned when the first Job starts, for example `task/web-
 
 A Task has one pull request at a time. If you ask the Agent for changes while it is open, the Agent pushes to the same branch and the pull request updates; once it is merged or closed, the Agent opens a new one.
 
+## See the files an Agent left uncommitted
+
+The Worktree lives in the Project Worker's volume, so the app reads it through a connected Runner. Open the Task's **Task actions** menu and choose **Changes**:
+
+![The Changes dialog listing modified, added, deleted and untracked files](images/git-repositories/worktree-changes.png)
+
+The dialog shows the uncommitted files with a status letter: modified, added, deleted, renamed, copied, type-changed, untracked or conflicted. The number beside **Changes** is the total. It reads the Worktree when it opens; if the Worker has no running container, it shows the last read and when it was taken. No polling runs while the dialog is closed, and reading the Worktree does not interfere with a running Job.
+
 Merging never changes the Task's Status, whether you merge from the Task view or on the code host, and it never closes the Task. Moving a Task to **Done** also leaves the Session available; a Status in the `closed` Category ends it.
 
-Closing removes the Agent's local Worktree. Ask the Agent to push work before closing: reopening recreates its working files from the remote Task Branch.
+Closing removes the Agent's Worktree from the Worker Volume. Ask the Agent to push work before closing: reopening recreates its working files from the remote Task Branch.
 
 ![Git connections showing the fictional Demo GitLab connection](images/git-repositories/connections.png)
 
 ## Related
 
 - [Projects and boards](projects-and-boards.md): configure Project Statuses and settings.
+- [Workers](workers.md): where Worktrees and repository files are stored and run.
 - [Agent sessions and queues](agent-sessions-and-queues.md): start, stop and retry work.
 - [Wikis](wikis.md): use a Repository as a shared knowledge base.
 

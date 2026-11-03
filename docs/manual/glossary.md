@@ -31,21 +31,31 @@ These are the terms you will meet while using Claude Task.
 | Timeline | Comments, Revisions and Agent work shown together in time order. |
 | Chat Dock | The row of Minimized Chats at the bottom of the web app, kept in your browser. |
 | Minimized Chat | A Conversation or Wiki Chat kept in the Chat Dock, out of its page, so you can read and answer it from anywhere. |
-| Agent | A named Claude Code worker with its own instructions and environment. |
+| Agent | A named Claude Code configuration: Credential, model, instructions, environment and Extensions. Its Jobs run on Workers. |
 | Default Agent | A Project’s Agent choice assigned to new Tasks when enabled. The first regular Comment starts work. |
+| Worker | A Docker execution environment with a Dockerfile, Development Services, limits and a number of Worker Containers. Every Project, Wiki and Schedule runs on one Worker. |
+| Worker Container | One running container of a Worker, one per Worker Slot. It runs one Job at a time for any Agent. |
+| Worker Slot | A numbered place in a Worker, from 1 to its cap. It keeps its own Development Service data. |
+| Worker Image | The image built from a Worker's Dockerfile on top of the platform Base Image. |
+| Base Image | The platform image `claude-task/agent-base`, with Claude Code, the Runner, mise and the `agent` user. |
+| Worker Volume | The storage shared by every Worker Container of a Worker: repositories, Worktrees, Claude transcripts, Agent Profiles and installed tools. |
+| Service Volume | The storage of one Worker Slot's Development Services, kept across container restarts. |
+| Agent Profile | An Agent's own Claude Code configuration directory inside a Worker Volume, holding its Skills, Plugins and settings. |
+| Build | One attempt to build a Worker Image from its Dockerfile, with a log and an outcome. |
+| Worker State | The status shown for a Worker: idle, working, offline, building, build failed or disabled. |
 | Assignment | Linking an Agent to a Task; a regular Comment starts its work. |
-| Session | One Agent's continuing Claude Code conversation on one Task. |
-| Job | A period when an Agent runs work for a Session. |
+| Session | One continuing Claude Code conversation on one Task or Wiki Chat, whichever Agent works it. |
+| Job | A period when an Agent runs work for a Session in a Worker Container. |
 | Turn | A cycle of Agent work ending when it hands control back. |
-| Queue | An Agent's ordered list of waiting work. |
+| Queue | A Worker's ordered list of waiting work. |
 | Held | Waiting work whose start failed and needs Retry or a new Comment. |
 | Run | A piece of work the Agent hands off while its Turn continues: a Subagent Run or a Background Command, listed in the bar above the composer. |
 | Subagent Run | A Run in which a subagent works on part of the Agent's task. Read its text and tool calls live from the bar. |
 | Background Command | A Run in which a command keeps going after the Agent has moved on; its entry reports how it ended. |
 | Credential | Named Claude authentication used by one or more Agents. |
 | Extension | A shared Skill, MCP Server or Plugin assigned to Agents. |
-| Development Service | A local database or tool available inside an Agent Container. |
-| Worktree | The Task's separate working directory inside an Agent's storage. |
+| Development Service | A local database or tool available inside a Worker Container. |
+| Worktree | The Task's separate working directory inside a Worker Volume. |
 | Setup Script | Project commands that prepare a newly created Worktree. |
 | Agent Instructions | Project guidance supplied to Agents working on its Tasks. |
 | Repository | The GitHub or GitLab repository linked to a Project or Wiki. |
@@ -69,6 +79,7 @@ These are the terms you will meet while using Claude Task.
 ## Related
 
 - [Agent sessions and queues](agent-sessions-and-queues.md): see how Sessions, Jobs and Turns fit together.
+- [Workers](workers.md): see how Worker Containers, Slots and Volumes fit together.
 - [Projects and boards](projects-and-boards.md): use Statuses and Categories.
 
 ---

@@ -35,7 +35,7 @@ The Dock remembers up to six conversations in your browser, survives reloads, an
 3. Click the **Description** text or **Edit** to update it. Use the formatting toolbar or Markdown shortcuts.
 4. Click outside the description or press Escape to finish editing and save it.
 
-You can assign several Users and one Agent. User assignees identify the people responsible for the Task. Assigning an Agent prepares its Session; post a regular Comment to start its work.
+You can assign several Users and one Agent. User assignees identify the people responsible for the Task. Assigning an Agent creates a pending Session; post a regular Comment to start its work. Changing the Agent later keeps the same conversation and applies the new Agent's configuration from its next Job.
 
 A Project can have a **Default agent**, configured in its web **Settings** → **Agents**. New Tasks inherit that Agent when it is enabled. A disabled or removed default leaves new Tasks unassigned. Existing Tasks keep their assignment. In the native creation form, choosing another Agent assigns that Agent to the new Task. Your first regular Comment starts work in every case.
 
@@ -94,6 +94,8 @@ Type `/` to see the Agent's available commands and Skills, including the ones th
 ## Review code changes
 
 The Task's details show its branch and Pull Request when available. For an open, non-draft Pull Request, use the merge action after checking the changes. The app asks you to confirm **Merge** and applies the code host's own review and check requirements. The merge leaves the Task's Status unchanged and never closes the Task. See [Git repositories and pull requests](git-repositories.md#review-and-merge-changes) for web and native controls.
+
+To see what the Agent left uncommitted, open **Task actions** and choose **Changes**. The dialog lists the Worktree's modified, added, deleted and untracked files. It reads the Worktree when it opens and shows the last read when the Worker is not running. See [See the files an Agent left uncommitted](git-repositories.md#see-the-files-an-agent-left-uncommitted).
 
 ## Delete a Task
 

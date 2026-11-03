@@ -2,7 +2,7 @@
 
 # Work from the native app and receive notifications
 
-Use the native app to read Conversations, create and edit Tasks, work with Wikis and Schedules and receive phone alerts. Settings also let you manage Projects and their Repositories. Admins can configure Agents, Credentials, Users, Extensions and Git Connections.
+Use the native app to read Conversations, create and edit Tasks, work with Wikis and Schedules and receive phone alerts. Settings also let you manage Projects and their Repositories. Admins can configure Agents, Workers, Credentials, Users, Extensions and Git Connections.
 
 ## Sign in
 
@@ -26,6 +26,7 @@ The drawer shows your profile, Projects, Wikis, Schedules and Settings. Tap a Pr
 
 - **Projects settings** opens Project details, Statuses, Tags, archiving, **Agent setup** and Repository settings.
 - **Agents** lists Agents. Admins can create or edit them and select their Extensions.
+- **Workers** lists the execution environments. Admins can open a Worker, see its slots and restart or rebuild it.
 - Admins also see **Users**, **Credentials**, **Extensions** and **Git Connections**.
 
 ![The phone drawer with Projects, Wikis and administration entries](images/native-app-and-notifications/drawer-phone.png)
@@ -46,11 +47,11 @@ Open **Git Connections** to add GitHub Apps or GitLab instances, inspect their h
 
 Every User can open **Projects settings**, choose a Project, and open **Repository**. Search the Repositories grouped by connection, select one, check **Base Branch**, and choose **Save repository**. Open Sessions lock the Repository choice while leaving the Base Branch editable. The screen also shows provider protection and offers **Re-check protection**.
 
-Open **Projects settings**, choose a Project, then open **Agent setup** to choose its **Default Agent**, edit its **Worktree Setup Script** or change its **Agent Instructions**. Choose **No Agent** to clear the default. Changes save after a short pause, when leaving a field or before going back. If saving fails, your edits stay on screen and **Retry** submits them again.
+Open **Projects settings**, choose a Project, then open **Agent setup** to choose its **Worker** and **Default Agent**, edit its **Worktree Setup Script** or change its **Agent Instructions**. Choose **No Agent** to clear the default. Changes save after a short pause, when leaving a field or before going back. If saving fails, your edits stay on screen and **Retry** submits them again.
 
 Everyone can read the Project's environment variables. Admins can choose **Add variable**, tap an existing variable to edit it, or use its delete button. Secret values stay hidden; editing a saved secret requires a replacement value. Choose **Import .env** to paste configuration or **Choose file** to load it. Review the variable names and overwrite indicators, optionally enable **Import as secrets**, then choose **Import variables**. Existing secrets stay secret during imports.
 
-Dockerfiles, Builds, Development Services and resource limits are configured in the web app.
+Dockerfiles, Development Services, resource limits, Build history and container logs are configured in the web app. The native **Workers** settings show each Worker's slots and offer **Rebuild image**, **Recreate when idle** and per-slot **Restart** and **Force recreate** to Admins.
 
 ## Find and update work
 
@@ -61,6 +62,7 @@ On a phone, open a Project, then a Task to reach its Conversation. Back returns 
 - Open **Filters** to choose priority, Tag or assignee. Use **Clear** to remove those filters.
 - Enable **Archive** to show Tasks in closed-category Statuses.
 - Open **Task details** to change Status, priority or Agent, or use **Edit Task** for title, description, assignees and Tags.
+- In the Task actions menu, choose **Changes** to see the uncommitted files in the Task's Worktree. It reads the Worker when one is running, or shows the last read.
 - Choose **Create Task** to add work. The Project’s Default Agent, when enabled, is assigned automatically. Choosing another Agent explicitly with **Create and assign** overrides it. Your first Comment starts the Agent.
 
 If assignment fails after creating a Task, use **Retry assignment** on the created Task. It retries the assignment without creating another Task.
@@ -79,7 +81,7 @@ Use **Attach local files** to stage files. They stay with your Draft until you s
 
 Scroll to the latest entry to mark the Conversation read while online and in the foreground. A bold Task row with a dot means it has unread entries. Read state is shared with your other devices and the web app. While reading older entries, use **Jump to latest** to return to the bottom.
 
-The **Wiki** section offers each Wiki's list of Chats, with **New chat**, rename and delete, plus the Wiki's settings and deletion. See [Wikis](wikis.md) before deleting a shared Chat.
+The **Wiki** section offers each Wiki's list of Chats, with **New chat**, rename and delete, plus the Wiki's settings and deletion. Each Chat has its own Agent selector in the header: changing it resumes the same conversation with the new Agent. See [Wikis](wikis.md) before deleting a shared Chat.
 
 ## Schedules
 
@@ -117,6 +119,7 @@ Alerts are sent for completed or failed Agent Turns and failed Jobs requiring at
 
 - [Getting started](getting-started.md): access and your first useful result.
 - [Extensions and environment](admin-extensions.md): manage the shared catalog and Agent assignments.
+- [Workers](workers.md): see capacity, slots and restart actions from the phone.
 - [Git repositories](git-repositories.md): configure connections and Project Repositories.
 - [Tasks and conversations](tasks-and-conversations.md): Comments, Attachments and delivery.
 - [Troubleshooting](troubleshooting.md): resolve sign-in and Agent problems.

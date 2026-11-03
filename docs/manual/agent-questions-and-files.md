@@ -32,7 +32,7 @@ Things to know:
 - **The first answer decides.** If a colleague answers a moment before you, you see **Someone answered first** (in the native app, the name of who answered) and the card shows their answer.
 - **An answer is final.** You can delete your answer Comment, but not edit it. To change your mind, post a regular Comment ("Use Adyen after all"): it reaches the Agent in order.
 - **A Question stays open until someone answers it**, even if the conversation moves on. A free Comment does not close it.
-- **The answer follows the usual Delivery rules.** It is queued while the Agent works on another Task, and it is **Not delivered** when the Task is closed or has no Agent. If the Task is handed to another Agent, the new Agent receives it together with the Question.
+- **The answer follows the usual Delivery rules.** It is queued while the Task waits in the Worker's Queue, and it is **Not delivered** when the Task is closed or has no Agent. If the Task's Agent changes, the new Agent receives it together with the Question.
 
 ## Run a Survey with your team
 

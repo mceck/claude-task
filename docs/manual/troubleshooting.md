@@ -35,11 +35,25 @@ Start with the message you see. For Agent failures, include the Task Key and rel
 2. Post a regular Comment. Assignment, Internal Notes and moving to In Progress do not start work.
 3. Check the Task is not in a closed-category Status.
 4. Read its Session indicator and Comment delivery badges.
-5. Open **Agents** and inspect the Agent's Queue and state.
+5. Open **Workers**, select the Project's Worker and read its state, containers and **Queue**.
 
-**Queued** work waits for the Agent to be ready and free. An Admin must resolve disabled Agents, build failures, unavailable containers or pending configuration changes. An Agent handles only one Job at a time.
+**Queued** work waits for the Worker to have a free container and for the Agent to be ready. An Admin must resolve a disabled Worker, a failed Build, unavailable containers or pending Extension changes. An Agent can run several Jobs at once; the Worker's cap, not the Agent, sets how many run in parallel.
 
-If you see **waiting for retry**, open the Agent's **Work & queue** and inspect **Recent jobs** → **Details**. Read the Setup Script output and diagnostics. Fix the cause, then click **Retry** on the Task or post a new regular Comment.
+If you see **waiting for retry**, open the Agent's **Jobs** tab and **Details** on the failed Job. Read the Setup Script output and diagnostics. Fix the cause, then click **Retry** on the Task or post a new regular Comment.
+
+## Worker and container problems
+
+| Message or symptom | What to do |
+| --- | --- |
+| A Worker shows **Build failed** | Open its **Builds** tab and read the end of the log. Existing containers keep working on the previous image until a Build succeeds. |
+| A Worker shows **Offline** | With minimum 0 this is the resting state. A queued Comment starts a container. If work waits and nothing starts, an Admin checks the container, its Runner and `AGENT_BACKEND_URL`. |
+| A Worker is **Disabled** | Its Queue keeps growing and its containers stop when idle. An Admin enables it again. |
+| A slot shows **Stopped** | It starts when the minimum or work needs it. Use **Recreate when idle** for a planned replacement, not to force idle work. |
+| A Task waits behind others | Reorder or remove entries in the Worker's **Queue**. The running Job always finishes first. |
+| **Recreation is waiting for the current job to finish** | The new image or limits apply as soon as that container has no active Job. |
+| A Project's Worker cannot change | Close every Task whose Session is started and open, then try again. The app lists them. For a Wiki, delete its started Chats first. |
+| An Extension synchronization fails | Read the error on the Agent page or the Worker page. Fix the Skill name conflict, Plugin or marketplace, then wait for the automatic retry. |
+| A Worker cannot be deleted | A Project, Wiki or Schedule still uses it. Move them to another Worker first; the app names them. |
 
 ## The Agent missed instructions
 
@@ -62,7 +76,7 @@ An Internal Note never reaches the Agent. Editing an already delivered Comment a
 | --- | --- |
 | **This Run's transcript is no longer in memory** | The Agent's Job ended or the transcript reached its size limit. Its Timeline row keeps its status and error. Ask the Agent to repeat the work if you need the details. |
 | A Run shows its tool calls but no text | The Agent's Claude Code version does not forward subagent text. The tool calls and the Timeline row are still complete. |
-| A Background Command shows no output | Its output stays inside the Agent's container. The Run reports how the command ended; ask the Agent to read the command's log if you need more. |
+| A Background Command shows no output | Its output stays inside its Worker Container. The Run reports how the command ended; ask the Agent to read the command's log if you need more. |
 
 ## Credential, Git and setup failures
 
@@ -73,16 +87,17 @@ An Internal Note never reaches the Agent. Editing an already delivered Comment a
 | Repository cannot be listed or reached | An Admin should verify Git Connection access and expiry. Check the selected Repository and Base Branch. |
 | Setup Script fails | Review the Job's setup output, correct the Project's Setup Script or Agent environment, then Retry. |
 | Pull request merged and the Task should move on | Merging never changes the Task's Status, whether from the app or on the code host. Move the Task to the intended Status yourself. |
-| Agent disconnected or backend restarted | Allow recovery to complete and look for a recovery notice before posting duplicate work. |
+| Worker disconnected or backend restarted | Allow recovery to complete and look for a recovery notice before posting duplicate work. |
 
 ## Schedule issues
 
 | Problem | Next action |
 | --- | --- |
-| A Schedule starts no runs | Check that it is not paused and that its Agent is enabled. The history shows **Skipped** rows with the reason. |
+| A Schedule starts no runs | Check that it is not paused, that its Agent is enabled and that its Worker is enabled. The history shows **Skipped** rows with the reason. |
 | **previous run still active** | The last run has not finished. Open its Task to see what the Agent is doing, or wait for it to end. |
+| **worker unavailable** | The Schedule's Worker is disabled. Enable it or choose another Worker in the Schedule's settings. |
 | **missed** | The backend was down for longer than the Schedule's period. The next due time runs normally. |
-| **Run now** says the agent is disabled or missing | Enable the Agent or choose another one in the Schedule's settings. |
+| **Run now** says the agent is disabled or missing, or the Worker is disabled | Enable the Agent or choose another one, and enable the Worker or choose another one, in the Schedule's settings. |
 | A Schedule cannot be deleted | An Agent is still working on one of its runs. Wait for it to finish, then retry. |
 | **claude-task: this schedule is read-only** | The Schedule forbids pushes. Turn off **Read-only** in its settings if the Agent should push. |
 
@@ -102,11 +117,12 @@ An Internal Note never reaches the Agent. Editing an already delivered Comment a
 
 Use [Native app and notifications](native-app-and-notifications.md) to check connection status, pending Comments and phone permissions. Offline cached content can be read, but new server actions need a connection.
 
-**Delete** on a Wiki's Chat removes that Chat for everyone. Its repository files and the other Chats remain. It is not a way to undo file changes or reset Git history. A Chat run by an earlier Agent is read-only until the Wiki is assigned back to that Agent.
+**Delete** on a Wiki's Chat removes that Chat for everyone. Its repository files and the other Chats remain. It is not a way to undo file changes or reset Git history. Each Chat has its own Agent; change it from the Chat header to continue the same conversation with another Agent. Changing the Wiki's Worker requires deleting every started Chat first.
 
 ## Related
 
 - [Roles and limits](roles-and-limits.md): check permissions and accepted sizes.
+- [Workers](workers.md): inspect capacity, Builds and container states.
 - [Installation and operations](installation-and-operations.md): operator configuration and recovery.
 
 ---

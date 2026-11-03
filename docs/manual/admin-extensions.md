@@ -2,7 +2,7 @@
 
 # Add Extensions and Project environment
 
-Use **Extensions** to maintain the shared Skills, Plugins and MCP servers available to Agents. Use a Project's **Settings** → **Agents** to prepare its Worktrees and environment.
+Use **Extensions** to maintain the shared Skills, Plugins and MCP servers available to Agents. Use a Project's **Settings** → **Agents** to choose its Worker and default Agent, and to prepare its Worktrees and environment.
 
 Admins manage the catalog in both clients. On a phone, tap the app icon to open the drawer and choose **Extensions**; on native desktop, open **Settings** → **Extensions**. The web app lists **Extensions** in its sidebar. The procedures below describe the web controls; [native controls](#use-extensions-in-the-native-app) follow.
 
@@ -42,7 +42,7 @@ Click **Update** on the catalog entry to request the marketplace's latest versio
 | Transport | Fields |
 | --- | --- |
 | **HTTP**, **SSE** | **URL**, plus **Headers** when required. Mark sensitive header values **Secret**. |
-| **stdio** | **Command**, **Arguments** with one argument per line and no shell quoting, plus **Environment variables**. Mark sensitive values **Secret**. Install the command and its runtime in the Agent's Dockerfile. |
+| **stdio** | **Command**, **Arguments** with one argument per line and no shell quoting, plus **Environment variables**. Mark sensitive values **Secret**. Install the command and its runtime in the Dockerfile of each Worker that runs the Agent. |
 
 On edit, an unchanged saved secret is preserved. To replace it, enter the new value. If you rename a secret header or environment variable, supply a replacement value for the new name. Changes reach the next Job; a running Job keeps its original configuration.
 
@@ -73,16 +73,17 @@ Pull down to refresh the catalog. If loading fails, choose **Retry**. A failed s
 
 ## Apply catalog changes
 
-Catalog imports and updates do not assign an Extension automatically. Select entries for each Agent. The web app saves selections automatically; the native app applies them with **Save agent**. New work waits while synchronization runs; errors appear on the Agent page and are retried automatically. Remove assignments from every Agent before deleting a catalog entry.
+Catalog imports and updates do not assign an Extension automatically. Select entries for each Agent. The web app saves selections automatically; the native app applies them with **Save agent**. Before the Agent's next Job on a Worker, the Worker synchronizes that Agent's Agent Profile. Only that Agent's entries on that Worker wait; errors appear on the Agent page and on the Worker page and are retried automatically. Remove assignments from every Agent before deleting a catalog entry.
 
 ## Prepare a Project's Worktrees
 
 1. Open the Project's **Settings** → **Agents**.
-2. Enter **Worktree setup script**, such as the dependency installation commands that the repository needs.
-3. Choose a **Default agent** if new tasks should start with an Agent assigned (it only starts working on the first comment; a disabled or removed Agent leaves new tasks unassigned).
-4. Enter **Agent instructions** for every Agent working on this Project. Setup Script and Agent Instructions save automatically; check the save status.
+2. Choose the **Worker** that runs the Project's Tasks. The change is refused while a Session of the Project is started and open; close those Tasks first.
+3. Enter **Worktree setup script**, such as the dependency installation commands that the repository needs.
+4. Choose a **Default agent** if new tasks should start with an Agent assigned (it only starts working on the first comment; a disabled or removed Agent leaves new tasks unassigned).
+5. Enter **Agent instructions** for every Agent working on this Project. Worker, Default agent, Setup Script and Agent Instructions save automatically; check the save status.
 
-![Web Project Agent settings with Default agent and automatic save status](images/admin-extensions/project-agent-settings.png)
+![Web Project Agent settings with the Worker picker, Default agent and automatic save status](images/admin-extensions/project-agent-settings.png)
 
 The script runs once for each new Worktree before Claude starts. Existing Worktrees are not prepared again when the script changes. Repository tool-version files are handled with mise before the setup script. Repository `CLAUDE.md` instructions still apply alongside the Project's instructions.
 
@@ -107,10 +108,11 @@ An import merges variables: matching names are overwritten; other existing names
 
 ## Related
 
-- [Agents and credentials](admin-agents.md): select Extensions and install tools.
+- [Agents and credentials](admin-agents.md): select Extensions and configure the Claude Code side.
+- [Workers](workers.md): install the tools a stdio MCP server or a Project needs.
 - [Git repositories and pull requests](git-repositories.md): link a repository and choose a Base Branch.
 - [Troubleshooting](troubleshooting.md): investigate synchronization and setup failures.
 
 ---
 
-← [Agents and credentials](admin-agents.md) · [Installation and operations](installation-and-operations.md) →
+← [Workers](workers.md) · [Installation and operations](installation-and-operations.md) →

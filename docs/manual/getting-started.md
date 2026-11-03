@@ -17,7 +17,7 @@ Ask an Admin for a password reset if you cannot sign in. There is no self-servic
 
 ## Find your way around
 
-**Projects** lists your team's Projects. Open one to see its Board, or use a shortcut under **Boards** in the sidebar. **Wiki** opens shared knowledge conversations. **Agents** shows available Agents and their work. Admins also see **Extensions**, **Credentials**, **Git** and **Users**.
+**Projects** lists your team's Projects. Open one to see its Board, or use a shortcut under **Boards** in the sidebar. **Wiki** opens shared knowledge conversations. **Agents** shows available Agents and their work, and **Workers** shows the Docker environments where they run. Admins also see **Extensions**, **Credentials**, **Git** and **Users**.
 
 ![The Projects page and sidebar for the fictional Customer Portal team](images/getting-started/projects.png)
 
@@ -27,7 +27,7 @@ Click your name at the bottom of the web sidebar to choose **Dark**, **Light** o
 
 ## Create a Task
 
-1. Open an existing Project. To create one, choose **New project**, enter **Name**, check its **Key**, and click **Create project**. The Key is permanent.
+1. Open an existing Project. To create one, choose **New project**, enter **Name**, check its **Key**, choose its **Worker**, and click **Create project**. The Key is permanent. If no Worker exists yet, an Admin creates one first (see [Workers](workers.md)).
 2. On the Board, choose **Add task** in the **Todo** column.
 3. Type a clear title, such as “Write the onboarding guide”, and press Enter. The Task appears with a Task Key, such as `PORTAL-1`.
 4. Click the Task to open it.
@@ -42,7 +42,7 @@ Your team can now discuss and track the work without an Agent.
 2. Write a regular Comment explaining what you want it to do.
 3. Click **Comment** or press Enter.
 
-The Agent starts when ready, or waits in its Queue. Assignment alone does not start work. Leave **Internal chat** off for instructions the Agent should receive. Read [Agent sessions and queues](agent-sessions-and-queues.md) before stopping, closing or reassigning active work.
+The Agent starts when ready, or waits in the Worker's Queue. Assignment alone does not start work. An Agent can work on several Tasks at once, each in a Worker Container. Leave **Internal chat** off for instructions the Agent should receive. Read [Agent sessions and queues](agent-sessions-and-queues.md) before stopping, closing or reassigning active work.
 
 ## Related
 

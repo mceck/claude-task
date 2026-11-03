@@ -10,9 +10,13 @@ Use a Project to group related Tasks, then use its Board to track their progress
 2. Click **New project**.
 3. Enter a **Name** and check the suggested **Key**. You can replace the Key with 2 to 6 uppercase letters.
 4. Add an optional **Description**.
-5. Click **Create project**. The new Board opens.
+5. Choose the **Worker** that runs the Project's Agents. The form preselects it when exactly one Worker exists.
+6. Optionally choose a **Default Agent**, a **Repository** and its **Base branch**. You can change them later in the Project's settings.
+7. Click **Create project**. The new Board opens.
 
 The Project Key is permanent. A Project with Key `WEB` has Task Keys such as `WEB-1` and `WEB-2`. Deleted Task numbers are not reused.
+
+If no Worker exists yet, the form explains how to continue: Admins get a link to create one, and Members are asked to contact an Admin. See [Workers](workers.md).
 
 ## See Project activity at a glance
 
@@ -74,17 +78,19 @@ Open the Board's **Settings**. In the native app, open **Projects settings** fro
 
 Each Project needs at least one `open` and one `closed` Status. Changing a Status's Category to `closed` closes the Sessions of every Task in it, so review the affected Tasks first.
 
-The **Agents** and **Repository** tabs configure how Agents prepare and work on the Project. See [environment settings](admin-extensions.md) and [Git repositories](git-repositories.md).
+The **Agents** and **Repository** tabs configure where Agents run, how they prepare and work on the Project, and the default Agent. See [Workers](workers.md) and [Git repositories](git-repositories.md).
 
-## Set a Project logo and Default Agent
+## Set a Project logo, Worker and Default Agent
 
 Every User can open the Project’s web **Settings** → **General** and use **Upload logo** or **Replace logo** under **Project logo**. Choose PNG, JPEG, GIF or WebP up to 2 MB. It saves immediately and appears in Project lists, headers and the native app. **Remove logo** restores the Project Key badge.
 
 ![Web Project settings with logo upload and General details](images/projects-and-boards/project-settings.png)
 
-Open **Settings** → **Agents** and choose **Default agent** to assign an Agent to each new Task in that Project. The selection saves immediately. Choose **No agent** to clear it. An enabled Default Agent is assigned when a Task is created in either client; a disabled or removed Default Agent leaves new Tasks unassigned. Assignment creates a pending Session; the first regular User Comment starts work.
+Open **Settings** → **Agents** and choose the **Worker** that runs the Project's Tasks. The change is accepted only while none of the Project's Sessions is started and open; otherwise the app lists the Tasks to close. When it is accepted, waiting Queue entries move to the new Worker, and the old Worker keeps the Project's Worktrees and repository files. See [Workers](workers.md#assign-a-worker-to-projects).
 
-The native Create Task form can explicitly assign a different Agent after creating the Task. Configuring the Project’s Default Agent is available in the web app.
+In the same section, choose **Default agent** to assign an Agent to each new Task in that Project. The selection saves immediately. Choose **No agent** to clear it. An enabled Default Agent is assigned when a Task is created in either client; a disabled or removed Default Agent leaves new Tasks unassigned. Assignment creates a pending Session; the first regular User Comment starts work.
+
+The native Create Task form can explicitly assign a different Agent after creating the Task. Configuring the Project’s Worker and Default Agent is available in the web and native settings.
 
 ## Archive or delete a Project
 

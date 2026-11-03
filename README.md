@@ -1,11 +1,11 @@
 # Claude Task
 
-A self-hosted kanban board where tasks are worked by **Claude Code agents** running in Docker containers. People talk to the agents through task **comments**, and each task keeps **one continuous agent session** until the task is closed. Built for internal team use.
+A self-hosted kanban board where tasks are worked by **Claude Code agents** in the Docker environments of **Workers**. People talk to the agents through task **comments**, and each task keeps **one continuous session** until the task is closed. Built for internal team use.
 
 ## How it works
 
 - A **Task** gets an **Agent** assigned; the task's first user **comment** triggers the agent's work.
-- A **Session** (one per task + agent) is resumed with `claude --resume`, so the agent keeps full context across turns.
+- A **Session** (one per task) is resumed with `claude --resume`, so the conversation survives Jobs and Agent changes.
 - The agent's transcript, status updates and tool activity appear live in the task **timeline** and board.
 - Agents reach git **only** through a Git Proxy with a job-scoped token, so they push only to their task branch.
 - Secrets are encrypted at rest and never exposed to containers' environment.
@@ -57,6 +57,6 @@ The container exposes `GET /health` for orchestration: it needs no Login and ans
 
 ## Further reading
 
-- `docs/specs/` — one living spec per area (board, conversation, agents, agent-sessions, runner, git-integration, wikis, voice-rooms, users-and-auth, clients).
+- `docs/specs/` — one living spec per area (board, conversation, agents, workers, agent-sessions, runner, git-integration, wikis, schedules, voice-rooms, users-and-auth, clients).
 - `docs/CONTEXT.md` — the project's domain glossary.
-- `docs/manuale` — user manual.
+- `docs/manual/` — user manual.

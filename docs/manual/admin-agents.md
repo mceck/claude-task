@@ -2,9 +2,9 @@
 
 # Set up Agents and credentials
 
-Create named Claude Code Agents with the tools and instructions your team needs. Admins manage their configuration; every User can view Agents and assign them to Tasks.
+Create named Claude Code Agents with the model, instructions, tools and Credential your team needs. Admins manage their configuration; every User can view Agents and assign them to Tasks. Where an Agent runs is the concern of a Worker, not of the Agent.
 
-An Agent handles one Job at a time. Add another Agent when you need work to run in parallel.
+An Agent can work several Tasks at once. Its Jobs run on the Worker of each Task's Project, one Job per Worker Container.
 
 ## Add a Credential
 
@@ -15,20 +15,19 @@ An Agent handles one Job at a time. Add another Agent when you need work to run 
 
 The saved secret cannot be read back. You see its kind, a last-four-character hint for secrets at least 12 characters long, the Agents using it and any observed rate limit. Agents sharing a Credential share its provider limits.
 
-To rotate a secret, click **Edit / rotate**, enter **New secret** and save. Leave that field empty to keep the existing secret. The kind is fixed. Rotation reaches all linked Agents on their next Job, without rebuilding them. Before deleting a Credential, change every linked Agent to another one.
+To rotate a secret, click **Edit / rotate**, enter **New secret** and save. Leave that field empty to keep the existing secret. The kind is fixed. Rotation reaches all linked Agents on their next Job, without recreating any Worker Container. Before deleting a Credential, change every linked Agent to another one.
 
 ## Create an Agent
 
 1. Open **Agents** and click **New agent**.
 2. Enter **Name**, select a **Credential**, and optionally set an emoji, color, image and description.
-3. Choose the execution settings below.
-4. Select the Skills, **MCP servers** and **Plugins** it needs from the shared catalog.
-5. Choose **Services**, check the **Dockerfile**, and set resource limits if needed.
-6. Leave **Enabled** checked and click **Create agent**.
+3. Choose the model, effort, permission mode and system prompt.
+4. Add any environment variables and select the Skills, **MCP servers** and **Plugins** it needs.
+5. Leave **Enabled** checked and click **Create agent**.
 
-Creation starts an image Build. Open **Builds** to follow the log. Once its container starts and the Runner connects, the Agent becomes `idle`. The container runs only while the Agent has work (see [Containers and work](#containers-and-work)); until then the Agent shows `offline`. Assigning it to a Task creates a pending Session; the first User Comment starts work.
+Creation saves the Claude Code configuration only. A new Agent is `idle` or `disabled` at once and can be assigned to a Task. Its Agent Profile on a Worker is created before its first Job there, when its Extensions are synchronized.
 
-![Agents list showing Rowan ready and idle](images/admin-agents/agents.png)
+![Agents list showing a working Agent and an idle one](images/admin-agents/agents.png)
 
 | Setting | What it controls |
 | --- | --- |
@@ -36,44 +35,35 @@ Creation starts an image Build. Open **Builds** to follow the log. Once its cont
 | **Effort** | Default, `low`, `medium`, `high`, `xhigh` or `max`. |
 | **Permission mode** | Claude Code's execution mode: `bypassPermissions`, `auto`, `acceptEdits` or `dontAsk`. Default is `bypassPermissions`. |
 | **System prompt** | The Agent's instructions, added to the platform and Project instructions. |
-| **Environment variables** | One `NAME=value` per line, applied to every Job and winning over the Project's variables, e.g. `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL` or `ENABLE_TOOL_SEARCH`. Plain text; keep secrets in a Credential or a Project secret. |
-| **CPU limit** | Fractional CPU allowance, up to 256; empty means no limit. |
-| **Memory (MB)** | Memory allowance from 256 to 1,048,576 MB; empty means no limit. |
-| **Enabled** | Allows new Jobs to start. Turning it off lets the current Job finish and keeps queued work. |
+| **Environment variables** | One `NAME=value` per line, applied to every Job and winning over the Project's variables, for example `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL` or `ENABLE_TOOL_SEARCH`. Plain text; keep secrets in a Credential or a Project secret. |
+| **Enabled** | Allows new Jobs to start. Turning it off lets running Jobs finish and keeps queued work. |
 
 You can upload PNG, JPEG, GIF or WebP avatar images up to 2 MB. **Remove image** restores the emoji and color.
 
-## Prepare the development environment
+## Where an Agent runs
 
-The Dockerfile must start from `claude-task/agent-base` and finish as `USER agent`. Install your toolchains and any stdio MCP servers there. The platform pins the Base Image version during the Build.
+An Agent has no image, no container and no storage of its own. Each Project runs on a [Worker](workers.md), and the Agent's Jobs run there:
 
-Under **Services**, select PostgreSQL, Redis, MySQL, Mailpit or RustFS/MinIO. Mailpit receives test email on SMTP port 1025; its mailbox interface is available inside the Agent Container on port 8025. RustFS/MinIO serves S3 on port 9000 and also provides a `minio` command, so a Project that starts its own MinIO (`minio server ./data --address :9100`) gets a RustFS server with the same flags and `MINIO_*` variables. PostgreSQL and Redis are selected by default. Each Agent has its own local Development Services; all its Tasks share them, so give different Projects distinct databases, namespaces and buckets.
+- The Worker provides the Dockerfile, toolchains, Development Services, CPU and memory limits and the number of parallel Worker Containers.
+- The Worker's shared volume holds the Worktrees, Claude transcripts and the Agent's Agent Profile.
+- An Agent Profile stores the Agent's Skills, Plugins and settings. Every Agent Profile on a Worker shares the same transcripts, so changing the Task's Agent keeps its conversation.
 
-Repositories, Worktrees, Claude transcripts, installed tools and Development Service data persist across container recreation. Deselecting a Development Service keeps its data for later use.
-
-## Containers and work
-
-An Agent's container runs while the Agent has work: a Job is running, a Comment waits in its Queue, or it has a Session that can still receive Comments (a Task that is not closed, `done` included). An Agent assigned only to Tasks that have no Comment yet, or only to closed Tasks, has its container stopped. Its image and storage stay, so repositories, Worktrees and Development Service data are there when it starts again.
-
-A Wiki never closes, so its Session keeps the container running for 30 minutes after the Wiki's last Job (`AGENT_WIKI_IDLE_MINUTES`) and then lets it stop.
-
-The container starts again when a Comment is queued, a Task is reopened or an Agent is assigned back to a Task it worked on. The first Job waits for the container and its Development Services to start, which can take up to a minute. While the container is stopped the Agent shows `offline`. Setting `AGENT_STOP_WHEN_UNUSED` to `false` keeps every container running (see [Installation and operations](installation-and-operations.md)).
+Builds, container actions and the Queue are on the Worker page. See [Workers](workers.md) for capacity, images and Development Services.
 
 ## Change configuration
 
-In the web app, open the Agent's **Configuration** tab. General settings and Extension selections save automatically; wait for **All changes saved** before leaving. If saving fails, your edits stay visible and **Retry** sends them again. Apply Dockerfile, Services and resource-limit changes with **Save Docker configuration**.
+In the web app, open the Agent's **Configuration** tab. Every field saves automatically after a short pause or when a field loses focus. The form shows saving, saved or failed state and offers **Retry** after an error, keeping your edits visible. Switching settings tabs or navigating to another app view starts saving any pending changes.
 
 ![The web Agent Configuration tab with automatic save status](images/admin-agents/configuration.png)
 
 | Change | When it applies |
 | --- | --- |
-| Credential, model, effort, permission mode, System prompt or Environment variables | Next Job. |
-| Skills, MCP servers or Plugins | Before the next Job, after synchronization succeeds. |
-| Dockerfile or Services | Starts a Build; switches containers when the current Job finishes. |
-| CPU or memory limit | Recreates the container when idle, without a Build. |
-| Avatar or description | Display change. |
+| Credential, model, effort, permission mode, System prompt, Environment variables or name | From the next Job. A running Job keeps what it started with. |
+| Skills, MCP servers or Plugins | Before the Agent's next Job on each Worker, after synchronization succeeds. |
+| Enabled | Switching it off makes the Agent's entries wait; switching it on lets them dispatch again. |
+| Description, avatar | Display change. |
 
-A failed Build leaves the previous successful container available. Fix the Dockerfile or service choice and save, or use **Rebuild image**. A synchronization error appears on the Agent page and holds new work until synchronization succeeds.
+A synchronization error appears on the Agent page and on the Worker page, and holds back only that Agent's entries on that Worker. Other Agents keep working. See [Workers](workers.md#agent-profiles-and-extension-synchronization).
 
 ## Configure an Agent in the native app
 
@@ -81,7 +71,7 @@ On a phone, tap the app icon in **Projects** or **Wiki** and choose **Agents** f
 
 Admins can choose **New agent** or open an existing Agent. Fill in its name, emoji, color, description, Credential, model, effort, permission mode, System prompt, Environment variables and Enabled choice. Select any **Skills**, **MCP Servers** and **Plugins** it needs from the shared catalog. Choose **Create agent** or **Save agent** to apply the form.
 
-New Agents use the default Dockerfile. Use the web app to configure Dockerfiles, Development Services and resource limits, or inspect Builds and container logs. The native form also offers **Duplicate**, **Delete agent** and **Manage shared Extensions**. Save your edits before opening the shared catalog.
+The native Agent form holds the Claude Code configuration only. Dockerfiles, Development Services and build logs are in the web app, and the native **Workers** settings show each Worker's slots and restart actions. The native form also offers **Duplicate**, **Delete agent** and **Manage shared Extensions**. Save your edits before opening the shared catalog.
 
 The Agents list shows pending Extension changes and synchronization errors. Updates reach the next Job once synchronization succeeds. See [native Extension management](admin-extensions.md#use-extensions-in-the-native-app) for imports, MCP secrets and Plugin updates.
 
@@ -89,23 +79,39 @@ The Agents list shows pending Extension changes and synchronization errors. Upda
 
 | Action | Result |
 | --- | --- |
-| **Rebuild image** | Builds the current configuration again. |
-| **Restart** | Restarts the container, interrupting its current Job; its Session resumes after reconnection. An Agent without work answers with an error, since its container starts when work arrives. |
-| **Recreate when idle** | Replaces the container using the current image and limits after the current Job ends. An Agent without work applies it when work arrives. |
-| **Force recreate** | Replaces the container immediately; interrupted work resumes after reconnection. |
-| **Duplicate** | Copies settings into a new Agent with its own empty storage, Build and container. History stays with the original. |
-| **Delete** | Removes the Agent, its container, images, persistent storage, Sessions and execution history. Agent Comments remain on Tasks. |
+| **Duplicate** | Copies the configuration into a new Agent. Assignments, Sessions, Jobs and history stay with the original. The copy gets its own Agent Profile on each Worker at its first synchronization there. |
+| **Delete** | Removes the Agent's configuration, Credential link, Extension assignments and synchronization records. Past Jobs keep the Agent's name, and its Agent Profiles stay in the Worker Volumes until each Worker is deleted. |
 
-Before **Delete**, unassign the Agent from every Task with an open Session. Closing a Task also ends its Session. Review the confirmation before deleting, because stored work and Claude transcripts are removed.
+Before **Delete**, unassign the Agent from every open Task, Wiki Chat, Wiki default and Schedule. Closing a Task also ends its Session. The app names what still uses the Agent and refuses the deletion until it is free.
 
-For diagnosis, open **Builds**, **Container logs**, or a Job's details in **Work & queue**. **Usage** shows estimated cost, token use and the Credential's latest observed rate limit.
+## Agent state and view
+
+The state shown for an Agent is the first that applies:
+
+```mermaid
+flowchart TD
+  A{Enabled?} -- no --> D[disabled]
+  A -- yes --> W{Active Jobs?}
+  W -- yes --> WO[working, with the number of active Jobs and their Tasks]
+  W -- no --> I[idle]
+```
+
+The Agents list shows each Agent with its avatar, state, active Jobs and their Tasks, and Credential name. Open an Agent to see:
+
+- **Jobs**: active Jobs with their Task, Worker and slot, then recent Jobs. **Details** shows setup output, stderr and the Claude version.
+- **Usage**: estimated cost, tokens and Turns in total, per day for the last 30 days (UTC), and for the 20 most expensive Tasks, plus the latest rate-limit status of the Agent's Credential.
+- **Configuration** (Admins): the Agent form, with the synchronization state of the Agent on each Worker where one is pending or failed.
+- **Actions** (Admins): **Duplicate** and **Delete**.
+
+Queue, Builds and container logs belong to the Worker page. See [Workers](workers.md).
 
 ## Related
 
+- [Workers](workers.md): execution environments, capacity, images and Development Services.
 - [Extensions and environment](admin-extensions.md): fill the shared catalog and configure Project variables.
 - [Agent sessions and queues](agent-sessions-and-queues.md): start, stop and prioritize work.
 - [Troubleshooting](troubleshooting.md): recover from Build and connection failures.
 
 ---
 
-← [Users and access](admin-users.md) · [Extensions and environment](admin-extensions.md) →
+← [Users and access](admin-users.md) · [Workers](workers.md) →

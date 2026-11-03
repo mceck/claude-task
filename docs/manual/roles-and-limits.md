@@ -18,14 +18,16 @@ Use this reference when an action is unavailable or an input is rejected. All ac
 | Create, edit and delete Wikis; start, rename and delete Chats | Yes | Yes |
 | See Schedules and read their runs | Yes | Yes |
 | Create, edit, pause, delete and run Schedules | No | Yes |
-| Inspect Agent Queue, Jobs, Builds and usage | Yes | Yes |
-| Reorder or remove eligible Queue entries; Stop and Retry | Yes | Yes |
-| Configure Agents, containers and Credentials | No | Yes |
+| Inspect Agent Jobs and usage; inspect Workers, container states, Builds and Queue | Yes | Yes |
+| Reorder or remove eligible Worker Queue entries; Stop and Retry | Yes | Yes |
+| Choose the Worker of a Project or Wiki | Yes | Yes |
+| Choose the Worker of a Schedule | No | Yes |
+| Configure Agents, Workers and Credentials | No | Yes |
 | Manage Users, Git Connections and Extensions | No | Yes |
 | Create, import or delete Project environment variables | No | Yes |
 | Manage own notification preferences | Yes | Yes |
 
-The same role permissions apply in the web and native apps. Native Settings include Project Repositories and Base Branches for every User, and Extensions, Git Connections and Agent configuration for Admins. Use the web app for Docker configuration, Builds, Development Services, resource limits and Project environment variables.
+The same role permissions apply in the web and native apps. Native Settings include Project Repositories and Base Branches for every User, Workers with their slots and restart actions, and Extensions, Git Connections and Agent configuration for Admins. Use the web app for a Worker's Dockerfile, Development Services, resource limits, Build history and container logs, and for Project environment variables.
 
 Members can read Project environment variable names and plain values, but secret values are redacted. Internal Notes are visible to every User, including Members. Admins cannot edit someone else's Comment.
 
@@ -54,12 +56,18 @@ Members can read Project environment variable names and plain values, but secret
 | Wiki name | 200 characters |
 | Wiki description | 100,000 characters |
 | Agent avatar upload | 2 MB; PNG, JPEG, GIF or WebP |
+| Worker name | 100 characters |
+| Worker description | 2,000 characters |
+| Worker Dockerfile | 100,000 characters |
+| Worker minimum and cap | Minimum 0 to the cap; cap 1 to 20 Worker Containers |
+| Worker CPU limit | More than 0 and up to 256 CPUs, per Worker Container |
+| Worker memory limit | 256 to 1,048,576 MB, per Worker Container |
 | Project logo or User profile image | 2 MB; PNG, JPEG, GIF or WebP |
 | Setup Script or Agent Instructions | 100,000 characters each |
 
 ## Work and access limits
 
-An Agent runs one Job at a time. Add Agents to work on several Tasks at once. Agents using the same Credential share its provider rate limits.
+An Agent has no concurrency limit of its own. The Project's Worker runs up to its cap of Worker Containers, and each container runs one Job at a time, so the cap sets how many Tasks of that Worker run in parallel. Agents using the same Credential share its provider rate limits.
 
 A Project must keep at least one Status in the `open` Category and one in `closed`. Only `closed` ends an Agent Session; `done` does not. The `backlog` Category is only a label: a new Task gets the Project's default Agent in any Status, and moving a Task never changes its Agent.
 
@@ -68,6 +76,7 @@ Logins expire after 30 days without activity. Password resets and deactivation e
 ## Related
 
 - [Users and access](admin-users.md): change roles and restore access.
+- [Workers](workers.md): configure capacity and execution environments.
 - [Troubleshooting](troubleshooting.md): understand rejected actions.
 
 ---

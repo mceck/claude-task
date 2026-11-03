@@ -6,7 +6,7 @@ A Schedule starts an Agent's work by itself, at times you choose: a nightly revi
 
 ## How a Schedule works
 
-A Schedule has a name, an Agent, a cron expression, a time zone and a prompt. Each time it is due, the platform starts a **Scheduled Run**:
+A Schedule has a name, an Agent, a Worker, a cron expression, a time zone and a prompt. Each time it is due, the platform starts a **Scheduled Run**:
 
 1. It creates a Task for the run, named after the Schedule and the date.
 2. It assigns the Agent and posts your prompt as the Task's first Comment, written by **System**. That Comment starts the Agent's work.
@@ -18,7 +18,7 @@ stateDiagram-v2
     [*] --> Running: due time
     Running --> Succeeded: the Job ends well
     Running --> Failed: the Job fails or its Turn ends in error
-    [*] --> Skipped: another run is still active, the Agent is unavailable, or the time was missed
+    [*] --> Skipped: another run is still active, the Agent or Worker is unavailable, or the time was missed
 ```
 
 Scheduled Runs live in the **Schedules** section, not on your boards. Their Tasks do not appear in the Projects list.
@@ -40,13 +40,14 @@ Admins only.
 
 1. Open **Schedules** in the sidebar on the web, or from the drawer (phones) or the calendar button in the rail (desktops) in the native app, and click **New schedule**.
 2. Enter a **Name** and choose an enabled **Agent**.
-3. Write the **Cron expression**. A line under the field shows it in words, for example **Monday to Friday at 09:00**.
-4. Check the **Time zone**. It starts with your browser's zone on the web and with **UTC** in the native app, where you pick it from a searchable list. The Schedule follows that zone's daylight saving changes.
-5. Write the **Prompt**. It is posted as the first message of every run.
-6. Optionally choose a **Repository** and its **Base branch**, and turn on **Read-only**. Leave the Repository empty for a global Schedule.
-7. Click **Create schedule**.
+3. Choose the **Worker** where the runs work. Admins choose it; the form preselects it when exactly one Worker exists.
+4. Write the **Cron expression**. A line under the field shows it in words, for example **Monday to Friday at 09:00**.
+5. Check the **Time zone**. It starts with your browser's zone on the web and with **UTC** in the native app, where you pick it from a searchable list. The Schedule follows that zone's daylight saving changes.
+6. Write the **Prompt**. It is posted as the first message of every run.
+7. Optionally choose a **Repository** and its **Base branch**, and turn on **Read-only**. Leave the Repository empty for a global Schedule.
+8. Click **Create schedule**.
 
-![The New schedule form with a cron expression shown in words](images/schedules/form.png)
+![The New schedule form with Agent, Worker and a cron expression shown in words](images/schedules/form.png)
 
 A cron expression has five fields: minute, hour, day of the month, month and day of the week. It accepts lists (`1,3`), ranges (`1-5`), steps (`*/15`) and the names of months and days (`mon`, `jan`). When both the day of the month and the day of the week are restricted, a day matches if either does.
 
@@ -61,7 +62,7 @@ The most frequent Schedule runs once a minute. A time that does not exist when t
 
 ## Follow your Schedules
 
-The **Schedules** list shows each Schedule's Agent, when it runs, its scope (the Repository or **Global**, with a **read-only** badge), the next run and the outcome of the latest run. Admins can pause or resume a Schedule with the switch in the last column.
+The **Schedules** list shows each Schedule's Agent and Worker, when it runs, its scope (the Repository or **Global**, with a **read-only** badge), the next run and the outcome of the latest run. Admins can pause or resume a Schedule with the switch in the last column.
 
 ![The Schedules list with a global, a read-only Repository and a paused Schedule](images/schedules/list.png)
 
@@ -84,12 +85,13 @@ On a Schedule's page, Admins can:
 
 ## When a run is skipped
 
-A due time does not start a run in three cases, and the history shows a **Skipped** row with the reason, without a Task:
+A due time does not start a run in four cases, and the history shows a **Skipped** row with the reason, without a Task:
 
 | Reason | What happened |
 | --- | --- |
 | **previous run still active** | The last run has not finished, so runs do not pile up behind a slow Agent. |
 | **agent unavailable** | The Agent is disabled or was deleted. |
+| **worker unavailable** | The Schedule's Worker is disabled. |
 | **missed** | The backend was down and the due time is more than one period old. After a shorter outage, one catch-up run starts, whatever the number of missed times. |
 
 ## Alerts
@@ -98,6 +100,7 @@ The person who created a Schedule gets a phone alert when a run **fails** ("A sc
 
 ## Related
 
+- [Workers](workers.md): choose the environment where scheduled runs work.
 - [Agent sessions and queues](agent-sessions-and-queues.md): how a run's Job is queued and followed.
 - [Git repositories and pull requests](git-repositories.md): Repositories and the Push Policy that read-only Schedules extend.
 - [Roles and limits](roles-and-limits.md): who can manage Schedules.
