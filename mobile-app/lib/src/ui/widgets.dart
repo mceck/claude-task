@@ -1382,48 +1382,51 @@ Future<T?> showActions<T>(
   return showModalBottomSheet<T>(
     context: anchor,
     useSafeArea: true,
+    isScrollControlled: true,
     builder: (context) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 38,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Palette.borderStrong,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ),
-            if (title != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Palette.fgMuted,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Palette.borderStrong,
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-              )
-            else
-              const SizedBox(height: 10),
-            for (final item in items)
-              Pressable(
-                onTap: item.enabled
-                    ? () => Navigator.pop(context, item.value)
-                    : null,
-                pressedScale: .99,
-                child: _ActionRow(item: item),
               ),
-          ],
+              if (title != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Palette.fgMuted,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                )
+              else
+                const SizedBox(height: 10),
+              for (final item in items)
+                Pressable(
+                  onTap: item.enabled
+                      ? () => Navigator.pop(context, item.value)
+                      : null,
+                  pressedScale: .99,
+                  child: _ActionRow(item: item),
+                ),
+            ],
+          ),
         ),
       ),
     ),
