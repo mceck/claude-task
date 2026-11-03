@@ -15,6 +15,7 @@ import type { RunnerHub } from './runner/hub';
 import type { RunRegistry } from './sessions/runs';
 import type { UploadRequests } from './runner/uploads';
 import type { ProjectSkillRequests } from './runner/skill-requests';
+import type { WorktreeStatusRequests } from './runner/worktree-status';
 import type { LoginRevocations } from './auth/revocations';
 
 export interface AppContext {
@@ -38,6 +39,8 @@ export interface AppContext {
   uploads: UploadRequests;
   /** Project Skills read from a Worktree on request, before the Session's next Job. */
   skillRequests: ProjectSkillRequests;
+  /** Uncommitted changes of a Worktree, read on demand for the Task view. */
+  worktreeStatus: WorktreeStatusRequests;
   /** Dispatcher, builds and the container reconciler. */
   scheduler: Scheduler;
   log: FastifyBaseLogger;

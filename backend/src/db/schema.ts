@@ -37,7 +37,7 @@ import {
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentService, AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, QuestionAnswer, QuestionItem } from '@claude-task/shared';
+import type { AgentService, AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -602,6 +602,8 @@ export const sessions = pgTable(
      * reported them (`jobs.project_skills` wins once one has).
      */
     projectSkills: jsonb('project_skills').$type<{ name: string; description: string }[]>(),
+    /** The Worktree's uncommitted changes, as last read by a Runner. */
+    worktreeStatus: jsonb('worktree_status').$type<WorktreeStatus>(),
     /** The Worktree must be removed once the Runner is connected. */
     worktreeRemovalPending: boolean('worktree_removal_pending').notNull().default(false),
     createdAt: createdAt(),

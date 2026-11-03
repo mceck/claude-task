@@ -2,6 +2,7 @@
 // Agent Container and the backend. Versioned together with the Base Image; the Go
 // runner (runner/internal/protocol) mirrors these shapes.
 import type { PermissionMode } from './agents';
+import type { WorktreeFile, WorktreeStatusError } from './git';
 
 export const RUNNER_PROTOCOL_VERSION = 4;
 /** WebSocket path, authenticated with `Authorization: Bearer <runner token>`. */
@@ -133,6 +134,11 @@ export type BackendToRunner =
    * `project_skills.result`. Sent before the Session's next Job, to fill the composer.
    */
   | { type: 'project_skills.request'; requestId: string; worktreePath: string }
+  /**
+   * Read a Worktree's uncommitted changes now, without a Job: the backend answers with
+   * `worktree.status.result`. Sent when the Task view opens its Changes dialog.
+   */
+  | { type: 'worktree.status.request'; requestId: string; worktreePath: string }
   /** Remove a Worktree directory (never the branch). Paths relative to the agent user's home. */
   | { type: 'worktree.remove'; worktreePath: string; repoPath: string | null }
   /** Everything the Runner sent for this Job up to and including `seq` is processed. */
@@ -180,4 +186,13 @@ export type RunnerToBackend =
   | RunnerJobMessage
   /** The answer to `project_skills.request`; an empty list when the Worktree isn't there yet. */
   | { type: 'project_skills.result'; requestId: string; files: ProjectSkillFile[] }
+  /** The answer to `worktree.status.request`; `error` when the Worktree can't be read. */
+  | {
+      type: 'worktree.status.result';
+      requestId: string;
+      files: WorktreeFile[];
+      total: number;
+      truncated: boolean;
+      error: WorktreeStatusError | null;
+    }
   | { type: 'pong' };

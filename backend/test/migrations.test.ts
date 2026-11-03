@@ -96,6 +96,7 @@ describe('migration upgrades', () => {
       ALTER TABLE projects DROP COLUMN board_write_access;
       ALTER TABLE tasks DROP COLUMN chat_title;
       ALTER TABLE turns DROP COLUMN context_tokens, DROP COLUMN context_window;
+      ALTER TABLE sessions DROP COLUMN worktree_status;
       DROP INDEX IF EXISTS turns_task_idx;
     `);
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at > $1', [original.when]);
@@ -140,6 +141,7 @@ describe('migration upgrades', () => {
     const journal = JSON.parse(await readFile(path.join(migrationsFolder(), 'meta/_journal.json'), 'utf8')) as { entries: { tag: string; when: number }[] };
     const workers = journal.entries.find((e) => e.tag === '0033_workers')!;
     await db.$client.query(BEFORE_WORKERS);
+    await db.$client.query('ALTER TABLE sessions DROP COLUMN worktree_status');
     // An earlier Agent's Session on the same Task, started, with a Comment waiting in its Queue.
     const [{ id: older }] = (await db.$client.query(
       `INSERT INTO sessions (task_id, agent_id, state, worktree_path, started) SELECT task_id, $1, 'paused', worktree_path, true FROM sessions WHERE id = $2 RETURNING id`,
@@ -182,6 +184,7 @@ describe('migration upgrades', () => {
     try {
       // Recreate the schema before User avatars so the newer migration is applied during the upgrade.
       await db.$client.query(BEFORE_WORKERS);
+      await db.$client.query('ALTER TABLE sessions DROP COLUMN worktree_status');
       await db.$client.query('ALTER TABLE users DROP COLUMN avatar_blob_id');
       await db.$client.query('ALTER TABLE projects DROP COLUMN default_agent_id');
       await db.$client.query('DROP TABLE survey_responses, questions');

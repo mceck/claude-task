@@ -272,6 +272,9 @@ func (r *Runner) handle(m *protocol.Incoming) {
 	case "project_skills.request":
 		// Off the read loop: the backend waits a short while for the answer.
 		go r.answerProjectSkills(m)
+	case "worktree.status.request":
+		// Off the read loop: the backend waits a short while for the answer.
+		go r.answerWorktreeStatus(m)
 	case "worktree.remove":
 		// Off the read loop: it waits for Worktree work before it and for the Jobs using the Worktree.
 		r.mu.Lock()

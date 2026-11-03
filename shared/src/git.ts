@@ -48,6 +48,44 @@ export interface PullRequest {
   checkedAt: string;
 }
 
+/** How one uncommitted file of a Worktree changed, from `git status`. */
+export const WORKTREE_FILE_STATUSES = ['modified', 'added', 'deleted', 'renamed', 'copied', 'type-changed', 'untracked', 'conflicted'] as const;
+export type WorktreeFileStatus = (typeof WORKTREE_FILE_STATUSES)[number];
+
+/** One file of a Worktree with uncommitted changes. */
+export interface WorktreeFile {
+  /** Relative to the Worktree. */
+  path: string;
+  status: WorktreeFileStatus;
+}
+
+/** A Worktree's uncommitted changes, as read in the Worker Volume. */
+export interface WorktreeStatus {
+  /** When the backend stored the read. */
+  capturedAt: string;
+  /** At most the cap; `total` counts the rest too. */
+  files: WorktreeFile[];
+  total: number;
+  /** More changes than `files` holds. */
+  truncated: boolean;
+}
+
+/** Why a live Worktree read didn't happen. */
+export type WorktreeStatusReason = 'no-session' | 'no-repository' | 'no-worktree' | 'no-runner' | 'error';
+
+/** The Task view's Changes dialog: a live read, or the last one kept on the Session. */
+export interface TaskWorktreeStatus {
+  /** Null when no Runner has read it yet. */
+  status: WorktreeStatus | null;
+  /** Whether a Runner answered just now. */
+  live: boolean;
+  /** Why there is no live answer; null when `live`. */
+  reason: WorktreeStatusReason | null;
+}
+
+/** A Runner's failure reading a Worktree. */
+export type WorktreeStatusError = 'not-found' | 'not-a-worktree' | 'failed';
+
 export type GitConnectionHealth =
   | { state: 'ok' }
   | { state: 'error'; message: string }

@@ -17,6 +17,7 @@ import { applyProjection } from '../projection/apply';
 import { endJob, initialProjection, project } from '../projection/projector';
 import type { ProjectionState } from '../projection/projector';
 import { projectSkills } from '../sessions/project-skills';
+import { captureWorktreeStatus } from '../sessions/worktree-status';
 import { attachComments, enqueue } from '../sessions/queue';
 
 /** Setup output and stderr are kept up to this size (the tail). */
@@ -38,6 +39,16 @@ export async function handleRunnerMessage(ctx: AppContext, runner: RunnerIdentit
   if (msg.type === 'pong') return;
   if (msg.type === 'project_skills.result') {
     ctx.skillRequests.settle(runner.containerId, String(msg.requestId), Array.isArray(msg.files) ? msg.files : []);
+    return;
+  }
+  if (msg.type === 'worktree.status.result') {
+    const files = Array.isArray(msg.files) ? msg.files : [];
+    ctx.worktreeStatus.settle(runner.containerId, String(msg.requestId), {
+      files,
+      total: typeof msg.total === 'number' ? msg.total : files.length,
+      truncated: msg.truncated === true,
+      error: msg.error ?? null,
+    });
     return;
   }
   if (typeof msg.jobId === 'string' && typeof msg.seq === 'number') return handleJobMessage(ctx, runner, msg);
@@ -154,6 +165,8 @@ async function processJobMessage(
 ): Promise<void> {
   switch (msg.type) {
     case 'job.worktree_ready':
+      // A newly created Worktree starts clean: the changes of a previous one no longer exist.
+      if (msg.created) await tx.update(sessions).set({ worktreeStatus: null }).where(eq(sessions.id, session.id));
       if (msg.created && msg.remoteBranchMissing && session.started)
         await systemComment(tx, after, job.taskId, 'The previous remote task branch was not found. The worktree was recreated from the base branch.');
       return;
@@ -293,6 +306,15 @@ async function processJobMessage(
       }
       // A Scheduled Run ends with its first Job, unless the Job is about to start over.
       if (job.cancelRequested || (!missing && !exists)) await settleRun(tx, after, job.id);
+      // The Runner is still connected: keep the Worktree's changes for the Task view.
+      if (!job.cancelRequested && job.containerId) {
+        const containerId = job.containerId;
+        after.effect((ctx) => {
+          void captureWorktreeStatus(ctx, session.id, session.worktreePath, containerId).catch((err: unknown) =>
+            ctx.log.warn({ err, taskId: job.taskId }, 'could not read the worktree changes'),
+          );
+        });
+      }
       after.effect((ctx) => {
         ctx.scheduler.publishJob(job.id);
         ctx.scheduler.publishTask(job.taskId);
@@ -341,6 +363,14 @@ async function failJob(
   // Its Messages go back to the front of the Queue, waiting for a Retry instead of looping.
   if (stillActive) await requeue(tx, after, job, session, { held: true });
   await settleRun(tx, after, job.id);
+  if (job.containerId) {
+    const containerId = job.containerId;
+    after.effect((ctx) => {
+      void captureWorktreeStatus(ctx, session.id, session.worktreePath, containerId).catch((err: unknown) =>
+        ctx.log.warn({ err, taskId: job.taskId }, 'could not read the worktree changes'),
+      );
+    });
+  }
   after.effect((ctx) => {
     ctx.scheduler.publishJob(job.id);
     ctx.scheduler.publishTask(job.taskId);

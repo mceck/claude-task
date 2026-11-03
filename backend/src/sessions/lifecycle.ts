@@ -185,7 +185,7 @@ async function closeSession(tx: Executor, after: AfterCommit, task: TaskRow): Pr
   }
   const entry = await getEntry(tx, task.id, true);
   if (entry) await removeEntry(tx, after, entry, 'task closed');
-  await tx.update(sessions).set({ state: 'closed', closedAt: new Date(), worktreeRemovalPending: true }).where(eq(sessions.id, session.id));
+  await tx.update(sessions).set({ state: 'closed', closedAt: new Date(), worktreeRemovalPending: true, worktreeStatus: null }).where(eq(sessions.id, session.id));
   after.effect((ctx) => ctx.scheduler.removeWorktree(session.id));
   publishSession(after, task.id, workerId);
 }

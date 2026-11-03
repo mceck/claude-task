@@ -8,6 +8,7 @@ import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { HttpError, notFound, parse } from '../../errors';
 import { loadTimeline } from '../comments/service';
+import { taskWorktreeStatus } from '../../sessions/worktree-status';
 import { assertBoardTask, getBoardProject } from '../projects/service';
 import { ACTIVE_JOB_STATES } from '../agents/service';
 import { createTask, deleteTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from './service';
@@ -75,6 +76,14 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
     const row = await getTaskRow(ctx.db, id);
     await ctx.gitSync.refreshTask(row.id);
     return { task: await loadTask(ctx.db, row.id) };
+  });
+
+  // The Task view's Changes dialog: a live read of the Worktree from a Runner, else the last one
+  // kept on the Session (docs/specs/git-integration.md#what-users-see).
+  app.get('/tasks/:id/worktree-status', async (request) => {
+    const { id } = parse(params, request.params);
+    const row = await getTaskRow(ctx.db, id);
+    return { status: await taskWorktreeStatus(ctx, row.id) };
   });
 
   app.patch('/tasks/:id', async (request) => {
