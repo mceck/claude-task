@@ -115,7 +115,7 @@ Future<String?> _pickAgent(
     for (final a in agents)
       PickerOption(
         a.id,
-        a.name,
+        a.pickerLabel,
         detail: a.enabled ? null : 'Disabled',
         leading: agentAvatar(api, a),
         trailing: agentStateDot(a),
@@ -185,7 +185,7 @@ Future<void> showCreateTask(BuildContext context, TaskController c) async {
                   child: SelectField(
                     key: const Key('new-task-agent'),
                     leading: agentAvatar(c.api, agent, size: 26),
-                    label: agent?.name ?? 'No Agent',
+                    label: agent?.pickerLabel ?? 'No Agent',
                     placeholder: agent == null,
                     onTap: saving
                         ? null
@@ -416,7 +416,7 @@ class TaskDetails extends StatelessWidget {
                       ],
                       Flexible(
                         child: Text(
-                          agent?.name ?? 'No Agent',
+                          agent?.pickerLabel ?? 'No Agent',
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: agent == null ? Palette.fgSubtle : null,

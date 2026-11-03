@@ -196,14 +196,17 @@ class _ProjectAgentEditorState extends State<_ProjectAgentEditor> {
       selected: _defaultAgentId ?? '',
       options: [
         const PickerOption('', 'No Agent'),
-        for (final agent in widget.agents)
-          if (agent['enabled'] == true || agent['id'] == _defaultAgentId)
-            PickerOption(
-              agent['id'] as String,
-              agent['name'] as String,
-              detail: agent['enabled'] == true ? null : 'Disabled',
-              trailing: agentStateDot(Agent.fromJson(agent)),
-            ),
+        ...widget.agents
+            .where((a) => a['enabled'] == true || a['id'] == _defaultAgentId)
+            .map((a) {
+              final agent = Agent.fromJson(a);
+              return PickerOption(
+                agent.id,
+                agent.pickerLabel,
+                detail: agent.enabled ? null : 'Disabled',
+                trailing: agentStateDot(agent),
+              );
+            }),
       ],
     );
     if (selected == null || !mounted) return;

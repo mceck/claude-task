@@ -31,7 +31,7 @@ async function setup(page: Page) {
   await dialog.getByRole('combobox', { name: 'Worker', exact: true }).click();
   await page.getByRole('option', { name: worker.name, exact: true }).click();
   await dialog.getByLabel('Default Agent', { exact: true }).click();
-  await page.getByRole('option', { name, exact: true }).click();
+  await page.getByRole('option', { name: `${name} (${name})`, exact: true }).click();
   await dialog.getByLabel('Repository', { exact: true }).click();
   await page.getByPlaceholder('Search by owner, group or name').fill('platform/service');
   await page.locator('[cmdk-group]').filter({ hasText: name })
