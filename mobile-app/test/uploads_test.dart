@@ -386,6 +386,7 @@ void main() {
       (h.api as _UploadApi).failUpload = true;
       showEditTask(tester.element(find.byType(Scaffold).first), h.controller);
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byTooltip('Attach images or files'));
       await tester.tap(find.byTooltip('Attach images or files'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Files'));
@@ -432,6 +433,7 @@ void main() {
     showEditTask(tester.element(find.byType(Scaffold).first), h.controller);
     await tester.pumpAndSettle();
     picker.files = [_PickedFile('diagram.png'), _PickedFile('notes.pdf')];
+    await tester.ensureVisible(find.byTooltip('Attach images or files'));
     await tester.tap(find.byTooltip('Attach images or files'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Images'));
@@ -441,11 +443,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       h.api.currentTask['description'],
-      contains('![diagram.png](/api/v1/attachments/diagram.png)'),
+      contains('![diagram.png](</api/v1/attachments/diagram.png>)'),
     );
     expect(
       h.api.currentTask['description'],
-      contains('[notes.pdf](/api/v1/attachments/notes.pdf)'),
+      contains('[notes.pdf](</api/v1/attachments/notes.pdf>)'),
     );
     expect(tester.takeException(), isNull);
   });

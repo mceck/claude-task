@@ -280,13 +280,14 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
         final url = file['url'] as String;
         final image = attachmentMarkdown(file).startsWith('!');
         final length = offset == rich.selection.start ? end - offset : 0;
+        // Block embeds bring line breaks of their own, so measure what each insertion added.
+        final before = rich.document.length;
         if (image) {
           rich.replaceText(
             offset,
             length,
             BlockEmbed.image(url, data: {'alt': name, 'title': ''}),
           );
-          offset += 1;
         } else {
           rich.replaceText(offset, length, name);
           rich.formatText(
@@ -294,10 +295,9 @@ class _MarkdownEditorState extends State<MarkdownEditor> {
             name.length,
             ParchmentAttribute.link.fromString(url),
           );
-          offset += name.length;
-          rich.replaceText(offset, 0, '\n');
-          offset += 1;
+          rich.replaceText(offset + name.length, 0, '\n');
         }
+        offset += rich.document.length - before + length;
       }
       rich.updateSelection(TextSelection.collapsed(offset: offset));
     } catch (e) {

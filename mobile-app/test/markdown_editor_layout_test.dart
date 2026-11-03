@@ -69,10 +69,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(
-        find.widgetWithText(TextButton, 'Markdown').hitTestable(),
-        findsOneWidget,
-      );
+      expect(find.byTooltip('Bold').hitTestable(), findsOneWidget);
       // Include the settled dialog overlay in the captured layer.
       tester
           .renderObject<RenderRepaintBoundary>(find.byKey(boundary))
