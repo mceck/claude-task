@@ -7,6 +7,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support.dart';
 
 void main() {
+  test('finds a name by a word inside it, most relevant first', () {
+    List<String> names(String q) => matchSkillCommands(
+      [
+        'ciao_come_va',
+        'commit',
+        'welcome',
+        'come',
+        'comet',
+      ].map((n) => SkillCommand.fromJson({'name': n, 'description': ''})),
+      q,
+    ).map((c) => c.name).toList();
+    expect(names('come'), ['come', 'comet', 'ciao_come_va', 'welcome']);
+    expect(names('zzz'), isEmpty);
+  });
   testWidgets(
     'completes the token at the caret and keeps the surrounding draft',
     (tester) async {
