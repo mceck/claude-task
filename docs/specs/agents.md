@@ -110,7 +110,7 @@ flowchart TD
   W -- no --> I[idle]
 ```
 
-A Job is active while it is `dispatched`, `running` or `finishing`, on any Worker. Agent pickers show the state as a colored dot. Agents with Board Write Access read the same state through their Task Tools, which list enabled Agents by number of active Jobs, then name (see [Agent sessions](agent-sessions.md#writing-to-the-board)).
+A Job is active while it is `dispatched`, `running` or `finishing`, on any Worker. Agent pickers show the Agent's name followed by the name of its Credential in parentheses (`Sonnet (Mattia)`) and its state as a colored dot. Agents with Board Write Access read the same state through their Task Tools, which list enabled Agents by number of active Jobs, then name (see [Agent sessions](agent-sessions.md#writing-to-the-board)).
 
 ### Agent view
 

@@ -19,6 +19,7 @@ import type { ClickUpDraft } from '../components/ClickUpLink';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { errorMessage, post } from '../api/client';
 import { Combobox } from '../components/Combobox';
+import { AgentOptionLabel } from '../components/agents';
 import { keys, useAgents, useProjects, useRepositoryGroups, useWorkers } from '../api/queries';
 import { defaultWorkerId, WorkerPicker } from '../components/workers';
 import { ErrorText } from '../components/common';
@@ -262,7 +263,7 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                   <SelectContent>
                     <SelectGroup>
                       <SelectItem value="none">No Agent</SelectItem>
-                      {(agents.data ?? []).filter((a) => a.enabled).map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                      {(agents.data ?? []).filter((a) => a.enabled).map((a) => <SelectItem key={a.id} value={a.id}><AgentOptionLabel agent={a} /></SelectItem>)}
                     </SelectGroup>
                   </SelectContent>
                 </Select>

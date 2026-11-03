@@ -100,7 +100,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
       options: [
         const PickerOption('', 'No Agent'),
         for (final agent in widget.controller.agents.where((a) => a.enabled))
-          PickerOption(agent.id, agent.name, trailing: agentStateDot(agent)),
+          PickerOption(agent.id, agent.pickerLabel, trailing: agentStateDot(agent)),
       ],
     );
     if (selected != null && mounted) {
@@ -223,7 +223,7 @@ class _ProjectCreationFormState extends State<_ProjectCreationForm> {
             hint: 'optional',
             child: SelectField(
               leading: agentAvatar(widget.controller.api, agent, size: 26),
-              label: agent?.name ?? 'No Agent',
+              label: agent?.pickerLabel ?? 'No Agent',
               placeholder: agent == null,
               onTap: saving ? null : _pickAgent,
             ),

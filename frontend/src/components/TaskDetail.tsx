@@ -33,7 +33,7 @@ import { TaskActivity } from './TaskActivity';
 import { TaskChangesDialog } from './TaskChanges';
 import { TaskSkillsDialog } from './TaskSkills';
 import { TaskAttachments } from './TaskAttachments';
-import { AgentAvatar, AgentStateDot, ContextBadge, SessionChip } from './agents';
+import { AgentAvatar, AgentOptionLabel, AgentStateDot, ContextBadge, SessionChip } from './agents';
 
 type Fields = Omit<UpdateTaskBody, 'version'>;
 
@@ -480,7 +480,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                       <SelectContent>
                         <SelectItem value="none">No agent</SelectItem>
                         {(agents.data ?? []).filter((a) => a.enabled || a.id === shown.agentId).map((a) => (
-                          <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> <span className="truncate">{a.name}</span>{!a.enabled && ' (disabled)'} <AgentStateDot agent={a} /></SelectItem>
+                          <SelectItem key={a.id} value={a.id}><AgentAvatar agent={a} size="xs" /> <AgentOptionLabel agent={a} />{!a.enabled && ' (disabled)'} <AgentStateDot agent={a} /></SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
