@@ -1,4 +1,4 @@
-import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES, chatCommands, skillToken } from '@claude-task/shared';
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES, chatCommands, matchCommands, skillToken } from '@claude-task/shared';
 import type { ChatCommand, Comment, ScheduledMessage } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowUp, FileText, Lock, Paperclip, X } from 'lucide-react';
@@ -66,7 +66,7 @@ export function Composer({
   const available = commands ?? (agentId ? chatCommands(null, agent.data?.skillCommands ?? []) : []);
   const suggestions =
     token && !mention && !internal && dismissed !== tokenKey
-      ? available.filter((s) => s.name.toLowerCase().startsWith(token.query) && (token.atStart || s.kind === 'skill'))
+      ? matchCommands(available.filter((s) => token.atStart || s.kind === 'skill'), token.query)
       : [];
   const people = mention && dismissed !== tokenKey
     ? (users.data ?? []).filter((u) => u.active && `${u.displayName} ${u.email}`.toLowerCase().includes(mention.query))

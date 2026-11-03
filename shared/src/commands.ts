@@ -94,3 +94,25 @@ export function chatCommands(runtime: string[] | null, skills: SkillCommand[], p
     a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'skill' ? -1 : b.kind === 'skill' ? 1 : a.kind.localeCompare(b.kind),
   );
 }
+
+/**
+ * The commands matching what was typed after `/`, most relevant first: the exact name, a name that
+ * starts with it, a word of the name that starts with it (words split at `_ - : .`), then any
+ * occurrence inside the name. Ties keep the order given. An empty query matches everything.
+ */
+export function matchCommands<T extends { name: string }>(commands: T[], query: string): T[] {
+  const q = query.toLowerCase();
+  if (!q) return commands;
+  const rank = (name: string) => {
+    const n = name.toLowerCase();
+    if (n === q) return 0;
+    if (n.startsWith(q)) return 1;
+    if (n.split(/[_\-:.]/).some((word) => word.startsWith(q))) return 2;
+    return n.includes(q) ? 3 : -1;
+  };
+  return commands
+    .map((command, i) => ({ command, i, score: rank(command.name) }))
+    .filter((m) => m.score >= 0)
+    .sort((a, b) => a.score - b.score || a.i - b.i)
+    .map((m) => m.command);
+}

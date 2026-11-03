@@ -4,6 +4,35 @@ import '../models.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
+/// The commands matching [query], most relevant first: the exact name, a name
+/// starting with it, a word of the name starting with it (split at `_ - : .`),
+/// then any occurrence in the name. Ties keep the given order. Mirrors the web.
+List<SkillCommand> matchSkillCommands(
+  Iterable<SkillCommand> commands,
+  String query,
+) {
+  final q = query.toLowerCase();
+  if (q.isEmpty) return commands.toList();
+  int rank(String name) {
+    final n = name.toLowerCase();
+    if (n == q) return 0;
+    if (n.startsWith(q)) return 1;
+    if (n.split(RegExp(r'[_\-:.]')).any((w) => w.startsWith(q))) return 2;
+    return n.contains(q) ? 3 : -1;
+  }
+
+  final ranked = [for (final c in commands) (command: c, score: rank(c.name))]
+      .where((m) => m.score >= 0)
+      .toList();
+  // List.sort is not stable, so ties are broken by the original position.
+  final order = {for (final (i, m) in ranked.indexed) m: i};
+  ranked.sort((a, b) {
+    final byScore = a.score.compareTo(b.score);
+    return byScore != 0 ? byScore : order[a]!.compareTo(order[b]!);
+  });
+  return [for (final m in ranked) m.command];
+}
+
 /// Completes the slash token at the caret without replacing the rest of the draft.
 class SkillSuggestions extends StatelessWidget {
   final TextEditingController text;
@@ -38,13 +67,12 @@ class SkillSuggestions extends StatelessWidget {
       if (match == null) return const SizedBox.shrink();
       final query = match.group(1)!.toLowerCase();
       final tokenStart = caret - query.length - 1;
-      final suggestions = skills
-          .where(
-            (s) =>
-                s.name.toLowerCase().startsWith(query) &&
-                (tokenStart == 0 || s.kind == 'skill' || s.kind == 'system'),
-          )
-          .toList();
+      final suggestions = matchSkillCommands(
+        skills.where(
+          (s) => tokenStart == 0 || s.kind == 'skill' || s.kind == 'system',
+        ),
+        query,
+      );
       if (suggestions.isEmpty) return const SizedBox.shrink();
       // Above the composer, like the web's command popover.
       return FadeSlideIn(
