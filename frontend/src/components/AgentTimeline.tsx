@@ -32,6 +32,7 @@ import { AgentAvatar, formatCost, formatDuration, formatTokens } from './agents'
 import { Time } from './common';
 import { Markdown } from './Markdown';
 import { CollapsibleBody } from './Timeline';
+import { splitShellCommand } from '../lib/shell';
 
 export function toolIcon(name: string): LucideIcon {
   if (name === 'Bash') return Terminal;
@@ -242,11 +243,40 @@ function EntryView({ entry }: { entry: ActivityEntry }) {
       )}
       {open && !thinking && (
         <div className="mt-1 mb-2 ml-6 space-y-2">
-          <Block title="Input">{JSON.stringify(entry.input, null, 2)}</Block>
+          <ToolInput name={entry.name} input={entry.input} />
           {entry.output !== null && <Block title="Output">{entry.output || '(empty)'}</Block>}
         </div>
       )}
     </li>
+  );
+}
+
+/** A tool call's input; a Bash command is laid out one step per line, the rest is JSON. */
+export function ToolInput({ name, input }: { name: string; input: unknown }) {
+  const rec = input && typeof input === 'object' ? (input as Record<string, unknown>) : null;
+  if (name !== 'Bash' || typeof rec?.command !== 'string') return <Block title="Input">{JSON.stringify(input, null, 2)}</Block>;
+  const { command, description, ...rest } = rec;
+  const segments = splitShellCommand(command);
+  return (
+    <div>
+      <p className="mb-1 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Command</p>
+      <div className="max-h-72 overflow-auto rounded-md border bg-background/60 p-2 font-mono text-[11px] leading-relaxed text-foreground/85">
+        {typeof description === 'string' && description && <p className="mb-1.5 font-sans text-muted-foreground italic"># {description}</p>}
+        {segments.map((s, i) => (
+          <div key={i} className="flex gap-2">
+            <span aria-hidden className="w-5 shrink-0 text-right text-sky-400/80 select-none">
+              {s.op === ';' ? '' : s.op || '$'}
+            </span>
+            <span className="min-w-0 flex-1 break-all whitespace-pre-wrap">{s.text}</span>
+          </div>
+        ))}
+      </div>
+      {Object.keys(rest).length > 0 && (
+        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+          {Object.entries(rest).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' · ')}
+        </p>
+      )}
+    </div>
   );
 }
 

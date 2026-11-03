@@ -18,7 +18,7 @@ import {
   useRunTranscript,
 } from '../lib/runs';
 import { cn } from '../lib/utils';
-import { Block, Summary, elapsed, statusLabel, StatusIcon, toolIcon } from './AgentTimeline';
+import { Block, Summary, ToolInput, elapsed, statusLabel, StatusIcon, toolIcon } from './AgentTimeline';
 import { formatCost, formatDuration, formatTokens } from './agents';
 import { Markdown } from './Markdown';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
@@ -253,7 +253,7 @@ function RunToolRow({ taskId, message }: { taskId: string; message: RunToolMessa
       </div>
       {open && (
         <div className="mt-1 mb-2 ml-6 space-y-2">
-          <Block title="Input">{JSON.stringify(message.input, null, 2)}</Block>
+          <ToolInput name={message.name} input={message.input} />
           {message.output !== null && <Block title="Output">{message.output || '(empty)'}</Block>}
         </div>
       )}

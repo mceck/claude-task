@@ -282,6 +282,31 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await expect(page.getByLabel('System comment').filter({ hasText: 'notified the agent' })).toBeVisible();
 });
 
+test('lays out an expanded Bash command one step per line', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Build it');
+  const agent = await seedAgent(page.request, 'Shell agent');
+  await page.goto(`/t/${task.key}`);
+  await assignAndStart(page, agent.name);
+  const job = await jobStart(page.request, project.workerId, task.id);
+  const s = new Stream(job.sessionId);
+  await replay(page.request, project.workerId, job.jobId, [
+    s.toolUse('tool-1', 'Bash', {
+      command: 'cd backend && pnpm install --frozen-lockfile && pnpm test 2>&1 | grep -E "FAIL|ok" || echo "no match"; git status --short',
+      description: 'Install and test',
+      timeout: 120000,
+    }),
+    s.toolResult('tool-1', 'ok'),
+  ]);
+  await page.getByLabel('Activity', { exact: true }).first().getByRole('button', { name: /1 action/ }).click();
+  await page.getByRole('button', { name: /Ran/ }).click();
+  const steps = page.getByText('pnpm install --frozen-lockfile', { exact: true });
+  await expect(steps).toBeVisible();
+  await expect(page.getByText('git status --short', { exact: true })).toBeVisible();
+  await expect(page.getByText('# Install and test')).toBeVisible();
+});
+
 test('keeps a long streamed answer anchored at its top and expanded once it is stored', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request);
