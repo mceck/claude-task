@@ -374,9 +374,8 @@ abstract final class MarkdownDocument {
                 : chosen == ParchmentAttribute.italic.key
                 ? '*'
                 : '~~';
-            final match = RegExp(
-              r'^(\s*)([\s\S]*?)(\s*)$',
-            ).firstMatch(content)!;
+            final match = RegExp(r'^(\s*)([\s\S]*?)(\s*)$')
+                .firstMatch(content)!;
             output.write(
               match[2]!.isEmpty
                   ? content

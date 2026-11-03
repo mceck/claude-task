@@ -121,7 +121,7 @@ describe('Task preferences and read positions', () => {
     const first = await comment(admin, task.id, 'First');
     const last = await comment(admin, task.id, 'Last');
     const initial = (await member.client.get(`/projects/${project.id}/task-preferences`)).body.preferences[0];
-    expect(initial).toMatchObject({ unread: true, readPosition: '0', following: false, unreadComments: 2 });
+    expect(initial).toMatchObject({ unread: true, readPosition: '0', following: false, unreadComments: 2, unreadTurn: false });
     await member.client.get(`/tasks/${task.id}/timeline`);
     expect((await member.client.get(`/tasks/${task.id}/preferences`)).body.preference.readPosition).toBe('0');
     const read = await member.client.put(`/tasks/${task.id}/read-position`, { itemId: last.id });

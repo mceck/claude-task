@@ -10,6 +10,8 @@ export interface TaskPreference {
   unread: boolean;
   /** Non-deleted Comments newer than the read position. */
   unreadComments: number;
+  /** A finished (or failed) Agent Turn is newer than the read position. */
+  unreadTurn: boolean;
 }
 export const taskPreferenceBody = z.strictObject({
   following: z.boolean().optional(),

@@ -11,6 +11,7 @@ String formatContextTokens(num n) {
     final r = (v * 10).round() / 10;
     return r == r.roundToDouble() ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
   }
+
   if (n >= 1000000) return '${one(n / 1000000)}M';
   // Just below a million would read "1000K".
   if (n >= 999950) return '1M';
@@ -22,12 +23,14 @@ String formatContextTokens(num n) {
 class ContextInfo {
   final num tokens;
   final num? window;
+
   /// Rounded to a whole number and capped at 100; null when the CLI reported no window.
   final num? pct;
   const ContextInfo(this.tokens, this.window, this.pct);
 
-  String get label =>
-      pct == null ? formatContextTokens(tokens) : '${formatContextTokens(tokens)} ($pct%)';
+  String get label => pct == null
+      ? formatContextTokens(tokens)
+      : '${formatContextTokens(tokens)} ($pct%)';
 
   String get title => pct == null
       ? 'Context: ${formatContextTokens(tokens)} tokens'
@@ -106,10 +109,7 @@ class ContextLabel extends StatelessWidget {
         children: [
           Dot(color: info.color, size: 5),
           const SizedBox(width: 4),
-          Text(
-            info.label,
-            style: TextStyle(fontSize: 10.5, color: info.color),
-          ),
+          Text(info.label, style: TextStyle(fontSize: 10.5, color: info.color)),
         ],
       ),
     );
