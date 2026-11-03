@@ -16,6 +16,7 @@ import 'voice_widgets.dart';
 import 'models.dart';
 import 'questions.dart';
 import 'scheduled.dart';
+import 'shell_command.dart';
 import 'task_forms.dart';
 import 'task_skills.dart';
 import 'timeline_visibility.dart';
@@ -2655,17 +2656,28 @@ class _ActivityState extends State<_Activity> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: Palette.border),
             ),
-            child: SelectableText(
-              thinking
-                  ? '${item['output'] ?? ''}'
-                  : '${item['input']}\n${item['output'] ?? ''}',
-              style: TextStyle(
-                fontFamily: thinking ? null : mono,
-                fontSize: 11.5,
-                height: 1.5,
-                color: Palette.fgMuted,
-              ),
-            ),
+            child: thinking
+                ? SelectableText(
+                    '${item['output'] ?? ''}',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      height: 1.5,
+                      color: Palette.fgMuted,
+                    ),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _ToolInput(name: '${item['name']}', input: item['input']),
+                      if (item['output'] != null)
+                        _CodeBlock(
+                          title: 'Output',
+                          text: '${item['output']}'.isEmpty
+                              ? '(empty)'
+                              : '${item['output']}',
+                        ),
+                    ],
+                  ),
           ),
       ],
     );
@@ -3261,7 +3273,7 @@ class _RunMessageViewState extends State<_RunMessageView> {
             ),
           ),
         if (_open) ...[
-          _CodeBlock(title: 'Input', text: _pretty(m['input'])),
+          _ToolInput(name: '${m['name']}', input: m['input']),
           if (output != null)
             _CodeBlock(
               title: 'Output',
@@ -3269,6 +3281,94 @@ class _RunMessageViewState extends State<_RunMessageView> {
             ),
         ],
       ],
+    );
+  }
+}
+
+/// A tool call's input: a Bash command is laid out one step per line, the rest is JSON.
+class _ToolInput extends StatelessWidget {
+  final String name;
+  final Object? input;
+  const _ToolInput({required this.name, required this.input});
+  @override
+  Widget build(BuildContext context) {
+    final rec = input is Map ? input as Map : null;
+    final command = rec?['command'];
+    if (name != 'Bash' || command is! String) {
+      return _CodeBlock(title: 'Input', text: _pretty(input));
+    }
+    final description = rec!['description'];
+    final rest = {
+      for (final e in rec.entries)
+        if (e.key != 'command' && e.key != 'description')
+          '${e.key}': e.value is String ? e.value : jsonEncode(e.value),
+    };
+    const code = TextStyle(
+      fontFamily: mono,
+      fontSize: 11.5,
+      height: 1.5,
+      color: Palette.fgMuted,
+    );
+    return Container(
+      key: const Key('bash-command'),
+      margin: const EdgeInsets.fromLTRB(26, 4, 0, 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Palette.sidebar,
+        borderRadius: BorderRadius.circular(Radii.sm),
+        border: Border.all(color: Palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'COMMAND',
+            style: TextStyle(
+              fontSize: 10.5,
+              letterSpacing: .4,
+              fontWeight: FontWeight.w600,
+              color: Palette.fgSubtle,
+            ),
+          ),
+          const SizedBox(height: 4),
+          if (description is String && description.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                '# $description',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontStyle: FontStyle.italic,
+                  color: Palette.fgSubtle,
+                ),
+              ),
+            ),
+          for (final seg in splitShellCommand(command))
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 22,
+                  child: Text(
+                    seg.op == ';' ? '' : (seg.op.isEmpty ? r'$' : seg.op),
+                    textAlign: TextAlign.right,
+                    style: code.copyWith(color: Palette.agent),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: SelectableText(seg.text, style: code)),
+              ],
+            ),
+          if (rest.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                rest.entries.map((e) => '${e.key}: ${e.value}').join(' · '),
+                style: code.copyWith(fontSize: 10.5, color: Palette.fgSubtle),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
