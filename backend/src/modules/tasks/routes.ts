@@ -9,6 +9,7 @@ import type { AppContext } from '../../context';
 import { HttpError, notFound, parse } from '../../errors';
 import { loadTimeline } from '../comments/service';
 import { taskWorktreeStatus } from '../../sessions/worktree-status';
+import { taskSessionSkills } from '../../sessions/skills';
 import { assertBoardTask, getBoardProject } from '../projects/service';
 import { ACTIVE_JOB_STATES } from '../agents/service';
 import { createTask, deleteTask, getTaskRow, loadCards, loadTask, moveTask, updateTask } from './service';
@@ -84,6 +85,13 @@ export function taskRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     const row = await getTaskRow(ctx.db, id);
     return { status: await taskWorktreeStatus(ctx, row.id) };
+  });
+
+  // The Task view's Skills dialog: the Session's Skills and who activated them.
+  app.get('/tasks/:id/skills', async (request) => {
+    const { id } = parse(params, request.params);
+    const row = await getTaskRow(ctx.db, id);
+    return { skills: await taskSessionSkills(ctx, row.id) };
   });
 
   app.patch('/tasks/:id', async (request) => {

@@ -508,6 +508,9 @@ class FakeApi implements TaskApi {
 
   /// What `GET /tasks/:id/worktree-status` answers.
   Json? worktreeStatus;
+
+  /// What `GET /tasks/:id/skills` answers.
+  List<Json> sessionSkills = [];
   int createCount = 0, sendCount = 0, readCount = 0;
   final createdTags = <Json>[];
 
@@ -752,6 +755,7 @@ class FakeApi implements TaskApi {
             {'status': null, 'live': false, 'reason': 'no-session'},
       };
     }
+    if (path == '/tasks/task-1/skills') return {'skills': sessionSkills};
     if (path.startsWith('/tasks/task-1/session/') && method == 'POST') {
       session = {...?session, 'unseenChanges': false};
       return {'session': session};

@@ -4,6 +4,17 @@ export interface ChatCommand extends SkillCommand {
   kind: 'skill' | 'claude' | 'mcp';
 }
 
+/** Who activated a Skill in a Session: the User's slash command and/or the Agent's Skill tool. */
+export type SkillUsedBy = 'user' | 'agent';
+
+/** A Skill available in a Task's Session and who activated it there. */
+export interface SessionSkill {
+  name: string;
+  description: string;
+  /** Empty when it was never activated. Used Skills come first in the Task view's list. */
+  usedBy: SkillUsedBy[];
+}
+
 // These replace/exit the managed conversation, or change settings that the Agent form owns.
 const UNAVAILABLE = new Set([
   'clear',

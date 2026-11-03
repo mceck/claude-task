@@ -17,6 +17,7 @@ import 'models.dart';
 import 'questions.dart';
 import 'scheduled.dart';
 import 'task_forms.dart';
+import 'task_skills.dart';
 import 'timeline_visibility.dart';
 import 'wiki.dart';
 import 'worktree_changes.dart';
@@ -780,6 +781,13 @@ class _Header extends StatelessWidget {
                     Icons.difference_rounded,
                     enabled: c.online,
                   ),
+                if (!runMode && c.wiki == null)
+                  ActionItem(
+                    'skills',
+                    'Skills',
+                    Icons.auto_awesome_outlined,
+                    enabled: c.online,
+                  ),
                 if (!runMode)
                   ActionItem(
                     'auto-resume',
@@ -817,6 +825,9 @@ class _Header extends StatelessWidget {
               } else if (action == 'changes') {
                 final api = c.api;
                 if (api != null) await showTaskChanges(anchor, api, t.id);
+              } else if (action == 'skills') {
+                final api = c.api;
+                if (api != null) await showTaskSkills(anchor, api, t.id);
               } else if (action == 'auto-resume') {
                 await perform(anchor, () => c.setAutoResume(!t.autoResume));
               } else if (action == 'mute') {
