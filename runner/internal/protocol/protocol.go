@@ -88,6 +88,12 @@ type ProjectSkillFile struct {
 	Head string `json:"head"`
 }
 
+// WorktreeFile is one uncommitted change in a worktree.status.result.
+type WorktreeFile struct {
+	Path   string `json:"path"`
+	Status string `json:"status"`
+}
+
 func UserMessage(content json.RawMessage) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"type":    "user",

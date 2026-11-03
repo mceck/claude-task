@@ -3,7 +3,7 @@ import { BranchLink, PullRequestBadge, capitalize, withProvider } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, projectTopic, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, Bot, ChevronDown, CircleCheck, Expand, Eye, GitMerge, EyeOff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelBottomClose, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, Bot, ChevronDown, CircleCheck, Expand, Eye, GitMerge, EyeOff, FileDiff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelBottomClose, PanelRightClose, PanelRightOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
@@ -30,6 +30,7 @@ const TAG_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#0ea5e9', '#a85
 const nextTagColor = (existing: number) => TAG_COLORS[existing % TAG_COLORS.length]!;
 import { MultiPick } from './MultiPick';
 import { TaskActivity } from './TaskActivity';
+import { TaskChangesDialog } from './TaskChanges';
 import { TaskAttachments } from './TaskAttachments';
 import { AgentAvatar, AgentStateDot, ContextBadge, SessionChip } from './agents';
 
@@ -47,6 +48,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
   const navigate = useNavigate();
   const confirm = useConfirm();
   const [merging, setMerging] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
   const layout = useTaskLayout();
   const hidden = useHiddenTimelineItems();
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
@@ -378,6 +380,9 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               <DropdownMenuItem onSelect={copyLink}>
                 <Link2 /> Copy link
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setChangesOpen(true)}>
+                <FileDiff /> Changes
+              </DropdownMenuItem>
               <DropdownMenuCheckboxItem checked={task.autoResume} onCheckedChange={(on) => void setAutoResume(on)}>
                 Automatic resume at limit
               </DropdownMenuCheckboxItem>
@@ -546,6 +551,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
           </section>
         </Panel>
       </div>
+      <TaskChangesDialog taskId={task.id} open={changesOpen} onOpenChange={setChangesOpen} />
       {/* The description editor's popups, above both panels and inside the board's task dialog. */}
       <div ref={setOverlay} />
     </div>

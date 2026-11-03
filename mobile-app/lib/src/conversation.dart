@@ -19,6 +19,7 @@ import 'scheduled.dart';
 import 'task_forms.dart';
 import 'timeline_visibility.dart';
 import 'wiki.dart';
+import 'worktree_changes.dart';
 import 'uploads.dart';
 import 'ui/context_badge.dart';
 import 'ui/markdown.dart';
@@ -772,6 +773,13 @@ class _Header extends StatelessWidget {
                   Icons.campaign_outlined,
                   enabled: c.online && session?['unseenChanges'] == true,
                 ),
+                if (!runMode && c.wiki == null)
+                  ActionItem(
+                    'changes',
+                    'Changes',
+                    Icons.difference_rounded,
+                    enabled: c.online,
+                  ),
                 if (!runMode)
                   ActionItem(
                     'auto-resume',
@@ -806,6 +814,9 @@ class _Header extends StatelessWidget {
                 } else {
                   await confirmDeleteTask(anchor, c);
                 }
+              } else if (action == 'changes') {
+                final api = c.api;
+                if (api != null) await showTaskChanges(anchor, api, t.id);
               } else if (action == 'auto-resume') {
                 await perform(anchor, () => c.setAutoResume(!t.autoResume));
               } else if (action == 'mute') {

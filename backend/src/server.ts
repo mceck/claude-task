@@ -21,6 +21,7 @@ import { RunnerHub } from './runner/hub';
 import { RunRegistry } from './sessions/runs';
 import { UploadRequests } from './runner/uploads';
 import { ProjectSkillRequests } from './runner/skill-requests';
+import { WorktreeStatusRequests } from './runner/worktree-status';
 import type { Config } from './config';
 import type { AppContext } from './context';
 import { createDb, runMigrations } from './db/client';
@@ -73,6 +74,7 @@ export async function createServer(
     } as AppContext;
     ctx.uploads = new UploadRequests(ctx.runners, config.agents.backendUrl, config.agents.uploadTimeoutMs);
     ctx.skillRequests = new ProjectSkillRequests(ctx.runners);
+    ctx.worktreeStatus = new WorktreeStatusRequests(ctx.runners);
     ctx.pushDispatcher = new PushDispatcher(ctx);
     ctx.projectActivity = new ProjectActivity(ctx.hub, db, (err) => ctx.log.warn({ err }, 'Project activity failed'));
     ctx.scheduler = new Scheduler(ctx);

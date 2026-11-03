@@ -63,16 +63,17 @@ Backend to Runner:
 | `job.cancel` | Job id | Interrupts, closes stdin and escalates to signals. |
 | `job.upload` | Job id; request id; upload URL; file paths | Reads the files and uploads them to the URL (see [Uploading files](#uploading-files)). |
 | `project_skills.request` | Request id; Worktree path | Reads the Worktree's Project Skills now, without a Job, and answers with `project_skills.result`. |
+| `worktree.status.request` | Request id; Worktree path | Reads the Worktree's uncommitted changes now, without a Job, and answers with `worktree.status.result`. |
 | `worktree.remove` | Worktree path; bare clone path or none | Deletes the Worktree directory. Branches stay. |
 | `ack` | Job id; seq | Everything up to and including that seq is processed. |
 | `ping` | | Answered with `pong`. |
 
 The git spec holds the Git Proxy clone URL (without credentials), the Job token as the proxy password, the Repository's stable identity, the Base Branch, the Task Branch, a hint on whether the Task Branch exists remotely, the bare clone path and the commit identity (name and email). The Claude arguments are the model, the effort, the permission mode, the text appended to the system prompt, the tools to disallow and the MCP configuration (a JSON string carrying the Task Tools server with the Job token, plus the Agent's MCP Extensions). The environment is the merged map of the Project's env vars and secrets, the Agent's environment, the Credential's variable and, for a resumed interrupted Turn, the resume flag. Paths (the Worktree, the bare clone, the Agent Profile) are relative to the home, so they name the same directories in every Worker Container of the Worker. The values themselves are chosen by the backend (see [Agent sessions](agent-sessions.md), [Agents](agents.md), [Workers](workers.md) and [Git integration](git-integration.md)).
 
-**Which Runner gets what.** Job messages (`job.start`, `job.input`, `job.interrupt`, `job.end`, `job.cancel`, `job.upload`, `ack`) go to the Runner of the Worker Container that runs the Job. `worktree.remove` and `project_skills.request` belong to no Job, and any Runner of the Worker can serve them, since every one sees the same Worker Volume:
+**Which Runner gets what.** Job messages (`job.start`, `job.input`, `job.interrupt`, `job.end`, `job.cancel`, `job.upload`, `ack`) go to the Runner of the Worker Container that runs the Job. `worktree.remove`, `project_skills.request` and `worktree.status.request` belong to no Job, and any Runner of the Worker can serve them, since every one sees the same Worker Volume:
 
 - `worktree.remove` goes to the Runner of the Job still working in that Worktree (a cancelled Job that has not exited yet), which removes it once that Job ends. With no such Job, it goes to a connected Runner of the Worker, the Runner of the Session's last Worker Slot first. While no suitable Runner is connected, the removal stays pending in the backend and is sent to the first one that says hello.
-- `project_skills.request` goes to any connected Runner of the Worker.
+- `project_skills.request` and `worktree.status.request` go to any connected Runner of the Worker.
 
 Runner to backend:
 
@@ -80,6 +81,7 @@ Runner to backend:
 | --- | --- | --- |
 | `hello` | protocol version; Runner version; `claude` version; active Job id or none | First message of every connection. The active Job is the one being prepared or running, or else the oldest Job with unacknowledged messages. |
 | `project_skills.result` | Request id; files (name and beginning of each) | The answer to `project_skills.request`; no seq and no ack. |
+| `worktree.status.result` | Request id; files (path and status of each), total, truncated, error or none | The answer to `worktree.status.request`; no seq and no ack. |
 | `job.accepted` | Job id; seq | The Runner took the Job and starts preparing it. |
 | `job.worktree_ready` | Job id; seq; created; remote branch missing | The git Worktree is ready (sent only for Jobs with a git spec). |
 | `job.setup_output` | Job id; seq; chunk | Output of the git steps, the tool install and the Setup Script. |
@@ -178,6 +180,8 @@ The tool install and the Setup Script each:
 **Project Skills.** After the attachments, the Runner reads the Worktree's Project Skills and sends them in one `job.project_skills`, for every Job that gets this far, with or without a Repository, and with an empty list when there are none. It reads the files `claude` loads from the project: `.claude/skills/<name>/SKILL.md` first, then `.claude/commands/<name>.md`, each in name order. Symlinks are followed, as `claude` follows them, but only while they resolve inside the Worktree. Of each regular file it sends the name (the skill's directory or the command's file name without `.md`) and the first 8 KiB, cut on a character boundary, which is enough for the frontmatter and the first paragraph. It sends at most 200 files and skips unreadable ones silently. Parsing is the backend's job (see [Agent sessions](agent-sessions.md)), so the Runner needs no YAML parser and both ends parse skills the same way.
 
 `project_skills.request` reads the same files off the Job stream: a Worktree created by an earlier Job already has them, and the backend wants them for a composer before the Session's next Job. Any Runner of the Worker can answer, whichever Worker Container created the Worktree, since they all see the same Worker Volume. It answers `project_skills.result` with the same list, or an empty one when the path is outside the home or the Worktree isn't there yet. Like `job.upload` it carries no seq and gets no `ack`; unlike it, it doesn't need a running Job.
+
+**Worktree changes.** `worktree.status.request` reads a Worktree's uncommitted changes without a Job, for the Task view's Changes dialog (see [Git integration](git-integration.md#what-users-see)). The Runner checks the path into the home like every other, then runs `git status --porcelain=v2 -z --untracked-files=normal` with `GIT_OPTIONAL_LOCKS=0`, so the read neither waits for nor disturbs a Job working in the same Worktree, and with a 10-second limit. One answer carries at most 1000 files and 256 KiB of git output, `total` counting the changes it saw and `truncated` set when more were cut; each file has one status: `modified`, `added`, `deleted`, `renamed`, `copied`, `type-changed`, `untracked` or `conflicted`. A missing path answers `not-found`, a plain directory (a Project without a Repository) `not-a-worktree`, and a failed command `failed`, with no paths in the error answer.
 
 ### Running claude
 
@@ -333,6 +337,8 @@ In the container-local directory, private to its Worker Container, it keeps:
 | Outbox in memory per Job | 50 MiB, then spill to the container-local directory |
 | Control messages waiting for a Job to start | 1024 |
 | Each git command | 30 min |
+| Worktree changes read | 10 s; 1000 files and 256 KiB of git output |
+| Backend wait for a Worktree changes answer | 5 s |
 | Tool install, Setup Script | 30 min each |
 | Attachment download | 5 min each |
 | File upload | 10 files of 25 MB each per request, 60 s per request |
@@ -377,6 +383,7 @@ In the container-local directory, private to its Worker Container, it keeps:
 - **A Job arriving during a cancel waits for it.** The backend dispatches the next Queue Entry as soon as it cancels a Job, so the Runner lets the new Job wait out the cancel escalation rather than refusing it.
 - **Project Skills are read from the Worktree right before `claude` starts.** The Setup Script, or the Agent itself in an earlier Job, may add skills, and the Worktree can differ from the Base Branch, so reading the repository through the Git Provider would show a different set from the one `claude` loads. `system/init` lists command names, but with no descriptions and no way to tell a Project Skill from a bundled one. The Runner sends the files' beginnings rather than parsed fields because the backend already parses `SKILL.md` frontmatter for the catalog.
 - **The backend can also read them on request, without a Job.** A Worktree outlives its Jobs, so a Session that hasn't run one since a deploy, or whose image changed, would otherwise suggest no Project Skills until the next Job. `project_skills.request` costs one WebSocket round trip and reuses the same reader; the backend waits only briefly and falls back to what the latest Job reported. Any connected Runner of the Worker can answer, since they share the Worker Volume. Reading the Worktree from the backend was rejected because the files are in the Worker Volume, which only the Worker Containers mount.
+- **Worktree changes are read on request, with no lock and no Job.** The Changes dialog asks when it opens, so a long Turn costs nothing, and `git status` with optional locks off is a read: it neither takes the index lock nor needs the Bare Clone lock, and it can run beside a Job. The same request shape as Project Skills keeps the backend unchanged; the last answer is kept on the Session because a Worker at its minimum of 0 has no connected Runner when its Task is idle (see [Git integration](git-integration.md)).
 - **The Runner probes the `claude` it will start, not the one on the Base Image.** A repository's mise configuration can override the pinned CLI in its Worktree, and `--forward-subagent-text` exists only from 2.1.211. Asking that executable for its version before each Job that wants the flag costs one short process per Job and keeps an older or unusual CLI from failing the Job on an unknown argument; caching the answer per Worker Container was rejected because a repository change can swap the CLI between Jobs without touching the container.
 
 ## Related specs

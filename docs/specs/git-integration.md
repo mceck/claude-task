@@ -198,6 +198,7 @@ Rules of the preparation:
 - The upstream of the Task Branch is `origin/<Task Branch>` even before it exists remotely, so a plain `git push` works.
 - The commit identity is `<Agent name> (claude-task)` with the email `<Agent name slug>@<AGENT_COMMIT_EMAIL_DOMAIN>` (default domain `agents.claude-task.local`; the slug is at most 64 characters, `agent` when empty). These emails match no provider account, so Agent commits show the Agent's name with no avatar.
 - `.claude-task/` (attachments and platform markers) is excluded from git in the Bare Clone.
+- Reading a Worktree's uncommitted changes is a read: `git status` runs with optional locks off, so it takes no lock and can happen while a Job works in the same Worktree (see [Runner](runner.md#preparing-the-worktree)).
 - The Git Proxy URL is the same for whatever Repository a Project links, so the Bare Clone records the Repository identity. A Bare Clone recording a different identity (the Project changed Repository) is discarded and cloned again; a Bare Clone without a recorded identity is adopted, with its Worktrees kept.
 - Every git command and its output appear in the Job's setup output. Each command times out after 30 minutes and never prompts on a terminal.
 - A new Worktree triggers the Project's Setup Script (see [Agent sessions](agent-sessions.md)).
@@ -344,7 +345,7 @@ A refresh never changes a Task's Status or a Session. Merging does neither: it o
 
 ### What Users see
 
-- **Task view**: a "Task code" section with the Task Branch name (linking to the branch page on the provider), the Pull Request badge and, while the Pull Request is open and not a draft, a **Merge pull request** / **Merge merge request** button that asks for confirmation first. The branch link appears once a Job has stored it; after a Repository change it returns with the next Job.
+- **Task view**: a "Task code" section with the Task Branch name (linking to the branch page on the provider), the Pull Request badge and, while the Pull Request is open and not a draft, a **Merge pull request** / **Merge merge request** button that asks for confirmation first. The branch link appears once a Job has stored it; after a Repository change it returns with the next Job. The Task actions menu (**⋯**) offers **Changes**: a dialog listing the Worktree's uncommitted files, each with its name, directory and status (modified, added, deleted, renamed, copied, type-changed, untracked or conflicted), the change count and whether the read is live. It reads the Worktree when it opens; with no connected Runner it shows the last read, or explains that the Worker isn't running. Both clients offer it, and the native app shows the same dialog from the Task's actions menu.
 - **Board card**: the Pull Request badge, linking to the provider: `#N` or `!N` followed by `open`, `draft`, `merged` or `closed`, coloured green for open, muted for draft, violet for merged and red for closed. Its label says "Pull request" or "Merge request" by provider.
 - **Timeline**: Pull Request changes appear as Revisions, such as "updated merge request !3 (merged)", next to the System Comments posted by `open_pull_request`.
 - **Wikis** show the branch and Pull Request of their first Task the same way. Every Chat of a Wiki is a Task of its Wiki Project and shares that branch, Worktree and Pull Request: a Chat's Job pushes the first Task's Task Branch through the proxy and opens or updates its Pull Request with `open_pull_request`.
@@ -401,6 +402,7 @@ The backend's public address `APP_URL` is used for Task links in Pull Request fo
 | List repositories | Any User | Repositories grouped by connection, with an error per failing connection |
 | Read, set a Project's Repository | Any User | Repository and Base Branch, plus whether the Project has non-closed Sessions |
 | Re-check protection | Any User | Refreshes Base Branch Protection |
+| Read a Task's Worktree changes | Any User | Reads its Worktree's uncommitted files from a Runner, else returns the last read kept on the Session |
 | Merge a Task's Pull Request | Any User | Merges its open, non-draft Pull Request on the provider, without changing the Task's Status |
 
 The shared types package defines the payloads. Secrets are accepted on create and update and never returned.
@@ -410,7 +412,7 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - **Git Connection**: id, provider (`github` or `gitlab`), name, provider configuration (GitHub: App ID; GitLab: base URL, token user name, token expiry), encrypted secret (private key or token), secret last 4 characters (GitLab tokens only), last rotation error, created and updated times. Environment connections have the same shape but live only in configuration.
 - **Project Repository** (stored on the Project, also on a Wiki's Project): connection id, provider, provider repository id, owner (GitHub owner or GitLab namespace path), name, default branch, private flag, provider clone URL, web URL, Base Branch, and the last Base Branch Protection result (protected: yes, no or unknown; explanation; provider settings link; checked at).
 - **Task**: Task Branch name (empty until the first dispatch with a Repository, then fixed), branch web link, and Pull Request (provider, number, link, state `open`/`merged`/`closed`, draft flag, checked at). Pull Request changes are recorded as Revisions.
-- **Session**: its Worktree path, fixed at creation, and whether its Worktree is waiting to be removed.
+- **Session**: its Worktree path, fixed at creation, whether its Worktree is waiting to be removed, and the last read of its Worktree's uncommitted changes (files, their statuses, total, truncation and when it was read). The read is cleared when the Worktree is removed or recreated.
 - **Job**: a token, stored as a hash, that authenticates both the Task Tools and the Git Proxy.
 - **Bare Clone** (in the Worker Volume): records the Repository identity it was cloned from; its lock file sits next to it.
 
@@ -448,6 +450,7 @@ The shared types package defines the payloads. Secrets are accepted on create an
 - **The Task Branch name is fixed once chosen.** Links, open Pull Requests and the Agent's own memory of the branch all depend on it, so renaming the Task keeps it.
 - **The Bare Clone records its Repository identity.** The Git Proxy URL is the same whatever Repository a Project links, so the identity is what tells a reusable clone from one of another Repository, while clones from before the proxy are adopted without losing Worktrees.
 - **Repository changes wait for every Session to close.** A paused Session resumes in its Worktree and would otherwise continue on code from another Repository.
+- **Worktree changes are read on demand through the Runner, and the last read is kept on the Session.** The Worktree exists only in the Worker Volume, which no backend process mounts, so `git status` must run in a Worker Container, like Project Skills. Reading when the dialog opens keeps the cost off every Turn. Keeping the answer on the Session matters because a Worker with minimum 0 has no connected Runner when its Task is idle: the dialog then shows what was uncommitted when the last Job ended, with its time, instead of nothing. Reading it when a Job ends is one more `git status` from the Runner that is still connected, and a Worktree created anew clears the stale answer.
 
 ## Related specs
 
