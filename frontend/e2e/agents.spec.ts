@@ -2,16 +2,17 @@ import type { Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import { Stream } from '../../backend/test/helpers/stream';
 import { HEADERS as headers, createProject, createTask, login, replay, runnerMessages as messages, seedAgent, waitForStart as jobStart } from './helpers';
+import type { SeededAgent } from './helpers';
 
-async function assign(page: Page, agentName: string) {
+async function assign(page: Page, agent: SeededAgent) {
   await page.getByRole('combobox', { name: 'Assign agent' }).click();
-  // A free Agent's option also says "Free".
-  await page.getByRole('option', { name: new RegExp(`^${agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( Free)?$`) }).click();
+  // The option reads "‹Agent› (‹Credential›)".
+  await page.getByRole('option', { name: `${agent.name} (${agent.credentialName})` }).click();
 }
 
 /** Assignment alone doesn't start the Agent: the first User Comment does. */
-async function assignAndStart(page: Page, agentName: string) {
-  await assign(page, agentName);
+async function assignAndStart(page: Page, agent: SeededAgent) {
+  await assign(page, agent);
   await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please get started.');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
 }
@@ -85,7 +86,7 @@ test('completes assigned skills in the chat with keyboard, click, and Escape', a
   });
   await page.goto(`/t/${task.key}`);
   const assigned = page.waitForResponse((r) => r.url().endsWith(`/tasks/${task.id}`) && r.request().method() === 'PATCH' && r.status() === 200);
-  await assign(page, agent.name);
+  await assign(page, agent);
   await assigned;
   await page.reload();
   const composer = page.getByRole('textbox', { name: 'Comment', exact: true });
@@ -220,7 +221,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   const task = await createTask(page.request, project, 'Fix the redirect');
   const agent = await seedAgent(page.request, 'Runtime agent');
   await page.goto(`/t/${task.key}`);
-  await assignAndStart(page, agent.name);
+  await assignAndStart(page, agent);
   await expect(page.getByLabel('Session: running')).toBeVisible();
   const job = await jobStart(page.request, project.workerId, task.id);
   const s = new Stream(job.sessionId);
@@ -288,7 +289,7 @@ test('lays out an expanded Bash command one step per line', async ({ page }) => 
   const task = await createTask(page.request, project, 'Build it');
   const agent = await seedAgent(page.request, 'Shell agent');
   await page.goto(`/t/${task.key}`);
-  await assignAndStart(page, agent.name);
+  await assignAndStart(page, agent);
   const job = await jobStart(page.request, project.workerId, task.id);
   const s = new Stream(job.sessionId);
   await replay(page.request, project.workerId, job.jobId, [
@@ -313,7 +314,7 @@ test('keeps a long streamed answer anchored at its top and expanded once it is s
   const task = await createTask(page.request, project, 'Explain the redirect');
   const agent = await seedAgent(page.request, 'Writing agent');
   await page.goto(`/t/${task.key}`);
-  await assignAndStart(page, agent.name);
+  await assignAndStart(page, agent);
   await expect(page.getByLabel('Session: running')).toBeVisible();
   const job = await jobStart(page.request, project.workerId, task.id);
   const s = new Stream(job.sessionId);
@@ -436,7 +437,7 @@ test('shows setup failures and retries the same session only on request', async 
   const task = await createTask(page.request, project, 'Recover setup');
   const agent = await seedAgent(page.request, 'Retry agent');
   await page.goto(`/t/${task.key}`);
-  await assignAndStart(page, agent.name);
+  await assignAndStart(page, agent);
   const start = await jobStart(page.request, project.workerId, task.id);
   expect(
     (
@@ -482,7 +483,7 @@ test('keeps the live session state when an older HTTP snapshot arrives late', as
   try {
     await page.goto(`/t/${task.key}`);
     await ready;
-    await assignAndStart(page, agent.name);
+    await assignAndStart(page, agent);
     await jobStart(page.request, project.workerId, task.id);
     await expect(page.getByLabel('Session: running')).toBeVisible();
     release();
@@ -500,13 +501,13 @@ test("changing a Task's Agent keeps its Timeline and resumes the same conversati
   const second = await seedAgent(page.request, 'Second');
   const task = await createTask(page.request, project, 'Hand over');
   await page.goto(`/t/${task.key}`);
-  await assignAndStart(page, first.name);
+  await assignAndStart(page, first);
   const started = await jobStart(page.request, project.workerId, task.id);
   const s = new Stream(started.sessionId);
   await replay(page.request, project.workerId, started.jobId, [s.init(), s.text('First agent was here.'), s.result()], true);
   await expect(page.getByText('First agent was here.')).toBeVisible();
 
-  await assign(page, second.name);
+  await assign(page, second);
   await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Second, take over.');
   await page.getByRole('button', { name: 'Comment', exact: true }).click();
   let next: Record<string, unknown> | undefined;

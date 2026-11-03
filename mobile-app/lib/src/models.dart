@@ -96,6 +96,9 @@ class Agent implements Identified {
   @override
   final String id;
   final String name, emoji;
+
+  /// The name of the Credential the Agent uses.
+  final String credentialName;
   final String? avatarImageUrl;
   final bool enabled;
 
@@ -116,6 +119,7 @@ class Agent implements Identified {
     : id = json['id'] as String,
       name = json['name'] as String,
       emoji = json['avatarEmoji'] as String? ?? '🤖',
+      credentialName = json['credentialName'] as String? ?? '',
       avatarImageUrl = json['avatarImageUrl'] as String?,
       enabled = json['enabled'] == true,
       state = json['state'] as String? ?? '',
@@ -129,6 +133,11 @@ class Agent implements Identified {
       skillCommands = objects(json['skillCommands'])
           .map(SkillCommand.fromJson)
           .toList();
+
+  /// The Agent's name with its Credential's name in parentheses, as pickers
+  /// show it: `Sonnet (Mattia)`.
+  String get pickerLabel =>
+      credentialName.isEmpty ? name : '$name ($credentialName)';
 }
 
 /// Enough of a Task to name it next to an Agent, a Job or a Queue Entry.

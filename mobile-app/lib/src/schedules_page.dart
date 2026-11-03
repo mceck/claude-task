@@ -566,7 +566,7 @@ class _ScheduleFormState extends State<_ScheduleForm> {
         for (final agent in c.agents.where((a) => a.enabled || a.id == agentId))
           PickerOption(
             agent.id,
-            agent.name,
+            agent.pickerLabel,
             detail: agent.enabled ? null : 'Disabled',
             leading: agentAvatar(c.api, agent),
           ),
@@ -718,7 +718,7 @@ class _ScheduleFormState extends State<_ScheduleForm> {
               leading: agent == null
                   ? null
                   : agentAvatar(c.api, agent, size: 26),
-              label: agent?.name ?? 'Choose an Agent',
+              label: agent?.pickerLabel ?? 'Choose an Agent',
               placeholder: agent == null,
               onTap: saving ? null : _pickAgent,
             ),

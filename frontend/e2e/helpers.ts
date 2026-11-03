@@ -78,6 +78,7 @@ export async function createTask(
 export interface SeededAgent {
   id: string;
   name: string;
+  credentialName: string;
 }
 
 /** A Credential and an enabled Agent. */

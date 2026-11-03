@@ -1,5 +1,5 @@
 import { useLiveContext } from '../lib/live';
-import type { AgentRef, AgentState, ContextUsage, Delivery, SessionState, TaskSession } from '@claude-task/shared';
+import type { Agent, AgentRef, AgentState, ContextUsage, Delivery, SessionState, TaskSession } from '@claude-task/shared';
 import { Check, CheckCheck, Clock, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -48,6 +48,21 @@ export function StateDot({ state, className }: { state: string; className?: stri
     <span className={cn('relative flex size-2.5 rounded-full ring-2 ring-background', DOT[state] ?? 'bg-muted-foreground', className)}>
       {live && <span className={cn('absolute inset-0 animate-ping rounded-full opacity-70', DOT[state])} />}
     </span>
+  );
+}
+
+/** An Agent's name with the name of its Credential in parentheses, as Agent pickers show it: `Sonnet (Mattia)`. */
+export function AgentOptionLabel({ agent }: { agent: Pick<Agent, 'name' | 'credentialName'> }) {
+  return (
+    <>
+      <span className="truncate">{agent.name}</span>
+      {agent.credentialName && (
+        <>
+          {' '}
+          <span className="truncate text-muted-foreground">({agent.credentialName})</span>
+        </>
+      )}
+    </>
   );
 }
 

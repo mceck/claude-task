@@ -19,7 +19,7 @@ import { defaultWorkerId, WorkerPicker } from '../components/workers';
 import { ErrorText, Field, Loading, Time, useConfirm } from '../components/common';
 import { BranchLink, PullRequestBadge } from '../components/Git';
 import { TaskActivity } from '../components/TaskActivity';
-import { AgentAvatar, AgentStateDot, ContextBadge, SessionChip } from '../components/agents';
+import { AgentAvatar, AgentOptionLabel, AgentStateDot, ContextBadge, SessionChip } from '../components/agents';
 import { useTopic } from '../lib/realtime';
 import { applyEvent } from '../lib/cache';
 import { minimizeInDock, resumeInDock, suspendInDock, useDockAvailable } from '../lib/dock';
@@ -306,7 +306,7 @@ function WikiConversation({ wiki }: { wiki: Wiki }) {
                     .filter((a) => a.enabled || a.id === chatAgentId)
                     .map((a) => (
                       <SelectItem key={a.id} value={a.id}>
-                        <AgentAvatar agent={a} size="xs" /> {a.name}
+                        <AgentAvatar agent={a} size="xs" /> <AgentOptionLabel agent={a} />
                         {!a.enabled && ' (disabled)'} <AgentStateDot agent={a} />
                       </SelectItem>
                     ))}
@@ -545,6 +545,7 @@ function WikiForm({ wiki, onSaved }: { wiki?: Wiki; onSaved: () => void }) {
             .map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
+                {a.credentialName ? ` (${a.credentialName})` : ''}
               </option>
             ))}
         </select>
