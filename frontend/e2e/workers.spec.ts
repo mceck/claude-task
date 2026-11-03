@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DOCKERFILE, HEADERS as headers, createTask, login, uniqueKey } from './helpers';
+import { DOCKERFILE, HEADERS as headers, createProject, createTask, login, seedAgent, seedWorker, startJob, uniqueKey } from './helpers';
 
 test('creates a Worker in the UI, follows its containers and builds, and creates a Project on it', async ({ page }) => {
   await login(page.request);
@@ -53,6 +53,39 @@ test('creates a Worker in the UI, follows its containers and builds, and creates
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete worker', exact: true }).click();
   await expect(page.getByText(/The worker runs these projects: Worker project/)).toBeVisible();
+});
+
+test('links an archived Project on a Worker by its key', async ({ page }) => {
+  await login(page.request);
+  const worker = await seedWorker(page.request, 'Archived projects', { wait: true });
+  const project = await createProject(page.request, 'Archived on this worker', worker.id);
+  expect((await page.request.post(`/api/v1/projects/${project.id}/archive`, { headers })).ok()).toBe(true);
+
+  await page.goto(`/workers/${worker.id}`);
+  await page.getByRole('tab', { name: 'Projects', exact: true }).click();
+  await expect(page.getByRole('link', { name: 'Archived on this worker' })).toHaveAttribute('href', `/p/${project.key}`);
+});
+
+test('keeps the Task visible in a Queue row on a narrow screen', async ({ page }) => {
+  await login(page.request);
+  const worker = await seedWorker(page.request, 'Narrow queue', { wait: true });
+  const project = await createProject(page.request, 'Narrow queue', worker.id);
+  const agent = await seedAgent(page.request, 'Queue agent');
+  const running = await createTask(page.request, project, 'Running task');
+  await startJob(page.request, agent.id, running.id, worker.id);
+
+  const queued = await createTask(page.request, project, `Queued ${'Q'.repeat(60)}`);
+  const { task } = await (await page.request.get(`/api/v1/tasks/${queued.id}`)).json();
+  expect((await page.request.patch(`/api/v1/tasks/${queued.id}`, { headers, data: { version: task.version, agentId: agent.id } })).ok()).toBe(true);
+  expect((await page.request.post(`/api/v1/tasks/${queued.id}/comments`, { headers, data: { body: 'Queue me' } })).ok()).toBe(true);
+
+  await page.setViewportSize({ width: 700, height: 800 });
+  await page.goto(`/workers/${worker.id}`);
+  await page.getByRole('tab', { name: 'Queue', exact: true }).click();
+  const row = page.getByRole('list', { name: 'Worker queue' }).getByRole('listitem').filter({ hasText: queued.key });
+  const link = row.getByRole('link', { name: new RegExp(queued.key) });
+  await expect(link).toBeVisible();
+  expect((await link.boundingBox())?.width ?? 0).toBeGreaterThan(100);
 });
 
 test('refuses a Project Worker change while a Session is started, with the reason', async ({ page }) => {

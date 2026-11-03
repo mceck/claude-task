@@ -60,7 +60,7 @@ export interface Worker extends WorkerRef {
   /** Worker Containers running. */
   running: number;
   queueLength: number;
-  projects: { id: string; name: string; kind: string }[];
+  projects: { id: string; key: string; name: string; kind: string }[];
   profileErrors: AgentProfileError[];
   createdAt: string;
   updatedAt: string;

@@ -1097,6 +1097,46 @@ describe('Session lifecycle', () => {
     await runner.exit(start.jobId);
   });
 
+  it('reconnects a Runner whose Job message the backend could not process', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const stream = new Stream(start.sessionId);
+    await runner.play(start.jobId, [stream.init(), stream.text('Working.')]);
+    await app.settle();
+
+    const db = app.server.ctx.db as unknown as { transaction: (...args: any[]) => Promise<any> };
+    const original = db.transaction.bind(app.server.ctx.db);
+    let fail = true;
+    db.transaction = async (...args: any[]) => {
+      if (fail) {
+        fail = false;
+        throw new Error('database hiccup');
+      }
+      return original(...args);
+    };
+    let failedSeq = 0;
+    try {
+      failedSeq = runner.sendJob({ type: 'job.exited', jobId: start.jobId, exitCode: 0, signal: null });
+      const closed = await Promise.race([runner.closed, new Promise((resolve) => setTimeout(() => resolve(null), 2000))]);
+      // The failed message is still in the Runner's outbox: dropping the socket is the only way
+      // to make it resend, or the Job stays active forever.
+      expect(closed).toMatchObject({ code: 4001 });
+    } finally {
+      db.transaction = original;
+    }
+
+    const back = await FakeRunner.connect(app, app.workerId, { activeJobId: start.jobId });
+    back.resend({ type: 'job.exited', jobId: start.jobId, seq: failedSeq, exitCode: 0, signal: null });
+    await back.next('ack', (m) => m.seq >= failedSeq);
+    await app.settle();
+    const jobs = (await admin.get(`/agents/${agent.id}/jobs`)).body.jobs;
+    expect(jobs.find((j: { id: string }) => j.id === start.jobId).state).toBe('finished');
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'idle' });
+  });
+
   it('a Runner reconnecting with its Job keeps it and resends from the last ack', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);

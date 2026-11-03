@@ -239,6 +239,8 @@ stateDiagram-v2
 
 The stop is decided under the Worker's row lock: the container state is set to stopped in the same transaction that rechecks the slot has no Job, so a Job is dispatched only to a container that stays up. The Runner connection closes when the container stops (close code 4003), and the slot shows `exited`.
 
+A Worker Container the Worker still wants, but whose Runner has not connected (or reconnected) within the Runner reconnect timeout, cannot take a Job. The reconciler recreates it instead of leaving the Queue waiting for a Runner that is not coming, keeping the Worker Volume and its Service Volume. On backend startup every Runner connection is treated as lost, so a Runner that never comes back is recovered after the same timeout rather than waiting for a close event the new process cannot receive.
+
 Stopping keeps the container: the image, the Worker Volume and the slot's Service Volume stay, so repositories, Worktrees, transcripts and Development Service data survive. A pending recreation (new image, limits or an Admin's request) is applied at the slot's next start. A Queue Entry held after a failed Job is not ready, so it waits for a Retry without keeping a container up.
 
 When the dispatcher finds ready entries and no free Worker Container, it asks the reconciler to scale up right away, so a Comment, a reopened Task or a Retry starts a container at once. The Job dispatches once the Runner has connected and the Agent's Extensions are synchronized there, so the first reply after a scale-up waits for the container and its Development Services to start (up to 60 seconds for the services, see [Development Services](#development-services)).
@@ -269,7 +271,7 @@ Stopping preserves containers, images, Worker Volumes and Service Volumes. At th
 
 Admins have these actions:
 
-- **Restart** (one Worker Container) restarts the existing running container. Its running Job, if any, stops; when the Runner reconnects without it, the Job is treated as interrupted and its Session resumes at the front of the Queue (see [Agent sessions](agent-sessions.md)). A stopped or missing container answers Restart with `409`, since it starts when the minimum or work needs it.
+- **Restart** (one Worker Container) restarts the existing running container. Its running Job, if any, stops; when the Runner reconnects without it, the Job is treated as interrupted and its Session resumes at the front of the Queue (see [Agent sessions](agent-sessions.md)). A stopped or missing container answers Restart with `409`, since it starts when the minimum or work needs it. The restart starts a fresh idle window, so an idle container above the minimum is not stopped again immediately by the idle stop.
 - **Force recreate** (one Worker Container) recreates it immediately with the current image and limits. The running Job is interrupted and resumes after the new Runner connects, like after a crash. A stopped container records the recreation and applies it at its next start.
 - **Recreate when idle** (whole Worker) recreates every Worker Container with the current image and limits, each as soon as it has no active Job. It is answered with `409` while the Worker has no image yet. Stopped containers apply it at their next start.
 - **Rebuild image** (whole Worker) starts a Build.

@@ -9,7 +9,7 @@ import { transactWithRetry } from '../context';
 import type { AfterCommit, AppContext } from '../context';
 import type { Executor } from '../db/client';
 import { comments, jobs, projects, sessions, statuses, tasks } from '../db/schema';
-import { conflict } from '../errors';
+import { conflict, notFound } from '../errors';
 import { gitOwnerTask } from '../git/owner';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
@@ -37,9 +37,17 @@ export async function isClosedStatus(db: Executor, statusId: string): Promise<bo
 
 /** Locks the Worker of the Task's Project, which serializes its Queue and dispatch. */
 export async function lockTaskWorker(db: Executor, taskId: string): Promise<string> {
-  const workerId = await workerOfTask(db, taskId);
-  await getWorkerRow(db, workerId, { lock: true });
-  return workerId;
+  // Share-lock the Project first: a concurrent Project move holds it for update while it changes
+  // the Worker, so reading the Worker below cannot see the old one just before the move commits.
+  const [row] = await db
+    .select({ workerId: projects.workerId })
+    .from(tasks)
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .where(eq(tasks.id, taskId))
+    .for('share', { of: projects });
+  if (!row) throw notFound('Task');
+  await getWorkerRow(db, row.workerId, { lock: true });
+  return row.workerId;
 }
 
 export async function lockSession(db: Executor, taskId: string): Promise<SessionRow | null> {

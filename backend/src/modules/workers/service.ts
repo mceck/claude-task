@@ -66,7 +66,7 @@ export async function loadWorkers(db: Executor, isReady: (containerId: string) =
     .where(inArray(queueEntries.workerId, workerIds))
     .groupBy(queueEntries.workerId);
   const projectRows = await db
-    .select({ id: projects.id, name: projects.name, kind: projects.kind, workerId: projects.workerId })
+    .select({ id: projects.id, key: projects.key, name: projects.name, kind: projects.kind, workerId: projects.workerId })
     .from(projects)
     .where(inArray(projects.workerId, workerIds))
     .orderBy(asc(sql`lower(${projects.name})`));
@@ -119,7 +119,7 @@ export async function loadWorkers(db: Executor, isReady: (containerId: string) =
       busy,
       running,
       queueLength: queued.find((q) => q.workerId === w.id)?.n ?? 0,
-      projects: projectRows.filter((p) => p.workerId === w.id).map(({ id, name, kind }) => ({ id, name, kind })),
+      projects: projectRows.filter((p) => p.workerId === w.id).map(({ id, key, name, kind }) => ({ id, key, name, kind })),
       profileErrors: errors.filter((e) => e.workerId === w.id).map(({ agentId, agentName, error }) => ({ agentId, agentName, error: error! })),
       createdAt: w.createdAt.toISOString(),
       updatedAt: w.updatedAt.toISOString(),

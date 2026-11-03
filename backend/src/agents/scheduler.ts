@@ -351,7 +351,14 @@ export class Scheduler {
         const row = rows.find((r) => r.slot === slot) ?? (await ensureContainerRow(db, workerId, slot));
         const state = observed.get(slot) ?? 'missing';
         const busy = active.has(row.id);
-        if (state === 'missing' || row.containerSpec !== desired || row.forceRecreate) {
+        if (this.runnerGone(worker, row, state, busy)) {
+          // Docker kept the container running but its Runner never reconnected. Nothing can use
+          // this free container, and the Queue would wait for it forever: recreate it.
+          this.ctx.log.warn({ workerId, slot }, 'recreating a Worker Container whose Runner stayed away');
+          await this.recreate(worker, row, desired);
+          started = true;
+          changed = true;
+        } else if (state === 'missing' || row.containerSpec !== desired || row.forceRecreate) {
           if (state === 'missing' || !busy || row.forceRecreate) {
             await this.recreate(worker, row, desired);
             started = true;
@@ -359,7 +366,7 @@ export class Scheduler {
           }
         } else if (!isUp(state)) {
           await runtime.restartContainer(workerId, slot);
-          await db.update(workerContainers).set({ idleSince: new Date() }).where(eq(workerContainers.id, row.id));
+          await db.update(workerContainers).set({ idleSince: new Date(), runnerDisconnectedAt: new Date() }).where(eq(workerContainers.id, row.id));
           started = true;
           changed = true;
         }
@@ -413,7 +420,10 @@ export class Scheduler {
       if (active.has(row.id)) wanted.add(row.slot);
       else if (up && row.slot <= worker.cap) {
         const idleFor = now - (row.idleSince ?? row.createdAt).getTime();
-        if (!stopWhenUnused || idleFor < idleStopMs) wanted.add(row.slot);
+        // Disabling a Worker stops its containers after the idle timeout even when the idle stop
+        // is off: `WORKER_STOP_WHEN_UNUSED=false` only governs an enabled Worker.
+        const idleLimitApplies = !worker.enabled || stopWhenUnused;
+        if (!idleLimitApplies || idleFor < idleStopMs) wanted.add(row.slot);
       }
     }
     if (!worker.enabled) return wanted;
@@ -436,6 +446,16 @@ export class Scheduler {
       need--;
     }
     return wanted;
+  }
+
+  /**
+   * Whether a wanted container is up and free but has had no Runner for longer than the reconnect
+   * timeout. Its Runner is not coming back on its own (or never connected), so it can take no Job.
+   */
+  private runnerGone(worker: WorkerRow, row: WorkerContainerRow, state: string, busy: boolean): boolean {
+    if (!worker.enabled || busy || !isUp(state) || this.syncingIn.has(row.id) || this.ctx.runners.isReady(row.id)) return false;
+    const since = row.runnerDisconnectedAt?.getTime();
+    return since !== undefined && Date.now() - since >= this.ctx.config.agents.runnerReconnectTimeoutMs;
   }
 
   /** Stops a Worker Container that is no longer wanted, keeping it (and its volumes) for the next start. */
@@ -468,7 +488,14 @@ export class Scheduler {
     // makes the next reconcile retry instead of believing the old container is current.
     await this.ctx.db
       .update(workerContainers)
-      .set({ runnerTokenHash: hash, containerSpec: null, forceRecreate: false, idleSince: new Date() })
+      .set({
+        runnerTokenHash: hash,
+        containerSpec: null,
+        forceRecreate: false,
+        idleSince: new Date(),
+        // The new container has no Runner yet; the timeout starts here, not at the old disconnect.
+        runnerDisconnectedAt: new Date(),
+      })
       .where(eq(workerContainers.id, row.id));
     this.ctx.runners.disconnect(row.id, 4002, 'container recreated');
     await this.ctx.runtime.createContainer(worker.id, row.slot, {

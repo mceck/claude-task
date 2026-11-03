@@ -471,6 +471,15 @@ function tail(output: string, lines = 20): string {
   return t ? `\n\n\`\`\`\n${t.replace(/```/g, "'''")}\n\`\`\`` : '';
 }
 
+/**
+ * After a backend restart every Runner connection is gone, and no `close` event reports it:
+ * timestamp them all, so a Runner that stays away is recovered by `recoverAbandonedJobs` and
+ * recycled by the reconciler instead of leaving its Worker's Queue waiting forever.
+ */
+export async function markRunnerConnectionsLost(db: Executor, at = new Date()): Promise<void> {
+  await db.update(workerContainers).set({ runnerDisconnectedAt: at });
+}
+
 /** Jobs whose Runner has been away longer than the timeout are treated as interrupted. */
 export async function recoverAbandonedJobs(ctx: AppContext): Promise<void> {
   const cutoff = new Date(Date.now() - ctx.config.agents.runnerReconnectTimeoutMs);

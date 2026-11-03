@@ -29,6 +29,7 @@ import type { Config } from './config';
 import type { AppContext } from './context';
 import { createDb, runMigrations } from './db/client';
 import { resetInterruptedBuilds } from './modules/workers/builds';
+import { markRunnerConnectionsLost } from './runner/handlers';
 import { workerContainers } from './db/schema';
 import { isUp } from './modules/workers/service';
 import { bootstrapAdmin } from './modules/users/service';
@@ -90,6 +91,9 @@ export async function createServer(
     loginRevocations = ctx.loginRevocations = new LoginRevocations(config.databaseUrl, ctx.hub, app.log);
     await loginRevocations.start();
     await resetInterruptedBuilds(db);
+    // The new process has no Runner connections: a Runner that never comes back must not look
+    // connected to the rest of the backend.
+    await markRunnerConnectionsLost(db);
     if (overrides.startScheduler !== false) {
       ctx.pushDispatcher.start();
       ctx.scheduler.start();

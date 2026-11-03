@@ -67,7 +67,12 @@ export class RunnerHub {
     this.connections.set(containerId, conn);
 
     const enqueue = (work: () => Promise<void>) => {
-      conn.chain = conn.chain.then(work).catch((err) => this.log().error({ err, containerId }, 'runner message failed'));
+      conn.chain = conn.chain.then(work).catch((err) => {
+        this.log().error({ err, containerId }, 'runner message failed');
+        // The message was not acknowledged, so its seq is still in the Runner's outbox. Drop the
+        // connection: a live socket never resends, so the Job (or the hello) would stay stuck.
+        if (this.connections.get(containerId) === conn) this.disconnect(containerId, 4001, 'message failed');
+      });
       const pending = conn.chain;
       this.pending.add(pending);
       void pending.then(() => this.pending.delete(pending));

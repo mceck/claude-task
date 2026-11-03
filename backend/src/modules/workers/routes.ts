@@ -146,6 +146,12 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     await ctx.runtime.restartContainer(id, slot).catch((err) => {
       throw conflict(`Could not restart the container: ${(err as Error).message}`);
     });
+    // A restart starts a fresh Runner and gives the container a fresh idle window; without this
+    // an idle container above the minimum is stopped again by the reconcile below.
+    await ctx.db
+      .update(workerContainers)
+      .set({ idleSince: new Date(), runnerDisconnectedAt: new Date() })
+      .where(eq(workerContainers.id, row.id));
     await ctx.scheduler.reconcile(id);
     return { worker: await loadWorker(ctx.db, ready, id) };
   });

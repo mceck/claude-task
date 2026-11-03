@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { del, errorMessage, get, patch, post } from '../api/client';
-import { keys, useBuilds, useContainerLogs, useMe, useProjects, useQueue, useWorker } from '../api/queries';
+import { keys, useBuilds, useContainerLogs, useMe, useQueue, useWorker } from '../api/queries';
 import { AgentAvatar } from '../components/agents';
 import { ErrorText, Loading, LogView, Time, useConfirm } from '../components/common';
 import { WorkerForm } from '../components/WorkerForm';
@@ -369,24 +369,24 @@ function QueueRow({
     <li
       ref={sortable.setNodeRef}
       style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }}
-      className="flex items-center gap-2 bg-card p-3 text-sm"
+      className="flex flex-wrap items-center gap-2 bg-card p-3 text-sm"
     >
       <button type="button" aria-label={`Drag ${entry.task.key}`} className="touch-none cursor-grab" {...sortable.attributes} {...sortable.listeners}>
         <GripVertical className="size-4 text-muted-foreground" />
       </button>
       <span className="text-xs text-muted-foreground">#{index + 1}</span>
-      <Link className="min-w-0 flex-1 truncate" to={`/t/${entry.task.key}`}>
+      <Link className="min-w-48 flex-1 truncate" to={`/t/${entry.task.key}`}>
         <b>{entry.task.key}</b> · {entry.task.title}
       </Link>
       {entry.agent ? (
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="flex min-w-0 max-w-52 items-center gap-1.5 truncate text-xs text-muted-foreground">
           <AgentAvatar agent={entry.agent} size="xs" />
           {entry.agent.name}
         </span>
       ) : (
         <span className="text-xs text-muted-foreground">No agent</span>
       )}
-      <span className="text-xs text-muted-foreground">
+      <span className="whitespace-nowrap text-xs text-muted-foreground">
         {entry.held ? 'Waiting for retry' : entry.kind.replace(/_/g, ' ')} · {entry.pendingMessages} messages
       </span>
       <Button variant="ghost" size="icon-xs" aria-label={`Move ${entry.task.key} up`} disabled={disabled || index === 0} onClick={() => onMove(index - 1)}>
@@ -450,8 +450,6 @@ function BuildsPanel({ workerId }: { workerId: string }) {
 }
 
 function ProjectsPanel({ worker }: { worker: Worker }) {
-  const projects = useProjects(false);
-  const keyOf = (id: string) => projects.data?.find((p) => p.id === id)?.key ?? id;
   if (!worker.projects.length) return <p className="text-sm text-muted-foreground">No project runs on this worker.</p>;
   return (
     <ul aria-label="Worker projects" className="divide-y rounded-lg border">
@@ -466,7 +464,7 @@ function ProjectsPanel({ worker }: { worker: Worker }) {
               {p.name}
             </Link>
           ) : (
-            <Link className="flex-1 underline" to={`/p/${keyOf(p.id)}`}>
+            <Link className="flex-1 underline" to={`/p/${p.key}`}>
               {p.name}
             </Link>
           )}

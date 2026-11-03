@@ -9,6 +9,7 @@ import { assignAgent, assignAndStart, comment, createAgent, createProject, creat
 import { FakeRunner } from './helpers/runner';
 import { Stream } from './helpers/stream';
 import { WsTestClient } from './helpers/ws';
+import { markRunnerConnectionsLost, recoverAbandonedJobs } from '../src/runner/handlers';
 
 const getWorker = async (admin: ApiClient, id: string) => (await admin.get(`/workers/${id}`)).body.worker as Worker;
 
@@ -240,6 +241,39 @@ describe('workers', () => {
     for (const res of await Promise.all(attempts)) expect(res.status).toBe(403);
   });
 
+  it('recovers a Job whose Runner connection was lost with the backend', async () => {
+    const admin = await app.admin();
+    const worker = await createWorker(app, admin, { minimum: 1, cap: 1 });
+    const { project } = await createProject(admin, { workerId: worker.id });
+    const { agent } = await createAgent(app, admin, { connect: false });
+    const runner = await FakeRunner.connect(app, worker.id);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const stream = new Stream(start.sessionId);
+    await runner.play(start.jobId, [stream.init(), stream.text('Working.')]);
+
+    // A backend restart loses the close event: the database still says the Runner is connected.
+    await runner.close();
+    for (let i = 0; i < 100; i++) {
+      const { rows } = await app.server.ctx.db.execute<{ disconnected: Date | null }>(
+        sql`select runner_disconnected_at as disconnected from worker_containers where worker_id = ${worker.id}::uuid`,
+      );
+      if (rows[0]?.disconnected) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await app.server.ctx.db.execute(sql`update worker_containers set runner_disconnected_at = null where worker_id = ${worker.id}::uuid`);
+    // The new backend process has been up for longer than the reconnect timeout, with no hello.
+    await markRunnerConnectionsLost(app.server.ctx.db, new Date(Date.now() - 6 * 60_000));
+    await recoverAbandonedJobs(app.server.ctx);
+    await app.settle();
+
+    const jobs = (await admin.get(`/agents/${agent.id}/jobs`)).body.jobs;
+    expect(jobs.find((j: { id: string }) => j.id === start.jobId).state).toBe('interrupted');
+    expect((await admin.get(`/workers/${worker.id}/queue`)).body.entries).toHaveLength(1);
+  });
+
   it('refuses unknown Runner tokens and drops a Runner that stops answering pings', async () => {
     const admin = await app.admin();
     const worker = await createWorker(app, admin, { minimum: 1 });
@@ -345,6 +379,59 @@ describe('autoscaling between the minimum and the cap', () => {
     expect(resumed.slot).toBe(1);
   });
 
+  it('gives a manually restarted idle container a fresh idle window', async () => {
+    const { admin, worker, project, agent, runners, seen } = await scaled({ minimum: 0, cap: 1 });
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    await app.settle();
+    await connectRunning(app, worker.id, runners);
+    const first = await nextStart(runners, seen);
+    await finish(runners.get(first.slot)!, first.start);
+    await idleFor(app, worker.id, first.slot, 120_000);
+
+    const res = await admin.post(`/workers/${worker.id}/containers/${first.slot}/restart`);
+    expect(res.status).toBe(200);
+    await app.settle();
+    expect(app.runtime.container(worker.id, first.slot)!.state).toBe('running');
+  });
+
+  it('recreates a free container whose Runner stays away, so its queued work resumes', async () => {
+    const { admin, worker, project, agent, runners, seen } = await scaled({ minimum: 1, cap: 1 });
+    await connectRunning(app, worker.id, runners);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const first = await nextStart(runners, seen);
+    const runner = runners.get(first.slot)!;
+    runner.accept(first.start.jobId);
+    const stream = new Stream(first.start.sessionId);
+    await runner.play(first.start.jobId, [stream.init(), stream.toolUse('t1', 'Bash', { command: 'npm run build' })]);
+    const oldToken = app.runtime.container(worker.id, first.slot)!.spec.env.CLAUDE_TASK_RUNNER_TOKEN;
+
+    // The Runner is gone but Docker did not stop the container, and the disconnect is older
+    // than the reconnect timeout. The Job is recovered, but nothing can run it.
+    await runner.close();
+    // Wait for the backend to record the close before ageing it: the handler is asynchronous.
+    for (let i = 0; i < 100; i++) {
+      const { rows } = await app.server.ctx.db.execute<{ disconnected: Date | null }>(
+        sql`select runner_disconnected_at as disconnected from worker_containers where worker_id = ${worker.id}::uuid and slot = ${first.slot}`,
+      );
+      if (rows[0]?.disconnected) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await app.server.ctx.db.execute(sql`update worker_containers
+      set runner_disconnected_at = now() - interval '6 minutes'
+      where worker_id = ${worker.id}::uuid and slot = ${first.slot}`);
+    await recoverAbandonedJobs(app.server.ctx);
+    await app.settle();
+
+    // The Worker must recycle the unusable container instead of leaving the Queue waiting for
+    // a Runner that will never connect.
+    expect(app.runtime.container(worker.id, first.slot)!.spec.env.CLAUDE_TASK_RUNNER_TOKEN).not.toBe(oldToken);
+    const fresh = await FakeRunner.connect(app, { workerId: worker.id, slot: first.slot });
+    const resumed = await fresh.next('job.start');
+    expect(resumed).toMatchObject({ sessionId: first.start.sessionId, mode: 'resume', resumeInterrupted: true });
+  });
+
   it('stops the slots above a lowered cap once they are free, keeping them for later', async () => {
     const { admin, worker } = await scaled({ minimum: 3, cap: 3 });
     expect(app.runtime.runningSlots(worker.id)).toEqual([1, 2, 3]);
@@ -405,6 +492,22 @@ describe('autoscaling between the minimum and the cap', () => {
   });
 });
 
+describe('disabling a Worker with the idle stop off', () => {
+  const app = useTestApp({ defaultWorker: false, agents: { stopWhenUnused: false, idleStopMs: 60_000 } });
+
+  it('still stops its containers after the idle timeout', async () => {
+    const admin = await app.admin();
+    const worker = await createWorker(app, admin, { minimum: 1, cap: 1 });
+    expect(app.runtime.runningSlots(worker.id)).toEqual([1]);
+    await app.server.ctx.db.execute(sql`update worker_containers set idle_since = now() - interval '2 minutes'
+      where worker_id = ${worker.id}::uuid and slot = 1`);
+
+    expect((await admin.patch(`/workers/${worker.id}`, { enabled: false })).status).toBe(200);
+    await app.settle();
+    expect(app.runtime.runningSlots(worker.id)).toEqual([]);
+  });
+});
+
 describe('assigning Workers to Projects', () => {
   const app = useTestApp();
 
@@ -415,6 +518,45 @@ describe('assigning Workers to Projects', () => {
     const { project } = await createProject(admin, { workerId: app.workerId });
     expect(project.workerId).toBe(app.workerId);
     expect((await admin.get(`/projects/${project.id}/agent-settings`)).body.settings.workerId).toBe(app.workerId);
+  });
+
+  it('queues a Comment on the new Worker when the Project moves at the same time', async () => {
+    const admin = await app.admin();
+    const { project } = await createProject(admin);
+    const other = await createWorker(app, admin, { name: 'Moved to' });
+    const { agent } = await createAgent(app, admin, { connect: false });
+    const task = await createTask(admin, project.id);
+    await assignAgent(admin, task.id, agent.id);
+
+    // Hold the locks a Project move takes before it commits, then post the Comment. It must not
+    // read the old Worker and enqueue there after the move.
+    const client = await app.server.ctx.db.$client.connect();
+    try {
+      await client.query('begin');
+      await client.query('select id from projects where id = $1 for update', [project.id]);
+      await client.query('update projects set worker_id = $1 where id = $2', [other.id, project.id]);
+      await client.query('select id from workers where id = $1 for update', [app.workerId]);
+
+      const posted = admin.post(`/tasks/${task.id}/comments`, { body: 'Move me' });
+      let blocked = false;
+      for (let i = 0; i < 200; i++) {
+        const { rows } = await client.query<{ n: number }>('select count(*)::int as n from pg_locks where not granted');
+        if (rows[0]!.n > 0) {
+          blocked = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocked).toBe(true);
+      await client.query('commit');
+
+      expect((await posted).status).toBe(201);
+      expect((await admin.get(`/workers/${other.id}/queue`)).body.entries).toMatchObject([{ task: { id: task.id } }]);
+      expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toEqual([]);
+    } finally {
+      await client.query('rollback').catch(() => {});
+      client.release();
+    }
   });
 
   it('refuses a new Worker while a Session has started, and moves the Queue Entries of the others along', async () => {
