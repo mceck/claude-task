@@ -1,23 +1,31 @@
 import { isUserMentionPath } from '@claude-task/shared';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
 
-/** Renders user markdown. Raw HTML is not rendered. */
-export function Markdown({ source, className }: { source: string; className?: string }) {
+const REMARK_PLUGINS = [remarkGfm];
+const COMPONENTS: Components = {
+  a: ({ node: _n, ...props }) =>
+    isUserMentionPath(props.href ?? '') ? (
+      <span className="rounded bg-primary/10 px-0.5 font-medium text-primary">{props.children}</span>
+    ) : (
+      <a {...props} target="_blank" rel="noreferrer noopener" />
+    ),
+};
+
+/** Renders user markdown. Raw HTML is not rendered. Memoized: parsing a long message is the costliest thing a conversation does. */
+export const Markdown = memo(function Markdown({ source, className }: { source: string; className?: string }) {
   return (
     <div className={cn('markdown', className)}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{ a: ({ node: _n, ...props }) => isUserMentionPath(props.href ?? '') ? <span className="rounded bg-primary/10 px-0.5 font-medium text-primary">{props.children}</span> : <a {...props} target="_blank" rel="noreferrer noopener" /> }}
-      >
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
         {source}
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 /** The description laid out like the editor (toolbar row, then the text), while it loads or when it can't parse it. */
 export function RichMarkdownView({ source, placeholder }: { source: string; placeholder?: string }) {

@@ -22,7 +22,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useDeferredValue, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useHiddenTimelineItems } from '../lib/timeline-filter';
 import { useTaskSession } from '../api/queries';
@@ -31,7 +31,7 @@ import { openRun } from '../lib/runs';
 import { AgentAvatar, formatCost, formatDuration, formatTokens } from './agents';
 import { Time } from './common';
 import { Markdown } from './Markdown';
-import { CollapsibleBody } from './Timeline';
+import { clampSource, CollapsibleBody } from './Timeline';
 import { splitShellCommand } from '../lib/shell';
 
 export function toolIcon(name: string): LucideIcon {
@@ -73,7 +73,7 @@ function Rail({ icon: Icon, className }: { icon: LucideIcon; className?: string 
   );
 }
 
-export function AgentItemView({ item, taskId }: { item: AgentItem; taskId: string }) {
+export const AgentItemView = memo(function AgentItemView({ item, taskId }: { item: AgentItem; taskId: string }) {
   const p = item.payload;
   if (p.kind === 'thinking') return <ThinkingView text={p.text} />;
   if (p.kind === 'activity') return <ActivityView entries={p.entries} />;
@@ -85,7 +85,7 @@ export function AgentItemView({ item, taskId }: { item: AgentItem; taskId: strin
       {p.text} · <Time iso={item.createdAt} />
     </li>
   );
-}
+});
 
 /** A Run's trace on the Timeline: nothing more than where it went, which the dialog explains in full. */
 function RunItemView({ run, taskId }: { run: RunSummary; taskId: string }) {
@@ -316,6 +316,8 @@ function TurnSummaryView({ summary, at }: { summary: TurnSummary; at: string }) 
 export function LiveTurnView({ taskId }: { taskId: string }) {
   const hidden = useHiddenTimelineItems();
   const live = useLiveTurn(taskId);
+  // Streaming deltas arrive many times a second; the markdown is re-parsed at the pace the browser can afford.
+  const liveText = useDeferredValue(live.text);
   const session = useTaskSession(taskId);
   const [showSetup, setShowSetup] = useState(false);
   // With Agent activity hidden the Agent's work stays hidden; its streaming text is the Comment being written.
@@ -359,8 +361,12 @@ export function LiveTurnView({ taskId }: { taskId: string }) {
           </div>
           <div className="min-w-0 flex-1 rounded-xl border border-dashed border-violet-500/30 bg-violet-500/[0.04] px-4 py-3">
             <CollapsibleBody expand={live.expanded} onExpandedChange={(expanded) => setLiveExpanded(taskId, expanded)}>
-              <Markdown source={live.text} />
-              <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-violet-400 align-middle" />
+              {(full) => (
+                <>
+                  <Markdown source={full ? liveText : clampSource(liveText)} />
+                  <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-violet-400 align-middle" />
+                </>
+              )}
             </CollapsibleBody>
           </div>
         </li>

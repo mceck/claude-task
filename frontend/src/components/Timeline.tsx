@@ -3,7 +3,7 @@ import type { Agent, AgentItem, Attachment, Comment, GitProviderKind, Tag, Prior
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRightLeft, Bot, ChevronDown, ChevronUp, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, lazy, memo, Suspense, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +30,8 @@ interface Row {
   count: number;
 }
 
+const NO_AGENTS: Agent[] = [];
+
 const CommentEditor = lazy(() => import('./RichMarkdownEditor').then((m) => ({ default: m.CommentEditor })));
 
 interface Lookups {
@@ -44,19 +46,25 @@ export function Timeline({ taskId, agentId = null, ...rest }: { taskId: string; 
   const hidden = useHiddenTimelineItems();
   const timeline = useTimeline(taskId);
   const agents = useAgents();
-  const lookups = { ...rest, agents: agents.data ?? [] };
+  const agentList = agents.data ?? NO_AGENTS;
+  const { statuses, tags, users } = rest;
+  const lookups = useMemo(() => ({ statuses, tags, users, agents: agentList }), [statuses, tags, users, agentList]);
+  const pages = timeline.data?.pages;
+  // The fold and the Delivery lookups are the expensive part of a render; they only change with the items.
+  const { items, rows, jobAgents } = useMemo(() => {
+    // An item can sit on two pages when it moved across a page boundary between fetches.
+    const seen = new Set<string>();
+    const items = (pages ?? [])
+      .flatMap((p) => p.items)
+      .filter((i) => !seen.has(i.id) && !!seen.add(i.id))
+      .reverse();
+    // A Delivery names the Agent of the Job that carried it, known from that Job's items, else the Task's Agent.
+    const jobAgents = new Map(items.flatMap((i) => (i.type === 'agent' && i.item.jobId ? [[i.item.jobId, i.item.agentId] as const] : [])));
+    return { items, rows: fold(items, hidden, lookups), jobAgents };
+  }, [pages, hidden, lookups]);
   if (timeline.isPending) return <Loading />;
   // Only an initial load with nothing to show replaces the conversation; a later failure keeps what was read.
   if (timeline.isLoadingError) return <ErrorText>{errorMessage(timeline.error)}</ErrorText>;
-  // An item can sit on two pages when it moved across a page boundary between fetches.
-  const seen = new Set<string>();
-  const items = timeline.data.pages
-    .flatMap((p) => p.items)
-    .filter((i) => !seen.has(i.id) && !!seen.add(i.id))
-    .reverse();
-  const rows = fold(items, hidden, lookups);
-  // A Delivery names the Agent of the Job that carried it, known from that Job's items, else the Task's Agent.
-  const jobAgents = new Map(items.flatMap((i) => (i.type === 'agent' && i.item.jobId ? [[i.item.jobId, i.item.agentId] as const] : [])));
   const agentName = (delivery: Comment['delivery']) => {
     const id = (delivery?.jobId && jobAgents.get(delivery.jobId)) || agentId;
     return lookups.agents.find((a) => a.id === id)?.name ?? null;
@@ -86,7 +94,7 @@ export function Timeline({ taskId, agentId = null, ...rest }: { taskId: string; 
         ) : item.type === 'agent' ? (
           <AgentItemView key={item.id} item={item.item as AgentItem} taskId={taskId} />
         ) : (
-          <RevisionItem key={item.id} revision={item.revision} count={count} {...lookups} />
+          <RevisionItem key={item.id} revision={item.revision} count={count} statuses={lookups.statuses} tags={lookups.tags} users={lookups.users} agents={lookups.agents} />
         ),
       )}
       <LiveTurnView taskId={taskId} />
@@ -123,7 +131,7 @@ function fold(items: TimelineItem[], hidden: HiddenTimelineItems, lookups: Looku
   return rows;
 }
 
-function CommentItem({ comment, taskId, agents, deliveryAgent }: { comment: Comment; taskId: string; agents: Agent[]; deliveryAgent: string | null }) {
+const CommentItem = memo(function CommentItem({ comment, taskId, agents, deliveryAgent }: { comment: Comment; taskId: string; agents: Agent[]; deliveryAgent: string | null }) {
   const me = useMe();
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -170,7 +178,7 @@ function CommentItem({ comment, taskId, agents, deliveryAgent }: { comment: Comm
     <li
       id={`comment-${comment.id}`}
       aria-label={comment.internal ? 'Internal chat' : comment.kind === 'agent' ? 'Agent comment' : comment.kind === 'system' ? 'System comment' : 'Comment'}
-      className="relative flex gap-3"
+      className="relative flex gap-3 [contain-intrinsic-size:auto_160px] [content-visibility:auto]"
     >
       <div className="z-10 shrink-0">
         {agent ? (
@@ -263,9 +271,7 @@ function CommentItem({ comment, taskId, agents, deliveryAgent }: { comment: Comm
           </button>
         ) : (
           comment.body && (
-            <CollapsibleBody expand={expandedFromLive(comment.id)}>
-              <Markdown source={comment.body} />
-            </CollapsibleBody>
+            <CollapsibleBody expand={expandedFromLive(comment.id)}>{(full) => <Markdown source={full ? comment.body : clampSource(comment.body)} />}</CollapsibleBody>
           )
         )}
         {comment.attachments.length > 0 && <Attachments files={comment.attachments} />}
@@ -273,9 +279,20 @@ function CommentItem({ comment, taskId, agents, deliveryAgent }: { comment: Comm
       </div>
     </li>
   );
-}
+});
 
 const COLLAPSED_MAX_HEIGHT = 320;
+/** Past this many characters a collapsed box renders only the head of its text: the rest is clipped anyway and costs a huge DOM. */
+const CLAMP_CHARS = 6000;
+
+/** The head of a long markdown source, cut at a paragraph and with an open code fence closed. */
+export function clampSource(source: string): string {
+  if (source.length <= CLAMP_CHARS) return source;
+  let cut = source.lastIndexOf('\n\n', CLAMP_CHARS);
+  if (cut < CLAMP_CHARS / 2) cut = CLAMP_CHARS;
+  const head = source.slice(0, cut);
+  return (head.match(/^ {0,3}```/gm)?.length ?? 0) % 2 ? `${head}\n\`\`\`` : head;
+}
 
 /** Stops the conversation from following new output at the bottom, so an expanded box stays put to be read from its top. */
 export const StopFollowing = createContext<() => void>(() => {});
@@ -289,7 +306,8 @@ export function CollapsibleBody({
   expand,
   onExpandedChange,
 }: {
-  children: React.ReactNode;
+  /** A function gets whether the whole content is needed (expanded, or still animating shut); collapsed, it may render just a head. */
+  children: React.ReactNode | ((full: boolean) => React.ReactNode);
   /** Opens the box, e.g. for the Comment that replaces a live box the reader had expanded. */
   expand?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
@@ -297,9 +315,14 @@ export function CollapsibleBody({
   const ref = useRef<HTMLDivElement>(null);
   const [overflowing, setOverflowing] = useState(false);
   const [expanded, setExpanded] = useState(!!expand);
+  // Stays true while collapsing animates, so the content doesn't shrink under it.
+  const [full, setFull] = useState(!!expand);
   // A Comment the live text was appended to is already on screen.
   useEffect(() => {
-    if (expand) setExpanded(true);
+    if (expand) {
+      setExpanded(true);
+      setFull(true);
+    }
   }, [expand]);
   const [animatedHeight, setAnimatedHeight] = useState<number>();
   const stopFollowing = useContext(StopFollowing);
@@ -317,7 +340,15 @@ export function CollapsibleBody({
   const toggle = () => {
     if (!expanded) stopFollowing();
     const el = ref.current;
-    if (el && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const animate = !!el && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!expanded) {
+      // Render the whole content, still clipped, before measuring it.
+      flushSync(() => {
+        if (animate) setAnimatedHeight(COLLAPSED_MAX_HEIGHT);
+        setFull(true);
+      });
+    } else if (!animate) setFull(false);
+    if (el && animate) {
       if (expanded) {
         // No limit can't be animated from: pin the current height and reflow before heading to the clamp.
         flushSync(() => setAnimatedHeight(el.scrollHeight));
@@ -341,10 +372,12 @@ export function CollapsibleBody({
         className={cn('relative transition-[max-height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]', maxHeight !== undefined && 'overflow-hidden')}
         style={maxHeight !== undefined ? { maxHeight } : undefined}
         onTransitionEnd={(e) => {
-          if (e.target === e.currentTarget && e.propertyName === 'max-height') setAnimatedHeight(undefined);
+          if (e.target !== e.currentTarget || e.propertyName !== 'max-height') return;
+          setAnimatedHeight(undefined);
+          if (!expanded) setFull(false);
         }}
       >
-        {children}
+        {typeof children === 'function' ? children(full || expanded) : children}
         {clamped && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-background to-transparent" />}
       </div>
       {overflowing && (
@@ -411,7 +444,7 @@ const FIELD_ICON: Record<RevisionChange['field'], LucideIcon> = {
   pullRequest: ArrowRightLeft,
 };
 
-function RevisionItem({ revision, count, ...lookups }: { revision: Revision; count: number } & Lookups) {
+const RevisionItem = memo(function RevisionItem({ revision, count, ...lookups }: { revision: Revision; count: number } & Lookups) {
   const Icon = FIELD_ICON[revision.changes[0]?.field ?? 'title'];
   return (
     <li className="relative flex items-start gap-3 pl-1.5 text-xs text-muted-foreground">
@@ -425,7 +458,7 @@ function RevisionItem({ revision, count, ...lookups }: { revision: Revision; cou
       </span>
     </li>
   );
-}
+});
 
 function revisionText(revision: Revision, lookups: Lookups): string {
   const parts = revision.changes.map((c) => describeChange(c, lookups));
