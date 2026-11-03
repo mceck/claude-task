@@ -17,8 +17,8 @@ describe('native commands in managed conversations', () => {
       { ...new Stream().init(), slash_commands: ['compact', 'context', 'mcp', 'project:deploy', 'clear', 'model', 'exit'] },
     ]);
     const commands = (await admin.get(`/tasks/${task.id}/session`)).body.session.commands;
-    expect(commands.map((c: { name: string }) => c.name)).toEqual(['compact', 'context', 'mcp', 'project:deploy']);
-    expect(commands.every((c: { kind: string }) => c.kind === 'claude')).toBe(true);
+    expect(commands.map((c: { name: string }) => c.name)).toEqual(['project:deploy', 'compact', 'context', 'mcp']);
+    expect(commands.map((c: { kind: string }) => c.kind)).toEqual(['skill', 'claude', 'claude', 'claude']);
   });
 
   it("offers the Worktree's own skills and commands that the session loaded", async () => {
@@ -47,11 +47,12 @@ describe('native commands in managed conversations', () => {
     const before = (await admin.get(`/tasks/${task.id}/session`)).body.session.commands;
     expect(before.filter((c: { kind: string }) => c.kind === 'skill').map((c: { name: string }) => c.name)).toEqual(['deploy', 'release', 'unloaded']);
 
-    await runner.play(start.jobId, [{ ...new Stream().init(), slash_commands: ['compact', 'deploy', 'release', 'internal', 'clear'] }]);
+    await runner.play(start.jobId, [{ ...new Stream().init(), slash_commands: ['compact', 'deploy', 'release', 'internal', 'clear', 'superpowers:brainstorming'] }]);
     const commands = (await admin.get(`/tasks/${task.id}/session`)).body.session.commands;
     expect(commands).toEqual([
       { name: 'deploy', description: 'Deploy the service', kind: 'skill' },
       { name: 'release', description: 'Release', kind: 'skill' },
+      { name: 'superpowers:brainstorming', description: expect.any(String), kind: 'skill' },
       { name: 'compact', description: expect.any(String), kind: 'claude' },
     ]);
   });
