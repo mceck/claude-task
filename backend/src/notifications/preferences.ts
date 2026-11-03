@@ -16,12 +16,14 @@ export const latestUnreadPosition = (userId: string) => sql`(select max(x.positi
 export async function preferences(db: Executor, userId: string, filter: { taskId?: string; projectId?: string }): Promise<TaskPreference[]> {
   const result = await db.execute<{
     taskId: string; following: boolean; muted: boolean; readPosition: string; latestPosition: string; unread: boolean;
-    unreadComments: number;
+    unreadComments: number; unreadTurn: boolean;
   }>(sql`select t.id as "taskId", coalesce(p.following, false) as following,
     coalesce(p.muted, false) as muted, coalesce(p.read_position, 0)::text as "readPosition",
     coalesce(a.latest, 0)::text as "latestPosition",
     -- A Task in a closed Status has no unread state: closing it settles the conversation.
     (s.category <> 'closed' and coalesce(a.latest, 0) > coalesce(p.read_position, 0)) as unread,
+    (s.category <> 'closed' and exists (select 1 from task_activity u join agent_items ai on ai.id = u.item_id
+      where u.task_id = t.id and ai.kind = 'turn_summary' and u.position > coalesce(p.read_position, 0))) as "unreadTurn",
     (case when s.category = 'closed' then 0 else
       (select count(*)::int from task_activity u join comments c on c.id = u.item_id
         where u.task_id = t.id and c.task_id = t.id

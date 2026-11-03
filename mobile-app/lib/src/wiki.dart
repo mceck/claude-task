@@ -37,8 +37,7 @@ class WikiList extends StatelessWidget {
               ? EmptyState(
                   icon: Icons.menu_book_outlined,
                   title: 'No Wikis',
-                  message:
-                      'Create a wiki to work together on your Markdown documentation.',
+                  message: 'Create a wiki to work together on your Markdown documentation.',
                   action: AppButton(
                     label: 'New wiki',
                     icon: Icons.add_rounded,
@@ -621,8 +620,7 @@ Future<void> confirmDeleteChat(
   if (await confirm(
     context,
     title: 'Delete chat?',
-    message:
-        'Delete this chat and everything in it for everyone. Wiki files are kept.',
+    message: 'Delete this chat and everything in it for everyone. Wiki files are kept.',
     confirmLabel: 'Delete chat',
   )) {
     if (context.mounted) await perform(context, () => c.deleteChat(chat));
@@ -633,8 +631,7 @@ Future<void> confirmDeleteWiki(BuildContext context, TaskController c) async {
   if (await confirm(
     context,
     title: 'Delete wiki?',
-    message:
-        'Delete the wiki and its chats from the app. The remote repository is kept.',
+    message: 'Delete the wiki and its chats from the app. The remote repository is kept.',
     confirmLabel: 'Delete wiki',
   )) {
     if (context.mounted) await perform(context, c.deleteWiki);

@@ -2203,6 +2203,7 @@ class _TaskRow extends StatelessWidget {
                             api: c.api,
                             state: task.sessionState,
                             queuePosition: task.queuePosition,
+                            unreadTurn: pref?.unreadTurn == true,
                             size: 18,
                           ),
                         ],
@@ -2496,6 +2497,9 @@ class AgentBadge extends StatelessWidget {
   final String? state;
   final int? queuePosition;
   final double size;
+
+  /// A finished or failed Turn the User hasn't read: the whole avatar pulses.
+  final bool unreadTurn;
   const AgentBadge({
     super.key,
     this.agent,
@@ -2503,10 +2507,19 @@ class AgentBadge extends StatelessWidget {
     this.state,
     this.queuePosition,
     this.size = 22,
+    this.unreadTurn = false,
   });
   @override
   Widget build(BuildContext context) {
     final color = sessionColor(state, queued: queuePosition != null);
+    final avatar = UserAvatar(
+      label: agent?.name ?? 'Agent',
+      emoji: agent?.emoji ?? '🤖',
+      imageUrl: agent?.avatarImageUrl,
+      api: api,
+      size: size,
+      circle: false,
+    );
     return Tooltip(
       message:
           '${agent?.name ?? 'Agent'}: ${queuePosition != null ? 'queued #$queuePosition' : state ?? 'assigned'}',
@@ -2516,14 +2529,7 @@ class AgentBadge extends StatelessWidget {
           Stack(
             clipBehavior: Clip.none,
             children: [
-              UserAvatar(
-                label: agent?.name ?? 'Agent',
-                emoji: agent?.emoji ?? '🤖',
-                imageUrl: agent?.avatarImageUrl,
-                api: api,
-                size: size,
-                circle: false,
-              ),
+              if (unreadTurn) Pulse(child: avatar) else avatar,
               if (state != null)
                 Positioned(
                   right: -2,

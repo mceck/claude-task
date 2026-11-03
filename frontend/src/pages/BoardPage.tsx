@@ -428,6 +428,7 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
   const assignees = card.assigneeIds.map((id) => users.find((u) => u.id === id)).filter((u): u is User => !!u);
   const unread = preference?.unread ?? false;
   const unreadComments = preference?.unreadComments ?? 0;
+  const unreadTurn = preference?.unreadTurn ?? false;
   const commentsLabel = unreadComments > 0
     ? `${unreadComments} unread ${unreadComments === 1 ? 'comment' : 'comments'} of ${card.commentCount}`
     : `${card.commentCount} comments`;
@@ -489,8 +490,10 @@ function Card({ card, preference, tags, users, closedStatus, onOpen, dragging, s
             <TooltipContent>Move to “{closedStatus.name}” and end the agent session</TooltipContent>
           </Tooltip>
         )}
-        {agent && <span aria-label={`Agent ${agent.name}: ${card.session?.queuePosition ? `queued #${card.session.queuePosition}` : card.session?.state ?? 'assigned'}`} className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
-          <AgentAvatar agent={agent} size="xs" state={card.session?.state} />
+        {agent && <span aria-label={`Agent ${agent.name}: ${card.session?.queuePosition ? `queued #${card.session.queuePosition}` : card.session?.state ?? 'assigned'}${unreadTurn ? ', unread turn' : ''}`} data-testid={unreadTurn ? 'agent-unread-turn' : undefined} className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
+          <span className={cn('rounded-full', unreadTurn && 'animate-pulse ring-2 ring-primary/70')}>
+            <AgentAvatar agent={agent} size="xs" state={card.session?.state} />
+          </span>
           {card.session?.queuePosition ? `#${card.session.queuePosition}` : null}
         </span>}
         {assignees.length > 0 && (

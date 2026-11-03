@@ -21,8 +21,7 @@ class _GitSettings extends StatelessWidget {
         Future<void> edit([Json? entry]) => _form(
           context,
           title: entry == null ? 'Add connection' : 'Edit / rotate connection',
-          subtitle:
-              'Secrets are encrypted and cannot be read back. Leave a new secret empty to keep the saved one.',
+          subtitle: 'Secrets are encrypted and cannot be read back. Leave a new secret empty to keep the saved one.',
           fields: [
             if (entry == null)
               const _Choice('provider', 'Provider', [
@@ -40,8 +39,7 @@ class _GitSettings extends StatelessWidget {
               'GitHub App ID',
               initial: entry?['appId'] as String? ?? '',
               required: true,
-              hint:
-                  'Numeric App ID. Grant Contents and Pull requests read/write, Metadata read.',
+              hint: 'Numeric App ID. Grant Contents and Pull requests read/write, Metadata read.',
             ),
             _Text(
               'privateKey',
@@ -61,8 +59,7 @@ class _GitSettings extends StatelessWidget {
               'GitLab token',
               secret: true,
               required: entry == null,
-              hint:
-                  'api and write_repository scopes; saved tokens rotate automatically',
+              hint: 'api and write_repository scopes; saved tokens rotate automatically',
             ),
           ],
           visible: (f, v) {
@@ -276,8 +273,7 @@ class _RepositoryEditorState extends State<_RepositoryEditor> {
         const Padding(
           padding: EdgeInsets.only(bottom: 12),
           child: Notice(
-            message:
-                'Close every non-closed Session, including paused and pending Sessions, before changing the Repository. The Base Branch can still change.',
+            message: 'Close every non-closed Session, including paused and pending Sessions, before changing the Repository. The Base Branch can still change.',
             color: Palette.info,
             icon: Icons.info_outline_rounded,
           ),
@@ -350,8 +346,7 @@ class _RepositoryEditorState extends State<_RepositoryEditor> {
       if (protection != null)
         Section(
           title: 'Base Branch Protection',
-          description:
-              'Pushes to the Base Branch are always blocked by the platform. Provider protection is an optional second line of defense.',
+          description: 'Pushes to the Base Branch are always blocked by the platform. Provider protection is an optional second line of defense.',
           children: [
             AppTile(
               leading: IconBadge(

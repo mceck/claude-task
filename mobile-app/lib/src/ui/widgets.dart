@@ -539,6 +539,32 @@ class _PulseDotState extends State<PulseDot>
   );
 }
 
+/// Fades its child in and out: draws attention to something unread.
+class Pulse extends StatefulWidget {
+  final Widget child;
+  const Pulse({super.key, required this.child});
+  @override
+  State<Pulse> createState() => _PulseState();
+}
+
+class _PulseState extends State<Pulse> with SingleTickerProviderStateMixin {
+  late final _anim = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat(reverse: true);
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+    opacity: Tween(begin: .35, end: 1.0).animate(_anim),
+    child: widget.child,
+  );
+}
+
 class Spinner extends StatelessWidget {
   final double size;
   final Color color;
