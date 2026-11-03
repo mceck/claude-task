@@ -37,7 +37,7 @@ import {
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentService, AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
+import type { AgentService, AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, ProjectClickUp, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -119,6 +119,8 @@ export const projects = pgTable(
     autoResume: boolean('auto_resume').notNull().default(false),
     /** The Project's Agents may act on every Task of the Project, not only on their own. */
     boardWriteAccess: boolean('board_write_access').notNull().default(false),
+    /** The ClickUp Link (docs/specs/clickup.md); null for Projects that don't mirror ClickUp. */
+    clickup: jsonb('clickup').$type<ProjectClickUp>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -136,6 +138,8 @@ export const statuses = pgTable(
     color: text('color').notNull(),
     category: categoryEnum('category').notNull(),
     position: integer('position').notNull(),
+    /** The ClickUp status a Mirrored Status follows. */
+    clickupStatusId: text('clickup_status_id'),
   },
   (t) => [uniqueIndex('statuses_name_unique').on(t.projectId, sql`lower(${t.name})`)],
 );
@@ -179,12 +183,24 @@ export const tasks = pgTable(
     autoResume: boolean('auto_resume').notNull().default(false),
     /** A Wiki Chat's title once someone renamed it; until then the Chat is titled by its first User Comment. */
     chatTitle: text('chat_title'),
+    /** ClickUp sync (docs/specs/clickup.md). */
+    clickupTaskId: text('clickup_task_id'),
+    clickupUrl: text('clickup_url'),
+    clickupLinked: boolean('clickup_linked').notNull().default(false),
+    /** The description ClickUp had at the last sync. */
+    clickupDescription: text('clickup_description'),
+    descriptionDetached: boolean('description_detached').notNull().default(false),
+    /** The ClickUp status id seen at the last sync. */
+    clickupSeenStatus: text('clickup_seen_status'),
+    clickupPushPending: boolean('clickup_push_pending').notNull().default(false),
+    clickupError: text('clickup_error'),
     version: integer('version').notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex('tasks_number_unique').on(t.projectId, t.number),
+    uniqueIndex('tasks_clickup_unique').on(t.projectId, t.clickupTaskId),
     index('tasks_status_position_idx').on(t.statusId, t.position),
   ],
 );
@@ -282,6 +298,8 @@ export const attachments = pgTable(
     /** Set for files of a pending Scheduled Message; they move to its Comment when it is published. */
     scheduledMessageId: uuid('scheduled_message_id').references((): AnyPgColumn => scheduledMessages.id, { onDelete: 'cascade' }),
     blobId: text('blob_id').notNull(),
+    /** Set on files copied from ClickUp. */
+    clickupAttachmentId: text('clickup_attachment_id'),
     filename: text('filename').notNull(),
     contentType: text('content_type').notNull(),
     size: integer('size').notNull(),

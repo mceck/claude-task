@@ -92,6 +92,8 @@ Downloading an Attachment requires a signed-in User. PNG, JPEG, GIF, WebP and AV
 
 **Description files.** The Task description editor uploads files as Attachments of the Task, and links them from the description text by URL. The Agent receives them with the description. A description file that the current description no longer links and that is older than 24 hours is removed the next time someone uploads a description file to that Task. Description files are kept by Reset Chat and removed with the Task. Editing the description itself is covered in [Board](board.md).
 
+**ClickUp attachments.** In a Project with a ClickUp Link (see [ClickUp sync](clickup.md)), files of the ClickUp task are copied to the Task as description attachments flagged as coming from ClickUp. They are listed with a ClickUp mark, are read-only and are removed when ClickUp drops them.
+
 **The Task's attachment list.** `GET /tasks/:taskId/attachments` returns every Attachment of the Task, newest first: the description files and the files of every Comment, by Users and Agents alike. Files of a deleted Comment are not listed. Each entry adds to the usual Attachment fields its upload time (`createdAt`) and the Comment's author (`null` for a description file). Both clients show the list under the description, as a compact row per file with an image preview where available, its name, size, uploader (or "Description") and time, opening an image or downloading the others.
 
 **What the Agent receives.** Image Attachments travel to the Agent as images, within a per-Message size and count budget, and every other file is saved in its Worktree with its path listed under the Comment. The rules are in [Agent sessions](agent-sessions.md).

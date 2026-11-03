@@ -39,7 +39,9 @@ export function TaskAttachments({ taskId }: { taskId: string }) {
 function AttachmentRow({ file }: { file: TaskAttachment }) {
   const image = PREVIEWABLE.test(file.contentType);
   // A description file is linked from the description text; a Comment one belongs to that Comment.
-  const source = file.author ? (
+  const source = file.fromClickUp ? (
+    'ClickUp'
+  ) : file.author ? (
     <span className="flex items-center gap-1">
       {file.author.type === 'agent' ? <Bot className="size-3" aria-hidden /> : null}
       {file.author.displayName}

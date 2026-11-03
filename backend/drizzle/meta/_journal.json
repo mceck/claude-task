@@ -246,6 +246,13 @@
       "when": 1793662157959,
       "tag": "0034_worktree_status",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793670444939,
+      "tag": "0035_clickup_sync",
+      "breakpoints": true
     }
   ]
 }

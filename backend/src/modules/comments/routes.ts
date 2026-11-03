@@ -140,7 +140,7 @@ export async function receiveMultipart(
   return { fields, files };
 }
 
-function sanitizeFilename(name: string | undefined): string {
+export function sanitizeFilename(name: string | undefined): string {
   const base = (name ?? '').split(/[\\/]/).pop() ?? '';
   // Drop control characters and keep it a sane length. Count code points, so an emoji is never cut in half.
   const clean = [...base.replace(/[\u0000-\u001f\u007f]/g, '').trim()].slice(0, 255).join('');

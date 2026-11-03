@@ -1668,6 +1668,20 @@ class TaskController extends ChangeNotifier {
     }
   }
 
+  /// Retries the Status push to ClickUp or restores ClickUp's description.
+  Future<void> clickupAction(String action) async {
+    final current = task!;
+    final result = await _request(
+      'POST',
+      '/tasks/${current.id}/clickup/$action',
+    );
+    if (task?.id == current.id) {
+      task = Task.fromJson(result['task'] as Json);
+      await _cacheTask();
+      notifyListeners();
+    }
+  }
+
   /// Pending first by due time, then the finished ones, newest first.
   void _setScheduled(List<Json> messages) {
     final list = messages.map(ScheduledMessage.fromJson).toList();

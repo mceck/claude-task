@@ -23,6 +23,8 @@ import { scheduledMessageRoutes } from './modules/scheduled-messages/routes';
 import { questionRoutes } from './modules/questions/routes';
 import { tagRoutes } from './modules/tags/routes';
 import { projectRoutes } from './modules/projects/routes';
+import { clickupRoutes } from './clickup/routes';
+import { ClickUpError } from './clickup/client';
 import { statusRoutes } from './modules/statuses/routes';
 import { taskRoutes } from './modules/tasks/routes';
 import { userRoutes } from './modules/users/routes';
@@ -77,7 +79,7 @@ export async function buildApp(
   await app.register(multipart, { limits: { fieldSize: 1024 * 1024, fields: 10 } });
 
   app.setErrorHandler((err, request, reply) => {
-    const known = err instanceof HttpError ? err : err instanceof GitProviderError ? new HttpError(err.status === 409 ? 409 : 502, 'git_provider', err.message) : fromDatabaseError(err);
+    const known = err instanceof HttpError ? err : err instanceof GitProviderError ? new HttpError(err.status === 409 ? 409 : 502, 'git_provider', err.message) : err instanceof ClickUpError ? new HttpError(502, 'clickup', err.message) : fromDatabaseError(err);
     if (known) {
       return reply
         .status(known.statusCode)
@@ -114,6 +116,7 @@ export async function buildApp(
       notificationRoutes(api, ctx);
       userRoutes(api, ctx);
       projectRoutes(api, ctx);
+      clickupRoutes(api, ctx);
       statusRoutes(api, ctx);
       tagRoutes(api, ctx);
       taskRoutes(api, ctx);

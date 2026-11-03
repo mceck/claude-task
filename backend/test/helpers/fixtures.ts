@@ -105,7 +105,7 @@ export async function columnTitles(client: ApiClient, projectId: string, statusI
 
 export async function createCredential(
   admin: ApiClient,
-  body: { name?: string; kind?: 'claude_oauth_token' | 'anthropic_api_key' | 'anthropic_auth_token'; secret?: string } = {},
+  body: { name?: string; kind?: 'claude_oauth_token' | 'anthropic_api_key' | 'anthropic_auth_token' | 'clickup_token'; secret?: string } = {},
 ): Promise<Credential> {
   const res = await admin.post('/credentials', {
     name: body.name ?? `Credential ${unique()}`,

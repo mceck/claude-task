@@ -153,6 +153,7 @@ function CredentialForm({ credential, onSaved }: { credential?: Credential; onSa
           <option value="claude_oauth_token">Claude OAuth token (claude setup-token)</option>
           <option value="anthropic_api_key">Anthropic API key</option>
           <option value="anthropic_auth_token">Anthropic auth token (ANTHROPIC_AUTH_TOKEN, e.g. a gateway)</option>
+          <option value="clickup_token">ClickUp personal API token (for ClickUp-linked projects)</option>
         </select>
       </Field>
       <Field label={credential ? 'New secret' : 'Secret'} hint={credential ? 'Leave empty to keep the current secret.' : undefined}>

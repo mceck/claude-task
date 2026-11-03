@@ -27,8 +27,9 @@ const params = z.object({ id: z.uuid() });
 const taskParams = z.object({ id: idOrKey });
 
 async function assertCredential(db: Executor, id: string): Promise<void> {
-  const [row] = await db.select({ id: credentials.id }).from(credentials).where(eq(credentials.id, id));
+  const [row] = await db.select({ id: credentials.id, kind: credentials.kind }).from(credentials).where(eq(credentials.id, id));
   if (!row) throw badRequest('Unknown credential');
+  if (row.kind === 'clickup_token') throw badRequest('A ClickUp token cannot authenticate an Agent');
 }
 
 export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {

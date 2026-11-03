@@ -70,7 +70,7 @@ const _swatches = [
   '#a855f7',
   '#64748b',
 ];
-const _categories = ['backlog', 'open', 'active', 'closed'];
+const _categories = ['backlog', 'open', 'active', 'review', 'done', 'closed'];
 const _efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
 const _permissionModes = [
   'bypassPermissions',
@@ -529,9 +529,9 @@ class _SettingsHub extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller, admin = c.user?.isAdmin ?? false;
-    void open(Widget page) => Navigator.of(
-      context,
-    ).push<void>(MaterialPageRoute(builder: (_) => page));
+    void open(Widget page) =>
+        Navigator.of(context)
+            .push<void>(MaterialPageRoute(builder: (_) => page));
     return AppPage(
       title: 'Settings',
       subtitle: c.user?.email,
@@ -588,7 +588,8 @@ class _SettingsHub extends StatelessWidget {
                   color: Palette.warning,
                 ),
                 title: 'Credentials',
-                subtitle: 'Claude tokens, auth tokens and API keys used by Agents',
+                subtitle:
+                    'Claude tokens, auth tokens and API keys used by Agents',
                 onTap: () => open(_CredentialsSettings(controller: c)),
               ),
               AppTile(
@@ -769,31 +770,36 @@ class _ProjectSettings extends StatelessWidget {
                 ),
               ],
             ),
+            if (info['clickup'] is Map)
+              _clickUpSection(context, c, project, info, change),
             Section(
               title: 'Statuses',
-              description:
-                  'A project keeps at least one open and one closed status.',
-              trailing: SectionAdd(
-                tooltip: 'Add status',
-                onPressed: () => _form(
-                  context,
-                  title: 'New status',
-                  fields: [
-                    const _Text('name', 'Name', required: true),
-                    const _Color('color', 'Color', '#64748b'),
-                    _Choice('category', 'Category', [
-                      for (final k in _categories) (k, k),
-                    ], 'active'),
-                  ],
-                  submit: 'Add status',
-                  onSubmit: (v) =>
-                      change('POST', '/projects/${project.id}/statuses', {
-                        'name': (v['name'] as String).trim(),
-                        'color': v['color'],
-                        'category': v['category'],
-                      }),
-                ),
-              ),
+              description: info['clickup'] == null
+                  ? 'A project keeps at least one open and one closed status.'
+                  : 'Names, colors and order follow ClickUp; only the category can change here.',
+              trailing: info['clickup'] != null
+                  ? null
+                  : SectionAdd(
+                      tooltip: 'Add status',
+                      onPressed: () => _form(
+                        context,
+                        title: 'New status',
+                        fields: [
+                          const _Text('name', 'Name', required: true),
+                          const _Color('color', 'Color', '#64748b'),
+                          _Choice('category', 'Category', [
+                            for (final k in _categories) (k, k),
+                          ], 'active'),
+                        ],
+                        submit: 'Add status',
+                        onSubmit: (v) =>
+                            change('POST', '/projects/${project.id}/statuses', {
+                              'name': (v['name'] as String).trim(),
+                              'color': v['color'],
+                              'category': v['category'],
+                            }),
+                      ),
+                    ),
               children: [
                 for (final (i, s) in statuses.indexed)
                   AppTile(
@@ -803,81 +809,92 @@ class _ProjectSettings extends StatelessWidget {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        IconAction(
-                          icon: Icons.arrow_upward_rounded,
-                          size: 32,
-                          tooltip: 'Move ${s['name']} up',
-                          onPressed: i == 0 ? null : () => reorder(i, i - 1),
-                        ),
-                        IconAction(
-                          icon: Icons.arrow_downward_rounded,
-                          size: 32,
-                          tooltip: 'Move ${s['name']} down',
-                          onPressed: i == statuses.length - 1
-                              ? null
-                              : () => reorder(i, i + 1),
-                        ),
+                        if (info['clickup'] == null) ...[
+                          IconAction(
+                            icon: Icons.arrow_upward_rounded,
+                            size: 32,
+                            tooltip: 'Move ${s['name']} up',
+                            onPressed: i == 0 ? null : () => reorder(i, i - 1),
+                          ),
+                          IconAction(
+                            icon: Icons.arrow_downward_rounded,
+                            size: 32,
+                            tooltip: 'Move ${s['name']} down',
+                            onPressed: i == statuses.length - 1
+                                ? null
+                                : () => reorder(i, i + 1),
+                          ),
+                        ],
                       ],
                     ),
                     onTap: () => _form(
                       context,
                       title: 'Edit status',
                       fields: [
-                        _Text(
-                          'name',
-                          'Name',
-                          initial: s['name'] as String,
-                          required: true,
-                        ),
-                        _Color('color', 'Color', s['color'] as String),
+                        if (info['clickup'] == null) ...[
+                          _Text(
+                            'name',
+                            'Name',
+                            initial: s['name'] as String,
+                            required: true,
+                          ),
+                          _Color('color', 'Color', s['color'] as String),
+                        ],
                         _Choice('category', 'Category', [
                           for (final k in _categories) (k, k),
                         ], s['category'] as String),
                       ],
                       submit: 'Save status',
                       onSubmit: (v) => change('PATCH', '/statuses/${s['id']}', {
-                        'name': (v['name'] as String).trim(),
-                        'color': v['color'],
+                        if (info['clickup'] == null) ...{
+                          'name': (v['name'] as String).trim(),
+                          'color': v['color'],
+                        },
                         'category': v['category'],
                       }),
-                      extra: (sheet) => [
-                        AppButton(
-                          label: 'Delete status',
-                          tone: Tone.danger,
-                          onPressed: statuses.length < 2
-                              ? null
-                              : () async {
-                                  final others = [
-                                    for (final o in statuses)
-                                      if (o['id'] != s['id']) o,
-                                  ];
-                                  final target = await showPicker<String>(
-                                    sheet,
-                                    title: 'Move its tasks to',
-                                    selected: others.first['id'] as String,
-                                    options: [
-                                      for (final o in others)
-                                        PickerOption(
-                                          o['id'] as String,
-                                          o['name'] as String,
-                                          detail: o['category'] as String,
-                                        ),
-                                    ],
-                                  );
-                                  if (target == null || !sheet.mounted) return;
-                                  final nav = Navigator.of(sheet);
-                                  if (await _run(
-                                    sheet,
-                                    () => change(
-                                      'DELETE',
-                                      '/statuses/${s['id']}?targetStatusId=$target',
-                                    ),
-                                  )) {
-                                    nav.pop();
-                                  }
-                                },
-                        ),
-                      ],
+                      extra: (sheet) => info['clickup'] != null
+                          ? const <Widget>[]
+                          : [
+                              AppButton(
+                                label: 'Delete status',
+                                tone: Tone.danger,
+                                onPressed: statuses.length < 2
+                                    ? null
+                                    : () async {
+                                        final others = [
+                                          for (final o in statuses)
+                                            if (o['id'] != s['id']) o,
+                                        ];
+                                        final target = await showPicker<String>(
+                                          sheet,
+                                          title: 'Move its tasks to',
+                                          selected:
+                                              others.first['id'] as String,
+                                          options: [
+                                            for (final o in others)
+                                              PickerOption(
+                                                o['id'] as String,
+                                                o['name'] as String,
+                                                detail: o['category'] as String,
+                                              ),
+                                          ],
+                                        );
+                                        if (target == null || !sheet.mounted) {
+                                          return;
+                                        }
+                                        final nav = Navigator.of(sheet);
+                                        if (await _run(
+                                          sheet,
+                                          () => change(
+                                            'DELETE',
+                                            '/statuses/${s['id']}?targetStatusId=$target',
+                                          ),
+                                        )) {
+                                          nav.pop();
+                                        }
+                                      },
+                              ),
+                            ],
                     ),
                   ),
               ],
@@ -961,8 +978,7 @@ class _ProjectSettings extends StatelessWidget {
               children: [
                 AppTile(
                   title: 'Agent setup',
-                  subtitle:
-                      'Worker, default Agent, Setup Script, instructions and environment',
+                  subtitle: 'Worker, default Agent, Setup Script, instructions and environment',
                   leading: const IconBadge(
                     Icons.smart_toy_outlined,
                     color: Palette.agent,
@@ -1018,8 +1034,7 @@ class _ProjectSettings extends StatelessWidget {
                           if (!await confirm(
                             context,
                             title: 'Delete ${project.key} permanently?',
-                            message:
-                                'All its tasks, comments and attachments are deleted. This cannot be undone.',
+                            message: 'All its tasks, comments and attachments are deleted. This cannot be undone.',
                             confirmLabel: 'Delete project',
                           )) {
                             return;
@@ -1072,7 +1087,12 @@ class _AgentsSettings extends StatelessWidget {
         ]);
         return (
           objects(results[0]['agents']),
-          admin ? objects(results[1]['credentials']) : <Json>[],
+          admin
+              ? [
+                  for (final k in objects(results[1]['credentials']))
+                    if (k['kind'] != 'clickup_token') k,
+                ]
+              : <Json>[],
           admin ? objects(results[2]['skills']) : <Json>[],
           admin ? objects(results[3]['mcpServers']) : <Json>[],
           admin ? objects(results[4]['plugins']) : <Json>[],
@@ -1131,12 +1151,9 @@ class _AgentsSettings extends StatelessWidget {
             ('', 'default'),
             for (final e in _efforts) (e, e),
           ], (a?['effort'] as String?) ?? ''),
-          _Choice(
-            'permissionMode',
-            'Permission mode',
-            [for (final m in _permissionModes) (m, m)],
-            (a?['permissionMode'] as String?) ?? 'bypassPermissions',
-          ),
+          _Choice('permissionMode', 'Permission mode', [
+            for (final m in _permissionModes) (m, m),
+          ], (a?['permissionMode'] as String?) ?? 'bypassPermissions'),
           _Text(
             'systemPrompt',
             'System prompt',
@@ -1467,8 +1484,7 @@ class _UsersSettings extends StatelessWidget {
                         if (!await confirm(
                           sheet,
                           title: 'Reset password?',
-                          message:
-                              'Signs the User out everywhere and generates a temporary password.',
+                          message: 'Signs the User out everywhere and generates a temporary password.',
                           confirmLabel: 'Reset password',
                         )) {
                           return;
@@ -1513,6 +1529,7 @@ class _CredentialsSettings extends StatelessWidget {
       ('claude_oauth_token', 'Claude token'),
       ('anthropic_api_key', 'API key'),
       ('anthropic_auth_token', 'Auth token'),
+      ('clickup_token', 'ClickUp token'),
     ];
     String kindLabel(String? k) =>
         kinds.where((e) => e.$1 == k).firstOrNull?.$2 ?? '$k';
@@ -1602,9 +1619,7 @@ class _CredentialsSettings extends StatelessWidget {
                         if (!await confirm(
                           sheet,
                           title: 'Delete ${k['name']}?',
-                          message: objects(k['usedBy']).isEmpty
-                              ? null
-                              : 'It is still used by Agents; the server may refuse.',
+                          message: objects(k['usedBy']).isEmpty ? null : 'It is still used by Agents; the server may refuse.',
                           confirmLabel: 'Delete credential',
                         )) {
                           return;

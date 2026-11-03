@@ -46,6 +46,7 @@ export function serializeAttachment(a: AttachmentRow): Attachment {
     contentType: a.contentType,
     size: a.size,
     url: `${API_PREFIX}/attachments/${a.id}`,
+    ...(a.clickupAttachmentId ? { fromClickUp: true } : {}),
   };
 }
 

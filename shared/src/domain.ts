@@ -1,3 +1,4 @@
+import type { ProjectClickUp, TaskClickUp } from './clickup';
 import type { ProjectRepository, PullRequest } from './git';
 // Entity shapes returned by the API. Terms follow docs/CONTEXT.md.
 import type { AgentItemPayload, ContextUsage, Delivery, SessionState } from './agents';
@@ -44,6 +45,8 @@ export type CategoryCounts = Record<Category, number>;
 export interface Project {
   logoUrl: string | null;
   repository: ProjectRepository | null;
+  /** The ClickUp Link, when the Project mirrors a ClickUp List or View. */
+  clickup: ProjectClickUp | null;
   /** Where the Project's Jobs run. */
   workerId: string;
   id: string;
@@ -89,6 +92,8 @@ export interface TaskCard {
   branchName: string | null;
   branchUrl: string | null;
   pullRequest: PullRequest | null;
+  /** ClickUp state of a Task imported from ClickUp. */
+  clickup: TaskClickUp | null;
   id: string;
   projectId: string;
   key: string;
@@ -155,6 +160,8 @@ export interface Attachment {
   contentType: string;
   size: number;
   url: string;
+  /** Copied from ClickUp: read-only and removed when ClickUp drops it. */
+  fromClickUp?: boolean;
 }
 
 /** One file of a Task, from its description or from any of its Comments. */

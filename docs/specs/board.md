@@ -7,7 +7,7 @@ The board is where the team organizes work. It covers **Projects** (each with it
 - A **Project** is a body of work with its own Board, Statuses and Tags. It has a **Project Key**, a name, a description, the **Worker** its Agents run on (see [Workers](workers.md)), an optional link to a code **Repository** (see [Git integration](git-integration.md)), Agent-related settings, and an archived flag.
 - The **Project Key** is a short uppercase code of 2 to 6 letters (`API`, `WEB`), unique across the installation and fixed at creation. It prefixes the Project's Task Keys.
 - A Project has a **kind**. Ordinary Projects have kind `project`. Each Wiki is stored as a Project of kind `wiki` with one backing Task; these Projects are kept out of the Projects list, absent from the Project API and managed only through the Wiki (see [Wikis](wikis.md)).
-- A **Status** is a named step of a Project's workflow, with a color and a position. Each Status belongs to one **Category**: `backlog`, `open`, `active`, `review`, `done` or `closed`. The Category gives the Status its fixed meaning whatever its name. Only `closed` changes how Agents behave, and `backlog` changes how Agents are assigned (see [Updating Tasks](#updating-tasks)): a Task entering a `closed`-category Status ends its Agent's Session (see [Agent Sessions](agent-sessions.md)).
+- A **Status** is a named step of a Project's workflow, with a color and a position. Each Status belongs to one **Category**: `backlog`, `open`, `active`, `review`, `done` or `closed`. The Category gives the Status its fixed meaning whatever its name. Only `closed` changes how Agents behave: a Task entering a `closed`-category Status ends its Agent's Session (see [Agent Sessions](agent-sessions.md)). `backlog` is a label for the Board and has no effect on Agents.
 - A **Tag** is a colored, Project-scoped label. A Task can carry several.
 - A **Task** is a unit of work in a Project: title, Markdown description, Status, priority, Tags, User assignees, at most one assigned Agent, and its position within its Status. It is identified by its **Task Key**, the Project Key followed by a sequential number (`API-42`).
 - **Priority** is one of `urgent`, `high`, `normal`, `low` or `none` (the default).
@@ -113,7 +113,7 @@ Any User creates a Task in a Project, from the "Add task" box at the bottom of a
 - **Title**: 1 to 500 characters after trimming. Required.
 - **Description**: Markdown, up to 100,000 characters, empty by default.
 - **Status**: any Status of the Project; by default the first `open` Status in order (Todo in the default set, never a `backlog` one).
-- **Agent**: the Project's **default Agent** (set in its "Agents" settings) when it is enabled, otherwise none; a Task created in a `backlog`-category Status has no Agent. Assigning it creates the usual `pending` Session; nothing starts until the first User Comment. A disabled or deleted default Agent leaves new Tasks without an Agent (deleting an Agent clears the setting).
+- **Agent**: the Project's **default Agent** (set in its "Agents" settings) when it is enabled, otherwise none; whatever the Status, `backlog` included. Assigning it creates the usual `pending` Session; nothing starts until the first User Comment. A disabled or deleted default Agent leaves new Tasks without an Agent (deleting an Agent clears the setting).
 - **Automatic resume at limit**: copied from the Project's switch when the Task is created, by a User, an Agent or a Schedule. It is the Task's own switch from then on: changing the Project's does not change existing Tasks. When it is on, a Turn that stops at a usage limit with a known reset time gets its Limit Resume without asking (see [Agent sessions](agent-sessions.md#usage-limits-and-limit-resume)). Any User changes it from the Task's menu; it is a dedicated call that creates no Revision and leaves the Task's version as it is.
 - **Priority**: `none` by default.
 - **Tags**: up to 50, all from the same Project.
@@ -166,7 +166,8 @@ flowchart TD
 - An update that changes nothing records no Revision and keeps the version.
 - Changing the Status through an update puts the Task at the end of the new column.
 - Changing the Status or the Agent triggers the Session rules: assigning, changing or unassigning an Agent, closing and reopening (see [Agent Sessions](agent-sessions.md)). Status itself never starts an Agent; only entering or leaving a `closed`-category Status matters.
-- **Backlog holds Tasks without an Agent.** Assigning an Agent to a Task in a `backlog`-category Status, through an update without a Status, also moves it to the first `open` Status (the clients ask for confirmation first and send both together). A Task leaving `backlog` for a non-`backlog` Status, through an update or a move, gets the Project's default Agent when it has none and that Agent is enabled; the Agent change is part of the same Revision. A Task already in Backlog with an Agent keeps it. Projects created before the `backlog` Category existed keep their Backlog Status as `open` until its Category is changed in settings.
+- **Agents change only on purpose.** A Task gets the Project's default Agent when it is created (when that Agent is enabled) and its Agent changes afterwards only when a User or an Agent edits it. Moving a Task, or assigning an Agent, never changes the Status or the Agent as a side effect, and the `backlog` Category triggers nothing.
+- **ClickUp-linked Projects** lock some fields: see [ClickUp sync](clickup.md#what-is-locked).
 - Newly added assignees start following the Task.
 
 After a successful update the card is published as `task.updated` on the Project's topic, the full Task as `task.changed` on the Task's topic, and the Revision as `revision.created`.
@@ -298,6 +299,7 @@ Deleting a Project removes its Statuses, Tags and Tasks; deleting a Task removes
 
 ## Related specs
 
+- [ClickUp sync](clickup.md): a Project can mirror a ClickUp List or View: its Statuses, Task names, descriptions and attachments, and the Task Status in both directions.
 - [Users and authentication](users-and-auth.md): who can do what on Projects, Statuses, Tags and Tasks.
 - [Conversation](conversation.md): Comments, Internal Notes, attachments (including files embedded in descriptions), following and notifications.
 - [Agents](agents.md): Agents assignable to Tasks, and the Project's environment variables and secrets.

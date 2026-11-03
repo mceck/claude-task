@@ -1,6 +1,5 @@
 import { autoFollow } from '../../notifications/preferences';
 import { projectTopic, taskKey, taskTopic } from '@claude-task/shared';
-import type { Category } from '@claude-task/shared';
 import type {
   Actor,
   BoardFilter,
@@ -19,7 +18,7 @@ import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
 import { agents, jobs, tags, projects, statuses, taskAssignees, taskTags, taskRevisions, tasks, users } from '../../db/schema';
 import { onTaskChanged, removeDeletedWorktrees } from '../../sessions/lifecycle';
-import { badRequest, conflict, notFound } from '../../errors';
+import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { actorResolver } from '../actors';
 import { UUID } from '../../ids';
 import { ACTIVE_JOB_STATES } from '../agents/service';
@@ -57,6 +56,12 @@ interface CardRow extends Record<string, unknown> {
   branch_name: string | null;
   branch_url: string | null;
   pull_request: TaskCard['pullRequest'];
+  clickup_task_id: string | null;
+  clickup_url: string | null;
+  clickup_linked: boolean;
+  description_detached: boolean;
+  clickup_push_pending: boolean;
+  clickup_error: string | null;
 }
 
 export interface CardQuery {
@@ -130,7 +135,7 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
         from task_assignees ta where ta.task_id = t.id), '{}') as assignee_ids,
       (select count(*)::int from comments c where c.task_id = t.id and c.deleted_at is null) as comment_count,
       (select coalesce(sum(tr.num_tool_calls), 0)::int from turns tr where tr.task_id = t.id) as tool_call_count,
-      t.branch_name, t.branch_url, t.pull_request, t.agent_id, coalesce(t.agent_id, ss.last_agent_id) as session_agent_id, ss.state as session_state,
+      t.branch_name, t.branch_url, t.pull_request, t.clickup_task_id, t.clickup_url, t.clickup_linked, t.description_detached, t.clickup_push_pending, t.clickup_error, t.agent_id, coalesce(t.agent_id, ss.last_agent_id) as session_agent_id, ss.state as session_state,
       (select count(*)::int from queue_entries q join queue_entries q2 on q2.worker_id = q.worker_id and q2.position <= q.position
         where q.task_id = t.id) as queue_position,
       (select jsonb_build_object('tokens', tr.context_tokens, 'window', tr.context_window)
@@ -162,6 +167,15 @@ export async function loadCards(db: Executor, q: CardQuery): Promise<TaskCard[]>
     branchName: r.branch_name,
     branchUrl: r.branch_url,
     pullRequest: r.pull_request,
+    clickup: r.clickup_task_id
+      ? {
+          url: r.clickup_url,
+          linked: r.clickup_linked,
+          descriptionDetached: r.description_detached,
+          pushPending: r.clickup_push_pending,
+          error: r.clickup_error,
+        }
+      : null,
     agentId: r.agent_id,
     session:
       r.session_state
@@ -286,7 +300,7 @@ export async function createTask(
     .returning();
   await setTags(tx, task!.id, tagIds);
   await setAssignees(tx, task!.id, assigneeIds);
-  if (opts.assignDefaultAgent !== false && (await categoryOf(tx, statusId)) !== 'backlog') await assignDefaultAgent(tx, after, projectId, task!.id);
+  if (opts.assignDefaultAgent !== false) await assignDefaultAgent(tx, after, projectId, task!.id);
 
   await autoFollow(tx, after, task!.id, [...assigneeIds, ...(actor.type === 'user' && actor.id ? [actor.id] : [])]);
   const created = await loadTask(tx, task!.id);
@@ -307,11 +321,6 @@ async function assignDefaultAgent(tx: Executor, after: AfterCommit, projectId: s
   if (!agentId) return;
   await tx.update(tasks).set({ agentId }).where(eq(tasks.id, taskId));
   await onTaskChanged(tx, after, await getTaskRow(tx, taskId), { agentId: null, statusId: (await getTaskRow(tx, taskId)).statusId });
-}
-
-async function categoryOf(tx: Executor, statusId: string): Promise<Category> {
-  const [s] = await tx.select({ category: statuses.category }).from(statuses).where(eq(statuses.id, statusId));
-  return s!.category;
 }
 
 export interface UpdateTaskInput {
@@ -337,6 +346,10 @@ export async function updateTask(
   actor: Actor,
 ): Promise<Task> {
   const row = await lockTaskForWrite(tx, taskId);
+  // The title of a task linked to ClickUp follows ClickUp (docs/specs/clickup.md).
+  if (row.clickupLinked && input.title !== undefined && input.title !== row.title) {
+    throw forbidden('The title is managed by ClickUp', 'clickup_managed');
+  }
   const { version, ...patch } = input;
   const touched = (Object.keys(patch) as (keyof typeof patch)[]).filter((k) => patch[k] !== undefined);
 
@@ -360,14 +373,6 @@ export async function updateTask(
   if (patch.assigneeIds !== undefined) next.assigneeIds = await validAssignees(tx, patch.assigneeIds);
   if (patch.agentId !== undefined) next.agentId = patch.agentId === null ? null : await validAgent(tx, patch.agentId);
 
-  // Giving a Task in Backlog an Agent takes it out of Backlog, into the first open Status.
-  if (next.agentId && next.agentId !== current.agentId && patch.statusId === undefined && (await categoryOf(tx, row.statusId)) === 'backlog') {
-    next.statusId = await firstOpenStatus(tx, row.projectId);
-  }
-  // Leaving Backlog for another Status gives an unassigned Task the Project's default Agent.
-  const leavesBacklog = next.statusId !== current.statusId && (await categoryOf(tx, current.statusId)) === 'backlog' && (await categoryOf(tx, next.statusId)) !== 'backlog';
-  if (leavesBacklog && !next.agentId) next.agentId = await enabledDefaultAgent(tx, row.projectId);
-
   const changes = diff(current, next);
   if (changes.length === 0) return loadTask(tx, row.id);
 
@@ -381,6 +386,8 @@ export async function updateTask(
       statusId: next.statusId,
       agentId: next.agentId,
       ...(changed.has('statusId') ? { position: await endOfColumn(tx, next.statusId) } : {}),
+      ...(changed.has('description') && row.clickupLinked ? { descriptionDetached: true } : {}),
+      ...(changed.has('statusId') && row.clickupLinked ? { clickupPushPending: true } : {}),
       version: row.version + 1,
       updatedAt: new Date(),
     })
@@ -394,6 +401,7 @@ export async function updateTask(
   if (changed.has('agentId') || changed.has('statusId')) {
     await onTaskChanged(tx, after, await getTaskRow(tx, row.id), { agentId: row.agentId, statusId: row.statusId });
   }
+  if (changed.has('statusId') && row.clickupLinked) after.effect((ctx) => ctx.clickupSync.push(row.id));
 
   const [task] = await emitTasksChanged(tx, after, [row.id], 'task.updated');
   return task!;
@@ -414,22 +422,20 @@ export async function moveTask(
   taskId: string,
   input: MoveTaskInput,
   actor: Actor,
+  opts: { fromClickUp?: boolean } = {},
 ): Promise<Task> {
   const row = await lockTaskForWrite(tx, taskId);
   await assertStatusInProject(tx, input.statusId, row.projectId);
   const { position, respaced } = await positionBetween(tx, row.id, input);
   const statusChanged = input.statusId !== row.statusId;
-  // Leaving Backlog gives an unassigned Task the Project's default Agent.
-  const leavesBacklog =
-    statusChanged && (await categoryOf(tx, row.statusId)) === 'backlog' && (await categoryOf(tx, input.statusId)) !== 'backlog';
-  const agentId = leavesBacklog && !row.agentId ? await enabledDefaultAgent(tx, row.projectId) : null;
+  const pushToClickUp = statusChanged && row.clickupLinked && !opts.fromClickUp;
 
   await tx
     .update(tasks)
     .set({
       statusId: input.statusId,
       position,
-      ...(agentId ? { agentId } : {}),
+      ...(pushToClickUp ? { clickupPushPending: true } : {}),
       ...(statusChanged ? { version: row.version + 1, updatedAt: new Date() } : {}),
     })
     .where(eq(tasks.id, row.id));
@@ -447,11 +453,11 @@ export async function moveTask(
       version: row.version + 1,
       changes: [
         { field: 'statusId', before: row.statusId, after: input.statusId },
-        ...(agentId ? [{ field: 'agentId' as const, before: null, after: agentId }] : []),
       ],
     },
   ]);
   await onTaskChanged(tx, after, await getTaskRow(tx, row.id), { agentId: row.agentId, statusId: row.statusId });
+  if (pushToClickUp) after.effect((ctx) => ctx.clickupSync.push(row.id));
   const [task] = await emitTasksChanged(tx, after, [row.id], 'task.moved');
   return task!;
 }
@@ -583,7 +589,7 @@ export async function unassignDeletedAgent(tx: Executor, after: AfterCommit, age
   await emitTasksChanged(tx, after, ids, 'task.updated');
 }
 
-async function recordRevisions(
+export async function recordRevisions(
   tx: Executor,
   after: AfterCommit,
   actor: Actor,

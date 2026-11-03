@@ -3,7 +3,7 @@ import { BranchLink, PullRequestBadge, capitalize, withProvider } from './Git';
 import { AGENTS_TOPIC, PRIORITIES, projectTopic, pullRequestNoun, pullRequestRef, taskTopic } from '@claude-task/shared';
 import type { ConflictResponse, Tag, Priority, Task, UpdateTaskBody } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, Bot, ChevronDown, CircleCheck, Expand, Eye, GitMerge, EyeOff, FileDiff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelBottomClose, PanelRightClose, PanelRightOpen, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowRightLeft, Bot, ChevronDown, CircleCheck, Expand, ExternalLink, Eye, GitMerge, EyeOff, FileDiff, FileText, Link2, MessagesSquare, MoreHorizontal, PanelBottomClose, PanelRightClose, PanelRightOpen, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
@@ -167,22 +167,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
     await moveTo(closedStatus.id);
   };
 
-  // An Agent takes a Task out of Backlog, into the first open Status.
-  const todoStatus = statuses.find((s) => s.category === 'open');
-  const changeAgent = async (agentId: string | null) => {
-    const current = statuses.find((s) => s.id === shown.statusId);
-    if (agentId && current?.category === 'backlog' && todoStatus) {
-      const ok = await confirm({
-        title: `Assign an agent to ${task.key}?`,
-        description: `The task moves from “${current.name}” to “${todoStatus.name}”.`,
-        confirmLabel: 'Assign and move',
-      });
-      if (!ok) return;
-      await save({ agentId, statusId: todoStatus.id });
-      return;
-    }
-    await save({ agentId });
-  };
+  const changeAgent = (agentId: string | null) => save({ agentId });
 
   const mergePullRequest = async (pr: NonNullable<Task['pullRequest']>) => {
     const noun = pullRequestNoun(pr.provider);
@@ -269,7 +254,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
               · Created by {task.createdBy.displayName} <Time iso={task.createdAt} />
             </span>
           </div>
-          <Title title={shown.title} onSave={(title) => save({ title })} />
+          <Title title={shown.title} readOnly={!!task.clickup?.linked} onSave={(title) => save({ title })} />
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1">
           <div className="mr-2 flex flex-wrap items-center gap-2">
@@ -550,6 +535,7 @@ export function TaskDetail({ taskKey, onClose }: { taskKey: string; onClose?: ()
                   </Button>
                 )}
               </section>}
+              {task.clickup && <ClickUpPanel task={task} onChanged={applied} />}
               <Description taskId={task.id} description={shown.description} onSave={(description) => save({ description })} overlayContainer={overlay} />
               <TaskAttachments taskId={task.id} />
             </div>
@@ -665,7 +651,7 @@ function CloseButton({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Title({ title, onSave }: { title: string; onSave: (title: string) => Promise<boolean> }) {
+function Title({ title, onSave, readOnly }: { title: string; onSave: (title: string) => Promise<boolean>; readOnly?: boolean }) {
   const [draft, setDraft] = useState(title);
   const [focused, setFocused] = useState(false);
   // Follow remote renames, but never while the user is typing.
@@ -682,6 +668,8 @@ function Title({ title, onSave }: { title: string; onSave: (title: string) => Pr
     <textarea
       aria-label="Title"
       rows={1}
+      readOnly={readOnly}
+      title={readOnly ? 'The title is managed by ClickUp' : undefined}
       value={draft}
       onChange={(e) => setDraft(e.target.value.replace(/\n/g, ''))}
       onFocus={() => setFocused(true)}
@@ -819,6 +807,48 @@ function Description({ taskId, description, onSave, overlayContainer }: { taskId
           </button>
           .
         </p>
+      )}
+    </section>
+  );
+}
+
+/** The Task's ClickUp state: the link, a failed Status push, and a description that no longer follows ClickUp. */
+function ClickUpPanel({ task, onChanged }: { task: Task; onChanged: (task: Task) => void }) {
+  const clickup = task.clickup!;
+  const [busy, setBusy] = useState(false);
+  const run = async (path: string, success: string) => {
+    setBusy(true);
+    try {
+      onChanged((await post<{ task: Task }>(`/tasks/${task.id}/clickup/${path}`)).task);
+      toast.success(success);
+    } catch (err) {
+      toast.error('Couldn’t reach ClickUp', { description: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section aria-label="ClickUp" className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3 text-sm">
+      {clickup.url && (
+        <a href={clickup.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-medium hover:underline">
+          <ExternalLink className="size-3.5" aria-hidden /> Open in ClickUp
+        </a>
+      )}
+      {!clickup.linked && <span className="text-muted-foreground">No longer in the linked ClickUp source</span>}
+      {clickup.pushPending && <span className="text-muted-foreground">Sending the status to ClickUp…</span>}
+      {clickup.error && (
+        <span role="alert" className="flex items-center gap-2 text-destructive">
+          {clickup.error}
+          <Button size="xs" variant="outline" disabled={busy} onClick={() => run('retry', 'Status sent to ClickUp')}>Retry</Button>
+        </span>
+      )}
+      {clickup.descriptionDetached && (
+        <span className="ml-auto flex items-center gap-2 text-muted-foreground">
+          The description differs from ClickUp
+          <Button size="xs" variant="outline" disabled={busy} onClick={() => run('restore-description', 'Description restored from ClickUp')}>
+            Restore from ClickUp
+          </Button>
+        </span>
       )}
     </section>
   );

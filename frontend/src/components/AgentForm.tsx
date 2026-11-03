@@ -217,7 +217,7 @@ export function AgentForm({ agent, onSave, onUpdate }: {
       <Field label="Credential">
         <select aria-label="Credential" className={selectClass} required value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
           <option value="">Choose a credential</option>
-          {credentials.data?.map((c) => (
+          {credentials.data?.filter((c) => c.kind !== 'clickup_token').map((c) => (
             <option key={c.id} value={c.id}>
               {c.name} · …{c.last4}
             </option>

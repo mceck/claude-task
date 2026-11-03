@@ -19,13 +19,16 @@ export const AGENT_SERVICE_INFO: Record<AgentService, { name: string; descriptio
   chrome: { name: 'Chrome', description: 'Chromium, started on demand · `chromium` on PATH · used by the Playwright MCP server' },
 };
 
-export const CREDENTIAL_KINDS = ['claude_oauth_token', 'anthropic_api_key', 'anthropic_auth_token'] as const;
+export const CREDENTIAL_KINDS = ['claude_oauth_token', 'anthropic_api_key', 'anthropic_auth_token', 'clickup_token'] as const;
+/** The kinds an Agent can authenticate with. */
+export const CLAUDE_CREDENTIAL_KINDS = ['claude_oauth_token', 'anthropic_api_key', 'anthropic_auth_token'] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
 
 export const CREDENTIAL_KIND_LABELS: Record<CredentialKind, string> = {
   claude_oauth_token: 'Claude OAuth token',
   anthropic_api_key: 'Anthropic API key',
   anthropic_auth_token: 'Anthropic auth token',
+  clickup_token: 'ClickUp token',
 };
 
 /** The secret itself is write-only: only its last 4 characters come back. */

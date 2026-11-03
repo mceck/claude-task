@@ -172,7 +172,7 @@ There are no per-Project permissions: every active User sees and works on every 
 | Comments | Post Comments and Internal Notes; edit own Comments; delete own Comments | Delete any Comment |
 | Agents | List Agents and see their state, Jobs and usage; Stop, Retry and Notify agent on a Task | Create, edit, duplicate, delete Agents; set and remove avatars |
 | Workers | List Workers and see their state, configuration, Worker Containers, Builds and build logs, and the Projects that run on them; reorder and remove Queue Entries | Create, edit, duplicate, enable, disable and delete Workers; rebuild a Worker and recreate it when idle; restart and force-recreate a Worker Container; read container logs |
-| Credentials | | Everything, including listing |
+| Credentials | List the ClickUp tokens (name and last four characters) to link a new Project | Everything, including listing |
 | Extensions | List Skills and Plugins | Import and delete Skills; list, create, edit and delete MCP servers; create, edit, update and delete Plugins |
 | Git | List linkable Repositories | List, create, edit and delete Git Connections |
 | Wikis | Create, edit (Worker and default Agent included), delete; start, rename and delete Chats and change a Chat's Agent; converse | |
