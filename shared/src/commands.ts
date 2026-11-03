@@ -80,7 +80,8 @@ export function chatCommands(runtime: string[] | null, skills: SkillCommand[], p
     result.set(name, {
       name,
       description: DESCRIPTIONS[name] ?? 'Run this Claude command.',
-      kind: name.startsWith('mcp__') ? 'mcp' : 'claude',
+      // Plugin commands (`plugin:name`) are skills: they show in the autocomplete anywhere and in the Skills dialog.
+      kind: name.startsWith('mcp__') ? 'mcp' : name.includes(':') ? 'skill' : 'claude',
     });
   }
   for (const skill of skills) if (commandName(`/${skill.name}`) === skill.name) result.set(skill.name, { ...skill, kind: 'skill' });
