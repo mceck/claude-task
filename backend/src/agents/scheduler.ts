@@ -3,9 +3,9 @@
 // publishing scheduling state to browsers. Everything it starts is tracked so tests can settle.
 import { agentTopic, pinAgentBase, projectTopic, taskTopic, workerTopic } from '@claude-task/shared';
 import type { BackendToRunner } from '@claude-task/shared';
-import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
-import { agentProfiles, agents, jobs, queueEntries, sessions, workerBuilds, workerContainers, workers } from '../db/schema';
+import { agentProfiles, agents, jobs, projects, queueEntries, sessions, tasks, workerBuilds, workerContainers, workers } from '../db/schema';
 import { ACTIVE_JOB_STATES, loadJobs, publishAgent } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
 import { loadCommentsById } from '../modules/comments/service';
@@ -13,6 +13,7 @@ import { runDueMessages } from '../modules/scheduled-messages/service';
 import { runDueSchedules } from '../modules/schedules/service';
 import { agentExtensions } from '../modules/extensions/service';
 import { loadCard } from '../modules/tasks/service';
+import { addToCleanup, createCleanup, publishCleanup } from '../modules/workers/cleanup';
 import { containerRows, desiredContainerSpec, ensureContainerRow, getWorkerRow, isUp, publishWorker, serializeBuild, workerOfTask } from '../modules/workers/service';
 import type { WorkerContainerRow, WorkerRow } from '../modules/workers/service';
 import { recoverAbandonedJobs } from '../runner/handlers';
@@ -23,6 +24,10 @@ import { loadQueue } from '../sessions/queue';
 import { loadTaskSession } from '../sessions/view';
 
 const BUILD_LOG_CAP = 256 * 1024;
+/** The automatic Cleanup's interval. */
+export const CLEANUP_INTERVAL_MS = 24 * 60 * 60_000;
+/** How long a slot above the cap stays without a Job before an automatic Cleanup removes it. */
+export const SLOT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const BUILD_LOG_FLUSH_MS = 500;
 
 /** Docker's final USER for a Worker image must be the non-root `agent`. */
@@ -41,6 +46,9 @@ export class Scheduler {
   /** Worker Containers running an Agent Profile synchronization, which the reconciler keeps up. */
   private readonly syncingIn = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
+  private cleanupTimer: NodeJS.Timeout | null = null;
+  /** The id of the running Cleanup, if any. */
+  private cleaning: Promise<string> | null = null;
   private stopping = false;
 
   // Coalesced real-time publishing, flushed in order.
@@ -62,6 +70,12 @@ export class Scheduler {
     this.timer = setInterval(tick, this.ctx.config.agents.reconcileIntervalMs);
     this.timer.unref();
     tick();
+    if (this.ctx.config.agents.cleanup) {
+      const cleanup = () => void this.cleanup('automatic').catch((err) => this.ctx.log.error(err, 'could not start a cleanup'));
+      this.cleanupTimer = setInterval(cleanup, CLEANUP_INTERVAL_MS);
+      this.cleanupTimer.unref();
+      cleanup();
+    }
   }
 
   stop(): void {
@@ -70,6 +84,8 @@ export class Scheduler {
     this.buildAgain.clear();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    this.cleanupTimer = null;
   }
 
   /** Resolves once no background work is left (used by tests). */
@@ -209,6 +225,153 @@ export class Scheduler {
     );
   }
 
+  // Cleanup (docs/specs/workers.md, "Cleanup")
+
+  /** Starts a Cleanup in the background and returns its id, or the id of the one already running. */
+  cleanup(trigger: 'automatic' | 'manual', userId: string | null = null): Promise<string> {
+    if (this.cleaning) return this.cleaning;
+    const id = createCleanup(this.ctx.db, trigger, userId);
+    this.cleaning = id;
+    this.track(
+      id
+        .then(async (cleanupId) => {
+          await publishCleanup(this.ctx, cleanupId);
+          await this.runCleanup(cleanupId, trigger);
+        })
+        .finally(() => {
+          this.cleaning = null;
+        }),
+    );
+    return id;
+  }
+
+  private async runCleanup(id: string, trigger: 'automatic' | 'manual'): Promise<void> {
+    const { db, runtime } = this.ctx;
+    const report = await runtime
+      .cleanup({
+        anyBuilding: this.building.size > 0,
+        workers: async () => {
+          const rows = await db.select({ id: workers.id, imageTag: workers.imageTag }).from(workers);
+          return rows.map((w) => ({ ...w, building: this.building.has(w.id) }));
+        },
+      })
+      .catch((err: unknown) => ({ removed: {}, reclaimedBytes: 0, errors: [`Docker: ${errorText(err)}`] }));
+    for (const error of report.errors) this.ctx.log.warn({ cleanupId: id }, `cleanup: ${error}`);
+    await addToCleanup(db, id, report);
+    await publishCleanup(this.ctx, id);
+
+    const errors: string[] = [];
+    let slots = 0;
+    const all = await db.select({ id: workers.id, name: workers.name }).from(workers);
+    for (const worker of all) {
+      slots += await this.onWorker(worker.id, () => this.removeSlotsAboveCap(worker.id, trigger === 'manual' ? 0 : SLOT_RETENTION_MS, errors)).catch((err: unknown) => {
+        errors.push(`${worker.name}: ${errorText(err)}`);
+        return 0;
+      });
+    }
+    // Counted before the requests go out, so an early answer finds its Worker Volume pending.
+    await addToCleanup(db, id, { volumesPending: all.length });
+    for (const worker of all) await this.requestVolumeCleanup(worker.id, id);
+    for (const error of errors) this.ctx.log.warn({ cleanupId: id }, `cleanup: ${error}`);
+    await addToCleanup(db, id, { removed: { slots }, errors, finished: true });
+    await publishCleanup(this.ctx, id);
+  }
+
+  /** Runs `fn` in the Worker's reconcile chain, so it never races a reconcile of that Worker. */
+  private onWorker<T>(workerId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.reconciling.get(workerId) ?? Promise.resolve();
+    const run = previous.then(fn);
+    const settled = run.then(
+      () => {},
+      () => {},
+    );
+    this.reconciling.set(workerId, settled);
+    void settled.finally(() => {
+      if (this.reconciling.get(workerId) === settled) this.reconciling.delete(workerId);
+    });
+    return run;
+  }
+
+  /** Slots above the cap, stopped and idle for at least `minIdleMs`: container, Service Volume and record go. */
+  private async removeSlotsAboveCap(workerId: string, minIdleMs: number, errors: string[]): Promise<number> {
+    const { db, runtime } = this.ctx;
+    const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
+    if (!worker) return 0;
+    let removed = 0;
+    const now = Date.now();
+    for (const row of await containerRows(db, workerId)) {
+      if (row.slot <= worker.cap || this.syncingIn.has(row.id)) continue;
+      if (now - (row.idleSince ?? row.createdAt).getTime() < minIdleMs) continue;
+      if (isUp((await runtime.inspect(workerId, row.slot)).state)) continue;
+      const [busy] = await db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.containerId, row.id), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
+      if (busy) continue;
+      try {
+        await runtime.removeSlot(workerId, row.slot);
+      } catch (err) {
+        errors.push(`${worker.name}, slot ${row.slot}: ${errorText(err)}`);
+        continue;
+      }
+      await db.delete(workerContainers).where(eq(workerContainers.id, row.id));
+      removed++;
+    }
+    if (removed) this.publishWorker(workerId);
+    return removed;
+  }
+
+  /** What a Runner of the Worker keeps in its Worker Volume: the Projects that run there and every Agent. */
+  private async volumeCleanupMessage(workerId: string, requestId: string): Promise<BackendToRunner> {
+    const { db } = this.ctx;
+    const assigned = await db.select({ id: projects.id }).from(projects).where(eq(projects.workerId, workerId));
+    const working = await db
+      .selectDistinct({ id: projects.id })
+      .from(jobs)
+      .innerJoin(tasks, eq(tasks.id, jobs.taskId))
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(and(eq(jobs.workerId, workerId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
+    const agentRows = await db.select({ id: agents.id }).from(agents);
+    return {
+      type: 'volume.cleanup',
+      requestId,
+      keepProjects: [...new Set([...assigned, ...working].map((p) => p.id))],
+      keepAgents: agentRows.map((a) => a.id),
+    };
+  }
+
+  /**
+   * Sends the Worker Volume part of a Cleanup to a connected Runner of the Worker, or keeps it pending
+   * until one connects. A request it replaces will get no answer, so its Cleanup stops waiting for it.
+   */
+  private async requestVolumeCleanup(workerId: string, cleanupId: string): Promise<void> {
+    const { db } = this.ctx;
+    const sent = this.sendToWorker(workerId, await this.volumeCleanupMessage(workerId, cleanupId));
+    const [previous] = await db
+      .select({ pending: workers.volumeCleanupPending })
+      .from(workers)
+      .where(eq(workers.id, workerId));
+    await db.update(workers).set({ volumeCleanupPending: sent ? null : cleanupId }).where(eq(workers.id, workerId));
+    if (previous?.pending && previous.pending !== cleanupId) {
+      await addToCleanup(db, previous.pending, { volumesPending: -1 });
+      await publishCleanup(this.ctx, previous.pending);
+    }
+    // The Worker was deleted meanwhile: nobody will answer.
+    if (!previous) await addToCleanup(db, cleanupId, { volumesPending: -1 });
+  }
+
+  /** A Runner said hello: the Worker Volume cleanup waiting for one goes to it. */
+  async sendPendingVolumeCleanup(workerId: string, containerId: string): Promise<void> {
+    const { db } = this.ctx;
+    const cleanupId = await db.transaction(async (tx) => {
+      const [row] = await tx.select({ pending: workers.volumeCleanupPending }).from(workers).where(eq(workers.id, workerId)).for('update');
+      if (!row?.pending) return null;
+      await tx.update(workers).set({ volumeCleanupPending: null }).where(eq(workers.id, workerId));
+      return row.pending;
+    });
+    if (!cleanupId) return;
+    if (!this.ctx.runners.send(containerId, await this.volumeCleanupMessage(workerId, cleanupId))) {
+      await db.update(workers).set({ volumeCleanupPending: cleanupId }).where(and(eq(workers.id, workerId), isNull(workers.volumeCleanupPending)));
+    }
+  }
+
   // Image builds
 
   /** Builds the Worker's image from its current Dockerfile; a build already running is followed by another. */
@@ -302,6 +465,10 @@ export class Scheduler {
     hub.publish(workerTopic(workerId), { type: 'build.updated', build: done });
     await this.publishWorkerNow(workerId);
     if (imageTag) await this.reconcile(workerId);
+    // Base Images of older Platform Versions, unless another Build may still need its parent.
+    if (imageTag && this.ctx.config.agents.cleanup && [...this.building].every((id) => id === workerId)) {
+      await runtime.removeOldBaseImages().catch((err) => this.ctx.log.warn({ err }, 'could not remove old base images'));
+    }
   }
 
   // Containers
@@ -377,13 +544,22 @@ export class Scheduler {
         if (await this.sleep(worker, row)) changed = true;
       }
     }
+    let removedOutdated = false;
     for (const row of await containerRows(db, workerId)) {
-      const state = (await runtime.inspect(workerId, row.slot)).state;
+      const info = await runtime.inspect(workerId, row.slot);
+      let state = info.state;
+      // A stopped container on an older image only pins that image: its next start recreates it anyway.
+      if (this.ctx.config.agents.cleanup && worker.imageTag && info.image && info.image !== worker.imageTag && !isUp(state) && state !== 'missing' && !active.has(row.id)) {
+        await runtime.removeContainer(workerId, row.slot);
+        state = 'missing';
+        removedOutdated = true;
+      }
       if (state !== row.containerState) {
         await db.update(workerContainers).set({ containerState: state }).where(eq(workerContainers.id, row.id));
         changed = true;
       }
     }
+    if (removedOutdated) await runtime.removeUnusedImages(workerId, worker.imageTag!).catch((err) => this.ctx.log.warn({ err, workerId }, 'could not remove old worker images'));
     if (changed) this.publishWorker(workerId);
     if (started) this.kick(workerId);
 
@@ -680,4 +856,8 @@ export class Scheduler {
     this.pendingWorkers.clear();
     for (const workerId of workerIds) await publishWorker(this.ctx, workerId);
   }
+}
+
+function errorText(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).slice(0, 500);
 }

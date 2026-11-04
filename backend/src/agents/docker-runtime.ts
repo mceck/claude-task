@@ -9,9 +9,14 @@ import { pack } from 'tar-stream';
 import type { AgentsConfig } from '../config';
 import { SERVICE_DATA_DIR, containerName, serviceVolumeName, volumeName, workerImageRepo } from './runtime';
 import { profileArchive } from './skill-files';
-import type { BuildResult, ContainerInfo, ContainerSpec, ProfileSpec, WorkerRuntime } from './runtime';
+import type { BuildResult, ContainerInfo, ContainerSpec, DockerCleanupCounts, DockerCleanupInput, DockerCleanupReport, ProfileSpec, WorkerRuntime } from './runtime';
 
 const AGENT_HOME = '/home/agent';
+/** Labels the resources of one Installation, so Installations sharing a Docker host stay apart. */
+const INSTALLATION_LABEL = 'claude-task.installation';
+const WORKER_LABEL = 'claude-task.worker';
+/** Set by every stage of the Base Image recipe: Worker Images and Build intermediates inherit it. */
+const PLATFORM_LABEL = 'claude-task.platform';
 
 /** Where the Base Image's Dockerfile and the Runner sources live, in dev and in the production image. */
 function defaultPaths(): { baseDockerfile: string; runnerDir: string } {
@@ -43,7 +48,11 @@ export class DockerRuntime implements WorkerRuntime {
   private readonly baseScripts: Record<string, Buffer>;
   private readonly runner: { dir: string; files: string[] };
 
-  constructor(private readonly config: AgentsConfig, paths = defaultPaths()) {
+  constructor(
+    private readonly config: AgentsConfig,
+    private readonly installationId: string,
+    paths = defaultPaths(),
+  ) {
     this.docker = new Docker({ socketPath: config.dockerSocket });
     this.baseDockerfile = readFileSync(paths.baseDockerfile, 'utf8');
     this.baseScripts = Object.fromEntries(['install-services.sh', 'entrypoint.sh', 'minio-shim.sh'].map((name) => [
@@ -69,14 +78,14 @@ export class DockerRuntime implements WorkerRuntime {
 
   async buildWorkerImage(input: { workerId: string; buildId: string; dockerfile: string }, onLog: (chunk: string) => void): Promise<BuildResult> {
     const imageTag = `${workerImageRepo(input.workerId)}:${input.buildId.slice(0, 12)}`;
-    await this.build({ Dockerfile: input.dockerfile }, { t: imageTag, labels: { 'claude-task.worker': input.workerId } }, onLog);
+    await this.build({ Dockerfile: input.dockerfile }, { t: imageTag, labels: this.labels(input.workerId) }, onLog);
     const info = await this.docker.getImage(imageTag).inspect();
     return { imageTag, user: info.Config?.User ?? '' };
   }
 
   async createContainer(workerId: string, slot: number, spec: ContainerSpec): Promise<void> {
     await this.removeContainer(workerId, slot);
-    const labels = { 'claude-task.worker': workerId };
+    const labels = this.labels(workerId);
     await this.docker.createVolume({ Name: volumeName(workerId), Labels: labels }).catch(ignore(409));
     await this.docker.createVolume({ Name: serviceVolumeName(workerId, slot), Labels: { ...labels, 'claude-task.slot': String(slot) } }).catch(ignore(409));
     const container = await this.docker.createContainer({
@@ -96,7 +105,7 @@ export class DockerRuntime implements WorkerRuntime {
       },
     });
     await container.start();
-    await this.pruneImages(workerId, spec.image);
+    await this.removeUnusedImages(workerId, spec.image);
   }
 
   async restartContainer(workerId: string, slot: number): Promise<void> {
@@ -163,11 +172,122 @@ export class DockerRuntime implements WorkerRuntime {
   }
 
   async removeWorker(workerId: string): Promise<void> {
-    const containers = await this.docker.listContainers({ all: true, filters: JSON.stringify({ label: [`claude-task.worker=${workerId}`] }) });
+    const containers = await this.docker.listContainers({ all: true, filters: JSON.stringify({ label: [`${WORKER_LABEL}=${workerId}`] }) });
     for (const c of containers) await this.docker.getContainer(c.Id).remove({ force: true }).catch(ignore(404));
-    await this.pruneImages(workerId, null);
-    const { Volumes } = await this.docker.listVolumes({ filters: JSON.stringify({ label: [`claude-task.worker=${workerId}`] }) });
+    await this.removeAllImages(workerId);
+    const { Volumes } = await this.docker.listVolumes({ filters: JSON.stringify({ label: [`${WORKER_LABEL}=${workerId}`] }) });
     for (const v of Volumes ?? []) await this.docker.getVolume(v.Name).remove().catch(ignore(404));
+  }
+
+  async removeSlot(workerId: string, slot: number): Promise<void> {
+    await this.removeContainer(workerId, slot);
+    await this.docker.getVolume(serviceVolumeName(workerId, slot)).remove().catch(ignore(404));
+  }
+
+  async removeUnusedImages(workerId: string, keepTag: string): Promise<number> {
+    const repo = workerImageRepo(workerId);
+    const images = await this.docker.listImages({ filters: JSON.stringify({ reference: [repo] }) });
+    let removed = 0;
+    for (const image of images) {
+      if (image.RepoTags?.includes(keepTag)) continue;
+      // Unforced: Docker keeps an image a container still uses.
+      for (const tag of image.RepoTags ?? []) {
+        if (tag.startsWith(`${repo}:`) && (await this.docker.getImage(tag).remove().then(() => true, () => false))) removed++;
+      }
+    }
+    return removed;
+  }
+
+  async removeOldBaseImages(): Promise<number> {
+    const current = `${BASE_IMAGE}:${this.baseVersion}`;
+    const currentId = await this.docker.getImage(current).inspect().then((i) => i.Id, () => null);
+    const images = await this.docker.listImages({ filters: JSON.stringify({ reference: [BASE_IMAGE] }) });
+    let removed = 0;
+    for (const image of images) {
+      for (const tag of image.RepoTags ?? []) {
+        if (!tag.startsWith(`${BASE_IMAGE}:`) || tag === current) continue;
+        const latest = tag === `${BASE_IMAGE}:latest`;
+        if (latest && image.Id === currentId) continue;
+        // Untagging leaves the layers that Worker Images still build on.
+        const ok = await this.docker.getImage(tag).remove().then(() => true, () => false);
+        if (ok && !latest) removed++;
+      }
+    }
+    return removed;
+  }
+
+  async cleanup(input: DockerCleanupInput): Promise<DockerCleanupReport> {
+    const removed: DockerCleanupCounts = { baseImages: 0, workerImages: 0, danglingImages: 0, orphanContainers: 0, orphanVolumes: 0, orphanImages: 0 };
+    const errors: string[] = [];
+    const attempt = async (what: string, fn: () => Promise<unknown>): Promise<boolean> => {
+      try {
+        await fn();
+        return true;
+      } catch (err) {
+        if ((err as { statusCode?: number }).statusCode === 404) return false;
+        errors.push(`${what}: ${(err as Error).message}`.slice(0, 500));
+        return false;
+      }
+    };
+    const before = await this.diskUsage();
+    // Listed before the Workers are read: a Worker created meanwhile is known by then.
+    const mine = JSON.stringify({ label: [`${INSTALLATION_LABEL}=${this.installationId}`] });
+    const containers = await this.docker.listContainers({ all: true, filters: mine });
+    const { Volumes } = await this.docker.listVolumes({ filters: mine });
+    const images = await this.docker.listImages({ filters: mine });
+    const known = await input.workers();
+    const knownIds = new Set(known.map((w) => w.id));
+    const orphan = (labels: Record<string, string> | null | undefined) => !!labels?.[WORKER_LABEL] && !knownIds.has(labels[WORKER_LABEL]);
+
+    if (!input.anyBuilding) {
+      await attempt('old base images', async () => (removed.baseImages = await this.removeOldBaseImages()));
+      await attempt('untagged images', async () => {
+        const dangling = await this.docker.listImages({ filters: JSON.stringify({ dangling: ['true'], label: [PLATFORM_LABEL] }) });
+        await this.docker.pruneImages({ filters: JSON.stringify({ dangling: ['true'], label: [PLATFORM_LABEL] }) });
+        const left = await this.docker.listImages({ filters: JSON.stringify({ dangling: ['true'], label: [PLATFORM_LABEL] }) });
+        removed.danglingImages = Math.max(0, dangling.length - left.length);
+      });
+    }
+    for (const worker of known) {
+      if (worker.building || !worker.imageTag) continue;
+      await attempt(`images of worker ${worker.id}`, async () => (removed.workerImages += await this.removeUnusedImages(worker.id, worker.imageTag!)));
+    }
+
+    const removedVolumes: string[] = [];
+    for (const c of containers.filter((c) => orphan(c.Labels))) {
+      if (await attempt(`container ${c.Names?.[0] ?? c.Id}`, () => this.docker.getContainer(c.Id).remove({ force: true }))) removed.orphanContainers++;
+    }
+    for (const v of (Volumes ?? []).filter((v) => orphan(v.Labels))) {
+      if (await attempt(`volume ${v.Name}`, () => this.docker.getVolume(v.Name).remove())) {
+        removed.orphanVolumes++;
+        removedVolumes.push(v.Name);
+      }
+    }
+    for (const image of images.filter((i) => orphan(i.Labels))) {
+      if (await attempt(`image ${image.RepoTags?.[0] ?? image.Id}`, () => this.docker.getImage(image.Id).remove({ force: true }))) removed.orphanImages++;
+    }
+
+    const after = await this.diskUsage();
+    const layers = before && after ? Math.max(0, before.layers - after.layers) : 0;
+    const volumes = removedVolumes.reduce((sum, name) => sum + (before?.volumes.get(name) ?? 0), 0);
+    return { removed, reclaimedBytes: layers + volumes, errors };
+  }
+
+  /** Image layers and volume sizes, from Docker's disk usage; null when Docker can't tell. */
+  private async diskUsage(): Promise<{ layers: number; volumes: Map<string, number> } | null> {
+    try {
+      const df = (await this.docker.df()) as { LayersSize?: number; Volumes?: { Name: string; UsageData?: { Size?: number } }[] };
+      return {
+        layers: df.LayersSize ?? 0,
+        volumes: new Map((df.Volumes ?? []).map((v) => [v.Name, Math.max(0, v.UsageData?.Size ?? 0)])),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private labels(workerId: string): Record<string, string> {
+    return { [INSTALLATION_LABEL]: this.installationId, [WORKER_LABEL]: workerId };
   }
 
   async inspect(workerId: string, slot: number): Promise<ContainerInfo> {
@@ -221,13 +341,10 @@ export class DockerRuntime implements WorkerRuntime {
     });
   }
 
-  /** Old images of the Worker, except the one in use. */
-  private async pruneImages(workerId: string, keep: string | null): Promise<void> {
+  /** Every image of a deleted Worker. */
+  private async removeAllImages(workerId: string): Promise<void> {
     const images = await this.docker.listImages({ filters: JSON.stringify({ reference: [workerImageRepo(workerId)] }) });
-    for (const image of images) {
-      if (keep && image.RepoTags?.includes(keep)) continue;
-      await this.docker.getImage(image.Id).remove({ force: !keep }).catch(() => {});
-    }
+    for (const image of images) await this.docker.getImage(image.Id).remove({ force: true }).catch(() => {});
   }
 }
 

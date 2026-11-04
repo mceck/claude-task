@@ -141,6 +141,11 @@ export type BackendToRunner =
   | { type: 'worktree.status.request'; requestId: string; worktreePath: string }
   /** Remove a Worktree directory (never the branch). Paths relative to the agent user's home. */
   | { type: 'worktree.remove'; worktreePath: string; repoPath: string | null }
+  /**
+   * Remove the Bare Clones and Worktrees of Projects not in `keepProjects` and the Agent Profiles
+   * of Agents not in `keepAgents` (only UUID-named entries). Answered with `volume.cleanup.result`.
+   */
+  | { type: 'volume.cleanup'; requestId: string; keepProjects: string[]; keepAgents: string[] }
   /** Everything the Runner sent for this Job up to and including `seq` is processed. */
   | { type: 'ack'; jobId: string; seq: number }
   | { type: 'ping' };
@@ -195,4 +200,6 @@ export type RunnerToBackend =
       truncated: boolean;
       error: WorktreeStatusError | null;
     }
+  /** The answer to `volume.cleanup`; `error` when something could not be removed (the rest was). */
+  | { type: 'volume.cleanup.result'; requestId: string; bareClones: number; agentProfiles: number; reclaimedBytes: number; error: string | null }
   | { type: 'pong' };

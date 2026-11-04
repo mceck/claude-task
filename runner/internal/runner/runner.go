@@ -289,6 +289,16 @@ func (r *Runner) handle(m *protocol.Incoming) {
 			}
 			r.removeWorktree(m)
 		}()
+	case "volume.cleanup":
+		// Off the read loop, after the Worktree work before it, like a Worktree removal.
+		r.mu.Lock()
+		turn, endTurn := r.worktrees.enter()
+		r.mu.Unlock()
+		go func() {
+			defer endTurn()
+			<-turn
+			r.cleanVolume(m)
+		}()
 	default:
 		log.Printf("ignoring unknown message type %q", m.Type)
 	}

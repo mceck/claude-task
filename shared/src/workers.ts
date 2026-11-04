@@ -123,3 +123,44 @@ export const updateWorkerBody = z.strictObject({
 export type UpdateWorkerBody = z.infer<typeof updateWorkerBody>;
 
 export const duplicateWorkerBody = z.strictObject({ name: name.optional() });
+
+/** What one Cleanup removed, per kind (docs/specs/workers.md, "Cleanup"). */
+export interface CleanupCounts {
+  baseImages: number;
+  workerImages: number;
+  danglingImages: number;
+  orphanContainers: number;
+  orphanVolumes: number;
+  orphanImages: number;
+  slots: number;
+  bareClones: number;
+  agentProfiles: number;
+}
+
+export const EMPTY_CLEANUP_COUNTS: CleanupCounts = {
+  baseImages: 0,
+  workerImages: 0,
+  danglingImages: 0,
+  orphanContainers: 0,
+  orphanVolumes: 0,
+  orphanImages: 0,
+  slots: 0,
+  bareClones: 0,
+  agentProfiles: 0,
+};
+
+/** One run of the Cleanup, automatic or asked by an Admin. */
+export interface Cleanup {
+  id: string;
+  trigger: 'automatic' | 'manual';
+  requestedBy: { id: string; name: string } | null;
+  startedAt: string;
+  /** Null while the Docker part and the slots are still being cleaned. */
+  finishedAt: string | null;
+  removed: CleanupCounts;
+  /** Approximate: Docker's reclaimed space plus the Runners' measured file sizes. */
+  reclaimedBytes: number;
+  /** Worker Volumes whose Runner has not answered yet. */
+  volumesPending: number;
+  errors: string[];
+}

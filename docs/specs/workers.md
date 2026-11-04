@@ -438,7 +438,7 @@ Steps 1 and 2 are skipped while any Build of the Installation runs, and step 3 s
 
 ### Fake runtime
 
-With the `AGENT_RUNTIME` setting at `fake`, the backend simulates images and containers in memory, several per Worker: Builds succeed with a one-line log, containers report `running` as soon as they are created, synchronizations succeed, and nothing runs Claude. Runners attach only through a test harness, which connects a fake Runner with each container's token as the fake exposes it per (Worker, slot), so autoscaling and parallel Jobs can be exercised. It serves the backend test suite, the browser end-to-end suite and demos without Docker.
+With the `AGENT_RUNTIME` setting at `fake`, the backend simulates images and containers in memory, several per Worker: Builds succeed with a one-line log, containers report `running` as soon as they are created, synchronizations succeed, the Docker part of a Cleanup removes nothing, and nothing runs Claude. Runners attach only through a test harness, which connects a fake Runner with each container's token as the fake exposes it per (Worker, slot), so autoscaling and parallel Jobs can be exercised. It serves the backend test suite, the browser end-to-end suite and demos without Docker.
 
 ## Architecture
 

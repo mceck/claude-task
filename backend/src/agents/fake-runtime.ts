@@ -1,5 +1,5 @@
 import { workerImageRepo } from './runtime';
-import type { BuildResult, ContainerInfo, ContainerSpec, ProfileSpec, WorkerRuntime } from './runtime';
+import type { BuildResult, ContainerInfo, ContainerSpec, DockerCleanupInput, DockerCleanupReport, KnownWorker, ProfileSpec, WorkerRuntime } from './runtime';
 
 interface FakeContainer {
   workerId: string;
@@ -33,6 +33,17 @@ export class FakeRuntime implements WorkerRuntime {
   readonly removed: string[] = [];
   /** Next builds' outcomes, consumed in order; default success. */
   private readonly script: { fail?: string; user?: string; log?: string; hold?: Promise<void> }[] = [];
+  /** Slots removed by a Cleanup, as `containerKey`s. */
+  readonly removedSlots: string[] = [];
+  /** Every `removeUnusedImages` call. */
+  readonly imageRemovals: { workerId: string; keepTag: string }[] = [];
+  oldBaseImageRemovals = 0;
+  /** Every Docker part of a Cleanup, with the Workers it was given. */
+  readonly cleanups: { anyBuilding: boolean; workers: KnownWorker[] }[] = [];
+  /** What the next Docker parts of a Cleanup report; zeros by default. */
+  cleanupReport: DockerCleanupReport | null = null;
+  /** Holds the Docker part of Cleanups until it resolves. */
+  cleanupHold: Promise<void> | null = null;
   baseImageBuilds = 0;
   private baseBuilt = false;
   /** Called with each new container, e.g. to hand its Runner token to a fake Runner. */
@@ -102,6 +113,33 @@ export class FakeRuntime implements WorkerRuntime {
   async removeWorker(workerId: string): Promise<void> {
     for (const [key, c] of this.containers) if (c.workerId === workerId) this.containers.delete(key);
     this.removed.push(workerId);
+  }
+
+  async removeSlot(workerId: string, slot: number): Promise<void> {
+    this.containers.delete(containerKey(workerId, slot));
+    this.removedSlots.push(containerKey(workerId, slot));
+  }
+
+  async removeUnusedImages(workerId: string, keepTag: string): Promise<number> {
+    this.imageRemovals.push({ workerId, keepTag });
+    return 0;
+  }
+
+  async removeOldBaseImages(): Promise<number> {
+    this.oldBaseImageRemovals++;
+    return 0;
+  }
+
+  async cleanup(input: DockerCleanupInput): Promise<DockerCleanupReport> {
+    await this.cleanupHold;
+    this.cleanups.push({ anyBuilding: input.anyBuilding, workers: await input.workers() });
+    return (
+      this.cleanupReport ?? {
+        removed: { baseImages: 0, workerImages: 0, danglingImages: 0, orphanContainers: 0, orphanVolumes: 0, orphanImages: 0 },
+        reclaimedBytes: 0,
+        errors: [],
+      }
+    );
   }
 
   async inspect(workerId: string, slot: number): Promise<ContainerInfo> {

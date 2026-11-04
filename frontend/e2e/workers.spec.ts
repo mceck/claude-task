@@ -112,3 +112,15 @@ test('refuses a Project Worker change while a Session is started, with the reaso
   await expect(page.getByRole('alert').filter({ hasText: /current worker|still running a job/ })).toBeVisible();
   expect((await (await page.request.get(`/api/v1/projects/${project.id}/agent-settings`)).json()).settings.workerId).toBe(workers[0]!.id);
 });
+
+test('an Admin cleans up from the Workers list and sees what was freed', async ({ page }) => {
+  await login(page.request);
+  await page.goto('/workers');
+  await page.getByRole('button', { name: 'Clean up', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Base Images of older platform versions');
+  await dialog.getByRole('button', { name: 'Clean up', exact: true }).click();
+  await expect(dialog.getByLabel('Cleanup result')).toContainText('freed', { timeout: 10_000 });
+  await dialog.getByRole('button', { name: 'Close', exact: true }).first().click();
+  await expect(page.getByLabel('Last cleanup')).toContainText(/by .+ · about .+ freed/);
+});

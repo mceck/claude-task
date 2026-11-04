@@ -1,6 +1,6 @@
 // The only module that talks to Docker (docs/specs/workers.md, "WorkerRuntime"). Everything else asks it for
 // images and containers and stores what it observed.
-import type { InstalledPlugin, InstalledSkill } from '@claude-task/shared';
+import type { CleanupCounts, InstalledPlugin, InstalledSkill } from '@claude-task/shared';
 
 export interface ContainerSpec {
   image: string;
@@ -30,6 +30,31 @@ export interface ProfileSpec {
   plugins: InstalledPlugin[];
 }
 
+/** A Worker of this Installation, as the Docker part of a Cleanup needs it. */
+export interface KnownWorker {
+  id: string;
+  /** Its current image, which always stays; null before the first successful Build. */
+  imageTag: string | null;
+  /** A Build of it runs: its images are left alone. */
+  building: boolean;
+}
+
+export interface DockerCleanupInput {
+  /** Some Build of the Installation runs: Base Images and untagged images wait for the next Cleanup. */
+  anyBuilding: boolean;
+  /** Loaded after Docker's resources are listed, so a Worker created meanwhile is never an orphan. */
+  workers: () => Promise<KnownWorker[]>;
+}
+
+export type DockerCleanupCounts = Pick<CleanupCounts, 'baseImages' | 'workerImages' | 'danglingImages' | 'orphanContainers' | 'orphanVolumes' | 'orphanImages'>;
+
+export interface DockerCleanupReport {
+  removed: DockerCleanupCounts;
+  /** Approximate. */
+  reclaimedBytes: number;
+  errors: string[];
+}
+
 export interface WorkerRuntime {
   /** Base Image version: changes with the pinned Claude Code version and the Runner. */
   readonly baseVersion: string;
@@ -45,6 +70,14 @@ export interface WorkerRuntime {
   removeContainer(workerId: string, slot: number): Promise<void>;
   /** Every container, image and volume of the Worker. */
   removeWorker(workerId: string): Promise<void>;
+  /** Removes one slot's container and its Service Volume. */
+  removeSlot(workerId: string, slot: number): Promise<void>;
+  /** The Worker's images other than `keepTag` that no container uses; returns how many went. */
+  removeUnusedImages(workerId: string, keepTag: string): Promise<number>;
+  /** Untags the Base Images of other Platform Versions (never while a Build runs); returns how many went. */
+  removeOldBaseImages(): Promise<number>;
+  /** The Docker part of a Cleanup (docs/specs/workers.md, "Cleanup"). */
+  cleanup(input: DockerCleanupInput): Promise<DockerCleanupReport>;
   inspect(workerId: string, slot: number): Promise<ContainerInfo>;
   logs(workerId: string, slot: number, tail: number): Promise<string>;
   /**

@@ -24,6 +24,13 @@ describe('configuration', () => {
   });
 });
 
+describe('cleanup configuration', () => {
+  it('runs the automatic Cleanup unless WORKER_CLEANUP is false', () => {
+    expect(loadConfig(base).agents.cleanup).toBe(true);
+    expect(loadConfig({ ...base, WORKER_CLEANUP: 'false' }).agents.cleanup).toBe(false);
+  });
+});
+
 describe('storage configuration', () => {
   it('keeps blobs on the local filesystem when no storage setting is given', () => {
     expect(loadConfig(base).storage).toEqual({ type: 'disk' });
