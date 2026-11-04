@@ -8,7 +8,7 @@ import type { AfterCommit, AppContext } from '../context';
 import { transactWithRetry } from '../context';
 import type { Executor } from '../db/client';
 import { agents, comments, jobs, projects, sessionEvents, sessions, tasks, workerContainers, workers } from '../db/schema';
-import { addToCleanup, publishCleanup } from '../modules/workers/cleanup';
+import { publishCleanup, settleVolumeCleanup } from '../modules/workers/cleanup';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import { getWorkerRow, workerOfTask } from '../modules/workers/service';
 import type { JobRow } from '../modules/agents/service';
@@ -67,13 +67,8 @@ async function handleVolumeCleanupResult(ctx: AppContext, runner: RunnerIdentity
   const [worker] = await ctx.db.select({ name: workers.name }).from(workers).where(eq(workers.id, runner.workerId));
   const error = typeof msg.error === 'string' && msg.error ? `${worker?.name ?? 'Worker'} volume: ${msg.error.slice(0, 500)}` : null;
   if (error) ctx.log.warn({ workerId: runner.workerId, cleanupId: requestId }, `cleanup: ${error}`);
-  const found = await addToCleanup(ctx.db, requestId, {
-    removed: { bareClones: count(msg.bareClones), agentProfiles: count(msg.agentProfiles) },
-    reclaimedBytes: count(msg.reclaimedBytes),
-    errors: error ? [error] : [],
-    volumesPending: -1,
-  });
-  if (found) await publishCleanup(ctx, requestId);
+  const counts = { projects: count(msg.projects), agentProfiles: count(msg.agentProfiles), reclaimedBytes: count(msg.reclaimedBytes), error };
+  if (await settleVolumeCleanup(ctx.db, runner.workerId, requestId, counts)) await publishCleanup(ctx, requestId);
 }
 
 async function handleHello(ctx: AppContext, runner: RunnerIdentity, msg: Extract<RunnerToBackend, { type: 'hello' }>): Promise<void> {

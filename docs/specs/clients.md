@@ -68,7 +68,7 @@ Events are grouped by the area that emits them. Each one carries the new state, 
 | Agents | Agents and Agent | Agent updated (full Agent); Agent deleted | Update the Agents list and the Agent's detail view; drop a deleted Agent. |
 | Agent detail | Agent | Job updated | Update the Agent's active and recent Jobs, the Job's detail and usage figures. |
 | Workers | Workers and Worker | Worker updated (full Worker, with its state, busy and running containers and Queue length); Worker deleted | Update the Workers list, the Worker pickers and the Worker's page; drop a deleted Worker. |
-| Workers | Workers | Cleanup updated (the full Cleanup) | Update the last Cleanup line and an open Clean up dialog. |
+| Workers | Workers | Cleanup updated (its id) | Admins reload the last Cleanup, which updates the last Cleanup line and an open Clean up dialog. |
 | Worker detail | Worker | Worker Container updated (one slot with its container state, Runner connection and current Job); Queue changed (whole Queue); build updated; build log chunk | Replace the slot's row; replace the Queue; update the build list and append log text. |
 | Private | User | Task preference (following, mute, read and latest positions, unread) | Every client of that User updates unread and following indicators, whichever one moved the read position, and refetches the Projects list. |
 

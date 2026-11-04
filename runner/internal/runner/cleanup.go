@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"errors"
 	"io/fs"
 	"log"
 	"os"
@@ -46,19 +45,15 @@ func (r *Runner) cleanVolume(m *protocol.Incoming) {
 			fail(err)
 			continue
 		}
+		// The lock file stays: removing it while another Runner waits on it would split the lock.
 		bytes += sizeOf(repo)
 		err = os.RemoveAll(repo)
-		if err == nil {
-			projects[id] = true
-			err = os.Remove(repo + ".lock")
-			if errors.Is(err, fs.ErrNotExist) {
-				err = nil
-			}
-		}
 		unlock()
 		if err != nil {
 			fail(err)
+			continue
 		}
+		projects[id] = true
 	}
 	for _, id := range staleEntries(filepath.Join(r.cfg.Home, "worktrees"), "", keepProjects) {
 		dir := filepath.Join(r.cfg.Home, "worktrees", id)
@@ -83,7 +78,7 @@ func (r *Runner) cleanVolume(m *protocol.Incoming) {
 	answer := map[string]any{
 		"type":           "volume.cleanup.result",
 		"requestId":      m.RequestID,
-		"bareClones":     len(projects),
+		"projects":       len(projects),
 		"agentProfiles":  profiles,
 		"reclaimedBytes": bytes,
 		"error":          nil,
@@ -140,4 +135,3 @@ func sizeOf(dir string) int64 {
 	})
 	return total
 }
-

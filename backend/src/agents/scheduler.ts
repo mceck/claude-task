@@ -2,7 +2,7 @@
 // Worker Containers between a Worker's minimum and cap, Agent Profile synchronization, and
 // publishing scheduling state to browsers. Everything it starts is tracked so tests can settle.
 import { agentTopic, pinAgentBase, projectTopic, taskTopic, workerTopic } from '@claude-task/shared';
-import type { BackendToRunner } from '@claude-task/shared';
+import type { BackendToRunner, CleanupTrigger } from '@claude-task/shared';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
 import { agentProfiles, agents, jobs, projects, queueEntries, sessions, tasks, workerBuilds, workerContainers, workers } from '../db/schema';
@@ -13,7 +13,7 @@ import { runDueMessages } from '../modules/scheduled-messages/service';
 import { runDueSchedules } from '../modules/schedules/service';
 import { agentExtensions } from '../modules/extensions/service';
 import { loadCard } from '../modules/tasks/service';
-import { addToCleanup, createCleanup, publishCleanup } from '../modules/workers/cleanup';
+import { addToCleanup, createCleanup, publishCleanup, volumeCleanupRequest } from '../modules/workers/cleanup';
 import { containerRows, desiredContainerSpec, ensureContainerRow, getWorkerRow, isUp, publishWorker, serializeBuild, workerOfTask } from '../modules/workers/service';
 import type { WorkerContainerRow, WorkerRow } from '../modules/workers/service';
 import { recoverAbandonedJobs } from '../runner/handlers';
@@ -228,7 +228,7 @@ export class Scheduler {
   // Cleanup (docs/specs/workers.md, "Cleanup")
 
   /** Starts a Cleanup in the background and returns its id, or the id of the one already running. */
-  cleanup(trigger: 'automatic' | 'manual', userId: string | null = null): Promise<string> {
+  cleanup(trigger: CleanupTrigger, userId: string | null = null): Promise<string> {
     if (this.cleaning) return this.cleaning;
     const id = createCleanup(this.ctx.db, trigger, userId);
     this.cleaning = id;
@@ -245,7 +245,7 @@ export class Scheduler {
     return id;
   }
 
-  private async runCleanup(id: string, trigger: 'automatic' | 'manual'): Promise<void> {
+  private async runCleanup(id: string, trigger: CleanupTrigger): Promise<void> {
     const { db, runtime } = this.ctx;
     const report = await runtime
       .cleanup({
@@ -277,7 +277,7 @@ export class Scheduler {
     await publishCleanup(this.ctx, id);
   }
 
-  /** Runs `fn` in the Worker's reconcile chain, so it never races a reconcile of that Worker. */
+  /** Runs `fn` after the Worker's earlier reconciles and Cleanup steps: they never overlap. */
   private onWorker<T>(workerId: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.reconciling.get(workerId) ?? Promise.resolve();
     const run = previous.then(fn);
@@ -318,58 +318,34 @@ export class Scheduler {
     return removed;
   }
 
-  /** What a Runner of the Worker keeps in its Worker Volume: the Projects that run there and every Agent. */
-  private async volumeCleanupMessage(workerId: string, requestId: string): Promise<BackendToRunner> {
-    const { db } = this.ctx;
-    const assigned = await db.select({ id: projects.id }).from(projects).where(eq(projects.workerId, workerId));
-    const working = await db
-      .selectDistinct({ id: projects.id })
-      .from(jobs)
-      .innerJoin(tasks, eq(tasks.id, jobs.taskId))
-      .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(and(eq(jobs.workerId, workerId), inArray(jobs.state, [...ACTIVE_JOB_STATES])));
-    const agentRows = await db.select({ id: agents.id }).from(agents);
-    return {
-      type: 'volume.cleanup',
-      requestId,
-      keepProjects: [...new Set([...assigned, ...working].map((p) => p.id))],
-      keepAgents: agentRows.map((a) => a.id),
-    };
-  }
-
   /**
-   * Sends the Worker Volume part of a Cleanup to a connected Runner of the Worker, or keeps it pending
-   * until one connects. A request it replaces will get no answer, so its Cleanup stops waiting for it.
+   * Hands the Worker Volume part of a Cleanup to the Worker: it stays pending until a Runner of the
+   * Worker answers, and goes out now when one is connected. A pending request it replaces will not
+   * be answered any more, so that Cleanup stops waiting for it.
    */
   private async requestVolumeCleanup(workerId: string, cleanupId: string): Promise<void> {
     const { db } = this.ctx;
-    const sent = this.sendToWorker(workerId, await this.volumeCleanupMessage(workerId, cleanupId));
-    const [previous] = await db
-      .select({ pending: workers.volumeCleanupPending })
-      .from(workers)
-      .where(eq(workers.id, workerId));
-    await db.update(workers).set({ volumeCleanupPending: sent ? null : cleanupId }).where(eq(workers.id, workerId));
-    if (previous?.pending && previous.pending !== cleanupId) {
-      await addToCleanup(db, previous.pending, { volumesPending: -1 });
-      await publishCleanup(this.ctx, previous.pending);
-    }
+    const replaced = await db.transaction(async (tx) => {
+      const [row] = await tx.select({ pending: workers.volumeCleanupPending }).from(workers).where(eq(workers.id, workerId)).for('update');
+      if (!row) return { gone: true, previous: null };
+      await tx.update(workers).set({ volumeCleanupPending: cleanupId }).where(eq(workers.id, workerId));
+      return { gone: false, previous: row.pending };
+    });
     // The Worker was deleted meanwhile: nobody will answer.
-    if (!previous) await addToCleanup(db, cleanupId, { volumesPending: -1 });
+    if (replaced.gone) await addToCleanup(db, cleanupId, { volumesPending: -1 });
+    if (replaced.previous && replaced.previous !== cleanupId && (await addToCleanup(db, replaced.previous, { volumesPending: -1 }))) {
+      await publishCleanup(this.ctx, replaced.previous);
+    }
+    if (!replaced.gone) await this.sendPendingVolumeCleanup(workerId);
   }
 
-  /** A Runner said hello: the Worker Volume cleanup waiting for one goes to it. */
-  async sendPendingVolumeCleanup(workerId: string, containerId: string): Promise<void> {
-    const { db } = this.ctx;
-    const cleanupId = await db.transaction(async (tx) => {
-      const [row] = await tx.select({ pending: workers.volumeCleanupPending }).from(workers).where(eq(workers.id, workerId)).for('update');
-      if (!row?.pending) return null;
-      await tx.update(workers).set({ volumeCleanupPending: null }).where(eq(workers.id, workerId));
-      return row.pending;
-    });
-    if (!cleanupId) return;
-    if (!this.ctx.runners.send(containerId, await this.volumeCleanupMessage(workerId, cleanupId))) {
-      await db.update(workers).set({ volumeCleanupPending: cleanupId }).where(and(eq(workers.id, workerId), isNull(workers.volumeCleanupPending)));
-    }
+  /** Sends the Worker's pending Worker Volume cleanup, if any, to the given Runner or to any connected one. */
+  async sendPendingVolumeCleanup(workerId: string, containerId?: string): Promise<void> {
+    const [row] = await this.ctx.db.select({ pending: workers.volumeCleanupPending }).from(workers).where(eq(workers.id, workerId));
+    if (!row?.pending) return;
+    const msg = await volumeCleanupRequest(this.ctx.db, workerId, row.pending);
+    if (containerId) this.ctx.runners.send(containerId, msg);
+    else this.sendToWorker(workerId, msg);
   }
 
   // Image builds
@@ -486,13 +462,7 @@ export class Scheduler {
   /** Brings one Worker's image and containers in line with its configuration and its work. Serialized per Worker. */
   reconcile(workerId: string): Promise<void> {
     if (this.stopping) return Promise.resolve();
-    const previous = this.reconciling.get(workerId) ?? Promise.resolve();
-    const next = previous.then(() => this.reconcileOnce(workerId)).catch((err) => this.ctx.log.error({ err, workerId }, 'reconcile failed'));
-    this.reconciling.set(workerId, next);
-    void next.finally(() => {
-      if (this.reconciling.get(workerId) === next) this.reconciling.delete(workerId);
-    });
-    return this.track(next);
+    return this.track(this.onWorker(workerId, () => this.reconcileOnce(workerId)).catch((err) => this.ctx.log.error({ err, workerId }, 'reconcile failed')));
   }
 
   private async reconcileOnce(workerId: string): Promise<void> {

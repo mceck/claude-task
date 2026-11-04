@@ -48,6 +48,8 @@ export interface DockerCleanupInput {
 
 export type DockerCleanupCounts = Pick<CleanupCounts, 'baseImages' | 'workerImages' | 'danglingImages' | 'orphanContainers' | 'orphanVolumes' | 'orphanImages'>;
 
+export const noDockerCleanupCounts = (): DockerCleanupCounts => ({ baseImages: 0, workerImages: 0, danglingImages: 0, orphanContainers: 0, orphanVolumes: 0, orphanImages: 0 });
+
 export interface DockerCleanupReport {
   removed: DockerCleanupCounts;
   /** Approximate. */

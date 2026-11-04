@@ -69,7 +69,7 @@ export interface AgentsConfig {
   stopWhenUnused: boolean;
   /** How long a Worker Container above the minimum stays up without a Job (`WORKER_IDLE_MINUTES`). */
   idleStopMs: number;
-  /** The automatic Cleanup: at start, every 24 hours, after Builds and in the reconciler (`WORKER_CLEANUP`). Off when unset. */
+  /** The automatic Cleanup: at start, every 24 hours, after Builds and in the reconciler (`WORKER_CLEANUP`, on by default; off when a hand-built config leaves it out). */
   cleanup?: boolean;
 }
 

@@ -1,4 +1,4 @@
-import { workerImageRepo } from './runtime';
+import { noDockerCleanupCounts, workerImageRepo } from './runtime';
 import type { BuildResult, ContainerInfo, ContainerSpec, DockerCleanupInput, DockerCleanupReport, KnownWorker, ProfileSpec, WorkerRuntime } from './runtime';
 
 interface FakeContainer {
@@ -135,7 +135,7 @@ export class FakeRuntime implements WorkerRuntime {
     this.cleanups.push({ anyBuilding: input.anyBuilding, workers: await input.workers() });
     return (
       this.cleanupReport ?? {
-        removed: { baseImages: 0, workerImages: 0, danglingImages: 0, orphanContainers: 0, orphanVolumes: 0, orphanImages: 0 },
+        removed: noDockerCleanupCounts(),
         reclaimedBytes: 0,
         errors: [],
       }

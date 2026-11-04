@@ -201,5 +201,5 @@ export type RunnerToBackend =
       error: WorktreeStatusError | null;
     }
   /** The answer to `volume.cleanup`; `error` when something could not be removed (the rest was). */
-  | { type: 'volume.cleanup.result'; requestId: string; bareClones: number; agentProfiles: number; reclaimedBytes: number; error: string | null }
+  | { type: 'volume.cleanup.result'; requestId: string; projects: number; agentProfiles: number; reclaimedBytes: number; error: string | null }
   | { type: 'pong' };

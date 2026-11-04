@@ -37,7 +37,7 @@ import {
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentService, AgentItemPayload, CleanupCounts, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, ProjectClickUp, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
+import type { AgentService, AgentItemPayload, CleanupCounts, CleanupTrigger, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, ProjectClickUp, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -450,7 +450,7 @@ export const installation = pgTable('installation', {
 /** One Cleanup of the Docker host and the Worker Volumes; the 20 latest are kept. */
 export const cleanups = pgTable('cleanups', {
   id: uuid('id').primaryKey().defaultRandom(),
-  trigger: text('trigger').$type<'automatic' | 'manual'>().notNull(),
+  trigger: text('trigger').$type<CleanupTrigger>().notNull(),
   requestedBy: uuid('requested_by').references(() => users.id, { onDelete: 'set null' }),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),

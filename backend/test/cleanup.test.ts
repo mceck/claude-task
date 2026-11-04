@@ -44,12 +44,13 @@ describe('Cleanup', () => {
       trigger: 'manual',
       requestedBy: { name: 'Ada Admin' },
       finishedAt: expect.any(String),
-      removed: { baseImages: 2, workerImages: 1, danglingImages: 3, orphanVolumes: 1, slots: 0, bareClones: 0, agentProfiles: 0 },
+      removed: { baseImages: 2, workerImages: 1, danglingImages: 3, orphanVolumes: 1, slots: 0, projects: 0, agentProfiles: 0 },
       reclaimedBytes: 5_000_000_000,
       errors: ['image claude-task/worker-x:1: conflict'],
     });
-    const { event } = await ws.next('cleanup.updated', (e) => e.cleanup.id === cleanup.id && e.cleanup.finishedAt !== null);
-    expect(event.cleanup.removed.baseImages).toBe(2);
+    // Every User may follow the Workers list: the event names the Cleanup, Admins load it.
+    const { event } = await ws.next('cleanup.updated', (e) => e.cleanupId === cleanup.id);
+    expect(event).toEqual({ type: 'cleanup.updated', cleanupId: cleanup.id });
     ws.close();
     app.runtime.cleanupReport = null;
   });
@@ -141,15 +142,15 @@ describe('Cleanup', () => {
     // The other Worker's container runs but its Runner never connected: its part waits.
     expect((await admin.get('/cleanup')).body.cleanup).toMatchObject({ finishedAt: expect.any(String), volumesPending: 2 });
 
-    runner.send({ type: 'volume.cleanup.result', requestId: started.id, bareClones: 1, agentProfiles: 2, reclaimedBytes: 1234, error: null });
+    runner.send({ type: 'volume.cleanup.result', requestId: started.id, projects: 1, agentProfiles: 2, reclaimedBytes: 1234, error: null });
     await app.settle();
     await new Promise((r) => setTimeout(r, 50));
-    expect((await admin.get('/cleanup')).body.cleanup).toMatchObject({ volumesPending: 1, reclaimedBytes: 1234, removed: { bareClones: 1, agentProfiles: 2 } });
+    expect((await admin.get('/cleanup')).body.cleanup).toMatchObject({ volumesPending: 1, reclaimedBytes: 1234, removed: { projects: 1, agentProfiles: 2 } });
 
     const late = await FakeRunner.connect(app, { workerId: other.id, slot: 1 });
     const pending = await late.next('volume.cleanup');
     expect(pending).toMatchObject({ requestId: started.id, keepProjects: [leaving.project.id] });
-    late.send({ type: 'volume.cleanup.result', requestId: started.id, bareClones: 0, agentProfiles: 0, reclaimedBytes: 0, error: 'permission denied' });
+    late.send({ type: 'volume.cleanup.result', requestId: started.id, projects: 0, agentProfiles: 0, reclaimedBytes: 0, error: 'permission denied' });
     await new Promise((r) => setTimeout(r, 100));
     const done = (await admin.get('/cleanup')).body.cleanup as Cleanup;
     expect(done.volumesPending).toBe(0);
@@ -172,5 +173,26 @@ describe('Cleanup', () => {
     expect(app.runtime.container(worker.id, 1)?.spec.image).toBe(current);
     expect(app.runtime.imageRemovals).toContainEqual({ workerId: worker.id, keepTag: current });
     expect(app.runtime.oldBaseImageRemovals).toBeGreaterThan(0);
+  });
+
+  it('sends a Worker Volume request again until a Runner answers it, and counts a repeated answer once', async () => {
+    const admin = await app.admin();
+    const { runner } = await createAgent(app, admin);
+    const started = (await admin.post('/cleanup', {})).body.cleanup as Cleanup;
+    await runner.next('volume.cleanup');
+    await app.settle();
+    // The container stops before its Runner answers: the next Runner gets the request.
+    await runner.close();
+    const next = await FakeRunner.connect(app, { workerId: app.workerId, slot: 1 });
+    expect((await next.next('volume.cleanup')).requestId).toBe(started.id);
+    const answer = { type: 'volume.cleanup.result' as const, requestId: started.id, projects: 1, agentProfiles: 0, reclaimedBytes: 10, error: null };
+    next.send(answer);
+    next.send({ ...answer, projects: 0, reclaimedBytes: 0 });
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await admin.get('/cleanup')).body.cleanup).toMatchObject({ volumesPending: 0, reclaimedBytes: 10, removed: { projects: 1 } });
+    // Answered: a later Runner gets nothing.
+    await next.close();
+    const later = await FakeRunner.connect(app, { workerId: app.workerId, slot: 1 });
+    expect(await later.none('volume.cleanup')).toBe(true);
   });
 });

@@ -7,9 +7,9 @@ import type { InstalledPlugin } from '@claude-task/shared';
 import Docker from 'dockerode';
 import { pack } from 'tar-stream';
 import type { AgentsConfig } from '../config';
-import { SERVICE_DATA_DIR, containerName, serviceVolumeName, volumeName, workerImageRepo } from './runtime';
+import { SERVICE_DATA_DIR, containerName, noDockerCleanupCounts, serviceVolumeName, volumeName, workerImageRepo } from './runtime';
 import { profileArchive } from './skill-files';
-import type { BuildResult, ContainerInfo, ContainerSpec, DockerCleanupCounts, DockerCleanupInput, DockerCleanupReport, ProfileSpec, WorkerRuntime } from './runtime';
+import type { BuildResult, ContainerInfo, ContainerSpec, DockerCleanupInput, DockerCleanupReport, ProfileSpec, WorkerRuntime } from './runtime';
 
 const AGENT_HOME = '/home/agent';
 /** Labels the resources of one Installation, so Installations sharing a Docker host stay apart. */
@@ -217,7 +217,7 @@ export class DockerRuntime implements WorkerRuntime {
   }
 
   async cleanup(input: DockerCleanupInput): Promise<DockerCleanupReport> {
-    const removed: DockerCleanupCounts = { baseImages: 0, workerImages: 0, danglingImages: 0, orphanContainers: 0, orphanVolumes: 0, orphanImages: 0 };
+    const removed = noDockerCleanupCounts();
     const errors: string[] = [];
     const attempt = async (what: string, fn: () => Promise<unknown>): Promise<boolean> => {
       try {
@@ -242,13 +242,15 @@ export class DockerRuntime implements WorkerRuntime {
     if (!input.anyBuilding) {
       await attempt('old base images', async () => (removed.baseImages = await this.removeOldBaseImages()));
       await attempt('untagged images', async () => {
-        const dangling = await this.docker.listImages({ filters: JSON.stringify({ dangling: ['true'], label: [PLATFORM_LABEL] }) });
-        await this.docker.pruneImages({ filters: JSON.stringify({ dangling: ['true'], label: [PLATFORM_LABEL] }) });
-        const left = await this.docker.listImages({ filters: JSON.stringify({ dangling: ['true'], label: [PLATFORM_LABEL] }) });
+        const untagged = JSON.stringify({ dangling: ['true'], label: [PLATFORM_LABEL] });
+        const dangling = await this.docker.listImages({ filters: untagged });
+        await this.docker.pruneImages({ filters: untagged });
+        const left = await this.docker.listImages({ filters: untagged });
         removed.danglingImages = Math.max(0, dangling.length - left.length);
       });
     }
-    for (const worker of known) {
+    // Read again: a Build may have started or finished meanwhile, changing what the Worker needs.
+    for (const worker of await input.workers()) {
       if (worker.building || !worker.imageTag) continue;
       await attempt(`images of worker ${worker.id}`, async () => (removed.workerImages += await this.removeUnusedImages(worker.id, worker.imageTag!)));
     }

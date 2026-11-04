@@ -49,14 +49,14 @@ func TestVolumeCleanupRemovesWhatNoProjectOrAgentUses(t *testing.T) {
 	b.send(msg{"type": "volume.cleanup", "requestId": cleanupID, "keepProjects": []string{keptProject}, "keepAgents": []string{keptAgent}})
 	result := b.waitFor("volume.cleanup.result", func(m msg) bool { return m.str("type") == "volume.cleanup.result" })
 
-	if result.str("requestId") != cleanupID || result.num("bareClones") != 1 || result.num("agentProfiles") != 1 || result["error"] != nil {
+	if result.str("requestId") != cleanupID || result.num("projects") != 1 || result.num("agentProfiles") != 1 || result["error"] != nil {
 		t.Fatalf("result %v", result)
 	}
 	// The gone Project's HEAD and worktree file, and the gone Agent's settings (the link is not followed).
 	if got := result.num("reclaimedBytes"); got != 3*int64(len(fileContents)) {
 		t.Fatalf("reclaimed %d bytes", got)
 	}
-	for _, gone := range []string{"repos/" + goneProject + ".git", "repos/" + goneProject + ".git.lock", "worktrees/" + goneProject, ".claude-agents/" + goneAgent} {
+	for _, gone := range []string{"repos/" + goneProject + ".git", "worktrees/" + goneProject, ".claude-agents/" + goneAgent} {
 		if exists(filepath.Join(home, gone)) {
 			t.Errorf("%s was kept", gone)
 		}
@@ -64,7 +64,7 @@ func TestVolumeCleanupRemovesWhatNoProjectOrAgentUses(t *testing.T) {
 	for _, kept := range []string{
 		"repos/" + keptProject + ".git/HEAD", "worktrees/" + keptProject + "/T-1/file.txt", ".claude-agents/" + keptAgent,
 		"repos/" + busyProject + ".git/HEAD", "worktrees/" + busyProject + "/T-1/file.txt", ".claude-agents/" + busyAgent,
-		".claude-shared/projects/transcript.jsonl", "repos/not-a-project.git/HEAD", "worktrees/scratch/notes.txt", ".claude-agents/manual",
+		"repos/" + goneProject + ".git.lock", ".claude-shared/projects/transcript.jsonl", "repos/not-a-project.git/HEAD", "worktrees/scratch/notes.txt", ".claude-agents/manual",
 	} {
 		if !exists(filepath.Join(home, kept)) {
 			t.Errorf("%s was removed", kept)

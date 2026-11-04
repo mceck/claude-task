@@ -25,7 +25,7 @@ const COUNT_LABELS: Record<keyof CleanupCounts, string> = {
   orphanVolumes: 'leftover volumes',
   orphanImages: 'leftover images',
   slots: 'slots above the cap',
-  bareClones: 'project repositories',
+  projects: 'projects’ repositories and worktrees',
   agentProfiles: 'agent profiles',
 };
 
@@ -99,7 +99,7 @@ export function CleanupButton() {
                 ))}
               </ul>
               <p className="text-muted-foreground">
-                Images, containers and volumes in use stay, and so does everything another installation on the same Docker host created.
+                Images, containers and volumes in use stay, and so do the containers and volumes of other installations on the same Docker host.
               </p>
             </div>
           )}

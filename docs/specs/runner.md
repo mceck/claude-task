@@ -74,7 +74,7 @@ The git spec holds the Git Proxy clone URL (without credentials), the Job token 
 **Which Runner gets what.** Job messages (`job.start`, `job.input`, `job.interrupt`, `job.end`, `job.cancel`, `job.upload`, `ack`) go to the Runner of the Worker Container that runs the Job. `worktree.remove`, `volume.cleanup`, `project_skills.request` and `worktree.status.request` belong to no Job, and any Runner of the Worker can serve them, since every one sees the same Worker Volume:
 
 - `worktree.remove` goes to the Runner of the Job still working in that Worktree (a cancelled Job that has not exited yet), which removes it once that Job ends. With no such Job, it goes to a connected Runner of the Worker, the Runner of the Session's last Worker Slot first. While no suitable Runner is connected, the removal stays pending in the backend and is sent to the first one that says hello.
-- `volume.cleanup` goes to a connected Runner of the Worker, the lowest slot first. While none is connected, the Worker keeps it pending and it is sent to the first one that says hello.
+- `volume.cleanup` goes to a connected Runner of the Worker, the lowest slot first, and stays pending in the backend until a Runner answers it: every Runner of the Worker that says hello meanwhile gets it again.
 - `project_skills.request` and `worktree.status.request` go to any connected Runner of the Worker.
 
 Runner to backend:
@@ -84,7 +84,7 @@ Runner to backend:
 | `hello` | protocol version; Runner version; `claude` version; active Job id or none | First message of every connection. The active Job is the one being prepared or running, or else the oldest Job with unacknowledged messages. |
 | `project_skills.result` | Request id; files (name and beginning of each) | The answer to `project_skills.request`; no seq and no ack. |
 | `worktree.status.result` | Request id; files (path and status of each), total, truncated, error or none | The answer to `worktree.status.request`; no seq and no ack. |
-| `volume.cleanup.result` | Request id; Projects cleaned; Agent Profiles removed; bytes reclaimed; error or none | The answer to `volume.cleanup`; no seq and no ack. |
+| `volume.cleanup.result` | Request id; Projects cleaned (Bare Clone or Worktrees removed); Agent Profiles removed; bytes reclaimed; error or none | The answer to `volume.cleanup`; no seq and no ack. |
 | `job.accepted` | Job id; seq | The Runner took the Job and starts preparing it. |
 | `job.worktree_ready` | Job id; seq; created; remote branch missing | The git Worktree is ready (sent only for Jobs with a git spec). |
 | `job.setup_output` | Job id; seq; chunk | Output of the git steps, the tool install and the Setup Script. |
@@ -247,7 +247,7 @@ When `claude` exits, the Runner:
 
 `volume.cleanup` comes from a Cleanup (see [Workers](workers.md#cleanup)) and lists the Projects that run on the Worker and the Agents that exist. Like a Worktree removal, it waits for the earlier Worktree work of this Runner, off the read loop. Then the Runner looks at three places in the home, and only at entries named after a UUID:
 
-- `repos/‹id›.git`: a Bare Clone. For a Project not in the list, under that clone's lock, the Runner deletes the clone, then the lock file.
+- `repos/‹id›.git`: a Bare Clone. For a Project not in the list, under that clone's lock, the Runner deletes the clone. The lock file stays, since another Runner may be waiting on it.
 - `worktrees/‹id›/`: the Worktrees of a Project. For a Project not in the list, the Runner deletes the directory.
 - `.claude-agents/‹id›/`: an Agent Profile. For an Agent not in the list, the Runner deletes it.
 

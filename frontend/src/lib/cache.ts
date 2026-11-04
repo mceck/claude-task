@@ -1,5 +1,5 @@
 // Applies real-time events to the TanStack Query caches.
-import type { Agent, Cleanup, Job, Worker, WorkerBuild, ProjectBundle, RealtimeEvent, ScheduledMessage, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic, WikiChat } from '@claude-task/shared';
+import type { Agent, Job, Worker, WorkerBuild, ProjectBundle, RealtimeEvent, ScheduledMessage, Task, TaskCard, TaskPreference, TimelineItem, TimelinePage, Topic, WikiChat } from '@claude-task/shared';
 import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { keys } from '../api/queries';
 import { removeFromDock } from './dock';
@@ -300,10 +300,8 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       if (event.build.status !== 'building') void qc.invalidateQueries({ queryKey: keys.builds(event.build.workerId) });
       return;
     case 'cleanup.updated':
-      // The latest Cleanup only: a late Worker Volume answer may update an older one.
-      qc.setQueryData<Cleanup | null>(keys.cleanup, (current) =>
-        !current || current.id === event.cleanup.id || current.startedAt <= event.cleanup.startedAt ? event.cleanup : current,
-      );
+      // Only Admins load the record; the query is disabled for everyone else.
+      void qc.invalidateQueries({ queryKey: keys.cleanup });
       return;
     case 'build.log':
       updateCachedList<WorkerBuild>(qc, keys.builds(event.workerId), (list) =>
