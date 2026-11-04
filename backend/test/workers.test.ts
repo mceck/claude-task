@@ -48,6 +48,24 @@ async function finish(runner: FakeRunner, start: JobStartMessage): Promise<void>
 describe('workers', () => {
   const app = useTestApp({ defaultWorker: false });
 
+  it('keeps stopped containers and runs no Cleanup on its own with WORKER_CLEANUP off, while Admins can still run one', async () => {
+    expect(app.runtime.cleanups).toEqual([]);
+    const admin = await app.admin();
+    const worker = (await admin.post('/workers', { name: 'Kept', dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: 2, cap: 2 })).body.worker as Worker;
+    await app.settle();
+    expect((await admin.patch(`/workers/${worker.id}`, { minimum: 1, cap: 1 })).status).toBe(200);
+    await app.settle();
+    expect((await admin.post(`/workers/${worker.id}/rebuild`, {})).status).toBe(200);
+    await app.settle();
+    expect(app.runtime.container(worker.id, 2)?.state).toBe('exited');
+    expect(app.runtime.oldBaseImageRemovals).toBe(0);
+
+    expect((await admin.post('/cleanup', {})).status).toBe(202);
+    await app.settle();
+    expect(app.runtime.cleanups).toHaveLength(1);
+    expect((await admin.get('/cleanup')).body.cleanup).toMatchObject({ trigger: 'manual', finishedAt: expect.any(String) });
+  });
+
   it('builds the image, starts the slots up to the minimum with its limits, and goes idle once the Runner connects', async () => {
     const admin = await app.admin();
     const res = await admin.post('/workers', { name: 'Toolchain', dockerfile: DEFAULT_AGENT_DOCKERFILE, cpuLimit: 2, memoryMb: 4096, minimum: 1, cap: 3 });

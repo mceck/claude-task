@@ -69,6 +69,8 @@ export interface AgentsConfig {
   stopWhenUnused: boolean;
   /** How long a Worker Container above the minimum stays up without a Job (`WORKER_IDLE_MINUTES`). */
   idleStopMs: number;
+  /** The automatic Cleanup: at start, every 24 hours, after Builds and in the reconciler (`WORKER_CLEANUP`, on by default; off when a hand-built config leaves it out). */
+  cleanup?: boolean;
 }
 
 /** Settings replaced by the Worker ones, reported at startup when still set. */
@@ -188,6 +190,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       stopOnShutdown: bool(env.WORKER_STOP_ON_SHUTDOWN, env.NODE_ENV !== 'production'),
       stopWhenUnused: bool(env.WORKER_STOP_WHEN_UNUSED, true),
       idleStopMs: positiveInt(env.WORKER_IDLE_MINUTES, 10) * 60_000,
+      cleanup: bool(env.WORKER_CLEANUP, true),
     },
   };
 }

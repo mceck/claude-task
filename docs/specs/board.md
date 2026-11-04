@@ -64,7 +64,7 @@ Logo changes use the same realtime event as other Project edits. Concurrent repl
 
 **Archiving.** Any User can archive a Project, which hides it from the Projects list and the sidebar while keeping everything: its Board stays reachable by URL with an "Archived" badge, and its Tasks, Comments and Agent work carry on as before. Archiving an already archived Project keeps its original archive time. Unarchiving brings it back to the list.
 
-**Deleting permanently.** An Admin can delete an archived Project for good, from its settings after a confirmation. The Project must be archived first (otherwise `400` "Archive the project before deleting it"), and none of its Tasks may have an active Job (otherwise `409` "An agent is working on this. Stop it, or close the task, before deleting."). Deletion removes the Project's Tasks, Comments, attachments (including the stored files), Revisions, Statuses and Tags and its Queue Entries, asks a Runner of the Project's Worker to remove the Tasks' Worktrees, and frees the key for a new Project.
+**Deleting permanently.** An Admin can delete an archived Project for good, from its settings after a confirmation. The Project must be archived first (otherwise `400` "Archive the project before deleting it"), and none of its Tasks may have an active Job (otherwise `409` "An agent is working on this. Stop it, or close the task, before deleting."). Deletion removes the Project's Tasks, Comments, attachments (including the stored files), Revisions, Statuses and Tags and its Queue Entries, asks a Runner of the Project's Worker to remove the Tasks' Worktrees, and frees the key for a new Project. The next Cleanup removes its Bare Clone from the Worker Volume (see [Workers](workers.md#cleanup)).
 
 **Settings.** A Project's settings page has five tabs:
 
@@ -80,7 +80,7 @@ Any User changes a Project's Worker from its Agents settings, choosing among eve
 When the change is accepted, in the same transaction:
 
 - the Project's Queue Entries leave the old Worker's Queue and join the end of the new Worker's Queue, keeping their relative order;
-- the Project's next Jobs run on the new Worker's Worker Containers. A closed Task reopened later gets its Worktree again on the new Worker; its transcript stayed on the old Worker Volume, so its next Comment starts a new conversation seeded with its Comments (see [Agent Sessions](agent-sessions.md)).
+- the Project's next Jobs run on the new Worker's Worker Containers, and the next Cleanup removes its Bare Clone and Worktrees from the old Worker Volume. A closed Task reopened later gets its Worktree again on the new Worker; its transcript stayed on the old Worker Volume, so its next Comment starts a new conversation seeded with its Comments (see [Agent Sessions](agent-sessions.md)).
 
 The change is published as `project.updated`, and the Queue views of both Workers refresh. Wikis and Schedules follow the same rule for their own Worker (see [Wikis](wikis.md) and [Schedules](schedules.md)).
 

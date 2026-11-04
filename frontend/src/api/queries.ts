@@ -1,4 +1,5 @@
 import type {
+  Cleanup,
   Schedule,
   ScheduleRun,
   Wiki,
@@ -67,6 +68,7 @@ export const keys = {
   job: (id: string) => ['job', id] as const,
   usage: (agentId: string) => ['usage', agentId] as const,
   workers: ['workers'] as const,
+  cleanup: ['cleanup'] as const,
   worker: (id: string) => ['worker', id] as const,
   builds: (workerId: string) => ['builds', workerId] as const,
   queue: (workerId: string) => ['queue', workerId] as const,
@@ -201,6 +203,11 @@ export function useUsage(agentId: string) {
 
 export function useWorkers() {
   return useQuery({ queryKey: keys.workers, queryFn: () => get<{ workers: Worker[] }>('/workers').then((r) => r.workers), staleTime: 30_000 });
+}
+
+/** The latest Cleanup (Admins only). */
+export function useCleanup(enabled: boolean) {
+  return useQuery({ queryKey: keys.cleanup, queryFn: () => get<{ cleanup: Cleanup | null }>('/cleanup').then((r) => r.cleanup), enabled });
 }
 
 export function useWorker(id: string | undefined) {

@@ -20,6 +20,7 @@ import { DockerRuntime } from './agents/docker-runtime';
 import { FakeRuntime } from './agents/fake-runtime';
 import type { WorkerRuntime } from './agents/runtime';
 import { Scheduler } from './agents/scheduler';
+import { ensureInstallationId } from './modules/workers/cleanup';
 import { RunnerHub } from './runner/hub';
 import { RunRegistry } from './sessions/runs';
 import { UploadRequests } from './runner/uploads';
@@ -63,9 +64,11 @@ export async function createServer(
   let loginRevocations: LoginRevocations | undefined;
   try {
     await runMigrations(db);
+    const installationId = await ensureInstallationId(db);
     const ctx = {
       config,
       db,
+      installationId,
       push: overrides.push ?? new FirebasePushTransport(config.push?.serviceAccountFile),
       git: new GitConnections(db, config, overrides.git ?? cachedProviderFactory()),
       clickup: overrides.clickup ?? httpClickUpClient,
@@ -73,7 +76,7 @@ export async function createServer(
       blobs: overrides.blobs ?? createBlobStore(config),
       runtime:
         overrides.runtime ??
-        (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents)),
+        (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents, installationId)),
       runners: new RunnerHub(() => ctx.log),
       runs: new RunRegistry(),
     } as AppContext;

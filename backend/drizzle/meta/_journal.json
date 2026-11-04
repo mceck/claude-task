@@ -253,6 +253,13 @@
       "when": 1793670444939,
       "tag": "0035_clickup_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793796995187,
+      "tag": "0036_cleanup",
+      "breakpoints": true
     }
   ]
 }

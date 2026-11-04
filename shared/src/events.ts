@@ -66,7 +66,9 @@ export type WorkerEvent =
   | { type: 'worker.deleted'; workerId: string }
   | { type: 'queue.changed'; workerId: string; entries: QueueEntry[] }
   | { type: 'build.updated'; build: Omit<WorkerBuild, 'log'> }
-  | { type: 'build.log'; workerId: string; buildId: string; chunk: string };
+  | { type: 'build.log'; workerId: string; buildId: string; chunk: string }
+  /** On `workers` only. The record is for Admins, who load it with `GET /cleanup`. */
+  | { type: 'cleanup.updated'; cleanupId: string };
 
 export type RealtimeEvent = { type: 'voice.room'; room: VoiceRoom } | { type: 'wiki.changed'; wikiId: string } | { type: 'schedule.changed'; scheduleId: string } | { type: 'project.activity'; projectId: string } | BoardEvent | TaskEvent | AgentEvent | WorkerEvent | UserEvent;
 

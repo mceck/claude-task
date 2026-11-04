@@ -37,7 +37,7 @@ import {
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentService, AgentItemPayload, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, ProjectClickUp, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
+import type { AgentService, AgentItemPayload, CleanupCounts, CleanupTrigger, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, ProjectClickUp, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -441,6 +441,25 @@ export const agents = pgTable(
 
 // Workers (docs/specs/workers.md)
 
+/** The single record of this Installation: its id labels every Docker resource the backend creates. */
+export const installation = pgTable('installation', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  createdAt: createdAt(),
+});
+
+/** One Cleanup of the Docker host and the Worker Volumes; the 20 latest are kept. */
+export const cleanups = pgTable('cleanups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  trigger: text('trigger').$type<CleanupTrigger>().notNull(),
+  requestedBy: uuid('requested_by').references(() => users.id, { onDelete: 'set null' }),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  removed: jsonb('removed').$type<CleanupCounts>().notNull(),
+  reclaimedBytes: bigint('reclaimed_bytes', { mode: 'number' }).notNull().default(0),
+  volumesPending: integer('volumes_pending').notNull().default(0),
+  errors: text('errors').array().notNull().default(sql`'{}'::text[]`),
+});
+
 export const workers = pgTable(
   'workers',
   {
@@ -461,13 +480,15 @@ export const workers = pgTable(
     imageState: imageStateEnum('image_state').notNull().default('none'),
     /** Base Image version the latest build used. */
     imageBaseVersion: text('image_base_version'),
+    /** A Cleanup whose Worker Volume request waits for a Runner of this Worker to connect. */
+    volumeCleanupPending: uuid('volume_cleanup_pending').references(() => cleanups.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex('workers_name_unique').on(sql`lower(${t.name})`)],
 );
 
-/** One Worker Slot that has had a container. Its Service Volume lives as long as the Worker. */
+/** One Worker Slot that has had a container. Its Service Volume lives as long as the slot. */
 export const workerContainers = pgTable(
   'worker_containers',
   {

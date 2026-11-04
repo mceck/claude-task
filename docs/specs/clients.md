@@ -40,7 +40,7 @@ A client subscribes and unsubscribes by sending small control messages listing t
 | Task (`task:<id>`) | Task (including a Wiki's conversation) | The Task view: Task fields, removal, Comments, Revisions, Agent Timeline items, Session state, Live Turn preview, Setup Script output, Run updates and transcripts, and for a Wiki's Chat the reset event sent when it is deleted. |
 | Agents (`agents`) | installation | Agent created, updated or deleted, for the Agents list and Agent pickers. |
 | Agent (`agent:<id>`) | Agent | One Agent's detail view: the Agent itself and its Jobs. |
-| Workers (`workers`) | installation | Worker created, updated or deleted, for the Workers list and Worker pickers. |
+| Workers (`workers`) | installation | Worker created, updated or deleted, for the Workers list and Worker pickers; Cleanup changes, for the Admins' Workers list. |
 | Worker (`worker:<id>`) | Worker | One Worker's page: the Worker itself, its Worker Containers, its Queue, its Builds and build logs. |
 | Wikis (`wikis`) | installation | A Wiki was created, changed (including a Chat renamed, deleted or given another Agent, and every Comment in one of its Chats) or deleted. |
 | Projects (`projects`) | installation | A Project's activity indicators (Tasks with unread Turns, running Agents) may have changed. |
@@ -68,6 +68,7 @@ Events are grouped by the area that emits them. Each one carries the new state, 
 | Agents | Agents and Agent | Agent updated (full Agent); Agent deleted | Update the Agents list and the Agent's detail view; drop a deleted Agent. |
 | Agent detail | Agent | Job updated | Update the Agent's active and recent Jobs, the Job's detail and usage figures. |
 | Workers | Workers and Worker | Worker updated (full Worker, with its state, busy and running containers and Queue length); Worker deleted | Update the Workers list, the Worker pickers and the Worker's page; drop a deleted Worker. |
+| Workers | Workers | Cleanup updated (its id) | Admins reload the last Cleanup, which updates the last Cleanup line and an open Clean up dialog. |
 | Worker detail | Worker | Worker Container updated (one slot with its container state, Runner connection and current Job); Queue changed (whole Queue); build updated; build log chunk | Replace the slot's row; replace the Queue; update the build list and append log text. |
 | Private | User | Task preference (following, mute, read and latest positions, unread) | Every client of that User updates unread and following indicators, whichever one moved the read position, and refetches the Projects list. |
 
@@ -242,7 +243,7 @@ The Schedules page, linked from the sidebar for every User, lists Schedules as r
 
 The Agents list (everyone) shows each Agent's avatar, its Agent State (idle, disabled, or working with the number of its active Jobs and their Tasks), Credential and last activity; Admins see "New agent". The Agent detail page has tabs for its active Jobs (each with its Task, Worker and Worker Slot), its recent Jobs, Usage and Configuration, and shows the Agent's Extension synchronization errors per Worker. The native app has no Agent page: an Agent's settings sheet holds its configuration only.
 
-The Workers section sits next to Agents. The Workers list (everyone) shows each Worker's state dot, the number of busy and running Worker Containers against its cap, its Queue length and the Projects that run on it; Admins see "New worker". The Worker page has five tabs:
+The Workers section sits next to Agents. The Workers list (everyone) shows each Worker's state dot, the number of busy and running Worker Containers against its cap, its Queue length and the Projects that run on it; Admins see "New worker" and "Clean up", and under the header a line with the last Cleanup: when it ran, automatic or the Admin who asked, the space freed and its errors, which open its details. "Clean up" opens a confirmation listing what a Cleanup removes; confirming starts it and the dialog follows it live to its counts, approximate space freed, pending Worker Volumes and errors (see [Workers](workers.md#cleanup)). The Worker page has five tabs:
 
 - **Containers**: one row per Worker Slot up to the cap, with the container's state, whether its Runner is connected, whether a recreation is pending, and the Task and Agent of its current Job. Admins get Restart, Force recreate and the container's logs (the last 500 lines, refreshed every 3 seconds while open) on each row.
 - **Queue**: the Worker's Queue, each entry with its Task (and Project) and its Agent. Every User reorders entries by dragging and removes them.
