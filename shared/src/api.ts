@@ -211,6 +211,8 @@ export interface ConflictResponse {
 export const createCommentBody = z.strictObject({
   body: z.string().max(100_000),
   internal: z.boolean().default(false),
+  /** Interrupt and send: interrupt the Agent's running Turn so it reads this Comment at once. */
+  interrupt: z.boolean().default(false),
 });
 export type CreateCommentBody = z.input<typeof createCommentBody>;
 

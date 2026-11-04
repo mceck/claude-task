@@ -1875,7 +1875,12 @@ class TaskController extends ChangeNotifier {
     }
   }
 
-  Future<void> send() async {
+  /// The Agent is working a Turn on the open Task, so it can be interrupted.
+  bool get agentWorking => session?['state'] == 'running';
+
+  /// [interrupt] is Interrupt and send: the Agent's running Turn is stopped
+  /// so it reads the Comment at once, instead of after its current step.
+  Future<void> send({bool interrupt = false}) async {
     if (sending || task == null || scheduleRunReadOnlyReason != null) {
       return;
     }
@@ -1903,7 +1908,11 @@ class TaskController extends ChangeNotifier {
       final result = await _request(
         'POST',
         '/tasks/${current.id}/comments',
-        body: {'body': value.text, 'internal': value.internal},
+        body: {
+          'body': value.text,
+          'internal': value.internal,
+          if (interrupt && agentWorking && !value.internal) 'interrupt': true,
+        },
         files: value.files,
       );
       final comment = result['comment'] as Json;

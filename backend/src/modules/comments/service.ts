@@ -205,7 +205,7 @@ export async function createUserComment(
   tx: Executor,
   after: AfterCommit,
   task: TaskRow,
-  input: { body: string; internal: boolean; attachments: NewAttachment[]; answersCommentId?: string },
+  input: { body: string; internal: boolean; interrupt?: boolean; attachments: NewAttachment[]; answersCommentId?: string },
   author: Actor,
 ): Promise<Comment> {
   if (input.body.trim() === '' && input.attachments.length === 0) {
@@ -231,7 +231,7 @@ export async function createUserComment(
     await autoFollow(tx, after, task.id, [author.id]);
     await notifyMentions(tx, task.id, row!.id, input.body, author.id);
   }
-  await deliverComment(tx, after, task, row!);
+  await deliverComment(tx, after, task, row!, { interrupt: input.interrupt });
   const comment = await loadComment(tx, row!.id);
   after.emit(taskTopic(task.id), { type: 'comment.created', comment });
   await emitCardRefresh(tx, after, task.id);

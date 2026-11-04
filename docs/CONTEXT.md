@@ -443,6 +443,10 @@ The action that releases a held Queue Entry.
 Stopping the current Turn without ending the Session. Labelled "Stop" in the UI.
 _Avoid_: cancel, kill (those end the Job)
 
+**Interrupt and send**:
+Posting a User Comment together with an Interrupt of the Agent's running Turn, so the Agent reads the Comment at once instead of after its current tool calls. Ctrl/⌘+Enter in the composer.
+_Avoid_: send now (that is a Scheduled Message or Survey action), force send
+
 ### Git integration
 
 **Repository**:

@@ -283,6 +283,34 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
   await expect(page.getByLabel('System comment').filter({ hasText: 'notified the agent' })).toBeVisible();
 });
 
+test('Interrupt and send stops the turn and delivers the comment right after, from the keyboard or the button', async ({ page }) => {
+  await login(page.request);
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Speed up the build');
+  const agent = await seedAgent(page.request, 'Hasty agent');
+  await page.goto(`/t/${task.key}`);
+  await assignAndStart(page, agent);
+  await expect(page.getByLabel('Session: running')).toBeVisible();
+  const job = await jobStart(page.request, project.workerId, task.id);
+  const s = new Stream(job.sessionId);
+  await replay(page.request, project.workerId, job.jobId, [s.toolUse('tool-1', 'Bash', { command: 'sleep 600' })]);
+  const sent = async () => (await messages(page.request, project.workerId)).filter((m) => m.type === 'job.interrupt' || m.type === 'job.input').map((m) => m.type);
+
+  const box = page.getByRole('textbox', { name: 'Comment', exact: true });
+  await box.fill('Use the cached build.');
+  await box.press('Control+Enter');
+  await expect(page.locator('li').filter({ hasText: 'Use the cached build.' }).getByLabel(/^Delivery: Delivered to Hasty agent/)).toBeVisible();
+  await expect.poll(sent).toEqual(['job.interrupt', 'job.input']);
+
+  await box.fill('And skip the docs.');
+  await page.getByRole('button', { name: 'Interrupt and send', exact: true }).click();
+  await expect.poll(sent).toEqual(['job.interrupt', 'job.input', 'job.interrupt', 'job.input']);
+
+  await replay(page.request, project.workerId, job.jobId, [s.text('Done.'), s.result()], true);
+  await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Interrupt and send', exact: true })).toHaveCount(0);
+});
+
 test('lays out an expanded Bash command one step per line', async ({ page }) => {
   await login(page.request);
   const project = await createProject(page.request);

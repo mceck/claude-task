@@ -226,12 +226,14 @@ async function reopenSession(tx: Executor, after: AfterCommit, task: TaskRow): P
 /**
  * A User's Comment (or a Notify agent notice) on a Task: written to the running process right
  * away when the Task's Agent is working on this Task, otherwise queued, merging into the Task's entry.
+ * Interrupt and send also interrupts the running Turn first, so the Comment is read at once.
  */
 export async function deliverComment(
   tx: Executor,
   after: AfterCommit,
   taskRef: Pick<TaskRow, 'id'>,
   comment: CommentRow,
+  opts: { interrupt?: boolean } = {},
 ): Promise<'delivered' | 'queued' | 'not_delivered' | 'none'> {
   if (comment.internal) return 'none';
   // Inserting the Comment key-share locked the Task, so this read is current.
@@ -280,6 +282,14 @@ export async function deliverComment(
     !waiting &&
     !commandName(comment.body) &&
     after.ctx.runners.isReady(job.containerId);
+  // Interrupt and send: the interrupt goes ahead of the Message, so `claude` ends the Turn and the
+  // Message opens a new one in the same process. A queued Comment runs once the Job ends.
+  const interrupt = opts.interrupt === true && job !== null && job.containerId !== null &&
+    job.state === 'running' && !job.cancelRequested && !job.discardOutput;
+  if (interrupt) {
+    const containerId = job.containerId!;
+    after.effect((ctx) => ctx.runners.send(containerId, { type: 'job.interrupt', jobId: job.id }));
+  }
   if (canInject) {
     const containerId = job.containerId!;
     const parts = await renderComments(after.ctx, tx, [comment]);

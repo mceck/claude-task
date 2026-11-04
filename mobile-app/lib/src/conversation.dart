@@ -3791,7 +3791,7 @@ class _ComposerState extends State<Composer> {
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
 
-  Future<void> _send() async {
+  Future<void> _send({bool interrupt = false}) async {
     if (!_canSend) return;
     if (_text.text.trim() == '/schedule') {
       await widget.controller.setDraft(
@@ -3814,7 +3814,10 @@ class _ComposerState extends State<Composer> {
         setState(() => _dueAt = null);
       }
     } else {
-      await perform(context, widget.controller.send);
+      await perform(
+        context,
+        () => widget.controller.send(interrupt: interrupt),
+      );
     }
     if (mounted && restoreFocus) _focus.requestFocus();
   }
@@ -3849,7 +3852,8 @@ class _ComposerState extends State<Composer> {
         ),
       );
     } else {
-      _send();
+      // Ctrl/⌘+Enter is Interrupt and send, like the web composer.
+      _send(interrupt: keyboard.isControlPressed || keyboard.isMetaPressed);
     }
     return KeyEventResult.handled;
   }
@@ -3902,6 +3906,8 @@ class _ComposerState extends State<Composer> {
         : Palette.borderStrong;
     final radius = BorderRadius.circular(Radii.xl);
     final due = _dueAt;
+    // Interrupt and send stops the Agent's running Turn so it reads the Comment at once.
+    final canInterrupt = c.agentWorking && !internal && due == null;
     final sendLabel = due != null
         ? 'Schedule'
         : internal
@@ -4086,6 +4092,17 @@ class _ComposerState extends State<Composer> {
                   ),
                 ),
               ),
+              if (canInterrupt)
+                slot(
+                  IconAction(
+                    key: const Key('interrupt-and-send'),
+                    icon: Icons.bolt_rounded,
+                    tooltip: "Interrupt and send · stops the Agent's current step so it reads this at once",
+                    color: Palette.primary,
+                    size: 36,
+                    onPressed: _canSend ? () => _send(interrupt: true) : null,
+                  ),
+                ),
               slot(
                 Tooltip(
                   message: sendLabel,

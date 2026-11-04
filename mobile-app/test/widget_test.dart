@@ -92,6 +92,83 @@ void main() {
   });
 
   testWidgets(
+    'Interrupt and send stops the working Agent, from the button or Ctrl/Cmd+Enter',
+    (tester) async {
+      // A working Agent animates the conversation, so this pumps a fixed while.
+      Future<void> settle() async {
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      }
+
+      final h = Harness();
+      addTearDown(h.dispose);
+      h.api.session = {
+        'state': 'running',
+        'queuePosition': null,
+        'held': false,
+        'unseenChanges': false,
+      };
+      await h.login();
+      await h.openTask();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await settle();
+      final field = find.byKey(const Key('comment-composer'));
+      final interrupt = find.byKey(const Key('interrupt-and-send'));
+
+      await tester.enterText(field, 'Use the cached build');
+      await tester.tap(interrupt);
+      await settle();
+      expect(h.api.lastCommentBody, containsPair('interrupt', true));
+
+      await tester.enterText(field, 'Skip the docs');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await settle();
+      expect(h.api.lastCommentBody, containsPair('interrupt', true));
+
+      // Enter alone waits for the Agent's next step, as before.
+      await tester.enterText(field, 'And then the tests');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await settle();
+      expect(h.api.sendCount, 3);
+      expect(h.api.lastCommentBody!.containsKey('interrupt'), isFalse);
+
+      // Internal chat never reaches the Agent, so it has no Interrupt and send.
+      await tester.tap(find.byKey(const Key('internal-toggle')));
+      await settle();
+      expect(interrupt, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('offers no Interrupt and send while the Agent is not working', (
+    tester,
+  ) async {
+    final h = Harness();
+    addTearDown(h.dispose);
+    h.api.session = {
+      'state': 'idle',
+      'queuePosition': null,
+      'held': false,
+      'unseenChanges': false,
+    };
+    await h.login();
+    await h.openTask();
+    await tester.pumpWidget(TaskApp(controller: h.controller));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('interrupt-and-send')), findsNothing);
+    await tester.enterText(find.byKey(const Key('comment-composer')), 'Hi');
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(h.api.sendCount, 1);
+    expect(h.api.lastCommentBody!.containsKey('interrupt'), isFalse);
+  });
+
+  testWidgets(
     'Enter preserves composition and does not retry an unknown send',
     (tester) async {
       final h = Harness();
