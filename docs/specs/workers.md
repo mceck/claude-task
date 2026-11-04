@@ -10,10 +10,12 @@ Workers are the platform's execution environments. A **Worker** is a Docker envi
 - The **Platform Version** is the Base Image's version. It combines the default Claude Code version with a fingerprint of the Base Image recipe, its scripts and the Runner sources, so any change to one of them produces a new version.
 - A **Worker Image** is built from the Worker's Dockerfile on top of the Base Image at the current Platform Version. A **Build** is one attempt to produce it, with its log and outcome. Every Worker Container of the Worker runs the same Worker Image.
 - The **Worker Volume** is shared by every Worker Container of one Worker and mounted as the agent user's home. It holds Bare Clones, Worktrees, Session transcripts, mise tool installs and Agent Profiles, so any Worker Container of the Worker can resume any Session of its Projects.
-- A **Service Volume** belongs to one Worker Slot and holds the data and logs of that slot's Development Services. It survives the Worker Container being stopped or recreated and is deleted with the Worker.
+- A **Service Volume** belongs to one Worker Slot and holds the data and logs of that slot's Development Services. It survives the Worker Container being stopped or recreated, and is deleted with the Worker or when a Cleanup removes its slot.
 - An **Agent Profile** is an Agent's own Claude Code configuration directory inside a Worker Volume, holding its Skills, Plugins and settings. Every Agent Profile of a Worker Volume shares the same Session transcripts and session data, so a Session started by one Agent resumes under another.
 - The **Runner token** identifies one Worker Container's Runner to the backend. Each Worker Container has its own, and it changes every time the container is recreated. It is distinct from the Job token, which authorizes one Job's MCP and Git Proxy calls (see [Agent sessions](agent-sessions.md) and [Git integration](git-integration.md)).
 - **Development Services** are local databases and tools (PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO, Chrome) installed in the Worker Image and started inside each Worker Container, selected per Worker.
+- A **Cleanup** removes what the Installation's Workers no longer need from the Docker host and from their Worker Volumes (see [Cleanup](#cleanup)).
+- The **Installation id** is a random identifier the backend creates on first start and keeps in its database. Every container, volume and Worker Image the backend creates is labelled with it, so several Installations can share one Docker host.
 - The **Worker State** is the single status the Workers list shows, derived from the Worker's configuration, image and Worker Containers.
 
 ## Behaviour
@@ -29,6 +31,7 @@ Workers are the platform's execution environments. A **Worker** is a Docker envi
 | Create, edit, duplicate, disable, delete a Worker | Admins |
 | Rebuild the image, Recreate when idle (whole Worker) | Admins |
 | Restart, Force recreate and read the logs of one Worker Container | Admins |
+| Run a Cleanup and see the last one | Admins |
 
 Requests outside these permissions are answered with `403`.
 
@@ -63,7 +66,7 @@ Docker configuration groups the Dockerfile, Development Services and CPU and mem
 | Dockerfile (when its text differs) or services (when the selection differs) | A new Build starts; on success each Worker Container is recreated with the new image as soon as it has no active Job, independently of the others |
 | CPU or memory limit | Each Worker Container is recreated with the new limits as soon as it has no active Job, with no Build |
 | Minimum | Raising it starts the slots up to the new minimum; lowering it makes the slots above it subject to the idle stop |
-| Cap | Raising it lets the Worker start more slots when work waits; lowering it stops the slots above the new cap as soon as each is free, keeping their containers and Service Volumes, so raising the cap again reuses their databases |
+| Cap | Raising it lets the Worker start more slots when work waits; lowering it stops the slots above the new cap as soon as each is free, keeping their Service Volumes, so raising the cap again reuses their databases. A Cleanup removes a slot above the cap once it has had no Job for 7 days (see [Cleanup](#cleanup)) |
 | Enabled | See [Disabling a Worker](#disabling-a-worker) |
 | Name, description | Display only |
 
@@ -81,7 +84,7 @@ A disabled Worker shows `disabled`. Its running Jobs finish normally, and its Qu
 
 An Admin deletes a Worker once no Project uses it, whatever its kind and archived Projects included. Otherwise the request is answered with `409` naming those Projects, and nothing changes.
 
-When the deletion goes ahead, the Worker's Builds, Worker Container records and Agent Profile synchronization records are deleted with it. Its Runner connections are closed, and its containers, images, Worker Volume (with every Agent Profile and Session transcript) and Service Volumes are removed in the background. A failure there is logged and leaves the leftovers on the Docker host.
+When the deletion goes ahead, the Worker's Builds, Worker Container records and Agent Profile synchronization records are deleted with it. Its Runner connections are closed, and its containers, images, Worker Volume (with every Agent Profile and Session transcript) and Service Volumes are removed in the background. A failure there is logged, and the next Cleanup removes the leftovers that carry the Installation id (see [Cleanup](#cleanup)).
 
 ### Assigning a Worker to Projects
 
@@ -116,7 +119,7 @@ flowchart TD
 
 ### Workers list and Worker page
 
-The Workers list shows every Worker with its state, the number of busy and running Worker Containers against its cap, its Queue length and the Projects it runs. The Worker page has these tabs:
+The Workers list shows every Worker with its state, the number of busy and running Worker Containers against its cap, its Queue length and the Projects it runs. Admins also see a "Clean up" action and a line summarizing the last Cleanup (see [Cleanup](#cleanup)). The Worker page has these tabs:
 
 - **Containers**: one row per slot, from 1 to the cap plus any slot above the cap that is still running. Each row shows the container state (`running`, `exited`, `restarting`, `missing`, ...), whether its Runner is connected, the Task and Agent of its current Job, the Runner and Claude versions it reported, its last activity (updated at most every 10 seconds while a Job streams output) and a pending recreation. Admins get Restart, Force recreate and Logs per row; Logs shows the last 500 lines of the container output, refreshed every three seconds (the API serves 1 to 5,000 lines). Below the rows, the synchronizations of Agent Profiles that are running or failed on this Worker, with the Agent and the error.
 - **Queue**: the Worker's Queue, each entry with its Task and Agent, reordered and edited by any User (see [Agent sessions](agent-sessions.md#the-queue)).
@@ -138,8 +141,9 @@ The native app lists Workers in Settings and opens a Worker sheet with the slots
 | `POST /workers/:id/containers/:slot/restart`, `POST /workers/:id/containers/:slot/force-recreate`, `GET /workers/:id/containers/:slot/logs` | Admins |
 | `GET /workers/:id/builds`, `GET /workers/:id/builds/:buildId/log` | Every User |
 | `GET /workers/:id/queue`, reordering and removing its entries | Every User |
+| `GET /cleanup` (the latest Cleanup, or none), `POST /cleanup` (starts a Cleanup, answered `202` with it, or with the running one) | Admins |
 
-Changes reach open clients in real time on the `workers` topic (the list) and on the `worker:<id>` topic (the Worker, its Worker Containers, its Queue, its Builds and Build log chunks).
+Changes reach open clients in real time on the `workers` topic (the list, and `cleanup.updated` for every change of a Cleanup) and on the `worker:<id>` topic (the Worker, its Worker Containers, its Queue, its Builds and Build log chunks).
 
 ### Base Image
 
@@ -193,7 +197,7 @@ Each Build records the Dockerfile as saved, the Platform Version, its status (`b
 - **Failure**: the Worker shows `build_failed`; the previous image and its Worker Containers stay in service, so a broken Dockerfile leaves the Worker's Projects working.
 - **Backend restart during a Build**: on startup the interrupted Build is marked failed with the note "The backend restarted during this build", and the Worker goes back to having no Build in progress, which makes the reconciler build it again.
 
-Once every Worker Container has moved to the new image, older images of the Worker that no container uses any more are removed.
+Each time a Worker Container is created, the Worker's older images that no container uses any more are removed. A stopped Worker Container still on an older image is removed by the reconciler (see [Cleanup](#cleanup)), so once every slot has moved on or been removed, only the current image is left. After each successful Build, Base Images of older Platform Versions are untagged as well.
 
 ### Worker Containers and the reconciler
 
@@ -225,7 +229,7 @@ The reconciler keeps running the slots that work needs, between the Worker's min
 - **Minimum.** Slots 1 to the minimum run whenever the Worker is enabled and has an image.
 - **Scaling up.** While the ready entries of the Worker's Queue outnumber its free running Worker Containers (running, with no active Job, including those whose Runner is still connecting), the reconciler starts one more slot per waiting entry, up to the cap. An entry is ready as described in [Agent sessions](agent-sessions.md#dispatch); an entry waiting for its Agent's [synchronization](#agent-profiles-and-extension-synchronization) counts as ready, since the synchronization needs a running container. For each entry beyond the free containers, in Queue order, the new slot is the entry's affine slot (the slot of its Session's latest Job) when that slot is stopped and within the cap, otherwise the lowest-numbered stopped slot within the cap.
 - **Idle stop.** A slot above the minimum whose Worker Container has had no Job for `WORKER_IDLE_MINUTES` (10 by default), counted from its last Job's end or from its Runner connecting, whichever is later, is stopped. A disabled Worker stops every slot this way, the minimum included.
-- **Cap decrease.** Slots above the cap stop as soon as each has no active Job.
+- **Cap decrease.** Slots above the cap stop as soon as each has no active Job. A Cleanup removes them, with their Service Volumes, once they have had no Job for 7 days.
 - **`WORKER_STOP_WHEN_UNUSED=false`.** The idle stop is off: every running Worker Container within the cap keeps running. Slots 1 to the minimum still start on their own, and the others start when work needs them, within the cap.
 
 ```mermaid
@@ -241,7 +245,7 @@ The stop is decided under the Worker's row lock: the container state is set to s
 
 A Worker Container the Worker still wants, but whose Runner has not connected (or reconnected) within the Runner reconnect timeout, cannot take a Job. The reconciler recreates it instead of leaving the Queue waiting for a Runner that is not coming, keeping the Worker Volume and its Service Volume. On backend startup every Runner connection is treated as lost, so a Runner that never comes back is recovered after the same timeout rather than waiting for a close event the new process cannot receive.
 
-Stopping keeps the container: the image, the Worker Volume and the slot's Service Volume stay, so repositories, Worktrees, transcripts and Development Service data survive. A pending recreation (new image, limits or an Admin's request) is applied at the slot's next start. A Queue Entry held after a failed Job is not ready, so it waits for a Retry without keeping a container up.
+Stopping keeps the container: the image, the Worker Volume and the slot's Service Volume stay, so repositories, Worktrees, transcripts and Development Service data survive. A pending recreation (new image, limits or an Admin's request) is applied at the slot's next start. A stopped container created with an image other than the Worker's current one is removed by the reconciler, which frees that image; the slot shows as stopped and is created from the current image at its next start, on the same volumes. A Queue Entry held after a failed Job is not ready, so it waits for a Retry without keeping a container up.
 
 When the dispatcher finds ready entries and no free Worker Container, it asks the reconciler to scale up right away, so a Comment, a reopened Task or a Retry starts a container at once. The Job dispatches once the Runner has connected and the Agent's Extensions are synchronized there, so the first reply after a scale-up waits for the container and its Development Services to start (up to 60 seconds for the services, see [Development Services](#development-services)).
 
@@ -249,7 +253,7 @@ When the dispatcher finds ready entries and no free Worker Container, it asks th
 
 Every Worker Container:
 
-- is named after the Worker and the slot (`claude-task-worker-‹worker id›-‹slot›`) and labelled with the Worker's id and the slot number;
+- is named after the Worker and the slot (`claude-task-worker-‹worker id›-‹slot›`) and labelled with the Installation id, the Worker's id and the slot number;
 - restarts automatically unless stopped, by hand or by the reconciler;
 - mounts the Worker Volume (`claude-task-worker-‹worker id›`) as the agent user's home, and its slot's Service Volume (`claude-task-worker-‹worker id›-services-‹slot›`) at a fixed path outside the home;
 - keeps what belongs to that container alone (the git credential socket, the Runner's lock files, its outbox spill files) in a container-local directory outside the Worker Volume;
@@ -330,6 +334,8 @@ The Worker Volume is the agent user's home in every Worker Container of the Work
 
 Several Worker Containers work on one Bare Clone at once, so the Runner holds an exclusive file lock per Bare Clone, kept next to the clone in the Worker Volume, around every git command that updates it (fetch, worktree add, worktree remove, prune). Removing a Worktree goes to the Runner of the Job still working in it (a cancelled Job that has not exited yet), which removes it once that Job ends; with no such Job, to any connected Runner of the Worker, the Session's last slot first. It stays pending until a suitable Runner connects. Reading a Worktree's Project Skills goes to any connected Runner of the Worker (see [Runner](runner.md)).
 
+**Leftovers.** A Cleanup asks one connected Runner of each Worker, the lowest slot first, to clean its Worker Volume. The request lists the Projects that run on the Worker (plus any Project with an active Job there) and every existing Agent. The Runner removes the Bare Clone, its lock file and the Worktree directory of every other Project, and the Agent Profile of every other Agent, skipping whatever a Job of its own container is using. It considers only the directories the platform names after Project and Agent ids, so the shared session data, tool installs, caches and anything an Agent created stay. A Worker with no connected Runner records the request as pending, and it goes out when a Runner of the Worker connects; a newer Cleanup replaces a pending request. A Project that moves back to the Worker later clones its repository again at its next Job.
+
 **Tool versions.** When a Job prepares a Worktree whose repository declares tool versions for mise (a `.tool-versions` file or a standard mise configuration file at the repository root), the Runner runs `mise install` before the Setup Script, trusting the repository's configuration. Installed tools persist in the Worker Volume, so every Worker Container of the Worker reuses them, and are on the `PATH` for the Runner, `claude` and login shells. Application packages stay the Setup Script's job. When this step runs, how its output is shown and how its failure is retried are described in [Runner](runner.md).
 
 ### Development Services
@@ -401,7 +407,34 @@ Each command inside the container has a 5-minute timeout. Synchronization change
 
 A failed synchronization (an unknown plugin, an unreachable marketplace, a Skill name conflict) stores its error on the pair, up to 2,000 characters, shown on the Agent page with the Worker's name and on the Worker page with the Agent's name. The dispatcher tries again on its next pass, every 30 seconds at the latest, and the Agent's entries on that Worker wait until a synchronization succeeds. Any new change to the Agent's Extensions clears the stored errors. A recreated Worker Container keeps every Agent Profile, so the applied revisions stay valid.
 
-An Agent's profiles stay in the Worker Volumes after the Agent is deleted, until each Worker is deleted.
+An Agent's profiles stay in the Worker Volumes after the Agent is deleted, until the next Cleanup of each Worker Volume removes them.
+
+### Cleanup
+
+A Cleanup frees the space that the Installation's Workers no longer need, on the Docker host and in their Worker Volumes. It removes only what the platform created and knows to be unused, so it is safe to run at any time, while Jobs and other Installations keep working.
+
+**When it runs.**
+
+- At backend start and every 24 hours after that, unless `WORKER_CLEANUP` is `false`.
+- When an Admin clicks "Clean up" on the Workers list, whatever the setting. A request while a Cleanup runs returns the running one.
+- Two parts also run on their own, outside a full Cleanup and under the same setting: after each successful Build, the old Base Images step; and in every reconciler run, the removal of stopped Worker Containers on an outdated image, followed by the Worker's unused images.
+
+**What it removes**, in this order:
+
+1. **Old Base Images.** Every tag of the Base Image other than the current Platform Version, and the `latest` tag when it points to another image. Tags are removed without force: Docker keeps the layers a Worker Image still builds on, and frees them once no image needs them. This step covers every Base Image on the host, labelled or not, since a Base Image holds no data and any Installation rebuilds a missing one at its next Build.
+2. **Untagged platform images.** Every stage of the Base Image recipe carries the `claude-task.platform` label, which Worker Images and the intermediate images of every platform Build inherit. The untagged images that carry it are pruned.
+3. **Older Worker Images.** For each Worker of the Installation, every tag of its image repository other than its current image. An image that a container still uses stays.
+4. **Slots above the cap.** A slot above the Worker's cap, with its container stopped or missing and no active Job, is removed with its container, its Service Volume and its record once it has had no Job for 7 days (counted from its last Job's end, or from its creation). A manual Cleanup removes such slots whatever their age. Jobs that ran there keep their slot number in their history.
+5. **Leftovers of deleted Workers.** Containers, then volumes, then images that carry this Installation's id and the id of a Worker that no longer exists. The resources are listed before the Workers are read, so a Worker created meanwhile is never taken for a deleted one.
+6. **Worker Volume leftovers.** For each Worker, a request to one of its Runners to remove the Bare Clones and Worktree directories of Projects that no longer run on the Worker, and the Agent Profiles of Agents that no longer exist (see [Worker Volume](#worker-volume)).
+
+Steps 1 and 2 are skipped while any Build of the Installation runs, and step 3 skips a Worker whose Build is running: a Build in progress needs its parent images, and its new image is not yet the Worker's current one. The next Cleanup catches up.
+
+**What it keeps.** Images used by any container, running or stopped; the current Base Image and every Worker's current image; Worker Volumes and Service Volumes of existing slots; resources without this Installation's id, apart from Base Images; package caches and mise tools in Worker Volumes; and everything on the host that the platform did not create.
+
+**Report.** Each Cleanup is recorded with its trigger (automatic, or the Admin who asked), its start and end, the number of resources removed per kind, an approximate amount of space reclaimed, the Worker Volumes still to answer and the errors. An error removing one resource is logged and listed, and the Cleanup goes on with the rest. Worker Volume results arrive after the Docker part, possibly much later for a Worker with no running container, and are added to the Cleanup that asked for them. The 20 latest Cleanups are kept. Every change is published as `cleanup.updated` on the `workers` topic.
+
+**In the web app.** The Workers list header shows Admins a "Clean up" button. It opens a confirmation that lists what a Cleanup removes and states that it keeps what is in use and other Installations' data. Confirming starts it, and the dialog follows it live: running, then the counts, the space reclaimed (marked approximate), the Worker Volumes still pending and the errors. Under the header, Admins see the last Cleanup in one line: when it ran, whether it was automatic or who asked, the space freed and its errors, which open the details.
 
 ### Fake runtime
 
@@ -456,8 +489,8 @@ flowchart LR
   SCH --> RH
 ```
 
-- **The runtime** is the only component that talks to Docker. It builds the Base Image and Worker Images, creates, starts, stops, restarts, inspects and removes containers, volumes and images, reads container logs, and runs Agent Profile synchronization inside a container. Two implementations exist: the Docker one, which talks to the host daemon over the socket named by the `DOCKER_SOCKET` setting, and the in-memory fake.
-- **The scheduler** runs all background work around Workers: one Build at a time per Worker, the serialized per-Worker reconciler with autoscaling, the per-Worker dispatcher, Agent Profile synchronizations, the 30-second tick (reconcile every Worker, recover Jobs whose Runner stayed away, dispatch Workers with waiting Queue Entries) and the coalesced real-time publishing of Worker, Worker Container, Build, Queue and Job changes.
+- **The runtime** is the only component that talks to Docker. It builds the Base Image and Worker Images, creates, starts, stops, restarts, inspects and removes containers, volumes and images, runs the Docker part of a Cleanup, reads container logs, and runs Agent Profile synchronization inside a container. Two implementations exist: the Docker one, which talks to the host daemon over the socket named by the `DOCKER_SOCKET` setting, and the in-memory fake.
+- **The scheduler** runs all background work around Workers: one Cleanup at a time, one Build at a time per Worker, the serialized per-Worker reconciler with autoscaling, the per-Worker dispatcher, Agent Profile synchronizations, the 30-second tick (reconcile every Worker, recover Jobs whose Runner stayed away, dispatch Workers with waiting Queue Entries) and the coalesced real-time publishing of Worker, Worker Container, Build, Queue and Job changes.
 - **The Runner hub** holds one WebSocket per Worker Container, authenticates Runners by token, pings them, and lets the backend send messages to a Worker Container's Runner or close its connection.
 - The **database** is the source of truth for configuration, Builds, the observed container states, the Queue and the synchronization records; the containers hold no scheduling state, so any Worker Container can be stopped or recreated at any time between Jobs (see [Runner](runner.md)).
 
@@ -483,18 +516,21 @@ When the backend stops, the scheduler stops and Runner connections close. Worker
 | `AGENT_COMMIT_EMAIL_DOMAIN` | Domain of Agents' commit email addresses (see [Git integration](git-integration.md)) | `agents.claude-task.local` |
 | `WORKER_IDLE_MINUTES` | Minutes a Worker Container above the minimum stays running without a Job | `10` |
 | `WORKER_STOP_WHEN_UNUSED` | `false` turns off the idle stop: running Worker Containers within the cap keep running | `true` |
+| `WORKER_CLEANUP` | `false` turns off the automatic Cleanup: the daily and startup runs, the removal of old Base Images after Builds and of stopped containers on outdated images. "Clean up" keeps working | `true` |
 | `WORKER_STOP_ON_SHUTDOWN` | Stops every Worker Container on a graceful backend shutdown | enabled in development, disabled when `NODE_ENV=production` |
 | `DOCKER_GID` | Docker Compose only: group that owns the Docker socket on the host | `0` |
 | `AGENT_BASE_DOCKERFILE`, `RUNNER_SOURCE_DIR` | Locations of the Base Image recipe and the Runner sources, when they differ from the bundled ones | bundled |
 
 The backend reads the lifecycle settings under their Worker names. When one of `AGENT_STOP_WHEN_UNUSED`, `AGENT_WIKI_IDLE_MINUTES` or `AGENT_STOP_ON_SHUTDOWN` is set, it logs a warning at startup naming the replacement (`WORKER_STOP_WHEN_UNUSED`, `WORKER_IDLE_MINUTES` and `WORKER_STOP_ON_SHUTDOWN` respectively).
 
-Fixed values: cap up to 20 Worker Containers per Worker, reconciler interval 30 seconds, Runner ping interval 30 seconds, Runner reconnect timeout 5 minutes, Build log cap 256 KB, container command timeout 5 minutes, Development Service readiness wait 60 seconds.
+Fixed values: Cleanup every 24 hours, slots above the cap removed after 7 days without a Job, 20 Cleanups kept, cap up to 20 Worker Containers per Worker, reconciler interval 30 seconds, Runner ping interval 30 seconds, Runner reconnect timeout 5 minutes, Build log cap 256 KB, container command timeout 5 minutes, Development Service readiness wait 60 seconds.
 
 ## Data model
 
-- **Worker**: name (unique ignoring case), description, Dockerfile, services, CPU limit, memory limit, minimum, cap, enabled; current image and its Platform Version, image state (`none`, `building`, `built`, `failed`), pending Build flag, timestamps.
-- **Worker Container**: one record per Worker Slot that has ever been started. Worker and slot number (unique together), Runner token hash, the image and limits the container was created with, last observed container state, pending forced recreation flag, Runner connection and disconnection times, Runner and Claude versions reported by the Runner, last Job end time (for the idle stop), last activity. Deleted with its Worker.
+- **Installation**: one record with the Installation id and its creation time.
+- **Cleanup**: trigger (`automatic` or `manual`), the User who asked (kept empty once that User is deleted), start and end times, counts removed per kind (Base Images, Worker Images, untagged images, leftover containers, volumes and images, slots, Bare Clones, Agent Profiles), approximate bytes reclaimed, Worker Volumes still to answer, errors. The 20 latest are kept.
+- **Worker**: name (unique ignoring case), description, Dockerfile, services, CPU limit, memory limit, minimum, cap, enabled; current image and its Platform Version, image state (`none`, `building`, `built`, `failed`), pending Build flag, the Cleanup whose Worker Volume request waits for a Runner, timestamps.
+- **Worker Container**: one record per Worker Slot that has been started, until a Cleanup removes the slot. Worker and slot number (unique together), Runner token hash, the image and limits the container was created with, last observed container state, pending forced recreation flag, Runner connection and disconnection times, Runner and Claude versions reported by the Runner, last Job end time (for the idle stop and the slot retention), last activity. Deleted with its Worker or by a Cleanup.
 - **Build**: Worker, Dockerfile as saved, Platform Version, status (`building`, `succeeded`, `failed`), image produced, log (latest 256 KB), start and end times. Deleted with its Worker.
 - **Agent Profile synchronization**: Worker and Agent (unique together), applied Extensions revision, error, in-progress flag. Deleted with its Worker or its Agent.
 - A **Project** references exactly one Worker. Queue Entries belong to a Worker's Queue, and each Job records the Worker and the Worker Slot it ran on (see [Agent sessions](agent-sessions.md)).
@@ -541,6 +577,11 @@ erDiagram
 - **Development Services run inside the Worker Container, as the `agent` user, on loopback.** Agents run tests against real databases with no extra infrastructure or credentials; one set per container matches the one-Job-at-a-time model of a container, and data lives on the slot's Service Volume so it survives rebuilds.
 - **Extensions synchronize into the Worker Volume instead of the image.** Skills and Plugins change more often than toolchains, and they belong to Agents while the image belongs to the Worker; synchronizing into Agent Profiles between Jobs avoids a rebuild and a recreation for each change. Plugins are installed with Claude Code's own plugin manager, so the platform stores only where they come from.
 - **The platform configures no hooks and no guardrails inside the container.** The Timeline comes from the stdout stream, and the Base Branch is protected by the Git Proxy's Push Policy, so an Agent's permission mode governs only what it does inside its Worker Container.
+- **Cleanup removes only what the platform knows is unused, and labels decide ownership.** Several Installations can share one Docker host, so a Worker id unknown to this database may belong to another Installation. Every data-bearing resource carries the Installation id, and only labelled resources of unknown Workers count as leftovers; older unlabelled volumes go only with their Worker, as before. Base Images are the exception: they hold no data, a missing one is rebuilt at the next Build, and the unlabelled ones from before the label are the largest leftovers, so every outdated tag goes. A host-wide `docker system prune` was rejected because it would reach resources the platform did not create.
+- **A stopped Worker Container on an outdated image is removed, not kept.** Its next start recreates it anyway, and its volumes hold everything worth keeping, while the stopped container pins its image on disk. Removing it lets scale-to-zero Workers drop old images without waiting for every slot to run again.
+- **Slots above the cap are kept for 7 days.** An Admin who lowers the cap and raises it again soon gets the slot's databases back, while slots nobody brings back stop holding Service Volumes forever. A manual Cleanup removes them at once for an Admin who needs the space now.
+- **Worker Volume leftovers go through a Runner, when one is connected.** The Runner already owns the Bare Clone lock and the path checks in the home, so cleaning there cannot collide with a Job preparing a Worktree. Leftovers do not grow while a Worker has no running container, so waiting for its next start costs nothing; starting a container or a throwaway helper just to clean would add a second way to write into the volume.
+- **Caches stay.** Package stores and mise tools make Jobs faster, and the platform has no record of which ones a Repository still needs.
 - **Docker through the host socket, behind one runtime component.** It is the simplest way to manage sibling containers on one host. Keeping every Docker call in one component, with each Runner dialing out, leaves room for remote hosts or Kubernetes later and lets tests run against an in-memory fake with several containers per Worker.
 
 ## Related specs
