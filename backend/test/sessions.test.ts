@@ -705,6 +705,76 @@ describe('Stop, Retry and failures', () => {
     expect((await admin.post(`/tasks/${task.id}/session/stop`)).status).toBe(409);
   });
 
+  it('Interrupt and send interrupts the running Turn and writes the Comment after it, to the same Job', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.toolUse('tool-1', 'Bash', { command: 'sleep 600' })]);
+
+    const form = new FormData();
+    form.set('body', 'Stop waiting, use the cached build.');
+    form.set('interrupt', 'true');
+    const res = await admin.request('POST', `/tasks/${task.id}/comments`, { form });
+    expect(res.status).toBe(201);
+    expect(res.body.comment.delivery).toMatchObject({ state: 'delivered', jobId: start.jobId });
+    const input = await runner.next('job.input', (m) => m.jobId === start.jobId);
+    expect(texts(input.message)).toContain('Stop waiting, use the cached build.');
+    const order = runner.received.filter((m) => m.type === 'job.interrupt' || m.type === 'job.input').map((m) => m.type);
+    expect(order).toEqual(['job.interrupt', 'job.input']);
+
+    // The interrupted Turn ends; the Comment opens the next Turn of the same process.
+    await runner.play(start.jobId, [
+      s.toolResult('tool-1', 'Interrupted', { rejected: true }),
+      { ...s.result({ subtype: 'error_during_execution', isError: true }), result: undefined, terminal_reason: 'aborted_tools' },
+    ]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    const state = async () => comments(await timeline(admin, task.id)).find((c) => c.body === 'Stop waiting, use the cached build.')!.delivery?.state;
+    expect(await state()).toBe('delivered');
+    await runner.play(start.jobId, [s.init(), s.text('Using the cached build.'), s.result()]);
+    await app.settle();
+    expect(await state()).toBe('handled');
+    expect(comments(await timeline(admin, task.id)).filter((c) => c.kind === 'system')).toEqual([]);
+    await runner.exit(start.jobId);
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'idle' });
+  });
+
+  it('Interrupt and send stops the previous Agent and queues the Comment ahead for the new one', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const { agent: other } = await createAgent(app, admin, { name: 'Bea Bot' });
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await runner.drain();
+    await assignAgent(admin, task.id, other.id);
+
+    const res = await admin.post(`/tasks/${task.id}/comments`, { body: 'Bea, take over now.', interrupt: true });
+    expect(res.body.comment.delivery?.state).toBe('queued');
+    await runner.next('job.interrupt', (m) => m.jobId === start.jobId);
+    expect(runner.messages('job.input')).toHaveLength(0);
+
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [{ ...s.result({ subtype: 'error_during_execution', isError: true }), result: undefined, terminal_reason: 'aborted_streaming' }]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    await runner.exit(start.jobId);
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(texts(next.initialMessage)).toContain('Bea, take over now.');
+  });
+
+  it('Interrupt and send with no Turn running delivers the Comment as usual', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const first = await startAndFinish(admin, runner, task.id, agent.id);
+
+    await admin.post(`/tasks/${task.id}/comments`, { body: 'Next step, please.', interrupt: true });
+    const next = await runner.next('job.start', (m) => m.jobId !== first.jobId);
+    expect(texts(next.initialMessage)).toContain('Next step, please.');
+    expect(await runner.none('job.interrupt')).toBe(true);
+  });
+
   it('a failed setup posts the error and waits for Retry', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);

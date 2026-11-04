@@ -508,7 +508,8 @@ export interface CommentEditorHandle {
 type ChatKey = 'ArrowUp' | 'ArrowDown' | 'Enter' | 'Tab' | 'Escape';
 interface ChatHooks {
   onMentionToken?: (token: { query: string } | null) => void;
-  onSubmit?: () => void;
+  /** `interrupt` is Ctrl/⌘+Enter: Interrupt and send. */
+  onSubmit?: (opts: { interrupt: boolean }) => void;
   onCommandToken?: (token: CommandToken | null) => void;
   /** Keys for an open suggestion list; returns whether it used the key. */
   onCommandKey?: (key: ChatKey) => boolean;
@@ -551,12 +552,13 @@ const chatPlugin = realmPlugin<{ hooks: { current: ChatHooks }; editor: { curren
               event?.preventDefault();
               return true;
             }
-            // Enter sends, Shift+Enter breaks the line; inside a list Enter still adds an item.
+            // Enter sends, Shift+Enter breaks the line; inside a list Enter still adds an item, Ctrl/⌘+Enter sends.
             if (name !== 'Enter' || !hooks.current.onSubmit || event?.shiftKey) return false;
+            const interrupt = !!event && (event.ctrlKey || event.metaKey);
             const selection = $getSelection();
-            if ($isRangeSelection(selection) && selection.anchor.getNode().getTopLevelElement()?.getType() === 'list') return false;
+            if (!interrupt && $isRangeSelection(selection) && selection.anchor.getNode().getTopLevelElement()?.getType() === 'list') return false;
             event?.preventDefault();
-            hooks.current.onSubmit();
+            hooks.current.onSubmit({ interrupt });
             return true;
           },
           COMMAND_PRIORITY_HIGH,
@@ -726,7 +728,7 @@ export function CommentEditor({
             }
             if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey && onSubmit) {
               e.preventDefault();
-              onSubmit();
+              onSubmit({ interrupt: e.ctrlKey || e.metaKey });
             }
           }}
         />

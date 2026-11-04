@@ -30,6 +30,11 @@ export interface ProjectionState {
   turnComment?: string | null;
   /** When the Turn last handed input to the model (its start, then each batch of tool results). */
   lastInputAt?: string | null;
+  /**
+   * Tool results not followed by a model call yet. A Stop or an Interrupt and send ends the Turn right after
+   * the rejected results, so the model never reads what was written to stdin meanwhile.
+   */
+  pendingInputAt?: string | null;
   /** The open Activity item, which new tool calls join. */
   activity: string | null;
   /** Where each tool call lives: its Activity item and the index of its entry. */
@@ -188,12 +193,16 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     case 'assistant':
       startTurn();
       clearRetry();
+      if (!e.parent_tool_use_id && s.pendingInputAt) {
+        s.lastInputAt = s.pendingInputAt;
+        s.pendingInputAt = null;
+      }
       if (e.parent_tool_use_id) handleRunMessage(e.parent_tool_use_id as string);
       else handleAssistant();
       break;
     case 'user':
-      // Comments written to stdin so far go to the model with these results.
-      if (!e.parent_tool_use_id) s.lastInputAt = ctx.receivedAt;
+      // Comments written to stdin so far go to the model with these results, once it is called.
+      if (!e.parent_tool_use_id) s.pendingInputAt = ctx.receivedAt;
       handleToolResults();
       break;
     case 'result':
@@ -546,6 +555,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
     s.hasVisibleOutput = false;
     s.turnComment = null;
     s.lastInputAt = null;
+    s.pendingInputAt = null;
     s.syntheticText = null;
     s.limitResetsAt = null;
     s.turns++;

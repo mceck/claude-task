@@ -114,7 +114,7 @@ export async function receiveMultipart(
     for await (const part of request.parts({ limits: { fileSize: ATTACHMENT_MAX_BYTES, files: ATTACHMENT_MAX_FILES } })) {
       if (part.type === 'field') {
         const value = String(part.value);
-        fields[part.fieldname] = part.fieldname === 'internal' ? value === 'true' : value;
+        fields[part.fieldname] = part.fieldname === 'internal' || part.fieldname === 'interrupt' ? value === 'true' : value;
         continue;
       }
       const filename = sanitizeFilename(part.filename);

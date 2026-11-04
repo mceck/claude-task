@@ -512,6 +512,9 @@ class FakeApi implements TaskApi {
   /// What `GET /tasks/:id/skills` answers.
   List<Json> sessionSkills = [];
   int createCount = 0, sendCount = 0, readCount = 0;
+
+  /// The body of the last `POST /tasks/:id/comments`.
+  Json? lastCommentBody;
   final createdTags = <Json>[];
 
   /// Every file of the open Task, as the attachments route returns them.
@@ -771,6 +774,7 @@ class FakeApi implements TaskApi {
     }
     if (path == '/tasks/task-1/comments' && method == 'POST') {
       sendCount++;
+      lastCommentBody = body;
       if (failSend) throw const SocketException('response lost');
       final entry = commentData(
         'sent-$sendCount',

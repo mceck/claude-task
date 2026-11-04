@@ -1,7 +1,7 @@
 import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES, chatCommands, matchCommands, skillToken } from '@claude-task/shared';
 import type { ChatCommand, Comment, ScheduledMessage } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowUp, FileText, Lock, Paperclip, X } from 'lucide-react';
+import { ArrowUp, FileText, Lock, Paperclip, X, Zap } from 'lucide-react';
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
 import type { ClipboardEvent, DragEvent } from 'react';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,8 @@ import { useAgent, useUsers } from '../api/queries';
 import { ErrorText, Kbd } from './common';
 import type { CommandToken, CommentEditorHandle } from './RichMarkdownEditor';
 import { dueError, SchedulePicker, toInstant } from './ScheduledMessages';
+
+const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
 const CommentEditor = lazy(() => import('./RichMarkdownEditor').then((m) => ({ default: m.CommentEditor })));
 
@@ -39,11 +41,14 @@ export function Composer({
   taskId,
   agentId,
   commands,
+  working = false,
   draft,
 }: {
   taskId: string;
   agentId?: string | null;
   commands?: ChatCommand[];
+  /** The Agent is working a Turn on this Task, so a Comment can be sent now. */
+  working?: boolean;
   draft: ReturnType<typeof useCommentDraft>;
 }) {
   const { body, setBody, internal, setInternal, files, setFiles, scheduledFor, setScheduledFor, error, setError, busy, setBusy } = draft;
@@ -101,7 +106,9 @@ export function Composer({
     setFiles(next);
   };
 
-  const submit = async () => {
+  // Interrupt and send stops the Agent's Turn so it reads the Comment at once, instead of after its current step.
+  const canInterrupt = working && !internal && !scheduledFor;
+  const submit = async (interrupt = false) => {
     if (busy || (!body.trim() && files.length === 0)) return;
     const problem = scheduledFor ? dueError(scheduledFor) : null;
     if (problem) return setError(problem);
@@ -110,6 +117,7 @@ export function Composer({
     try {
       let payload: Record<string, unknown> | FormData = { body, internal };
       if (scheduledFor) payload.dueAt = toInstant(scheduledFor);
+      else if (interrupt && canInterrupt) payload.interrupt = true;
       if (files.length > 0) {
         const form = new FormData();
         for (const [name, value] of Object.entries(payload)) form.set(name, String(value));
@@ -201,7 +209,7 @@ export function Composer({
               placeholder={placeholder}
               initialValue={body}
               onChange={setBody}
-              onSubmit={() => void submit()}
+              onSubmit={({ interrupt }) => void submit(interrupt)}
               compact
               onCommandToken={(next) => {
                 if (next?.query !== token?.query || next?.atStart !== token?.atStart) setActive(0);
@@ -264,6 +272,11 @@ export function Composer({
               <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
                 <Kbd>⇧↵</Kbd> new line
               </span>
+              {canInterrupt && (
+                <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @lg:flex">
+                  <Kbd>{MOD_KEY}↵</Kbd> interrupt and send
+                </span>
+              )}
               <SchedulePicker value={scheduledFor} onChange={setScheduledFor} disabled={busy} />
               {/* Schedule and Attach are icons only, so the row fits a narrow Dock panel. */}
               <Button
@@ -276,9 +289,21 @@ export function Composer({
               >
                 <Paperclip />
               </Button>
+              {canInterrupt && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void submit(true)}
+                  disabled={busy || empty}
+                  aria-label="Interrupt and send"
+                  title={`Interrupt and send: stops the agent's current step so it reads this at once (${MOD_KEY}+Enter)`}
+                >
+                  <Zap />
+                </Button>
+              )}
               <Button
                 size="sm"
-                onClick={submit}
+                onClick={() => void submit()}
                 disabled={busy || empty}
                 aria-label={submitLabel}
                 className={cn(internal && 'bg-slate-600 text-white hover:bg-slate-600/85')}
