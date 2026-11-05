@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
 import { putScheduledMessage, putTimelineItem } from '../lib/cache';
 import { commentDrafts } from '../lib/drafts';
-import { useAgent, useUsers } from '../api/queries';
+import { useAgent, useMe, useTimeline, useUsers } from '../api/queries';
 import { ErrorText, Kbd } from './common';
 import type { CommandToken, CommentEditorHandle } from './RichMarkdownEditor';
 import { dueError, SchedulePicker, toInstant } from './ScheduledMessages';
@@ -41,14 +41,14 @@ export function Composer({
   taskId,
   agentId,
   commands,
-  working = false,
+  interruptible = false,
   draft,
 }: {
   taskId: string;
   agentId?: string | null;
   commands?: ChatCommand[];
-  /** The Agent is working a Turn on this Task, so a Comment can be sent now. */
-  working?: boolean;
+  /** The Agent is running a Turn on this Task that Interrupt and send can end. */
+  interruptible?: boolean;
   draft: ReturnType<typeof useCommentDraft>;
 }) {
   const { body, setBody, internal, setInternal, files, setFiles, scheduledFor, setScheduledFor, error, setError, busy, setBusy } = draft;
@@ -106,10 +106,34 @@ export function Composer({
     setFiles(next);
   };
 
-  // Interrupt and send stops the Agent's Turn so it reads the Comment at once, instead of after its current step.
-  const canInterrupt = working && !internal && !scheduledFor;
+  const me = useMe();
+  const timeline = useTimeline(taskId);
+  // One of the User's own Comments the Agent hasn't read yet: an empty Interrupt and send hurries it.
+  const waiting = (timeline.data?.pages[0]?.items ?? []).some(
+    (i) => i.type === 'comment' && i.comment.author.type === 'user' && i.comment.author.id === me.data?.id &&
+      (i.comment.delivery?.state === 'queued' || i.comment.delivery?.state === 'delivered'),
+  );
+  const empty = !body.trim() && files.length === 0;
+  // Interrupt and send stops the Agent's Turn so it reads the Comment at once, instead of after its current
+  // step. With nothing typed it hurries the User's waiting Comments, so it shows only when there are some.
+  const canInterrupt = interruptible && !internal && !scheduledFor && (!empty || waiting);
+  const interruptWaiting = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/tasks/${taskId}/session/interrupt`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
   const submit = async (interrupt = false) => {
-    if (busy || (!body.trim() && files.length === 0)) return;
+    if (busy) return;
+    if (empty) {
+      if (interrupt && canInterrupt) await interruptWaiting();
+      return;
+    }
     const problem = scheduledFor ? dueError(scheduledFor) : null;
     if (problem) return setError(problem);
     setBusy(true);
@@ -171,8 +195,6 @@ export function Composer({
       addFiles([...e.dataTransfer.files]);
     }
   };
-
-  const empty = !body.trim() && files.length === 0;
 
   const placeholder = internal ? 'Write an internal chat…' : 'Leave a comment…';
   const submitLabel = scheduledFor ? 'Schedule' : internal ? 'Send' : 'Comment';
@@ -267,40 +289,42 @@ export function Composer({
                 e.target.value = '';
               }}
             />
-            <div className="ml-auto flex items-center gap-3">
+            <div className="ml-auto flex items-center gap-2">
               {/* Hidden in a narrow Dock panel, where it would push the Comment button out of view. */}
-              <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
+              <span className="mr-1 hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
                 <Kbd>⇧↵</Kbd> new line
               </span>
-              {canInterrupt && (
-                <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @lg:flex">
-                  <Kbd>{MOD_KEY}↵</Kbd> interrupt and send
-                </span>
-              )}
-              <SchedulePicker value={scheduledFor} onChange={setScheduledFor} disabled={busy} />
-              {/* Schedule and Attach are icons only, so the row fits a narrow Dock panel. */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                aria-label="Attach a file"
-                title="Attach a file"
-                onClick={() => fileInput.current?.click()}
-              >
-                <Paperclip />
-              </Button>
-              {canInterrupt && (
+              {/* Schedule, Attach and Interrupt are icons only, kept close, so the row fits a narrow Dock panel. */}
+              <div className="flex items-center gap-0.5">
+                <SchedulePicker value={scheduledFor} onChange={setScheduledFor} disabled={busy} />
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  onClick={() => void submit(true)}
-                  disabled={busy || empty}
-                  aria-label="Interrupt and send"
-                  title={`Interrupt and send: stops the agent's current step so it reads this at once (${MOD_KEY}+Enter)`}
+                  className="text-muted-foreground"
+                  aria-label="Attach a file"
+                  title="Attach a file"
+                  onClick={() => fileInput.current?.click()}
                 >
-                  <Zap />
+                  <Paperclip />
                 </Button>
-              )}
+                {canInterrupt && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-primary hover:text-primary"
+                    onClick={() => void submit(true)}
+                    disabled={busy}
+                    aria-label={empty ? 'Interrupt so the agent reads your message' : 'Interrupt and send'}
+                    title={
+                      empty
+                        ? `Stops the agent's current step so it reads your waiting message now (${MOD_KEY}+Enter)`
+                        : `Interrupt and send: stops the agent's current step so it reads this at once (${MOD_KEY}+Enter)`
+                    }
+                  >
+                    <Zap />
+                  </Button>
+                )}
+              </div>
               <Button
                 size="sm"
                 onClick={() => void submit()}

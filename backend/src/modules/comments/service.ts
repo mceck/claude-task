@@ -327,7 +327,7 @@ export async function deleteComment(
       // The tombstone is withdrawn from its Entry even when other Comments keep it
       // alive: otherwise a deleted Comment would show "Queued" forever.
       ...(queued
-        ? { queueEntryId: null, deliveryState: 'not_delivered' as const, deliveryReason: 'comment deleted', deliveredInJobId: null }
+        ? { queueEntryId: null, deliveryState: 'not_delivered' as const, deliveryReason: 'comment deleted', deliveredInJobId: null, deliveredMessageId: null }
         : {}),
     })
     .where(eq(comments.id, row.id));

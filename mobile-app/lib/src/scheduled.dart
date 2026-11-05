@@ -83,9 +83,9 @@ String _excerpt(String body) {
   return text.length > 140 ? '${text.substring(0, 140)}…' : text;
 }
 
-/// The Task's Scheduled Messages above the composer: the pending ones with
-/// Edit, Cancel and Send now, and a collapsed history of the finished ones.
-/// Hidden when there are none.
+/// The Task's pending Scheduled Messages above the composer, with Edit, Cancel
+/// and Send now. Hidden when none is pending, so the phone keeps the room for
+/// the conversation: a sent message shows on the Timeline as its Comment.
 class ScheduledSection extends StatefulWidget {
   final TaskController controller;
   const ScheduledSection({super.key, required this.controller});
@@ -94,7 +94,6 @@ class ScheduledSection extends StatefulWidget {
 }
 
 class _ScheduledSectionState extends State<ScheduledSection> {
-  bool _history = false;
   String? _busy;
 
   Future<void> _run(ScheduledMessage m, Future<bool> Function() action) async {
@@ -183,8 +182,7 @@ class _ScheduledSectionState extends State<ScheduledSection> {
   Widget build(BuildContext context) {
     final c = widget.controller;
     final pending = c.scheduledMessages.where((m) => m.pending).toList();
-    final finished = c.scheduledMessages.where((m) => !m.pending).toList();
-    if (pending.isEmpty && finished.isEmpty) return const SizedBox.shrink();
+    if (pending.isEmpty) return const SizedBox.shrink();
     return Container(
       key: const Key('scheduled-section'),
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -213,23 +211,6 @@ class _ScheduledSectionState extends State<ScheduledSection> {
                   color: Palette.fgMuted,
                 ),
               ),
-              const Spacer(),
-              if (finished.isNotEmpty)
-                Pressable(
-                  key: const Key('scheduled-history-toggle'),
-                  onTap: () => setState(() => _history = !_history),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  child: Text(
-                    _history ? 'Hide history' : 'History (${finished.length})',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Palette.fgSubtle,
-                    ),
-                  ),
-                ),
             ],
           ),
           for (final m in pending)
@@ -242,13 +223,6 @@ class _ScheduledSectionState extends State<ScheduledSection> {
               onCancel: () => _run(m, () => c.cancelScheduled(m.id)),
               onSendNow: () => _run(m, () => c.sendScheduledNow(m.id)),
             ),
-          if (_history)
-            for (final m in finished)
-              _ScheduledRow(
-                key: ValueKey('scheduled:${m.id}'),
-                message: m,
-                controller: c,
-              ),
         ],
       ),
     );

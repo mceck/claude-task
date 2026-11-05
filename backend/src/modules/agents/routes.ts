@@ -13,7 +13,7 @@ import { badRequest, conflict, notFound, parse } from '../../errors';
 import { latestRateLimits } from '../credentials/service';
 import { withDefaultSkills } from '../extensions/platform-skill';
 import { getTaskRow, unassignDeletedAgent } from '../tasks/service';
-import { retrySession, stopTurn } from '../../sessions/lifecycle';
+import { interruptForWaiting, retrySession, stopTurn } from '../../sessions/lifecycle';
 import { notifyAgent } from '../../sessions/notify';
 import { refreshProjectSkills } from '../../sessions/project-skills';
 import { loadTaskSession } from '../../sessions/view';
@@ -243,6 +243,15 @@ export function agentRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(taskParams, request.params);
     const task = await getTaskRow(ctx.db, id);
     await transact(ctx, (tx, after) => stopTurn(tx, after, task.id));
+    return { session: await loadTaskSession(ctx.db, task.id) };
+  });
+
+  /** Interrupt and send with an empty composer: the caller's waiting Comments are read at once. */
+  app.post('/tasks/:id/session/interrupt', async (request) => {
+    const { id } = parse(taskParams, request.params);
+    const task = await getTaskRow(ctx.db, id);
+    const user = currentUser(request);
+    await transact(ctx, (tx, after) => interruptForWaiting(tx, after, task.id, user.id));
     return { session: await loadTaskSession(ctx.db, task.id) };
   });
 

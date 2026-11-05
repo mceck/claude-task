@@ -169,7 +169,7 @@ What an Agent receives in its Session: one or more Comments merged together, or 
 _Avoid_: prompt, input
 
 **Delivery**:
-Whether a User's Comment has reached the Agent: queued, delivered, handled (the Turn that read it has ended), or not delivered (with a reason).
+Whether a User's Comment has reached the Agent: queued, delivered (written to the Agent's process, not read yet), handled (the Agent has read it), or not delivered (with a reason).
 
 **Scheduled Message**:
 A Comment a User writes ahead of time for a chosen date and time. It stays off the Timeline until then, listed on its Task where any User with access can edit, cancel or send it now. When due it is published as an ordinary Comment by its author and follows the usual Delivery. It is published even when it cannot be delivered, and then shows why.
@@ -448,7 +448,7 @@ Stopping the current Turn without ending the Session. Labelled "Stop" in the UI.
 _Avoid_: cancel, kill (those end the Job)
 
 **Interrupt and send**:
-Posting a User Comment together with an Interrupt of the Agent's running Turn, so the Agent reads the Comment at once instead of after its current tool calls. Ctrl/⌘+Enter in the composer.
+An Interrupt of the Agent's running Turn so it reads a User's Comment at once instead of after its current tool calls: a new Comment posted with it, or, from an empty composer, the User's own Comments still waiting. Ctrl/⌘+Enter in the composer.
 _Avoid_: send now (that is a Scheduled Message or Survey action), force send
 
 ### Git integration

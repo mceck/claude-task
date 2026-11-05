@@ -675,6 +675,104 @@ describe('Comments reaching the Agent', () => {
   });
 });
 
+describe('Comments the Agent reads', () => {
+  const app = useTestApp();
+  const states = async (admin: ApiClient, taskId: string) =>
+    Object.fromEntries(comments(await timeline(admin, taskId)).filter((c) => c.kind === 'user').map((c) => [c.body, c.delivery?.state]));
+
+  it('marks a Comment handled as soon as the CLI echoes the Message that carried it, mid-Turn', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    expect(start.claudeArgs.replayUserMessages).toBe(true);
+    expect(start.initialMessageId).toEqual(expect.any(String));
+    runner.accept(start.jobId);
+    const ws = await WsTestClient.connect(app.url, admin.cookie);
+    await ws.subscribe(taskTopic(task.id));
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.replay(start.initialMessageId!), s.toolUse('tool-1', 'Bash', { command: 'npm test' })]);
+    await app.settle();
+    expect(await states(admin, task.id)).toEqual({ 'Please get started.': 'handled' });
+
+    const steer = await comment(admin, task.id, 'Also check the logout flow.');
+    const input = await runner.next('job.input');
+    expect(input.messageId).toEqual(expect.any(String));
+    // Written, but `claude` takes it only with the next tool results.
+    expect((await states(admin, task.id))[steer.body]).toBe('delivered');
+    await runner.play(start.jobId, [s.toolResult('tool-1', 'ok'), s.replay(input.messageId!)]);
+    await ws.next('comment.updated', (e) => e.comment.id === steer.id && e.comment.delivery?.state === 'handled');
+    ws.close();
+  });
+
+  it("leaves a Comment the CLI never echoed unread at the Turn's end, and requeues it when the process exits", async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.replay(start.initialMessageId!), s.toolUse('tool-1', 'Bash', { command: 'npm test' })]);
+    await app.settle();
+    const lost = await comment(admin, task.id, 'Use port 4000.');
+    await runner.next('job.input');
+    await runner.play(start.jobId, [s.toolResult('tool-1', 'ok'), s.text('Done.'), s.result()]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    expect((await states(admin, task.id))[lost.body]).toBe('delivered');
+
+    await runner.exit(start.jobId);
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(texts(next.initialMessage)).toContain('Use port 4000.');
+    expect(comments(await timeline(admin, task.id)).find((c) => c.id === lost.id)!.delivery).toMatchObject({ state: 'delivered', jobId: next.jobId });
+  });
+
+  it('answers Comments an empty Interrupt and send hurried when `claude` read them just before the interrupt', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.replay(start.initialMessageId!), s.toolUse('tool-1', 'Bash', { command: 'sleep 600' })]);
+    await app.settle();
+    await comment(admin, task.id, 'Reply with KIWI.');
+    const input = await runner.next('job.input');
+
+    expect((await admin.post(`/tasks/${task.id}/session/interrupt`)).status).toBe(200);
+    await runner.next('job.interrupt');
+    // The tool returned and the Message was read before the interrupt landed: the model call it fed was aborted.
+    await runner.play(start.jobId, [
+      s.toolResult('tool-1', 'ok'),
+      s.replay(input.messageId!),
+      { ...s.result({ subtype: 'error_during_execution', isError: true }), result: undefined, terminal_reason: 'aborted_streaming' },
+    ]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    const after = runner.received.filter((m) => (m.type === 'job.input' || m.type === 'job.end') && m.jobId === start.jobId);
+    expect(after.map((m) => m.type)).toEqual(['job.input', 'job.input', 'job.end']);
+    expect(texts((after[1] as { message: InputBlock[] }).message)).toMatch(/interrupted so you would act on the latest message/);
+  });
+
+  it('adds nothing after an empty Interrupt and send whose Comments are still waiting on stdin', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.replay(start.initialMessageId!), s.toolUse('tool-1', 'Bash', { command: 'sleep 600' })]);
+    await app.settle();
+    await comment(admin, task.id, 'Reply with KIWI.');
+    await runner.next('job.input');
+    expect((await admin.post(`/tasks/${task.id}/session/interrupt`)).status).toBe(200);
+    await runner.play(start.jobId, [
+      s.toolResult('tool-1', 'Interrupted', { rejected: true }),
+      { ...s.result({ subtype: 'error_during_execution', isError: true }), result: undefined, terminal_reason: 'aborted_tools' },
+    ]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    expect(runner.messages('job.input')).toHaveLength(1);
+  });
+});
+
 describe('Stop, Retry and failures', () => {
   const app = useTestApp();
 
@@ -762,6 +860,64 @@ describe('Stop, Retry and failures', () => {
     await runner.exit(start.jobId);
     const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
     expect(texts(next.initialMessage)).toContain('Bea, take over now.');
+  });
+
+  it('Interrupt and send also writes what was already waiting for the Task behind the interrupt', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    // Posted while the Job was being dispatched, so it waits in the Task's entry.
+    const early = await comment(admin, task.id, 'Check Safari as well.');
+    expect(early.delivery?.state).toBe('queued');
+    runner.accept(start.jobId);
+    await runner.drain();
+    expect((await getSession(admin, task.id))!.interruptible).toBe(true);
+
+    const res = await admin.post(`/tasks/${task.id}/comments`, { body: 'And Firefox.', interrupt: true });
+    expect(res.body.comment.delivery).toMatchObject({ state: 'delivered', jobId: start.jobId });
+    const input = await runner.next('job.input', (m) => m.jobId === start.jobId);
+    expect(texts(input.message)).toMatch(/Check Safari as well\.[\s\S]*And Firefox\./);
+    expect(runner.received.filter((m) => m.type === 'job.interrupt' || m.type === 'job.input').map((m) => m.type)).toEqual(['job.interrupt', 'job.input']);
+    expect(comments(await timeline(admin, task.id)).find((c) => c.id === early.id)!.delivery).toMatchObject({ state: 'delivered', jobId: start.jobId });
+    expect((await admin.get(`/workers/${app.workerId}/queue`)).body.entries).toEqual([]);
+  });
+
+  it('an empty Interrupt and send makes the Agent read the caller\'s waiting Comments now', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const { client: member } = await createUser(app, admin, { displayName: 'Mia Member' });
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    const queued = await comment(member, task.id, 'Use the staging database.');
+    runner.accept(start.jobId);
+    await runner.drain();
+
+    // Only the author of a waiting Comment can hurry it.
+    const { client: other } = await createUser(app, admin, { displayName: 'Oli Other' });
+    expect((await other.post(`/tasks/${task.id}/session/interrupt`)).status).toBe(409);
+    expect(await runner.none('job.interrupt')).toBe(true);
+
+    expect((await member.post(`/tasks/${task.id}/session/interrupt`)).status).toBe(200);
+    await runner.next('job.interrupt', (m) => m.jobId === start.jobId);
+    const input = await runner.next('job.input', (m) => m.jobId === start.jobId);
+    expect(texts(input.message)).toContain('Use the staging database.');
+    expect(comments(await timeline(admin, task.id)).find((c) => c.id === queued.id)!.delivery).toMatchObject({ state: 'delivered', jobId: start.jobId });
+
+    // Already written to the process: the interrupt alone lets the next Turn read it.
+    const later = await comment(member, task.id, 'Skip the migrations.');
+    expect(later.delivery?.state).toBe('delivered');
+    expect((await member.post(`/tasks/${task.id}/session/interrupt`)).status).toBe(200);
+    await app.settle();
+    expect(runner.messages('job.interrupt')).toHaveLength(2);
+    expect(runner.messages('job.input')).toHaveLength(2);
+
+    // After the result the Turn is over: nothing left to interrupt.
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.text('Done.'), s.result()]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    expect((await getSession(admin, task.id))!.interruptible).toBe(false);
+    expect((await member.post(`/tasks/${task.id}/session/interrupt`)).status).toBe(409);
   });
 
   it('Interrupt and send with no Turn running delivers the Comment as usual', async () => {

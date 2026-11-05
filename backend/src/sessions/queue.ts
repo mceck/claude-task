@@ -80,6 +80,7 @@ export async function attachComments(tx: Executor, after: AfterCommit, entryId: 
       deliveryState: sql`case when ${carriesDelivery} then 'queued'::delivery_state else ${comments.deliveryState} end`,
       deliveryReason: null,
       deliveredInJobId: null,
+      deliveredMessageId: null,
     })
     .where(inArray(comments.id, commentIds));
   after.effect((ctx) => ctx.scheduler.publishComments(commentIds));

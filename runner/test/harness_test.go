@@ -425,6 +425,8 @@ type jobOpts struct {
 	git                                msg
 	attachments                        []msg
 	forwardSubagentText                bool
+	replayUserMessages                 bool
+	messageID                          string
 	profile                            string
 }
 
@@ -458,8 +460,9 @@ func jobStart(o jobOpts) msg {
 			"model": o.model, "effort": o.effort, "permissionMode": "bypassPermissions",
 			"appendSystemPrompt": o.systemPrompt, "mcpConfig": `{"mcpServers":{}}`,
 			"disallowedTools": []string{"AskUserQuestion"}, "forwardSubagentText": o.forwardSubagentText,
+			"replayUserMessages": o.replayUserMessages,
 		},
-		"initialMessage": initial, "attachmentsToFetch": attachments,
+		"initialMessage": initial, "initialMessageId": o.messageID, "attachmentsToFetch": attachments,
 	}
 }
 

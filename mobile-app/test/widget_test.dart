@@ -105,6 +105,7 @@ void main() {
       addTearDown(h.dispose);
       h.api.session = {
         'state': 'running',
+        'interruptible': true,
         'queuePosition': null,
         'held': false,
         'unseenChanges': false,
@@ -115,6 +116,18 @@ void main() {
       await settle();
       final field = find.byKey(const Key('comment-composer'));
       final interrupt = find.byKey(const Key('interrupt-and-send'));
+
+      // Nothing typed: it hurries the User's own Comment the Agent hasn't read.
+      await tester.tap(interrupt);
+      await settle();
+      expect(h.api.sessionActions, ['interrupt']);
+      expect(h.api.sendCount, 0);
+      await tester.showKeyboard(field);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await settle();
+      expect(h.api.sessionActions, ['interrupt', 'interrupt']);
 
       await tester.enterText(field, 'Use the cached build');
       await tester.tap(interrupt);
@@ -139,6 +152,52 @@ void main() {
       await tester.tap(find.byKey(const Key('internal-toggle')));
       await settle();
       expect(interrupt, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'an empty composer offers Interrupt only while an own Comment waits',
+    (tester) async {
+      Future<void> settle() async {
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      }
+
+      final h = Harness();
+      addTearDown(h.dispose);
+      h.api.session = {
+        'state': 'running',
+        'interruptible': true,
+        'queuePosition': null,
+        'held': false,
+        'unseenChanges': false,
+      };
+      // The User's Comment was read already.
+      final read = h.api.items.first;
+      (read['comment'] as Map)['delivery'] = {
+        'state': 'handled',
+        'reason': null,
+      };
+      await h.login();
+      await h.openTask();
+      await tester.pumpWidget(TaskApp(controller: h.controller));
+      await settle();
+      final field = find.byKey(const Key('comment-composer'));
+      final interrupt = find.byKey(const Key('interrupt-and-send'));
+      expect(interrupt, findsNothing);
+      await tester.showKeyboard(field);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await settle();
+      expect(h.api.sessionActions, isEmpty);
+
+      // Typing offers it again, to send the new Comment with an interrupt.
+      await tester.enterText(field, 'One more thing');
+      await settle();
+      expect(interrupt, findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

@@ -146,9 +146,9 @@ export async function applyProjection(
         if (m.turn.commentId) await setAlertComment(tx, turnEventId(job.id, m.turn.index), m.turn.commentId);
         // The card's tool call count is the sum of the Task's Turns: publish it as each one lands.
         after.effect((ctx) => ctx.scheduler.publishTask(job.taskId));
-        {
-          // The Turn read the Comments delivered to its Session before its last model call: they
-          // are handled. One written while it was finishing waits for the Turn that reads it.
+        if (m.turn.readUpTo !== null) {
+          // Without read echoes: the Turn read the Comments delivered to its Session before its last
+          // model call, so they are handled. One written while it was finishing waits for the Turn that reads it.
           const handled = await tx
             .update(comments)
             .set({ deliveryState: 'handled' })
@@ -161,6 +161,16 @@ export async function applyProjection(
         failedTurnEvent = m.turn.isError ? turnEventId(job.id, m.turn.index) : null;
         if (!m.turn.isError) await onTurnWorked(tx, after, job.taskId);
         break;
+      case 'message_read': {
+        // `claude` added the Message to the conversation: its Comments are read, mid-Turn.
+        const read = await tx
+          .update(comments)
+          .set({ deliveryState: 'handled' })
+          .where(and(eq(comments.taskId, job.taskId), eq(comments.deliveryState, 'delivered'), eq(comments.deliveredMessageId, m.messageId)))
+          .returning({ id: comments.id });
+        for (const { id } of read) if (!created.includes(id) && !updated.includes(id)) updated.push(id);
+        break;
+      }
       case 'rate_limit':
         if (credentialId) await tx.insert(rateLimitObservations).values({ credentialId, agentId: job.agentId, payload: m.info });
         break;

@@ -2,13 +2,14 @@
 // reopening a Task, and how a User's Comment reaches the Agent. One Session per Task, whichever Agent
 // works it. Lock order: project → task → worker → session → job → queue entries. The Worker's row lock
 // serializes every change to its Queue and dispatch, so the dispatcher may take its entry before the Session.
+import { randomUUID } from 'node:crypto';
 import { cancelLimitResumes } from '../modules/scheduled-messages/service';
 import { commandName, taskKey } from '@claude-task/shared';
-import { and, asc, eq, gt, inArray, isNull, ne, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 import { transactWithRetry } from '../context';
 import type { AfterCommit, AppContext } from '../context';
 import type { Executor } from '../db/client';
-import { comments, jobs, projects, sessions, statuses, tasks } from '../db/schema';
+import { comments, jobs, projects, queueEntries, sessions, statuses, tasks } from '../db/schema';
 import { conflict, notFound } from '../errors';
 import { gitOwnerTask } from '../git/owner';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
@@ -18,6 +19,7 @@ import { getWorkerRow, workerOfTask } from '../modules/workers/service';
 import { renderComments } from './messages';
 import type { CommentRow } from './messages';
 import { attachComments, carriesDelivery, enqueue, getEntry, removeEntry } from './queue';
+import type { EntryRow } from './queue';
 import type { SessionRow } from './view';
 
 /** Deterministic per (Project, Task), because `--resume` needs the same cwd (docs/specs/agent-sessions.md). */
@@ -242,10 +244,10 @@ export async function deliverComment(
     .from(tasks)
     .where(eq(tasks.id, taskRef.id));
   if (!task?.currentSessionId) return 'none';
-  const setDelivery = async (state: 'delivered' | 'not_delivered', reason: string | null, jobId: string | null) => {
+  const setDelivery = async (state: 'delivered' | 'not_delivered', reason: string | null, jobId: string | null, messageId: string | null = null) => {
     await tx
       .update(comments)
-      .set({ deliveryState: state, deliveryReason: reason, deliveredInJobId: jobId, queueEntryId: null })
+      .set({ deliveryState: state, deliveryReason: reason, deliveredInJobId: jobId, deliveredMessageId: messageId, queueEntryId: null })
       .where(eq(comments.id, comment.id));
     after.effect((ctx) => ctx.scheduler.publishComments([comment.id]));
   };
@@ -267,33 +269,17 @@ export async function deliverComment(
   const job = await activeJob(tx, session.id, true);
   // Native commands run at a Job boundary, after the active response has finished.
   const waiting = await getEntry(tx, task.id);
-  // Only a Turn that is actually running can take more input. A Job that was told to
-  // end or cancel keeps running while its stdin is already closed, so writing to it
-  // would lose the Comment; those go through the Queue instead. A Job of the previous
-  // Agent finishes its Turn alone: what is written now is for the Task's Agent.
-  const canInject =
-    job &&
-    job.containerId &&
-    job.agentId === task.agentId &&
-    !job.discardOutput &&
-    !job.cancelRequested &&
-    job.state === 'running' &&
-    session.state === 'running' &&
-    !waiting &&
-    !commandName(comment.body) &&
-    after.ctx.runners.isReady(job.containerId);
+  const takesInput = job !== null && acceptsInput(after, task.agentId, session, job);
+  const canInject = takesInput && !waiting && !commandName(comment.body);
   // Interrupt and send: the interrupt goes ahead of the Message, so `claude` ends the Turn and the
-  // Message opens a new one in the same process. A queued Comment runs once the Job ends.
-  const interrupt = opts.interrupt === true && job !== null && job.containerId !== null &&
-    job.state === 'running' && !job.cancelRequested && !job.discardOutput;
-  if (interrupt) {
-    const containerId = job.containerId!;
-    after.effect((ctx) => ctx.runners.send(containerId, { type: 'job.interrupt', jobId: job.id }));
-  }
+  // Message opens a new one in the same process.
+  const interrupt = opts.interrupt === true && job !== null && interruptible(job);
+  if (interrupt) sendInterrupt(after, job);
   if (canInject) {
     const containerId = job.containerId!;
     const parts = await renderComments(after.ctx, tx, [comment]);
-    await setDelivery('delivered', null, job.id);
+    const messageId = randomUUID();
+    await setDelivery('delivered', null, job.id, messageId);
     if (comment.noticeTaskVersion !== null) {
       await tx
         .update(sessions)
@@ -302,7 +288,7 @@ export async function deliverComment(
       publishSession(after, task.id, null);
     }
     after.effect((ctx) => {
-      if (!ctx.runners.send(containerId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch }))
+      if (!ctx.runners.send(containerId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch, messageId }))
         void requeueUnsentComment(ctx, comment.id, job.id).catch((err) => ctx.log.error({ err, commentId: comment.id }, 'could not requeue an unsent Comment'));
     });
     return 'delivered';
@@ -320,7 +306,76 @@ export async function deliverComment(
     front: job !== null,
   });
   await attachComments(tx, after, entry.id, [comment.id]);
+  // Behind the interrupt, what waits for this Task goes to the running process too, this Comment
+  // among it. Otherwise it runs once the Job ends, at the front of the Queue.
+  if (interrupt && takesInput && (await injectEntry(tx, after, session, job!, entry)).includes(comment.id)) return 'delivered';
   return 'queued';
+}
+
+/**
+ * Only a Turn that is actually running can take more input. A Job that was told to end or
+ * cancel keeps running while its stdin is already closed, so writing to it would lose the
+ * Comment; those go through the Queue instead. A Job of the previous Agent finishes its Turn
+ * alone: what is written now is for the Task's Agent.
+ */
+function acceptsInput(after: AfterCommit, agentId: string | null, session: SessionRow, job: JobRow): boolean {
+  return interruptible(job) && job.agentId === agentId && session.state === 'running' && after.ctx.runners.isReady(job.containerId!);
+}
+
+/** A Turn that is running and still listening: Stop or an Interrupt and send can end it. */
+function interruptible(job: JobRow): boolean {
+  return job.containerId !== null && job.state === 'running' && !job.cancelRequested && !job.discardOutput;
+}
+
+function sendInterrupt(after: AfterCommit, job: JobRow): void {
+  const containerId = job.containerId!;
+  after.effect((ctx) => ctx.runners.send(containerId, { type: 'job.interrupt', jobId: job.id }));
+}
+
+/**
+ * Writes the Comments of the Task's entry to its running process as one Message, up to the first
+ * native command, which keeps waiting for a Job boundary. Returns the Comments written. A `start`
+ * entry only means the Session had not started when they queued; its Job is running now.
+ */
+async function injectEntry(tx: Executor, after: AfterCommit, session: SessionRow, job: JobRow, entry: EntryRow): Promise<string[]> {
+  if (entry.kind === 'resume_interrupted') return [];
+  const attached = await tx
+    .select()
+    .from(comments)
+    .where(and(eq(comments.queueEntryId, entry.id), isNull(comments.deletedAt)))
+    .orderBy(asc(comments.createdAt), asc(comments.id));
+  const command = attached.findIndex((c) => c.kind === 'user' && !c.noticeMessage && commandName(c.body));
+  const batch = command < 0 ? attached : attached.slice(0, command);
+  if (batch.length === 0) return [];
+  const ids = batch.map((c) => c.id);
+  const parts = await renderComments(after.ctx, tx, batch);
+  const messageId = randomUUID();
+  await tx
+    .update(comments)
+    .set({
+      queueEntryId: null,
+      deliveredInJobId: job.id,
+      deliveredMessageId: messageId,
+      deliveryState: sql`case when ${carriesDelivery} then 'delivered'::delivery_state else ${comments.deliveryState} end`,
+      deliveryReason: null,
+    })
+    .where(inArray(comments.id, ids));
+  after.effect((ctx) => ctx.scheduler.publishComments(ids));
+  if (batch.length === attached.length) {
+    await tx.delete(queueEntries).where(eq(queueEntries.id, entry.id));
+    after.effect((ctx) => ctx.scheduler.publishQueue(entry.workerId, [entry.taskId]));
+  }
+  const seen = Math.max(0, ...batch.map((c) => c.noticeTaskVersion ?? 0));
+  if (seen > session.lastSeenTaskVersion) {
+    await tx.update(sessions).set({ lastSeenTaskVersion: sql`greatest(${sessions.lastSeenTaskVersion}, ${seen})` }).where(eq(sessions.id, session.id));
+  }
+  publishSession(after, entry.taskId, null);
+  const containerId = job.containerId!;
+  after.effect((ctx) => {
+    if (ctx.runners.send(containerId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch, messageId })) return;
+    for (const id of ids) void requeueUnsentComment(ctx, id, job.id).catch((err) => ctx.log.error({ err, commentId: id }, 'could not requeue an unsent Comment'));
+  });
+  return ids;
 }
 
 /** A mid-Turn write whose socket had already closed: put the Comment back in the Queue. */
@@ -340,7 +395,7 @@ async function requeueUnsentComment(ctx: AppContext, commentId: string, jobId: s
     const failed = async (reason: string) => {
       await tx
         .update(comments)
-        .set({ deliveryState: 'not_delivered', deliveryReason: reason, deliveredInJobId: null, queueEntryId: null })
+        .set({ deliveryState: 'not_delivered', deliveryReason: reason, deliveredInJobId: null, deliveredMessageId: null, queueEntryId: null })
         .where(eq(comments.id, commentId));
       after.effect((c) => c.scheduler.publishComments([commentId]));
     };
@@ -376,6 +431,49 @@ export async function stopTurn(tx: Executor, after: AfterCommit, taskId: string)
   if (!job || job.state === 'finishing' || !job.containerId) throw conflict('The agent is not running a turn on this task');
   const containerId = job.containerId;
   after.effect((ctx) => ctx.runners.send(containerId, { type: 'job.interrupt', jobId: job.id }));
+}
+
+/**
+ * Interrupt and send with nothing new to say: the Turn stops, so the Agent reads the User's
+ * Comments still waiting for it now. Those already written to the process are read by the next
+ * Turn; those queued for this Task go to the process right behind the interrupt.
+ */
+export async function interruptForWaiting(tx: Executor, after: AfterCommit, taskId: string, userId: string): Promise<void> {
+  // Injecting changes Deliveries, so this takes the locks a Comment does, in the same order.
+  const [peek] = await tx.select({ projectId: tasks.projectId }).from(tasks).where(eq(tasks.id, taskId));
+  if (!peek) throw notFound('Task');
+  await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, peek.projectId)).for('share');
+  const [task] = await tx.select().from(tasks).where(eq(tasks.id, taskId)).for('update');
+  if (!task?.currentSessionId) throw conflict('No agent is working on this task');
+  await lockTaskWorker(tx, taskId);
+  const session = await lockSession(tx, taskId);
+  const job = session && (await activeJob(tx, session.id, true));
+  if (!session || !job || !interruptible(job)) throw conflict('The agent is not running a turn on this task');
+  const entry = await getEntry(tx, taskId, true);
+  const [mine] = await tx
+    .select({ id: comments.id })
+    .from(comments)
+    .where(and(
+      eq(comments.taskId, taskId),
+      eq(comments.authorType, 'user'),
+      eq(comments.authorId, userId),
+      isNull(comments.deletedAt),
+      or(
+        and(eq(comments.deliveryState, 'delivered'), eq(comments.deliveredInJobId, job.id)),
+        entry ? and(eq(comments.deliveryState, 'queued'), eq(comments.queueEntryId, entry.id)) : sql`false`,
+      ),
+    ))
+    .limit(1);
+  if (!mine) throw conflict('None of your messages is waiting for the agent');
+  sendInterrupt(after, job);
+  const injected = entry && acceptsInput(after, task.agentId, session, job) ? await injectEntry(tx, after, session, job, entry) : [];
+  // What the interrupt hurries is on the process's stdin now; the end of the Turn checks it was answered.
+  const [onStdin] = injected.length > 0 ? [true] : await tx
+    .select({ id: comments.id })
+    .from(comments)
+    .where(and(eq(comments.deliveredInJobId, job.id), eq(comments.deliveryState, 'delivered')))
+    .limit(1);
+  if (onStdin) await tx.update(jobs).set({ hurried: true }).where(eq(jobs.id, job.id));
 }
 
 /** Retry after a failed Job: releases the held Queue Entry. */

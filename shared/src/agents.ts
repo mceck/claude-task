@@ -140,6 +140,11 @@ export interface TaskSession {
   unseenChanges: boolean;
   /** Context the conversation carries after its latest Turn; null before the first one. */
   context: ContextUsage | null;
+  /**
+   * A Turn is running and listening, so Stop and Interrupt and send can end it. False while
+   * the Job is still being dispatched, or finishing after its `result`.
+   */
+  interruptible: boolean;
   /** Version of the latest failed Job, so the UI can offer Retry. */
   lastJob: { id: string; state: JobState; failureStage: string | null; error: string | null } | null;
 }

@@ -79,14 +79,11 @@ void main() {
       _tooltip((m) => m.startsWith('Delivered to Ada Bot · ')),
       findsOneWidget,
     );
-    expect(
-      _tooltip((m) => m.startsWith('Handled by Ada Bot · ')),
-      findsOneWidget,
-    );
+    expect(_tooltip((m) => m.startsWith('Read by Ada Bot · ')), findsOneWidget);
     expect(_tooltip((m) => m == 'Not delivered: task closed'), findsOneWidget);
     final handled = tester.widget<Icon>(
       find.descendant(
-        of: _tooltip((m) => m.startsWith('Handled')),
+        of: _tooltip((m) => m.startsWith('Read by')),
         matching: find.byType(Icon),
       ),
     );

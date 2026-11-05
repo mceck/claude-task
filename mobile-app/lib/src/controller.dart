@@ -1875,8 +1875,25 @@ class TaskController extends ChangeNotifier {
     }
   }
 
-  /// The Agent is working a Turn on the open Task, so it can be interrupted.
-  bool get agentWorking => session?['state'] == 'running';
+  /// The Agent is running a Turn on the open Task that Interrupt and send can end.
+  bool get interruptible => session?['interruptible'] == true;
+
+  /// One of the User's own Comments the Agent hasn't read yet: an empty
+  /// Interrupt and send hurries it.
+  bool get ownMessageWaiting => timeline.any(
+    (e) =>
+        e.type == 'comment' &&
+        e.content['kind'] == 'user' &&
+        e.authorId != null &&
+        e.authorId == user?.id &&
+        const {
+          'queued',
+          'delivered',
+        }.contains((e.content['delivery'] as Map?)?['state']),
+  );
+
+  /// Stops the running Turn so the Agent reads the User's waiting Comments now.
+  Future<void> interruptForWaiting() => sessionAction('interrupt');
 
   /// [interrupt] is Interrupt and send: the Agent's running Turn is stopped
   /// so it reads the Comment at once, instead of after its current step.
@@ -1911,7 +1928,7 @@ class TaskController extends ChangeNotifier {
         body: {
           'body': value.text,
           'internal': value.internal,
-          if (interrupt && agentWorking && !value.internal) 'interrupt': true,
+          if (interrupt && interruptible && !value.internal) 'interrupt': true,
         },
         files: value.files,
       );

@@ -270,7 +270,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
     s.result(),
   ]);
   await expect(page.getByLabel('Turn summary')).toContainText('Turn finished');
-  await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Handled by Runtime agent/)).toBeVisible();
+  await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Read by Runtime agent/)).toBeVisible();
   await replay(page.request, project.workerId, job.jobId, [], true);
   await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
 
@@ -306,9 +306,16 @@ test('Interrupt and send stops the turn and delivers the comment right after, fr
   await page.getByRole('button', { name: 'Interrupt and send', exact: true }).click();
   await expect.poll(sent).toEqual(['job.interrupt', 'job.input', 'job.interrupt', 'job.input']);
 
+  // With nothing typed, it hurries the User's message the Agent hasn't read yet.
+  await box.fill('');
+  await expect(page.getByRole('button', { name: 'Interrupt so the agent reads your message', exact: true })).toBeVisible();
+  await box.press('Control+Enter');
+  await expect.poll(sent).toEqual(['job.interrupt', 'job.input', 'job.interrupt', 'job.input', 'job.interrupt']);
+
   await replay(page.request, project.workerId, job.jobId, [s.text('Done.'), s.result()], true);
   await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Interrupt and send', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Interrupt so the agent reads your message', exact: true })).toHaveCount(0);
 });
 
 test('lays out an expanded Bash command one step per line', async ({ page }) => {

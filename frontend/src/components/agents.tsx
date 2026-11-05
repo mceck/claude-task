@@ -215,7 +215,7 @@ export function deliveryLabel(delivery: Delivery, agentName: string | null): str
     case 'delivered':
       return `Delivered to ${agent}${clock(delivery.at)}`;
     case 'handled':
-      return `Handled by ${agent}${clock(delivery.at)}`;
+      return `Read by ${agent}${clock(delivery.at)}`;
     case 'not_delivered':
       return `Not delivered${delivery.reason ? `: ${delivery.reason}` : ''}`;
   }

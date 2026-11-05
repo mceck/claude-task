@@ -515,6 +515,9 @@ class FakeApi implements TaskApi {
 
   /// The body of the last `POST /tasks/:id/comments`.
   Json? lastCommentBody;
+
+  /// Each `POST /tasks/:id/session/<action>`, in order.
+  final sessionActions = <String>[];
   final createdTags = <Json>[];
 
   /// Every file of the open Task, as the attachments route returns them.
@@ -760,6 +763,7 @@ class FakeApi implements TaskApi {
     }
     if (path == '/tasks/task-1/skills') return {'skills': sessionSkills};
     if (path.startsWith('/tasks/task-1/session/') && method == 'POST') {
+      sessionActions.add(path.split('/').last);
       session = {...?session, 'unseenChanges': false};
       return {'session': session};
     }

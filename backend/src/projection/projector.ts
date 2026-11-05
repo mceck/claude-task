@@ -31,6 +31,11 @@ export interface ProjectionState {
   /** When the Turn last handed input to the model (its start, then each batch of tool results). */
   lastInputAt?: string | null;
   /**
+   * The CLI echoes each Message as it reads it (`--replay-user-messages`): Deliveries follow those
+   * echoes, and the end of a Turn no longer estimates what it read.
+   */
+  reads?: boolean;
+  /**
    * Tool results not followed by a model call yet. A Stop or an Interrupt and send ends the Turn right after
    * the rejected results, so the model never reads what was written to stdin meanwhile.
    */
@@ -74,8 +79,11 @@ export interface TurnRecord extends TurnSummary {
   stopReason: string | null;
   /** The last Agent Comment of the Turn. */
   commentId: string | null;
-  /** Comments delivered up to then reached one of the Turn's model calls. */
-  readUpTo: string;
+  /**
+   * Comments delivered up to then reached one of the Turn's model calls. Null when the CLI
+   * reports its reads itself, which then decide alone.
+   */
+  readUpTo: string | null;
 }
 
 export type Mutation =
@@ -91,6 +99,8 @@ export type Mutation =
   /** `limitResetsAt` (ISO) is set when the Comment reports a usage limit that says when it resets. */
   | { op: 'system_comment'; body: string; limitResetsAt?: string }
   | { op: 'turn'; turn: TurnRecord }
+  /** The CLI read the Message written with this `uuid`. */
+  | { op: 'message_read'; messageId: string }
   | { op: 'rate_limit'; info: Record<string, unknown> }
   | { op: 'init'; claudeVersion: string | null; mcpServers: unknown[]; slashCommands: string[] | null };
 
@@ -201,6 +211,14 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
       else handleAssistant();
       break;
     case 'user':
+      if (e.isReplay === true) {
+        // The CLI just added a Message it read from stdin to the conversation.
+        if (!e.parent_tool_use_id && typeof e.uuid === 'string') {
+          s.reads = true;
+          mutations.push({ op: 'message_read', messageId: e.uuid });
+        }
+        break;
+      }
       // Comments written to stdin so far go to the model with these results, once it is called.
       if (!e.parent_tool_use_id) s.pendingInputAt = ctx.receivedAt;
       handleToolResults();
@@ -541,7 +559,7 @@ export function project(prev: ProjectionState, event: unknown, ctx: ProjectionCo
         finishedAt: ctx.receivedAt,
         stopReason: typeof e.stop_reason === 'string' ? e.stop_reason : null,
         commentId: s.turnComment ?? null,
-        readUpTo: s.lastInputAt ?? s.turnStartedAt ?? ctx.receivedAt,
+        readUpTo: s.reads ? null : (s.lastInputAt ?? s.turnStartedAt ?? ctx.receivedAt),
       },
     });
     if (isError) {

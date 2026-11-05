@@ -11,6 +11,9 @@
 //	FAKE_CLAUDE_EXIT         exit right away with this code, after writing FAKE_CLAUDE_STDERR
 //	FAKE_CLAUDE_VERSION      what `--version` answers (default 9.9.9); "fail" exits 1
 //
+// With `--replay-user-messages` each user message is echoed with its `uuid` as it is read: at the
+// start of its Turn, or with the tool result for one that arrived during the tool.
+//
 // Message text keywords: "CRASH" kills the process with SIGKILL, "HANG" runs the tool until
 // interrupted, "STUCK" stops responding to anything, "SPAWN" leaves a background process in its
 // process group (pid in ./bg.pid), "TRICKLE" leaves one in its own session that keeps writing
@@ -27,6 +30,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,6 +128,7 @@ func main() {
 
 // turn answers one message and returns the stdin channel, nil once stdin is closed.
 func turn(m map[string]any, lines chan map[string]any) chan map[string]any {
+	replay(m)
 	text := messageText(m)
 	if strings.Contains(text, "CRASH") {
 		syscall.Kill(os.Getpid(), syscall.SIGKILL)
@@ -149,6 +154,7 @@ func turn(m map[string]any, lines chan map[string]any) chan map[string]any {
 	toolMs, _ := strconv.Atoi(os.Getenv("FAKE_CLAUDE_TOOL_MS"))
 	hang := strings.Contains(text, "HANG")
 	var noted []string
+	var read []map[string]any
 	interrupted := false
 	if toolMs > 0 || hang {
 		toolID := fmt.Sprintf("toolu_%d", time.Now().UnixNano())
@@ -176,11 +182,16 @@ func turn(m map[string]any, lines chan map[string]any) chan map[string]any {
 					continue
 				}
 				noted = append(noted, messageText(next))
+				read = append(read, next)
 			}
 		}
 		emit(map[string]any{"type": "user", "session_id": sessionID, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": []any{
 			map[string]any{"type": "tool_result", "tool_use_id": toolID, "content": "ok", "is_error": interrupted},
 		}}})
+		// Messages that arrived during the tool join the conversation with its result.
+		for _, m := range read {
+			replay(m)
+		}
 	}
 	for _, n := range noted {
 		assistant(msgID, map[string]any{"type": "text", "text": "Also noted: " + n})
@@ -296,6 +307,14 @@ func messageText(m map[string]any) string {
 func assistant(msgID string, block map[string]any) {
 	emit(map[string]any{"type": "assistant", "session_id": sessionID, "parent_tool_use_id": nil,
 		"message": map[string]any{"id": msgID, "role": "assistant", "model": "fake-model", "content": []any{block}}})
+}
+
+// replay echoes a user message as it is read, like `--replay-user-messages`.
+func replay(m map[string]any) {
+	if !slices.Contains(rec.Args, "--replay-user-messages") {
+		return
+	}
+	emit(map[string]any{"type": "user", "isReplay": true, "uuid": m["uuid"], "session_id": sessionID, "parent_tool_use_id": nil, "message": m["message"]})
 }
 
 func emit(v map[string]any) {

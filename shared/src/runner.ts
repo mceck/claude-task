@@ -77,6 +77,12 @@ export interface ClaudeArgs {
    * it is about to spawn supports it.
    */
   forwardSubagentText: boolean;
+  /**
+   * Delivery reads need `--replay-user-messages`: the CLI echoes each user message, with its
+   * `uuid`, when it adds it to the conversation (from its 2.0.0, as far as the Runner assumes).
+   * The Runner adds the flag when the `claude` it is about to spawn supports it.
+   */
+  replayUserMessages: boolean;
 }
 
 /** One requested path in an upload's manifest, in request order; `error` when it failed. */
@@ -110,6 +116,8 @@ export interface JobStartMessage {
   claudeArgs: ClaudeArgs;
   /** The first user message; null writes nothing. */
   initialMessage: InputBlock[] | null;
+  /** Written as the initial message's `uuid`, which the CLI's replay echoes once it reads it. */
+  initialMessageId: string | null;
   /** Fetched into the Worktree before the initial message is written. */
   attachmentsToFetch: AttachmentToFetch[];
 }
@@ -117,7 +125,7 @@ export interface JobStartMessage {
 export type BackendToRunner =
   | JobStartMessage
   /** Write a user message to stdin (attachments are fetched first). */
-  | { type: 'job.input'; jobId: string; message: InputBlock[]; attachmentsToFetch: AttachmentToFetch[] }
+  | { type: 'job.input'; jobId: string; message: InputBlock[]; attachmentsToFetch: AttachmentToFetch[]; messageId?: string }
   /** Interrupt the current Turn (stream-json `control_request` interrupt); the process keeps running. */
   | { type: 'job.interrupt'; jobId: string }
   /** Close stdin: `claude` finishes what was already written, then exits. */

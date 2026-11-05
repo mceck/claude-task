@@ -228,6 +228,8 @@ export function startMessage(
 export const RESUME_MESSAGE = 'The previous run was interrupted by a restart; continue where you left off.';
 /** What an existing Session receives when its entry carries nothing else to deliver. */
 export const CONTINUE_MESSAGE = 'Read the task with get_task to catch up on any changes, then continue.';
+/** After an empty Interrupt and send whose Comments were read right before the interrupt, so nothing answered them. */
+export const HURRY_MESSAGE = 'You were interrupted so you would act on the latest message above at once. Do that now.';
 
 /** The Agent Change Notice: the first Message after the Task's Agent changed opens with it. */
 export function agentChangeNotice(agentName: string, previousName: string | null): string {
