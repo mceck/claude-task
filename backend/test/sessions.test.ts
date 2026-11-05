@@ -747,7 +747,7 @@ describe('Comments the Agent reads', () => {
       { ...s.result({ subtype: 'error_during_execution', isError: true }), result: undefined, terminal_reason: 'aborted_streaming' },
     ]);
     await runner.next('job.end', (m) => m.jobId === start.jobId);
-    const after = runner.received.filter((m) => m.jobId === start.jobId && ['job.input', 'job.end'].includes(m.type));
+    const after = runner.received.filter((m) => (m.type === 'job.input' || m.type === 'job.end') && m.jobId === start.jobId);
     expect(after.map((m) => m.type)).toEqual(['job.input', 'job.input', 'job.end']);
     expect(texts((after[1] as { message: InputBlock[] }).message)).toMatch(/interrupted so you would act on the latest message/);
   });
