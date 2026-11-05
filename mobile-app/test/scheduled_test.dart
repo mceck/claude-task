@@ -234,11 +234,9 @@ void main() {
       expect(find.text('Ping the team'), findsOneWidget);
       expect(find.text('Internal chat'), findsWidgets);
       expect(find.text('Resume after usage limit'), findsOneWidget);
-      // History is collapsed.
+      // Finished messages are not listed: the phone keeps the pending ones only.
       expect(find.byKey(const ValueKey('scheduled:s3')), findsNothing);
-      await tester.tap(find.byKey(const Key('scheduled-history-toggle')));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Cancelled · Superseded'), findsOneWidget);
+      expect(find.textContaining('Cancelled · Superseded'), findsNothing);
 
       h.api.scheduleTool = (method, path, body) {
         final id = path.split('/')[2];
@@ -257,7 +255,8 @@ void main() {
       await tester.tap(find.byKey(const Key('scheduled-send:s2')));
       await tester.pumpAndSettle();
       expect(h.api.calls, contains('POST /scheduled-messages/s2/send'));
-      expect(find.byKey(const Key('scheduled-section')), findsOneWidget);
+      // Nothing pending is left, so the section goes away.
+      expect(find.byKey(const Key('scheduled-section')), findsNothing);
     });
 
     testWidgets('editing a Limit Resume changes only its time', (tester) async {
