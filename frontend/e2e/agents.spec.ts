@@ -270,7 +270,7 @@ test('streams a turn, expands thinking and activities, delivers comments, stops 
     s.result(),
   ]);
   await expect(page.getByLabel('Turn summary')).toContainText('Turn finished');
-  await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Handled by Runtime agent/)).toBeVisible();
+  await expect(page.locator('li').filter({ hasText: 'Please check logout too.' }).getByLabel(/^Delivery: Read by Runtime agent/)).toBeVisible();
   await replay(page.request, project.workerId, job.jobId, [], true);
   await expect(page.getByLabel('Session: waiting for messages')).toBeVisible();
 

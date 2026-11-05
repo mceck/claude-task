@@ -18,6 +18,7 @@ import { endJob, initialProjection, project } from '../projection/projector';
 import type { ProjectionState } from '../projection/projector';
 import { projectSkills } from '../sessions/project-skills';
 import { captureWorktreeStatus } from '../sessions/worktree-status';
+import { HURRY_MESSAGE } from '../sessions/messages';
 import { attachComments, enqueue } from '../sessions/queue';
 
 /** Setup output and stderr are kept up to this size (the tail). */
@@ -240,8 +241,17 @@ async function processJobMessage(
     case 'job.result':
       // End of a Turn: let `claude` finish what's already on stdin, then exit. Later Comments queue.
       if (job.state === 'running' || job.state === 'dispatched') {
-        await tx.update(jobs).set({ state: 'finishing' }).where(eq(jobs.id, job.id));
+        await tx.update(jobs).set({ state: 'finishing', hurried: false }).where(eq(jobs.id, job.id));
+        // An empty Interrupt and send whose Comments `claude` read just before the interrupt: the
+        // aborted Turn never answered them, and nothing left on stdin starts another Turn.
+        const [unread] = job.hurried
+          ? await tx.select({ id: comments.id }).from(comments).where(and(eq(comments.deliveredInJobId, job.id), eq(comments.deliveryState, 'delivered'))).limit(1)
+          : [];
+        const nudge = job.hurried && !unread;
         after.effect((ctx) => {
+          if (job.containerId && nudge) {
+            ctx.runners.send(job.containerId, { type: 'job.input', jobId: job.id, message: [{ type: 'text', text: HURRY_MESSAGE }], attachmentsToFetch: [] });
+          }
           if (job.containerId) ctx.runners.send(job.containerId, { type: 'job.end', jobId: job.id });
           ctx.scheduler.publishJob(job.id);
           // The Turn can no longer be interrupted: clients hide Interrupt and send.
@@ -301,6 +311,10 @@ async function processJobMessage(
           "The agent's conversation already existed, so its next run resumes it. Post a comment (or press **Retry**) to continue.",
         );
         if (session.state === 'running') await requeue(tx, after, job, { ...session, started: true }, { held: true });
+      } else if (!crashed && !job.cancelRequested && session.state === 'running' && (job.projection as ProjectionState | null)?.reads) {
+        // The CLI echoes every Message it reads: one still unread when it exits never reached the
+        // Agent (an interrupt can drop what was waiting), so it goes back to the front of the Queue.
+        await requeueUnread(tx, after, job, session);
       } else if (crashed) {
         await reportJobFailure(
           tx,
@@ -450,6 +464,16 @@ async function requeue(tx: Executor, after: AfterCommit, job: JobRow, session: t
     entry.id,
     delivered.map((c) => c.id),
   );
+}
+
+async function requeueUnread(tx: Executor, after: AfterCommit, job: JobRow, session: typeof sessions.$inferSelect) {
+  const unread = await tx
+    .select({ id: comments.id })
+    .from(comments)
+    .where(and(eq(comments.deliveredInJobId, job.id), eq(comments.deliveryState, 'delivered'), sql`${comments.deletedAt} is null`));
+  if (unread.length === 0) return;
+  const entry = await enqueue(tx, after, { workerId: await workerOfTask(tx, job.taskId), taskId: job.taskId, sessionId: session.id, kind: 'messages', front: true });
+  await attachComments(tx, after, entry.id, unread.map((c) => c.id));
 }
 
 /** Between Jobs a Session is `idle`, or still `pending` if `claude` never created it. */

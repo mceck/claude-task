@@ -2,6 +2,7 @@
 // reopening a Task, and how a User's Comment reaches the Agent. One Session per Task, whichever Agent
 // works it. Lock order: project → task → worker → session → job → queue entries. The Worker's row lock
 // serializes every change to its Queue and dispatch, so the dispatcher may take its entry before the Session.
+import { randomUUID } from 'node:crypto';
 import { cancelLimitResumes } from '../modules/scheduled-messages/service';
 import { commandName, taskKey } from '@claude-task/shared';
 import { and, asc, eq, gt, inArray, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
@@ -243,10 +244,10 @@ export async function deliverComment(
     .from(tasks)
     .where(eq(tasks.id, taskRef.id));
   if (!task?.currentSessionId) return 'none';
-  const setDelivery = async (state: 'delivered' | 'not_delivered', reason: string | null, jobId: string | null) => {
+  const setDelivery = async (state: 'delivered' | 'not_delivered', reason: string | null, jobId: string | null, messageId: string | null = null) => {
     await tx
       .update(comments)
-      .set({ deliveryState: state, deliveryReason: reason, deliveredInJobId: jobId, queueEntryId: null })
+      .set({ deliveryState: state, deliveryReason: reason, deliveredInJobId: jobId, deliveredMessageId: messageId, queueEntryId: null })
       .where(eq(comments.id, comment.id));
     after.effect((ctx) => ctx.scheduler.publishComments([comment.id]));
   };
@@ -277,7 +278,8 @@ export async function deliverComment(
   if (canInject) {
     const containerId = job.containerId!;
     const parts = await renderComments(after.ctx, tx, [comment]);
-    await setDelivery('delivered', null, job.id);
+    const messageId = randomUUID();
+    await setDelivery('delivered', null, job.id, messageId);
     if (comment.noticeTaskVersion !== null) {
       await tx
         .update(sessions)
@@ -286,7 +288,7 @@ export async function deliverComment(
       publishSession(after, task.id, null);
     }
     after.effect((ctx) => {
-      if (!ctx.runners.send(containerId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch }))
+      if (!ctx.runners.send(containerId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch, messageId }))
         void requeueUnsentComment(ctx, comment.id, job.id).catch((err) => ctx.log.error({ err, commentId: comment.id }, 'could not requeue an unsent Comment'));
     });
     return 'delivered';
@@ -347,11 +349,13 @@ async function injectEntry(tx: Executor, after: AfterCommit, session: SessionRow
   if (batch.length === 0) return [];
   const ids = batch.map((c) => c.id);
   const parts = await renderComments(after.ctx, tx, batch);
+  const messageId = randomUUID();
   await tx
     .update(comments)
     .set({
       queueEntryId: null,
       deliveredInJobId: job.id,
+      deliveredMessageId: messageId,
       deliveryState: sql`case when ${carriesDelivery} then 'delivered'::delivery_state else ${comments.deliveryState} end`,
       deliveryReason: null,
     })
@@ -368,7 +372,7 @@ async function injectEntry(tx: Executor, after: AfterCommit, session: SessionRow
   publishSession(after, entry.taskId, null);
   const containerId = job.containerId!;
   after.effect((ctx) => {
-    if (ctx.runners.send(containerId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch })) return;
+    if (ctx.runners.send(containerId, { type: 'job.input', jobId: job.id, message: parts.blocks, attachmentsToFetch: parts.fetch, messageId })) return;
     for (const id of ids) void requeueUnsentComment(ctx, id, job.id).catch((err) => ctx.log.error({ err, commentId: id }, 'could not requeue an unsent Comment'));
   });
   return ids;
@@ -391,7 +395,7 @@ async function requeueUnsentComment(ctx: AppContext, commentId: string, jobId: s
     const failed = async (reason: string) => {
       await tx
         .update(comments)
-        .set({ deliveryState: 'not_delivered', deliveryReason: reason, deliveredInJobId: null, queueEntryId: null })
+        .set({ deliveryState: 'not_delivered', deliveryReason: reason, deliveredInJobId: null, deliveredMessageId: null, queueEntryId: null })
         .where(eq(comments.id, commentId));
       after.effect((c) => c.scheduler.publishComments([commentId]));
     };
@@ -462,7 +466,14 @@ export async function interruptForWaiting(tx: Executor, after: AfterCommit, task
     .limit(1);
   if (!mine) throw conflict('None of your messages is waiting for the agent');
   sendInterrupt(after, job);
-  if (entry && acceptsInput(after, task.agentId, session, job)) await injectEntry(tx, after, session, job, entry);
+  const injected = entry && acceptsInput(after, task.agentId, session, job) ? await injectEntry(tx, after, session, job, entry) : [];
+  // What the interrupt hurries is on the process's stdin now; the end of the Turn checks it was answered.
+  const [onStdin] = injected.length > 0 ? [true] : await tx
+    .select({ id: comments.id })
+    .from(comments)
+    .where(and(eq(comments.deliveredInJobId, job.id), eq(comments.deliveryState, 'delivered')))
+    .limit(1);
+  if (onStdin) await tx.update(jobs).set({ hurried: true }).where(eq(jobs.id, job.id));
 }
 
 /** Retry after a failed Job: releases the held Queue Entry. */

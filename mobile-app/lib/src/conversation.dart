@@ -2393,7 +2393,7 @@ class _Delivery extends StatelessWidget {
       'handled' => (
         Icons.done_all_rounded,
         Palette.primary,
-        'Handled by $agent$at',
+        'Read by $agent$at',
       ),
       'not_delivered' => (
         Icons.warning_amber_rounded,

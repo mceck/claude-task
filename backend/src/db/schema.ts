@@ -265,6 +265,8 @@ export const comments = pgTable(
     deliveryState: deliveryStateEnum('delivery_state').notNull().default('none'),
     deliveryReason: text('delivery_reason'),
     deliveredInJobId: uuid('delivered_in_job_id'),
+    /** The `uuid` of the stream-json Message that carried it, which the CLI echoes once it reads it. */
+    deliveredMessageId: uuid('delivered_message_id'),
     /** Set by a trigger whenever the Delivery state changes. */
     deliveryChangedAt: timestamp('delivery_changed_at', { withTimezone: true }),
     queueEntryId: uuid('queue_entry_id'),
@@ -694,6 +696,8 @@ export const jobs = pgTable(
     cancelRequested: boolean('cancel_requested').notNull().default(false),
     /** Reset Chat: ignore old output while waiting for cancellation to finish. */
     discardOutput: boolean('discard_output').notNull().default(false),
+    /** An empty Interrupt and send stopped this Job's Turn so it reads the Comments written to it. */
+    hurried: boolean('hurried').notNull().default(false),
     createdAt: createdAt(),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),

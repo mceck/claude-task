@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { gitSlug, taskBranch } from '../git/branches';
 import { scheduleOfProject } from '../modules/schedules/service';
 import { gitOwnerTask } from '../git/owner';
@@ -243,12 +244,15 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
       .returning();
     if (remaining.size) await tx.update(queueEntries).set({ kind: 'messages' }).where(eq(queueEntries.id, entry.id));
     else await tx.delete(queueEntries).where(eq(queueEntries.id, entry.id));
+    // Its uuid comes back in the CLI's replay once `claude` reads it (docs/specs/agent-sessions.md).
+    const initialMessageId = randomUUID();
     if (included.length > 0) {
       await tx
         .update(comments)
         .set({
           queueEntryId: null,
           deliveredInJobId: job!.id,
+          deliveredMessageId: initialMessageId,
           deliveryState: sql`case when ${carriesDelivery} then 'delivered'::delivery_state else ${comments.deliveryState} end`,
           deliveryReason: null,
         })
@@ -322,8 +326,11 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
         disallowedTools: ['AskUserQuestion'],
         // The Run transcripts show what a subagent writes; the Runner adds the flag where the CLI has it.
         forwardSubagentText: true,
+        // Deliveries turn `handled` when the CLI echoes the Message it read.
+        replayUserMessages: true,
       },
       initialMessage: message.blocks,
+      initialMessageId,
       attachmentsToFetch: message.fetch,
     };
     after.effect((c) => {

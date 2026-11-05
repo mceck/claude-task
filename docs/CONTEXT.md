@@ -169,7 +169,7 @@ What an Agent receives in its Session: one or more Comments merged together, or 
 _Avoid_: prompt, input
 
 **Delivery**:
-Whether a User's Comment has reached the Agent: queued, delivered, handled (the Turn that read it has ended), or not delivered (with a reason).
+Whether a User's Comment has reached the Agent: queued, delivered (written to the Agent's process, not read yet), handled (the Agent has read it), or not delivered (with a reason).
 
 **Scheduled Message**:
 A Comment a User writes ahead of time for a chosen date and time. It stays off the Timeline until then, listed on its Task where any User with access can edit, cancel or send it now. When due it is published as an ordinary Comment by its author and follows the usual Delivery. It is published even when it cannot be delivered, and then shows why.

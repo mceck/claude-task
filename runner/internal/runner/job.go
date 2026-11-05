@@ -137,7 +137,7 @@ func (j *job) env() []string {
 	return env
 }
 
-func (j *job) args(forwardSubagentText bool) []string {
+func (j *job) args(f features) []string {
 	m := j.start
 	a := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	if m.Mode == "resume" {
@@ -164,8 +164,11 @@ func (j *job) args(forwardSubagentText bool) []string {
 	for _, tool := range c.DisallowedTools {
 		a = append(a, "--disallowedTools", tool)
 	}
-	if forwardSubagentText {
+	if f.forwardSubagentText {
 		a = append(a, "--forward-subagent-text")
+	}
+	if f.replayUserMessages {
+		a = append(a, "--replay-user-messages")
 	}
 	return a
 }
@@ -193,7 +196,7 @@ func (j *job) spawn(worktree string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(j.r.cfg.ClaudePath, j.args(j.start.ClaudeArgs.ForwardSubagentText && supportsForwardSubagentText(j.r.cfg.ClaudePath, worktree, j.env(), j.cancelled))...)
+	cmd := exec.Command(j.r.cfg.ClaudePath, j.args(probeFeatures(j.r.cfg.ClaudePath, worktree, j.env(), j.cancelled, j.start.ClaudeArgs))...)
 	cmd.Dir = worktree
 	cmd.Env = j.env()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stderrW
@@ -387,7 +390,7 @@ func (j *job) control(m *protocol.Incoming) {
 // feedStdin writes the initial message, then queued inputs, interrupts and stdin closes in order.
 func (j *job) feedStdin() {
 	if msg := j.start.InitialMessage; len(msg) > 0 && string(msg) != "null" {
-		j.writeStdin(protocol.UserMessage(msg))
+		j.writeStdin(protocol.UserMessage(msg, j.start.InitialMessageID))
 	}
 	for {
 		select {
@@ -402,7 +405,7 @@ func (j *job) feedStdin() {
 				if j.hasExited() {
 					return
 				}
-				if !j.writeStdin(protocol.UserMessage(m.Message)) && !j.hasExited() {
+				if !j.writeStdin(protocol.UserMessage(m.Message, m.MessageID)) && !j.hasExited() {
 					j.emit("job.stderr", map[string]any{"chunk": "[runner] could not deliver a message: claude's stdin is already closed\n"})
 				}
 			case "job.interrupt":

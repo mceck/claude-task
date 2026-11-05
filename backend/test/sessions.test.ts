@@ -675,6 +675,104 @@ describe('Comments reaching the Agent', () => {
   });
 });
 
+describe('Comments the Agent reads', () => {
+  const app = useTestApp();
+  const states = async (admin: ApiClient, taskId: string) =>
+    Object.fromEntries(comments(await timeline(admin, taskId)).filter((c) => c.kind === 'user').map((c) => [c.body, c.delivery?.state]));
+
+  it('marks a Comment handled as soon as the CLI echoes the Message that carried it, mid-Turn', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    expect(start.claudeArgs.replayUserMessages).toBe(true);
+    expect(start.initialMessageId).toEqual(expect.any(String));
+    runner.accept(start.jobId);
+    const ws = await WsTestClient.connect(app.url, admin.cookie);
+    await ws.subscribe(taskTopic(task.id));
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.replay(start.initialMessageId!), s.toolUse('tool-1', 'Bash', { command: 'npm test' })]);
+    await app.settle();
+    expect(await states(admin, task.id)).toEqual({ 'Please get started.': 'handled' });
+
+    const steer = await comment(admin, task.id, 'Also check the logout flow.');
+    const input = await runner.next('job.input');
+    expect(input.messageId).toEqual(expect.any(String));
+    // Written, but `claude` takes it only with the next tool results.
+    expect((await states(admin, task.id))[steer.body]).toBe('delivered');
+    await runner.play(start.jobId, [s.toolResult('tool-1', 'ok'), s.replay(input.messageId!)]);
+    await ws.next('comment.updated', (e) => e.comment.id === steer.id && e.comment.delivery?.state === 'handled');
+    ws.close();
+  });
+
+  it("leaves a Comment the CLI never echoed unread at the Turn's end, and requeues it when the process exits", async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.replay(start.initialMessageId!), s.toolUse('tool-1', 'Bash', { command: 'npm test' })]);
+    await app.settle();
+    const lost = await comment(admin, task.id, 'Use port 4000.');
+    await runner.next('job.input');
+    await runner.play(start.jobId, [s.toolResult('tool-1', 'ok'), s.text('Done.'), s.result()]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    expect((await states(admin, task.id))[lost.body]).toBe('delivered');
+
+    await runner.exit(start.jobId);
+    const next = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    expect(texts(next.initialMessage)).toContain('Use port 4000.');
+    expect(comments(await timeline(admin, task.id)).find((c) => c.id === lost.id)!.delivery).toMatchObject({ state: 'delivered', jobId: next.jobId });
+  });
+
+  it('answers Comments an empty Interrupt and send hurried when `claude` read them just before the interrupt', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.replay(start.initialMessageId!), s.toolUse('tool-1', 'Bash', { command: 'sleep 600' })]);
+    await app.settle();
+    await comment(admin, task.id, 'Reply with KIWI.');
+    const input = await runner.next('job.input');
+
+    expect((await admin.post(`/tasks/${task.id}/session/interrupt`)).status).toBe(200);
+    await runner.next('job.interrupt');
+    // The tool returned and the Message was read before the interrupt landed: the model call it fed was aborted.
+    await runner.play(start.jobId, [
+      s.toolResult('tool-1', 'ok'),
+      s.replay(input.messageId!),
+      { ...s.result({ subtype: 'error_during_execution', isError: true }), result: undefined, terminal_reason: 'aborted_streaming' },
+    ]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    const after = runner.received.filter((m) => m.jobId === start.jobId && ['job.input', 'job.end'].includes(m.type));
+    expect(after.map((m) => m.type)).toEqual(['job.input', 'job.input', 'job.end']);
+    expect(texts((after[1] as { message: InputBlock[] }).message)).toMatch(/interrupted so you would act on the latest message/);
+  });
+
+  it('adds nothing after an empty Interrupt and send whose Comments are still waiting on stdin', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream(start.sessionId);
+    await runner.play(start.jobId, [s.init(), s.replay(start.initialMessageId!), s.toolUse('tool-1', 'Bash', { command: 'sleep 600' })]);
+    await app.settle();
+    await comment(admin, task.id, 'Reply with KIWI.');
+    await runner.next('job.input');
+    expect((await admin.post(`/tasks/${task.id}/session/interrupt`)).status).toBe(200);
+    await runner.play(start.jobId, [
+      s.toolResult('tool-1', 'Interrupted', { rejected: true }),
+      { ...s.result({ subtype: 'error_during_execution', isError: true }), result: undefined, terminal_reason: 'aborted_tools' },
+    ]);
+    await runner.next('job.end', (m) => m.jobId === start.jobId);
+    expect(runner.messages('job.input')).toHaveLength(1);
+  });
+});
+
 describe('Stop, Retry and failures', () => {
   const app = useTestApp();
 

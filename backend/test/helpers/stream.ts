@@ -75,6 +75,18 @@ export class Stream {
     };
   }
 
+  /** `--replay-user-messages`: the CLI echoes a Message it read from stdin, with the uuid it was written with. */
+  replay(messageId: string, text = 'message'): StreamEvent {
+    return {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text }] },
+      parent_tool_use_id: null,
+      session_id: this.sessionId,
+      uuid: messageId,
+      isReplay: true,
+    };
+  }
+
   delta(text: string, kind: 'text' | 'thinking' = 'text'): StreamEvent {
     return {
       type: 'stream_event',

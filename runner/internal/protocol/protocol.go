@@ -31,6 +31,9 @@ type ClaudeArgs struct {
 	// ForwardSubagentText asks for `--forward-subagent-text`, which the Runner adds only when the
 	// `claude` it is about to start has it (dependency: a repository can override the version).
 	ForwardSubagentText bool `json:"forwardSubagentText"`
+	// ReplayUserMessages asks for `--replay-user-messages`, under the same rule: the CLI echoes
+	// each user message, with the `uuid` it was written with, when it reads it.
+	ReplayUserMessages bool `json:"replayUserMessages"`
 }
 
 type Attachment struct {
@@ -64,7 +67,9 @@ type Incoming struct {
 	Env                map[string]string `json:"env"`
 	ClaudeArgs         ClaudeArgs        `json:"claudeArgs"`
 	InitialMessage     json.RawMessage   `json:"initialMessage"`
+	InitialMessageID   string            `json:"initialMessageId"`
 	Message            json.RawMessage   `json:"message"`
+	MessageID          string            `json:"messageId"`
 	AttachmentsToFetch []Attachment      `json:"attachmentsToFetch"`
 	RepoPath           *string           `json:"repoPath"`
 	RequestID          string            `json:"requestId"`
@@ -94,11 +99,19 @@ type WorktreeFile struct {
 	Status string `json:"status"`
 }
 
-func UserMessage(content json.RawMessage) []byte {
-	b, _ := json.Marshal(map[string]any{
+// UserMessage is one stream-json user message; a non-empty id becomes its `uuid`, which the CLI's
+// replay echoes when it reads the message.
+func UserMessage(content json.RawMessage, id string) []byte {
+	m := map[string]any{
 		"type":    "user",
 		"message": map[string]any{"role": "user", "content": content},
-	})
+	}
+	if id != "" {
+		m["uuid"] = id
+		m["session_id"] = ""
+		m["parent_tool_use_id"] = nil
+	}
+	b, _ := json.Marshal(m)
 	return append(b, '\n')
 }
 

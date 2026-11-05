@@ -469,8 +469,8 @@ Both clients show the Delivery of each User Comment as an icon in its header, wi
 | Icon | Delivery | Tooltip |
 | --- | --- | --- |
 | 🕓 clock, muted | `queued` | "Queued · 12:40" |
-| ✓ one tick, grey | `delivered` | "Delivered to Opus · 12:41" |
-| ✓✓ two ticks, in the app's primary colour (indigo on the web, teal in the native app) | `handled` | "Handled by Opus · 12:43" |
+| ✓ one tick, grey | `delivered`: written to the Agent's process, not read yet | "Delivered to Opus · 12:41" |
+| ✓✓ two ticks, in the app's primary colour (indigo on the web, teal in the native app) | `handled`: the Agent read it, possibly mid-Turn | "Read by Opus · 12:43" |
 | ⚠ warning sign, amber | `not delivered` | "Not delivered: task closed" |
 
 The icon changes live as the Comment updated events arrive. Rules for each state are in [Agent sessions](agent-sessions.md#message-delivery-states).
