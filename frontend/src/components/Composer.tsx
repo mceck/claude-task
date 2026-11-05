@@ -289,44 +289,42 @@ export function Composer({
                 e.target.value = '';
               }}
             />
-            <div className="ml-auto flex items-center gap-3">
+            <div className="ml-auto flex items-center gap-2">
               {/* Hidden in a narrow Dock panel, where it would push the Comment button out of view. */}
-              <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
+              <span className="mr-1 hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
                 <Kbd>⇧↵</Kbd> new line
               </span>
-              {canInterrupt && (
-                <span className="hidden items-center gap-1 text-[11px] text-muted-foreground @lg:flex">
-                  <Kbd>{MOD_KEY}↵</Kbd> interrupt and send
-                </span>
-              )}
-              <SchedulePicker value={scheduledFor} onChange={setScheduledFor} disabled={busy} />
-              {/* Schedule and Attach are icons only, so the row fits a narrow Dock panel. */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                aria-label="Attach a file"
-                title="Attach a file"
-                onClick={() => fileInput.current?.click()}
-              >
-                <Paperclip />
-              </Button>
-              {canInterrupt && (
+              {/* Schedule, Attach and Interrupt are icons only, kept close, so the row fits a narrow Dock panel. */}
+              <div className="flex items-center gap-0.5">
+                <SchedulePicker value={scheduledFor} onChange={setScheduledFor} disabled={busy} />
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  onClick={() => void submit(true)}
-                  disabled={busy}
-                  aria-label={empty ? 'Interrupt so the agent reads your message' : 'Interrupt and send'}
-                  title={
-                    empty
-                      ? `Stops the agent's current step so it reads your waiting message now (${MOD_KEY}+Enter)`
-                      : `Interrupt and send: stops the agent's current step so it reads this at once (${MOD_KEY}+Enter)`
-                  }
+                  className="text-muted-foreground"
+                  aria-label="Attach a file"
+                  title="Attach a file"
+                  onClick={() => fileInput.current?.click()}
                 >
-                  <Zap />
+                  <Paperclip />
                 </Button>
-              )}
+                {canInterrupt && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-primary hover:text-primary"
+                    onClick={() => void submit(true)}
+                    disabled={busy}
+                    aria-label={empty ? 'Interrupt so the agent reads your message' : 'Interrupt and send'}
+                    title={
+                      empty
+                        ? `Stops the agent's current step so it reads your waiting message now (${MOD_KEY}+Enter)`
+                        : `Interrupt and send: stops the agent's current step so it reads this at once (${MOD_KEY}+Enter)`
+                    }
+                  >
+                    <Zap />
+                  </Button>
+                )}
+              </div>
               <Button
                 size="sm"
                 onClick={() => void submit()}
