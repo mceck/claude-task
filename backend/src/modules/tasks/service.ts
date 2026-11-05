@@ -17,6 +17,7 @@ import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
 import { agents, jobs, tags, projects, statuses, taskAssignees, taskTags, taskRevisions, tasks, users } from '../../db/schema';
+import { loadTimelinePositions } from '../../db/activity';
 import { onTaskChanged, removeDeletedWorktrees } from '../../sessions/lifecycle';
 import { badRequest, conflict, forbidden, notFound } from '../../errors';
 import { actorResolver } from '../actors';
@@ -600,8 +601,13 @@ export async function recordRevisions(
     .insert(taskRevisions)
     .values(entries.map((e) => ({ ...e, actorType: actor.type, actorId: actor.id })))
     .returning();
+  const positions = new Map<string, string>();
+  for (const taskId of new Set(inserted.map((r) => r.taskId))) {
+    const ids = inserted.filter((r) => r.taskId === taskId).map((r) => r.id);
+    for (const [id, position] of await loadTimelinePositions(tx, taskId, ids)) positions.set(id, position);
+  }
   for (const revision of inserted) {
-    after.emit(taskTopic(revision.taskId), { type: 'revision.created', revision: serializeRevision(revision, actor) });
+    after.emit(taskTopic(revision.taskId), { type: 'revision.created', revision: serializeRevision(revision, actor), readPosition: positions.get(revision.id) });
   }
 }
 

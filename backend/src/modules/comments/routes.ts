@@ -8,6 +8,7 @@ import { badRequest, HttpError, notFound, parse } from '../../errors';
 import { assertBoardTask } from '../projects/service';
 import { getTaskRow, emitTasksChanged } from '../tasks/service';
 import { createTaskAttachments, createUserComment, loadTaskAttachments, pruneTaskAttachments, deleteComment, getAttachment, updateComment } from './service';
+import { loadTimelinePositions } from '../../db/activity';
 import type { NewAttachment } from './service';
 import { idOrKey } from '../../ids';
 
@@ -31,7 +32,9 @@ export function commentRoutes(app: FastifyInstance, ctx: AppContext): void {
       const comment = await transact(ctx, (tx, after) =>
         createUserComment(tx, after, task, { ...body, attachments: files }, author),
       );
-      return reply.status(201).send({ comment });
+      // The Comment's Timeline position, so the client places it exactly where the server stored it.
+      const readPosition = (await loadTimelinePositions(ctx.db, task.id, [comment.id])).get(comment.id);
+      return reply.status(201).send({ comment, readPosition });
     } catch (err) {
       await Promise.all(files.map((f) => ctx.blobs.delete(f.blobId)));
       throw err;

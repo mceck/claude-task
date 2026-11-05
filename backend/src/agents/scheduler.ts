@@ -6,6 +6,7 @@ import type { BackendToRunner, CleanupTrigger } from '@claude-task/shared';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
 import { agentProfiles, agents, jobs, projects, queueEntries, sessions, tasks, workerBuilds, workerContainers, workers } from '../db/schema';
+import { loadTimelinePositions } from '../db/activity';
 import { ACTIVE_JOB_STATES, loadJobs, publishAgent } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
 import { loadCommentsById } from '../modules/comments/service';
@@ -800,9 +801,24 @@ export class Scheduler {
       this.pendingWorkers.add(workerId);
     }
     const comments = await loadCommentsById(db, [...commentModes.keys()]);
+    // A new Comment's Timeline position: clients place it where the server stored it, even when
+    // its timestamp ties with another entry's once cut to milliseconds.
+    const createdByTask = new Map<string, string[]>();
+    for (const [id, comment] of comments) {
+      if (commentModes.get(id) !== 'created') continue;
+      createdByTask.set(comment.taskId, [...(createdByTask.get(comment.taskId) ?? []), id]);
+    }
+    const positions = new Map<string, string>();
+    for (const [taskId, ids] of createdByTask) {
+      for (const [id, position] of await loadTimelinePositions(db, taskId, ids)) positions.set(id, position);
+    }
     for (const [id, comment] of comments) {
       const created = commentModes.get(id) === 'created';
-      hub.publish(taskTopic(comment.taskId), { type: created ? 'comment.created' : 'comment.updated', comment });
+      hub.publish(taskTopic(comment.taskId), {
+        type: created ? 'comment.created' : 'comment.updated',
+        comment,
+        ...(created ? { readPosition: positions.get(id) } : {}),
+      });
       if (created) taskIds.add(comment.taskId);
     }
     for (const taskId of taskIds) {

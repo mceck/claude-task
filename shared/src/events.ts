@@ -33,14 +33,15 @@ export type TaskEvent =
   | { type: 'task.changed'; task: Task }
   | { type: 'task.removed'; taskId: string }
   | { type: 'timeline.reset'; taskId: string }
-  | { type: 'comment.created'; comment: Comment }
+  /** `readPosition` is the entry's persisted Timeline position, so clients place it exactly where the server stores it. */
+  | { type: 'comment.created'; comment: Comment; readPosition?: string }
   | { type: 'comment.updated'; comment: Comment }
   | { type: 'comment.deleted'; comment: Comment }
-  | { type: 'revision.created'; revision: Revision }
+  | { type: 'revision.created'; revision: Revision; readPosition?: string }
   /** A scheduled message was created, changed, cancelled or published. */
   | { type: 'scheduled_message.updated'; message: ScheduledMessage }
   | { type: 'session.changed'; taskId: string; session: TaskSession | null }
-  | { type: 'agent_item.created'; item: AgentItem }
+  | { type: 'agent_item.created'; item: AgentItem; readPosition?: string }
   | { type: 'agent_item.updated'; item: AgentItem }
   /** Live text or thinking of the running Turn; not persisted, the final Comment follows. */
   | { type: 'live.delta'; taskId: string; delta: LiveDelta }

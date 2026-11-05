@@ -1,4 +1,5 @@
 import type { ProjectBundle, Task, TaskCard } from '@claude-task/shared';
+import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ApiClient } from './helpers/client';
 import { useTestApp } from './helpers/app';
@@ -396,6 +397,23 @@ describe('tasks', () => {
       expect(items.map(describe)).toEqual(['statusId', 'second comment', 'title', 'first comment']);
       const times = items.map((i: { createdAt: string }) => Date.parse(i.createdAt));
       expect([...times].sort((x, y) => y - x)).toEqual(times);
+    });
+
+    it('orders the timeline by when entries were stored, not by the timestamps shown', async () => {
+      // A Comment's created_at can run ahead of the rows stored before it: the column takes the
+      // transaction's start, not the moment of the insert.
+      const task = await createTask(admin, projectId);
+      const author = (await admin.get('/auth/me')).body.user.id;
+      const store = (body: string, createdAt: string) =>
+        app.server.ctx.db.execute(
+          sql`insert into comments (task_id, kind, author_type, author_id, body, created_at)
+              values (${task.id}::uuid, 'user', 'user', ${author}::uuid, ${body}, ${createdAt}::timestamptz)`,
+        );
+      await store('stored first', '2030-01-01T00:00:01Z');
+      await store('stored second', '2030-01-01T00:00:00Z');
+
+      const { items } = (await admin.get(`/tasks/${task.id}/timeline`)).body;
+      expect(items.map((i: { comment: { body: string } }) => i.comment.body)).toEqual(['stored second', 'stored first']);
     });
 
     it('pages backwards with a cursor', async () => {

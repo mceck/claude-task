@@ -1,7 +1,8 @@
 // Requests in flight while other changes arrive: late responses, out-of-order events, quick repeated edits.
 import type { Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
-import { cardTitles, column, createProject, createTask, drag, login } from './helpers';
+import { Stream } from '../../backend/test/helpers/stream';
+import { cardTitles, column, createProject, createTask, drag, login, replay, seedAgent, startJob } from './helpers';
 
 const headers = { 'x-claude-task': '1' };
 
@@ -155,6 +156,47 @@ test('timeline items that arrive out of order are shown in the order they happen
   await expect(comments).toHaveCount(2);
   await expect(comments.first()).toContainText('Happened first.');
   await expect(comments.last()).toContainText('Happened second.');
+});
+
+test('an Activity stays after the Comment that came first when both share a millisecond', async ({ page }) => {
+  await login(page.request);
+  const agent = await seedAgent(page.request, 'Ordering');
+  const project = await createProject(page.request);
+  const task = await createTask(page.request, project, 'Ordering');
+  const start = await startJob(page.request, agent.id, task.id, project.workerId);
+  // The events keep their stored order, but the timestamps clients see are cut to the millisecond:
+  // make both fall in the same one, so only the Timeline position can tell them apart.
+  const sameInstant = new Date(Date.now() + 60_000).toISOString();
+  await page.routeWebSocket('**/api/v1/ws', (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((raw) => {
+      const message = JSON.parse(String(raw));
+      const event = message.type === 'event' ? message.event : null;
+      if (event?.type === 'comment.created' && event.comment.kind === 'agent') event.comment.createdAt = sameInstant;
+      if (event?.type === 'agent_item.created' && event.item.payload.kind === 'activity') event.item.createdAt = sameInstant;
+      ws.send(JSON.stringify(message));
+    });
+  });
+  await page.goto(`/t/${task.key}`);
+  const timeline = page.getByRole('list', { name: 'Timeline' });
+  await expect(timeline.getByText('Please get started.')).toBeVisible();
+
+  const stream = new Stream(start.sessionId);
+  await replay(page.request, project.workerId, start.jobId, [
+    stream.init(),
+    // One model call: the text becomes a Comment, the tool call an Activity right after it.
+    stream.message([
+      { type: 'text', text: 'I will run the tests.' },
+      { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } },
+    ]),
+    stream.toolResult('t1', 'ok'),
+    stream.result(),
+  ]);
+
+  await expect(timeline.getByText('I will run the tests.')).toBeVisible();
+  const commentBox = (await timeline.getByRole('listitem', { name: 'Agent comment' }).last().boundingBox())!;
+  const activityBox = (await timeline.getByRole('listitem', { name: 'Activity' }).last().boundingBox())!;
+  expect(commentBox.y).toBeLessThan(activityBox.y);
 });
 
 test('a failed move puts back only the moved card, keeping a card created meanwhile', async ({ page }) => {

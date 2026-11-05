@@ -400,7 +400,7 @@ Turns recorded before the platform kept this field are filled at startup, after 
 
 **Credential errors** (`authentication_failed`, `billing_error`, `oauth_org_not_allowed`, `account_on_hold`) produce one System Comment per Job naming the Credential, e.g. "Credential **Team token** was rejected (authentication_failed). Check it in Credentials."
 
-**Live updates.** Timeline changes reach the Task's viewers as events: Comments created or updated, Agent Items created or updated, live deltas, the retry status, Run updates and transcript messages, and Setup Script output while the Worktree is prepared. Clients merge Comments, Revisions and Agent Items by creation time; the Timeline API pages through them newest first.
+**Live updates.** Timeline changes reach the Task's viewers as events: Comments created or updated, Agent Items created or updated, live deltas, the retry status, Run updates and transcript messages, and Setup Script output while the Worktree is prepared. Every event that creates an entry carries its Timeline position, so clients place it exactly where the Timeline API stores it; the API pages through the entries by that position, newest first.
 
 ### Runs
 

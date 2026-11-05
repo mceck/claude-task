@@ -8,6 +8,7 @@ import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
 import { agentItems, attachments, comments, limitResumeOffers, projects, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
 import { getWorkerRow } from '../workers/service';
+import { loadTimelinePositions } from '../../db/activity';
 import { dropIfEmpty } from '../../sessions/queue';
 import { serializeAgentItem } from '../../projection/apply';
 import { badRequest, forbidden, notFound } from '../../errors';
@@ -233,7 +234,8 @@ export async function createUserComment(
   }
   await deliverComment(tx, after, task, row!, { interrupt: input.interrupt });
   const comment = await loadComment(tx, row!.id);
-  after.emit(taskTopic(task.id), { type: 'comment.created', comment });
+  const readPosition = (await loadTimelinePositions(tx, task.id, [row!.id])).get(row!.id);
+  after.emit(taskTopic(task.id), { type: 'comment.created', comment, readPosition });
   await emitCardRefresh(tx, after, task.id);
   return comment;
 }
@@ -379,10 +381,12 @@ export async function createTaskAttachments(db: Executor, taskId: string, files:
 // Timeline
 
 interface Cursor {
-  /** Postgres timestamp text, which keeps microsecond precision. */
-  t: string;
-  k: 'comment' | 'revision' | 'agent';
-  id: string;
+  /** The position of the newest entry the previous page showed; pages go backwards from it. */
+  p?: string;
+  /** A cursor handed out while the Timeline was still ordered by timestamp (time, kind, id). */
+  t?: string;
+  k?: 'comment' | 'revision' | 'agent';
+  id?: string;
 }
 
 const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
@@ -390,8 +394,10 @@ const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('bas
 function decodeCursor(raw: string): Cursor {
   try {
     const c = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Cursor;
+    if (typeof c.p === 'string' && /^\d+$/.test(c.p)) return { p: c.p };
     if (
       typeof c.t === 'string' &&
+      typeof c.k === 'string' &&
       ['comment', 'revision', 'agent'].includes(c.k) &&
       typeof c.id === 'string' &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(c.id)
@@ -403,23 +409,41 @@ function decodeCursor(raw: string): Cursor {
   throw badRequest('Invalid cursor');
 }
 
-/** Comments, Revisions and the Agent's items of a Task, merged newest first. */
+/** The entry a pre-position cursor names, so a client holding one can keep paging after an upgrade. */
+async function positionOf(db: Executor, taskId: string, itemId: string): Promise<string | null> {
+  const [row] = (
+    await db.execute<{ position: string }>(
+      sql`select position::text from task_activity where task_id = ${taskId}::uuid and item_id = ${itemId}::uuid`,
+    )
+  ).rows;
+  return row?.position ?? null;
+}
+
+/**
+ * Comments, Revisions and the Agent's items of a Task, newest first. Ordered by the persisted
+ * Timeline position, not by timestamps: positions are the insert order the server assigned, while
+ * timestamps can tie once clients see only milliseconds (docs/specs/conversation.md).
+ */
 export async function loadTimeline(
   db: Executor,
   taskId: string,
   opts: { before?: string; limit: number },
 ): Promise<TimelinePage> {
   const cursor = opts.before ? decodeCursor(opts.before) : null;
-  const page = await db.execute<{ kind: Cursor['k']; id: string; t: string }>(sql`
-    select kind, id, t from (
-      select 'comment' as kind, id, created_at, created_at::text as t from comments where task_id = ${taskId}
+  const before = cursor === null ? null : (cursor.p ?? (cursor.id ? await positionOf(db, taskId, cursor.id) : null));
+  if (cursor !== null && before === null) throw badRequest('Invalid cursor');
+  const page = await db.execute<{ kind: Cursor['k']; id: string; position: string }>(sql`
+    select i.kind, i.id, a.position::text as position
+    from (
+      select 'comment' as kind, id from comments where task_id = ${taskId}::uuid
       union all
-      select 'revision' as kind, id, created_at, created_at::text as t from task_revisions where task_id = ${taskId}
+      select 'revision' as kind, id from task_revisions where task_id = ${taskId}::uuid
       union all
-      select 'agent' as kind, id, created_at, created_at::text as t from agent_items where task_id = ${taskId}
-    ) items
-    ${cursor ? sql`where (created_at, kind, id) < (${cursor.t}::timestamptz, ${cursor.k}, ${cursor.id}::uuid)` : sql``}
-    order by created_at desc, kind desc, id desc
+      select 'agent' as kind, id from agent_items where task_id = ${taskId}::uuid
+    ) i
+    join task_activity a on a.task_id = ${taskId}::uuid and a.item_id = i.id
+    ${before === null ? sql`` : sql`where a.position < ${before}::bigint`}
+    order by a.position desc
     limit ${opts.limit + 1}`);
 
   const rows = page.rows.slice(0, opts.limit);
@@ -445,19 +469,13 @@ export async function loadTimeline(
   );
 
   const items: TimelineItem[] = rows.map((r) => {
-    if (r.kind === 'comment') return { type: 'comment', id: r.id, createdAt: commentMap.get(r.id)!.createdAt, comment: commentMap.get(r.id)! };
-    if (r.kind === 'agent') return { type: 'agent', id: r.id, createdAt: agentMap.get(r.id)!.createdAt, item: agentMap.get(r.id)! };
-    return { type: 'revision', id: r.id, createdAt: revisionMap.get(r.id)!.createdAt, revision: revisionMap.get(r.id)! };
+    if (r.kind === 'comment') return { type: 'comment', id: r.id, createdAt: commentMap.get(r.id)!.createdAt, comment: commentMap.get(r.id)!, readPosition: r.position };
+    if (r.kind === 'agent') return { type: 'agent', id: r.id, createdAt: agentMap.get(r.id)!.createdAt, item: agentMap.get(r.id)!, readPosition: r.position };
+    return { type: 'revision', id: r.id, createdAt: revisionMap.get(r.id)!.createdAt, revision: revisionMap.get(r.id)!, readPosition: r.position };
   });
-  const pageIds = items.map((i) => i.id);
-  const positions = pageIds.length
-    ? await db.execute<{ item_id: string; position: string }>(sql`select item_id, position::text from task_activity
-        where task_id = ${taskId} and item_id in (${sql.join(pageIds.map((id) => sql`${id}::uuid`), sql`, `)})`)
-    : { rows: [] };
-  const positionMap = new Map(positions.rows.map((r) => [r.item_id, r.position]));
   const last = rows[rows.length - 1];
   return {
-    items: items.map((item) => ({ ...item, readPosition: positionMap.get(item.id) ?? '0' })),
-    nextCursor: page.rows.length > opts.limit && last ? encodeCursor({ t: last.t, k: last.kind, id: last.id }) : null,
+    items,
+    nextCursor: page.rows.length > opts.limit && last ? encodeCursor({ p: last.position }) : null,
   };
 }

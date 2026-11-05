@@ -302,7 +302,7 @@ export type TimelineItem = (
   | { type: 'comment'; id: string; createdAt: string; comment: Comment }
   | { type: 'revision'; id: string; createdAt: string; revision: Revision }
   | { type: 'agent'; id: string; createdAt: string; item: AgentItem }
-) & { /** Persisted read position, supplied by Timeline HTTP responses. */ readPosition?: string };
+) & { /** The entry's persisted Timeline position, which orders it: Timeline HTTP responses and the events that create it both carry it. */ readPosition?: string };
 
 export interface TimelinePage {
   /** Conversation generation for detecting a Delete Chat during page loads. */
