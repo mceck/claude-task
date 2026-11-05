@@ -7,7 +7,8 @@ import { and, eq, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { AfterCommit, AppContext } from '../context';
 import { transactWithRetry } from '../context';
 import type { Executor } from '../db/client';
-import { agents, comments, jobs, projects, sessionEvents, sessions, tasks, workerContainers } from '../db/schema';
+import { agents, comments, jobs, projects, sessionEvents, sessions, tasks, workerContainers, workers } from '../db/schema';
+import { publishCleanup, settleVolumeCleanup } from '../modules/workers/cleanup';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import { getWorkerRow, workerOfTask } from '../modules/workers/service';
 import type { JobRow } from '../modules/agents/service';
@@ -52,8 +53,23 @@ export async function handleRunnerMessage(ctx: AppContext, runner: RunnerIdentit
     });
     return;
   }
+  if (msg.type === 'volume.cleanup.result') return handleVolumeCleanupResult(ctx, runner, msg);
   if (typeof msg.jobId === 'string' && typeof msg.seq === 'number') return handleJobMessage(ctx, runner, msg);
   ctx.log.warn({ containerId: runner.containerId, type: (msg as { type?: string }).type }, 'unknown runner message');
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const count = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
+
+/** A Worker Volume's part of a Cleanup is done: it adds to the Cleanup that asked for it. */
+async function handleVolumeCleanupResult(ctx: AppContext, runner: RunnerIdentity, msg: Extract<RunnerToBackend, { type: 'volume.cleanup.result' }>): Promise<void> {
+  const requestId = String(msg.requestId);
+  if (!UUID.test(requestId)) return;
+  const [worker] = await ctx.db.select({ name: workers.name }).from(workers).where(eq(workers.id, runner.workerId));
+  const error = typeof msg.error === 'string' && msg.error ? `${worker?.name ?? 'Worker'} volume: ${msg.error.slice(0, 500)}` : null;
+  if (error) ctx.log.warn({ workerId: runner.workerId, cleanupId: requestId }, `cleanup: ${error}`);
+  const counts = { projects: count(msg.projects), agentProfiles: count(msg.agentProfiles), reclaimedBytes: count(msg.reclaimedBytes), error };
+  if (await settleVolumeCleanup(ctx.db, runner.workerId, requestId, counts)) await publishCleanup(ctx, requestId);
 }
 
 async function handleHello(ctx: AppContext, runner: RunnerIdentity, msg: Extract<RunnerToBackend, { type: 'hello' }>): Promise<void> {
@@ -114,6 +130,7 @@ async function handleHello(ctx: AppContext, runner: RunnerIdentity, msg: Extract
     ctx.runners.send(containerId, { type: 'job.cancel', jobId: msg.activeJobId });
   }
   for (const s of pendingRemovals) ctx.scheduler.removeWorktree(s.id);
+  await ctx.scheduler.sendPendingVolumeCleanup(workerId, containerId);
   await ctx.scheduler.reconcile(workerId);
   ctx.scheduler.kick(workerId);
 }

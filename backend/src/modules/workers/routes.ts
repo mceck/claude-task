@@ -10,6 +10,8 @@ import { projects, queueEntries, workerBuilds, workerContainers, workers } from 
 import { badRequest, conflict, notFound, parse } from '../../errors';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { loadJobs } from '../agents/service';
+import { currentUser } from '../../auth/guard';
+import { loadCleanup } from './cleanup';
 import { getWorkerRow, isUp, loadBuilds, loadWorker, loadWorkers, serializeBuild } from './service';
 
 const params = z.object({ id: z.uuid() });
@@ -194,6 +196,16 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id } = parse(params, request.params);
     await getWorkerRow(ctx.db, id);
     return { jobs: await loadJobs(ctx.db, { workerId: id, limit: 30 }) };
+  });
+
+  // Cleanup (docs/specs/workers.md, "Cleanup")
+
+  app.get('/cleanup', admin, async () => ({ cleanup: await loadCleanup(ctx.db) }));
+
+  /** Starts a Cleanup, or joins the running one; it goes on in the background. */
+  app.post('/cleanup', admin, async (request, reply) => {
+    const id = await ctx.scheduler.cleanup('manual', currentUser(request).id);
+    return reply.status(202).send({ cleanup: await loadCleanup(ctx.db, id) });
   });
 
   // Queue (every User may reorder and remove entries)

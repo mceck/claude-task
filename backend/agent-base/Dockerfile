@@ -1,6 +1,8 @@
 # The Base Image every Agent's Dockerfile builds on (claude-task/agent-base). Built by the backend
 # through the Docker socket with `runner/` and these scripts as context; see src/agents/docker-runtime.ts.
 FROM golang:1.26-bookworm AS runner
+# Every image a platform Build produces carries this label, so a Cleanup finds the untagged ones.
+LABEL claude-task.platform=true
 WORKDIR /src
 COPY runner/go.mod runner/go.sum ./
 RUN go mod download
@@ -10,6 +12,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${RUNNER_VE
  && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/git-credential-claude-task ./cmd/git-credential-claude-task
 
 FROM buildpack-deps:noble
+LABEL claude-task.platform=true
 ARG CLAUDE_CODE_VERSION
 ARG NODE_VERSION=26
 ARG PYTHON_VERSION=3.14

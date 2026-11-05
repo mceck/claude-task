@@ -30,6 +30,8 @@ export interface AppContext {
   loginRevocations: LoginRevocations;
   blobs: BlobStore;
   runtime: WorkerRuntime;
+  /** Labels every Docker resource the backend creates, so Installations sharing a host stay apart. */
+  installationId: string;
   /** Git Connections and their providers. */
   git: GitConnections;
   gitSync: GitSync;

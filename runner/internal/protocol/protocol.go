@@ -75,6 +75,8 @@ type Incoming struct {
 	RequestID          string            `json:"requestId"`
 	URL                string            `json:"url"`
 	Files              []UploadFile      `json:"files"`
+	KeepProjects       []string          `json:"keepProjects"`
+	KeepAgents         []string          `json:"keepAgents"`
 }
 
 // Outgoing message shapes (runner → backend). Job-scoped ones get jobId and seq from the runner.

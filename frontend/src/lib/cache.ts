@@ -299,6 +299,10 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       });
       if (event.build.status !== 'building') void qc.invalidateQueries({ queryKey: keys.builds(event.build.workerId) });
       return;
+    case 'cleanup.updated':
+      // Only Admins load the record; the query is disabled for everyone else.
+      void qc.invalidateQueries({ queryKey: keys.cleanup });
+      return;
     case 'build.log':
       updateCachedList<WorkerBuild>(qc, keys.builds(event.workerId), (list) =>
         list.map((b) => (b.id === event.buildId ? { ...b, log: b.log + event.chunk } : b)),

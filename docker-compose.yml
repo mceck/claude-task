@@ -86,6 +86,7 @@ services:
       WORKER_STOP_ON_SHUTDOWN: ${WORKER_STOP_ON_SHUTDOWN:-true}
       WORKER_STOP_WHEN_UNUSED: ${WORKER_STOP_WHEN_UNUSED:-true}
       WORKER_IDLE_MINUTES: ${WORKER_IDLE_MINUTES:-10}
+      WORKER_CLEANUP: ${WORKER_CLEANUP:-true}
     stop_grace_period: 30s
     healthcheck:
       # The backend answers 503 while its database is unreachable.

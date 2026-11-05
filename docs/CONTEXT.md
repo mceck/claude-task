@@ -321,7 +321,7 @@ The persistent storage shared by every Worker Container of one Worker, mounted a
 _Avoid_: agent volume, shared volume
 
 **Service Volume**:
-The persistent storage of one Worker Slot, holding the data of its Development Services. It survives the Worker Container being stopped or recreated, and is deleted with the Worker.
+The persistent storage of one Worker Slot, holding the data of its Development Services. It survives the Worker Container being stopped or recreated.
 
 **Worker State**:
 The summary of a Worker's condition: disabled, building, build_failed, offline (no Worker Container running), idle or working (with the number of busy Worker Containers).
@@ -338,6 +338,10 @@ _Avoid_: agent image
 
 **Build**:
 One attempt to produce a Worker Image, with its log.
+
+**Cleanup**:
+The removal of what the Installation's Workers no longer need from the Docker host and their Worker Volumes: outdated images, leftovers of deleted Workers, Worker Slots left above the cap, and Bare Clones and Agent Profiles that no Project or Agent uses there any more.
+_Avoid_: prune, garbage collection
 
 **Development Service**:
 A local database or tool (PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO, Chrome) run inside a Worker Container, with its data in the slot's Service Volume.

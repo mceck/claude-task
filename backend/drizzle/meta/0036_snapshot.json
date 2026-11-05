@@ -1,5 +1,5 @@
 {
-  "id": "278539fd-fe5d-4d0f-882d-cc67f46b75e5",
+  "id": "e8fe1254-1eaf-4807-ba80-74094a9c3f0a",
   "prevId": "7e420a96-a216-4ced-be67-0b508858c7c4",
   "version": "7",
   "dialect": "postgresql",
@@ -738,6 +738,92 @@
       },
       "isRLSEnabled": false
     },
+    "public.cleanups": {
+      "name": "cleanups",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "trigger": {
+          "name": "trigger",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "removed": {
+          "name": "removed",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reclaimed_bytes": {
+          "name": "reclaimed_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "volumes_pending": {
+          "name": "volumes_pending",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "errors": {
+          "name": "errors",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "cleanups_requested_by_users_id_fk": {
+          "name": "cleanups_requested_by_users_id_fk",
+          "tableFrom": "cleanups",
+          "tableTo": "users",
+          "columnsFrom": [
+            "requested_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.comments": {
       "name": "comments",
       "schema": "",
@@ -816,12 +902,6 @@
         },
         "delivered_in_job_id": {
           "name": "delivered_in_job_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "delivered_message_id": {
-          "name": "delivered_message_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
@@ -1113,6 +1193,33 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.installation": {
+      "name": "installation",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.jobs": {
       "name": "jobs",
       "schema": "",
@@ -1272,13 +1379,6 @@
         },
         "discard_output": {
           "name": "discard_output",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "hurried": {
-          "name": "hurried",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
@@ -5192,6 +5292,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "volume_cleanup_pending": {
+          "name": "volume_cleanup_pending",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -5224,7 +5330,21 @@
           "with": {}
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "workers_volume_cleanup_pending_cleanups_id_fk": {
+          "name": "workers_volume_cleanup_pending_cleanups_id_fk",
+          "tableFrom": "workers",
+          "tableTo": "cleanups",
+          "columnsFrom": [
+            "volume_cleanup_pending"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},

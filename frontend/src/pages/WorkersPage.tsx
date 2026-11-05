@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { errorMessage, post } from '../api/client';
 import { keys, useMe, useWorkers } from '../api/queries';
 import { ErrorText, Loading } from '../components/common';
+import { CleanupButton, LastCleanup } from '../components/Cleanup';
 import { WorkerForm } from '../components/WorkerForm';
 import { WorkerStateBadge, WorkerStateDot } from '../components/workers';
 import { useTopic } from '../lib/realtime';
@@ -25,11 +26,15 @@ export function WorkersPage() {
     <div className="mx-auto max-w-6xl px-8 py-8">
       <PageHeader title="Workers" description="Execution environments: the Docker containers where agents work on the tasks of their projects.">
         {admin && (
-          <Button onClick={() => setCreating(true)}>
-            <Plus /> New worker
-          </Button>
+          <>
+            <CleanupButton />
+            <Button onClick={() => setCreating(true)}>
+              <Plus /> New worker
+            </Button>
+          </>
         )}
       </PageHeader>
+      {admin && <LastCleanup />}
       {workers.isPending ? (
         <Loading />
       ) : workers.error ? (
