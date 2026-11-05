@@ -148,12 +148,18 @@ Comments on a Task that was never assigned an Agent carry no Delivery at all, li
 
 **Mid-turn delivery.** A Comment written to stdin during a Turn is read by `claude` at its next model call, after the current batch of tool calls, and belongs to that same Turn: one `result` covers it. This is how a User steers the Agent while it works.
 
-**Interrupt and send.** A User Comment posted with the interrupt flag also stops the Session's running Turn, so the Agent reads it without waiting for the tool calls in progress (a long test run, a build, a Subagent Run). The flag acts when the Session's Job is `running`, with no cancel requested; otherwise the Comment is delivered as usual. The Comment follows the Delivery rules above, and the interrupt goes with them:
+**Interrupt and send.** A User stops the Session's running Turn so the Agent reads what they wrote without waiting for the tool calls in progress (a long test run, a build, a Subagent Run). It acts while the Session's Job is **interruptible**: `running`, with no cancel requested. A Job still being dispatched, or `finishing` after its `result`, is not. The Session view carries this as its `interruptible` flag. It comes in two forms:
 
-- **Written mid-Turn**: the Runner receives the interrupt first and the Message right after it. `claude` rejects the running tool call, ends the Turn with an aborted `result` and stays alive; the Message then opens a new Turn in the same process. The aborted `result` moves the Job to `finishing` as any `result` does, and that new Turn runs before `claude` exits, so the Comment keeps the Job, the Worker Container and the Worktree. The Comment is `delivered` at once and `handled` when the new Turn ends.
-- **Queued** (the running Job belongs to the previous Agent, an entry is already waiting, the Comment is a native command): the running Turn is interrupted like a Stop, and the Comment waits in its entry at the front of the Queue, so it runs as soon as the Job ends.
+- **With a new Comment**: the Comment is posted with the interrupt flag. When the Job is not interruptible, the flag is ignored and the Comment is delivered as usual.
+- **With nothing new** (`POST /tasks/:id/session/interrupt`): it hurries the caller's own Comments the Agent hasn't read yet, those `delivered` to the running Job or `queued` in the Task's entry. It is available to the author of such a Comment and answers `409` when the caller has none waiting, or when the Job is not interruptible.
 
-The aborted Turn adds no System Comment, as with Stop. Internal Notes carry no Delivery, so the flag has no effect on them.
+In both forms the Runner receives the interrupt first. `claude` rejects the running tool call, ends the Turn with an aborted `result` and stays alive. What follows it:
+
+- Comments already written to the process are read by the next Turn of the same process.
+- When the Job's Agent is the Task's Agent, the Task's entry (`messages`, or `start` for a Session that had not started when they queued) is written right behind the interrupt as one Message, up to its first native command, which keeps waiting for a Job boundary. The new Comment, if any, joins the entry first, so everything waiting is read together in posting order. The entry is removed once it has nothing left.
+- Otherwise (the running Job belongs to the previous Agent, a native command waits) the Comments stay in the entry at the front of the Queue and run as soon as the Job ends.
+
+The aborted `result` moves the Job to `finishing` as any `result` does, and the Turns for what was written run before `claude` exits, so the Comments keep the Job, the Worker Container and the Worktree. The aborted Turn adds no System Comment, as with Stop. Internal Notes carry no Delivery, so the flag has no effect on them.
 
 **Merging.** Comments that wait in the Queue for the same Task are delivered together as one Message, oldest first, each one opened by a bracketed header line naming its author and the ISO time it was posted, followed by its Markdown body. Comments by Agents carry "(agent)" after the name. The body delivered is the one at dispatch time, so editing a queued Comment changes what the Agent reads; edits after delivery stay on the Timeline only.
 

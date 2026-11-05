@@ -179,7 +179,10 @@ async function processJobMessage(
     case 'job.accepted':
       if (job.state === 'dispatched') {
         await tx.update(jobs).set({ state: 'running', startedAt: new Date() }).where(eq(jobs.id, job.id));
-        after.effect((ctx) => ctx.scheduler.publishJob(job.id));
+        after.effect((ctx) => {
+          ctx.scheduler.publishJob(job.id);
+          ctx.scheduler.publishTask(job.taskId);
+        });
       }
       return;
 
@@ -241,6 +244,8 @@ async function processJobMessage(
         after.effect((ctx) => {
           if (job.containerId) ctx.runners.send(job.containerId, { type: 'job.end', jobId: job.id });
           ctx.scheduler.publishJob(job.id);
+          // The Turn can no longer be interrupted: clients hide Interrupt and send.
+          ctx.scheduler.publishTask(job.taskId);
         });
       }
       return;

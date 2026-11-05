@@ -3775,6 +3775,17 @@ class _ComposerState extends State<Composer> {
     return _standardDensity!;
   }
 
+  /// Interrupt and send stops the Agent's running Turn so it reads the Comment
+  /// at once. With nothing typed it hurries the User's waiting Comments, so it
+  /// is offered only when there are some.
+  bool _canInterrupt({required bool empty}) {
+    final c = widget.controller;
+    return c.interruptible &&
+        !c.draft.internal &&
+        _dueAt == null &&
+        (!empty || c.ownMessageWaiting);
+  }
+
   bool get _canSend {
     final c = widget.controller;
     return !c.sending && c.online && !c.draft.ambiguous;
@@ -3793,6 +3804,14 @@ class _ComposerState extends State<Composer> {
 
   Future<void> _send({bool interrupt = false}) async {
     if (!_canSend) return;
+    final c = widget.controller;
+    if (_text.text.trim().isEmpty && c.draft.files.isEmpty) {
+      // With nothing typed, Interrupt and send hurries the User's waiting Comments.
+      if (interrupt && _canInterrupt(empty: true)) {
+        await perform(context, c.interruptForWaiting);
+      }
+      return;
+    }
     if (_text.text.trim() == '/schedule') {
       await widget.controller.setDraft(
         widget.controller.draft.copyWith(text: ''),
@@ -3906,8 +3925,6 @@ class _ComposerState extends State<Composer> {
         : Palette.borderStrong;
     final radius = BorderRadius.circular(Radii.xl);
     final due = _dueAt;
-    // Interrupt and send stops the Agent's running Turn so it reads the Comment at once.
-    final canInterrupt = c.agentWorking && !internal && due == null;
     final sendLabel = due != null
         ? 'Schedule'
         : internal
@@ -4092,17 +4109,30 @@ class _ComposerState extends State<Composer> {
                   ),
                 ),
               ),
-              if (canInterrupt)
-                slot(
-                  IconAction(
-                    key: const Key('interrupt-and-send'),
-                    icon: Icons.bolt_rounded,
-                    tooltip: "Interrupt and send · stops the Agent's current step so it reads this at once",
-                    color: Palette.primary,
-                    size: 36,
-                    onPressed: _canSend ? () => _send(interrupt: true) : null,
-                  ),
-                ),
+              // Rebuilt with the text alone: an empty composer offers it only
+              // while one of the User's Comments waits.
+              ValueListenableBuilder(
+                valueListenable: _text,
+                builder: (context, value, _) {
+                  final empty =
+                      value.text.trim().isEmpty && draft.files.isEmpty;
+                  if (!_canInterrupt(empty: empty)) {
+                    return const SizedBox.shrink();
+                  }
+                  return slot(
+                    IconAction(
+                      key: const Key('interrupt-and-send'),
+                      icon: Icons.bolt_rounded,
+                      tooltip: empty
+                          ? "Interrupt · stops the Agent's current step so it reads your waiting message"
+                          : "Interrupt and send · stops the Agent's current step so it reads this at once",
+                      color: Palette.primary,
+                      size: 36,
+                      onPressed: _canSend ? () => _send(interrupt: true) : null,
+                    ),
+                  );
+                },
+              ),
               slot(
                 Tooltip(
                   message: sendLabel,

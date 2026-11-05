@@ -48,7 +48,7 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
     .from(queueEntries)
     .where(eq(queueEntries.taskId, taskId));
   const [lastJob] = await db
-    .select({ id: jobs.id, state: jobs.state, failureStage: jobs.failureStage, error: jobs.error })
+    .select({ id: jobs.id, state: jobs.state, failureStage: jobs.failureStage, error: jobs.error, cancelRequested: jobs.cancelRequested, discardOutput: jobs.discardOutput })
     .from(jobs)
     .where(eq(jobs.sessionId, s.id))
     .orderBy(desc(jobs.createdAt))
@@ -86,6 +86,7 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
     // A pending Session hasn't read anything yet, and its first Message carries the whole Task.
     unseenChanges: (s.state === 'idle' || s.state === 'running') && unseen,
     context: lastTurn?.tokens == null ? null : { tokens: lastTurn.tokens, window: lastTurn.window ?? null },
-    lastJob: lastJob ?? null,
+    interruptible: s.state === 'running' && lastJob?.state === 'running' && !lastJob.cancelRequested && !lastJob.discardOutput,
+    lastJob: lastJob ? { id: lastJob.id, state: lastJob.state, failureStage: lastJob.failureStage, error: lastJob.error } : null,
   };
 }
