@@ -234,7 +234,7 @@ Preferences are stored on the server, so every installation of the same User sha
 
 ### Read position and unread
 
-The server gives every persisted Timeline entry of a Task (Comments of every kind, Revisions and the Agent's items) an increasing position at the moment it is stored. Positions follow commit order within a Task, so a reader who has seen position N never misses an entry that becomes visible later with a lower position.
+The server gives every persisted Timeline entry of a Task (Comments of every kind, Revisions and the Agent's items) an increasing position at the moment it is stored. Positions follow commit order within a Task, so a reader who has seen position N never misses an entry that becomes visible later with a lower position. The Timeline itself is ordered by these positions, oldest first, and every entry carries its position: timestamps can tie once clients see only milliseconds, and a Comment's timestamp can predate the rows stored before it, so they don't decide the order.
 
 Each User has a read position per Task:
 

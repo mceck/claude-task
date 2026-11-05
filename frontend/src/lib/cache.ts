@@ -119,8 +119,17 @@ export function setTask(qc: QueryClient, task: Task): void {
   qc.setQueriesData<Task>({ queryKey: ['task'] }, (t) => (t && t.id === task.id && t.version <= task.version ? task : t));
 }
 
-/** Whether `a` comes before `b` on the Timeline, newest first: the server's order (time, then kind and id). */
+/**
+ * Whether `a` comes before `b` on the Timeline, newest first: the server's order. Its positions are
+ * exact, and distinguish entries whose timestamps are equal once cut to the millisecond; the old
+ * order (time, then kind and id) stays as the fallback for entries without one.
+ */
 function newerThan(a: TimelineItem, b: TimelineItem): boolean {
+  if (a.readPosition !== undefined && b.readPosition !== undefined) {
+    const at = BigInt(a.readPosition);
+    const bt = BigInt(b.readPosition);
+    if (at !== bt) return at > bt;
+  }
   const at = Date.parse(a.createdAt);
   const bt = Date.parse(b.createdAt);
   if (at !== bt) return at > bt;
@@ -138,7 +147,11 @@ export function putTimelineItem(qc: QueryClient, taskId: string, item: TimelineI
     if (exists) {
       return {
         ...data,
-        pages: data.pages.map((p) => ({ ...p, items: p.items.map((i) => (i.id === item.id ? item : i)) })),
+        pages: data.pages.map((p) => ({
+          ...p,
+          // A position never changes: an update must not drop the one the entry was placed with.
+          items: p.items.map((i) => (i.id === item.id ? { ...item, readPosition: i.readPosition ?? item.readPosition } : i)),
+        })),
       };
     }
     const insert = (n: number, at: number) => ({
@@ -258,6 +271,7 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
         id: event.comment.id,
         createdAt: event.comment.createdAt,
         comment: event.comment,
+        ...(event.type === 'comment.created' ? { readPosition: event.readPosition } : {}),
       });
     case 'scheduled_message.updated':
       return putScheduledMessage(qc, event.message);
@@ -267,6 +281,7 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
         id: event.revision.id,
         createdAt: event.revision.createdAt,
         revision: event.revision,
+        ...(event.type === 'revision.created' ? { readPosition: event.readPosition } : {}),
       });
     case 'session.changed':
       // An older HTTP snapshot must not overwrite this newer scheduling event.
@@ -275,7 +290,13 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       return;
     case 'agent_item.created':
     case 'agent_item.updated':
-      return putTimelineItem(qc, event.item.taskId, { type: 'agent', id: event.item.id, createdAt: event.item.createdAt, item: event.item });
+      return putTimelineItem(qc, event.item.taskId, {
+        type: 'agent',
+        id: event.item.id,
+        createdAt: event.item.createdAt,
+        item: event.item,
+        ...(event.type === 'agent_item.created' ? { readPosition: event.readPosition } : {}),
+      });
     case 'agent.updated':
       return upsertAgent(qc, event.agent);
     case 'agent.deleted':

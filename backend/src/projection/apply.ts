@@ -6,6 +6,7 @@ import type { Executor } from '../db/client';
 import { offerLimitResume, onTurnWorked } from '../modules/scheduled-messages/service';
 import { setAlertComment, turnEventId } from '../notifications/alerts';
 import { agentItems, comments, jobs, rateLimitObservations, tasks, turns } from '../db/schema';
+import { loadTimelinePositions } from '../db/activity';
 import type { JobRow } from '../modules/agents/service';
 import type { Broadcast, Mutation } from './projector';
 
@@ -36,6 +37,8 @@ export async function applyProjection(
   const topic = taskTopic(job.taskId);
   const created: string[] = [];
   const updated: string[] = [];
+  /** Agent Items this event created, announced with their Timeline position once all are stored. */
+  const createdItems: { id: string; item: AgentItem }[] = [];
   /** A failed Turn's Alert previews the System Comment its `result` adds right after it. */
   let failedTurnEvent: string | null = null;
   for (const m of mutations) {
@@ -78,7 +81,7 @@ export async function applyProjection(
           .values({ id: m.id, taskId: job.taskId, sessionId: job.sessionId, jobId: job.id, agentId: job.agentId, kind: m.payload.kind, payload: m.payload })
           .onConflictDoUpdate({ target: agentItems.id, set: { payload: m.payload, updatedAt: new Date() } })
           .returning();
-        after.emit(topic, { type: 'agent_item.created', item: serializeAgentItem(row!) });
+        createdItems.push({ id: m.id, item: serializeAgentItem(row!) });
         break;
       }
       case 'item.update': {
@@ -179,6 +182,12 @@ export async function applyProjection(
         after.effect((ctx) => ctx.scheduler.publishTask(job.taskId));
         break;
     }
+  }
+  if (createdItems.length > 0) {
+    // The position is the stored insert order: a client places each item exactly where the
+    // Timeline will show it, without relying on timestamps that only carry milliseconds.
+    const positions = await loadTimelinePositions(tx, job.taskId, createdItems.map((c) => c.id));
+    for (const { id, item } of createdItems) after.emit(topic, { type: 'agent_item.created', item, readPosition: positions.get(id) });
   }
   // The Board's cards follow the context too, from the Project's topic.
   const liveContext = broadcasts.findLast((b) => b.type === 'live.context');

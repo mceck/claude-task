@@ -339,6 +339,41 @@ describe('the Agent on the Timeline', () => {
     ws.close();
   });
 
+  it('tells clients where each new item goes, in the order the Turn produced it', async () => {
+    const { admin, project, agent, runner } = await setup(app);
+    const task = await createTask(admin, project.id);
+    const ws = await WsTestClient.connect(app.url, admin.cookie);
+    await ws.subscribe(taskTopic(task.id));
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    const s = new Stream();
+    await runner.play(start.jobId, [
+      s.init(),
+      // One model call that writes a Comment and calls a tool in the same message: stored within
+      // the same millisecond, they are only tellable apart by their Timeline position.
+      s.message([
+        { type: 'text', text: 'I will run the tests.' },
+        { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } },
+      ]),
+      s.toolResult('t1', 'ok'),
+      s.result(),
+    ]);
+
+    const created = [...ws.events('comment.created').map((e) => ({ id: e.comment.id, at: e.readPosition })),
+      ...ws.events('agent_item.created').map((e) => ({ id: e.item.id, at: e.readPosition }))];
+    // Every entry the client is told about carries the position the Timeline stores it under.
+    expect(created.every((c) => typeof c.at === 'string' && /^\d+$/.test(c.at))).toBe(true);
+    const byPosition = created.sort((a, b) => Number(a.at) - Number(b.at)).map((c) => c.id);
+    const stored = (await timeline(admin, task.id)).map((i) => i.id).filter((id) => byPosition.includes(id));
+    expect(stored).toEqual(byPosition);
+
+    const comment = ws.events('comment.created').find((e) => e.comment.kind === 'agent')!;
+    const activity = ws.events('agent_item.created').find((e) => e.item.payload.kind === 'activity')!;
+    expect(BigInt(comment.readPosition!)).toBeLessThan(BigInt(activity.readPosition!));
+    ws.close();
+  });
+
   it('records each Turn with its usage on the Job', async () => {
     const { admin, project, agent, runner } = await setup(app);
     const task = await createTask(admin, project.id);

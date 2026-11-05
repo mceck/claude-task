@@ -153,8 +153,8 @@ export function Composer({
         putScheduledMessage(qc, message);
         setScheduledFor('');
       } else {
-        const { comment } = await post<{ comment: Comment }>(`/tasks/${taskId}/comments`, payload);
-        putTimelineItem(qc, taskId, { type: 'comment', id: comment.id, createdAt: comment.createdAt, comment });
+        const { comment, readPosition } = await post<{ comment: Comment; readPosition?: string }>(`/tasks/${taskId}/comments`, payload);
+        putTimelineItem(qc, taskId, { type: 'comment', id: comment.id, createdAt: comment.createdAt, comment, readPosition });
       }
       // Only what was sent goes: text typed or files added while sending stay. Text that changed what was
       // sent is kept whole, rather than guessing which part is new.

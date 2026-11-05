@@ -5,6 +5,7 @@ import type { AfterCommit, AppContext } from '../context';
 import { transact } from '../context';
 import type { Executor } from '../db/client';
 import { comments, jobs, projects, sessions, taskRevisions, tasks } from '../db/schema';
+import { loadTimelinePositions } from '../db/activity';
 import { badRequest, conflict } from '../errors';
 import { GitProviderError } from './provider';
 import { gitOwnerTask } from './owner';
@@ -106,6 +107,7 @@ export async function recordPullRequest(tx: Executor, after: AfterCommit, task: 
   after.emit(taskTopic(task.id), {
     type: 'revision.created',
     revision: { id: revision!.id, taskId: task.id, version: task.version + 1, actor, changes: revision!.changes, createdAt: revision!.createdAt.toISOString() },
+    readPosition: (await loadTimelinePositions(tx, task.id, [revision!.id])).get(revision!.id),
   });
   await emitTasksChanged(tx, after, [task.id], 'task.updated');
 }

@@ -1470,12 +1470,17 @@ class TaskController extends ChangeNotifier {
         byId[id] = TimelineEntry(json);
       }
     }
-    // Display order is the server's and the web's: creation time, then kind,
-    // then id (loadTimeline's `created_at, kind, id`, oldest first). The read
-    // position tracks reading only; it can be missing or '0', and sorting by
-    // it showed the conversation newest first.
+    // Display order is the server's: the persisted Timeline position, oldest
+    // first, which stays exact where timestamps tie once cut to milliseconds.
+    // Creation time, then kind and id, is the fallback for entries without one.
     timeline = byId.values.toList()
       ..sort((a, b) {
+        final ap = a.json['readPosition'] as String?;
+        final bp = b.json['readPosition'] as String?;
+        if (ap != null && bp != null) {
+          final position = BigInt.parse(ap).compareTo(BigInt.parse(bp));
+          if (position != 0) return position;
+        }
         final time = a.createdAt.compareTo(b.createdAt);
         if (time != 0) return time;
         final kind = a.type.compareTo(b.type);
@@ -1940,6 +1945,8 @@ class TaskController extends ChangeNotifier {
             'type': 'comment',
             'id': comment['id'],
             'createdAt': comment['createdAt'],
+            if (result['readPosition'] != null)
+              'readPosition': result['readPosition'],
             'comment': comment,
           },
         ]);
@@ -2529,6 +2536,8 @@ class TaskController extends ChangeNotifier {
       'type': kind,
       'id': value['id'],
       'createdAt': value['createdAt'],
+      // The server's stored order, exact where timestamps tie at the millisecond.
+      if (event['readPosition'] != null) 'readPosition': event['readPosition'],
       key!: Map<String, dynamic>.from(value),
     };
   }

@@ -31,6 +31,11 @@ export class Stream {
   }
 
   private assistant(block: Record<string, unknown>, parent: string | null = null, model = this.model): StreamEvent {
+    return this.message([block], parent, model);
+  }
+
+  /** One assistant message carrying several content blocks, in order, as the CLI sends a text and its tool calls together. */
+  message(content: Record<string, unknown>[], parent: string | null = null, model = this.model): StreamEvent {
     return {
       type: 'assistant',
       message: {
@@ -38,7 +43,7 @@ export class Stream {
         type: 'message',
         role: 'assistant',
         model,
-        content: [block],
+        content,
         stop_reason: null,
         usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
       },

@@ -437,6 +437,48 @@ void main() {
       h.controller.dispose();
     },
   );
+  test(
+    'Timeline entries falling in the same millisecond keep the order the server stored them in',
+    () async {
+      final h = Harness();
+      addTearDown(h.dispose);
+      await h.login();
+      await h.openTask();
+      final same = at('3');
+      // A Comment and the Activity that followed it, cut to the same millisecond:
+      // only the position each event carries tells them apart.
+      h.live.eventController.add({
+        'type': 'agent_item.created',
+        'readPosition': '4',
+        'item': {
+          'id': 'activity-1',
+          'taskId': 'task-1',
+          'createdAt': same,
+          'payload': {'kind': 'activity', 'entries': <Json>[]},
+        },
+      });
+      h.live.eventController.add({
+        'type': 'comment.created',
+        'readPosition': '3',
+        'comment': {
+          ...commentData('agent-1', 'Written first.', position: '3')['comment']
+              as Map<String, dynamic>,
+          'kind': 'agent',
+          'author': {
+            'id': 'agent-1',
+            'displayName': 'Ada Bot',
+            'type': 'agent',
+          },
+        },
+      });
+      expect(h.controller.timeline.map((e) => e.id), [
+        'comment-1',
+        'comment-2',
+        'agent-1',
+        'activity-1',
+      ]);
+    },
+  );
   test('the Timeline reads oldest first even when the server has no read positions', () async {
     final h = Harness();
     // Newest first, as the API returns it, with the '0' a missing
