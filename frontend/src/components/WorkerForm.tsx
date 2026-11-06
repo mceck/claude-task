@@ -1,4 +1,12 @@
-import { AGENT_SERVICES, AGENT_SERVICE_INFO, DEFAULT_AGENT_SERVICES, WORKER_CAP_MAX, checkAgentDockerfile, updateWorkerBody } from '@claude-task/shared';
+import {
+  AGENT_SERVICES,
+  AGENT_SERVICE_INFO,
+  DEFAULT_AGENT_SERVICES,
+  DEFAULT_CLAUDE_CODE_VERSION,
+  WORKER_CAP_MAX,
+  checkAgentDockerfile,
+  updateWorkerBody,
+} from '@claude-task/shared';
 import type { AgentService, CreateWorkerBody, UpdateWorkerBody, Worker } from '@claude-task/shared';
 import { useState } from 'react';
 import type { FormEvent } from 'react';
@@ -75,6 +83,7 @@ export function WorkerForm({
   const [cap, setCap] = useState(String(worker?.cap ?? 1));
   const [enabled, setEnabled] = useState(worker?.enabled ?? true);
   const [dockerfile, setDockerfile] = useState(worker?.dockerfile ?? DEFAULT_DOCKERFILE);
+  const [claudeVersion, setClaudeVersion] = useState(worker?.claudeCodeVersion ?? DEFAULT_CLAUDE_CODE_VERSION);
   const [services, setServices] = useState<AgentService[]>(worker?.services ?? DEFAULT_AGENT_SERVICES);
   const [cpu, setCpu] = useState(worker?.cpuLimit?.toString() ?? '');
   const [memory, setMemory] = useState(worker?.memoryMb?.toString() ?? '');
@@ -91,7 +100,13 @@ export function WorkerForm({
     },
     editing,
   );
-  const docker = () => ({ dockerfile, services, cpuLimit: cpu ? Number(cpu) : null, memoryMb: memory ? Number(memory) : null });
+  const docker = () => ({
+    dockerfile,
+    claudeCodeVersion: claudeVersion.trim(),
+    services,
+    cpuLimit: cpu ? Number(cpu) : null,
+    memoryMb: memory ? Number(memory) : null,
+  });
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (worker) return;
@@ -146,6 +161,9 @@ export function WorkerForm({
         </label>
         <fieldset className="flex flex-col gap-4 rounded-lg border p-3" disabled={saving || readOnly}>
           <legend className="px-1 text-sm font-medium">Docker configuration</legend>
+          <Field label="Claude Code version" hint="The version installed in this Worker's image, e.g. 2.1.310. A repository's mise configuration can still override it. Changing it rebuilds the image.">
+            <Input aria-label="Claude Code version" value={claudeVersion} onChange={(e) => setClaudeVersion(e.target.value)} maxLength={100} />
+          </Field>
           <fieldset className="flex flex-col gap-2">
             <legend className="text-sm font-medium">Services</legend>
             <p className="text-xs text-muted-foreground">

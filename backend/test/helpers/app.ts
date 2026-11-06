@@ -117,7 +117,6 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       agents: {
         runtime: 'fake',
         dockerSocket: '/dev/null',
-        claudeCodeVersion: '2.1.310',
         backendUrl: 'http://backend.test',
         network: null,
         commitEmailDomain: 'agents.test',

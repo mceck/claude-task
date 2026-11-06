@@ -84,8 +84,8 @@ describe('workers', () => {
     expect(worker.containers.map((c) => [c.slot, c.state])).toEqual([[1, 'starting'], [2, 'stopped'], [3, 'stopped']]);
 
     const builds = (await admin.get(`/workers/${id}/builds`)).body.builds;
-    expect(builds).toMatchObject([{ status: 'succeeded', baseVersion: 'fake-1' }]);
-    expect(builds[0].log).toContain('FROM claude-task/agent-base:fake-1');
+    expect(builds).toMatchObject([{ status: 'succeeded', baseVersion: '2.1.310-fake-1' }]);
+    expect(builds[0].log).toContain('FROM claude-task/agent-base:2.1.310-fake-1');
 
     await FakeRunner.connect(app, id);
     expect(await getWorker(admin, id)).toMatchObject({ state: 'idle', containers: [{ slot: 1, state: 'idle', runnerConnected: true }, {}, {}] });
@@ -111,7 +111,17 @@ describe('workers', () => {
     const admin = await app.admin();
     for (const dockerfile of ['FROM node:22\nUSER agent\n', 'RUN echo hi\nFROM claude-task/agent-base\n', 'FROM claude-task/agent-base-evil\n'])
       expect((await admin.post('/workers', { name: 'Bad', dockerfile })).status, dockerfile).toBe(400);
-    for (const body of [{ services: ['mongo'] }, { services: ['redis', 'redis'] }, { minimum: 3, cap: 2 }, { cap: 21 }, { cap: 0 }, { minimum: -1 }])
+    for (const body of [
+      { services: ['mongo'] },
+      { services: ['redis', 'redis'] },
+      { minimum: 3, cap: 2 },
+      { cap: 21 },
+      { cap: 0 },
+      { minimum: -1 },
+      { claudeCodeVersion: '' },
+      { claudeCodeVersion: 'latest foo' },
+      { claudeCodeVersion: '1/2' },
+    ])
       expect((await admin.post('/workers', { name: 'Bad', dockerfile: DEFAULT_AGENT_DOCKERFILE, ...body })).status, JSON.stringify(body)).toBe(400);
     const worker = await createWorker(app, admin, { name: 'Unique', services: ['rustfs', 'mysql', 'mailpit'], cap: 2 });
     expect(worker.services).toEqual(['mysql', 'mailpit', 'rustfs']);
@@ -135,6 +145,25 @@ describe('workers', () => {
     await app.settle();
     expect(app.runtime.builds.at(-1)!.dockerfile).toContain('ENV CLAUDE_TASK_SERVICES=""');
     expect(app.runtime.container(worker.id, 1)!.spec.image).not.toBe(oldImage);
+  });
+
+  it('installs the Claude Code version chosen on each Worker, and rebuilds when it changes', async () => {
+    const admin = await app.admin();
+    const worker = await createWorker(app, admin, { claudeCodeVersion: '2.1.99' });
+    expect(worker.claudeCodeVersion).toBe('2.1.99');
+    expect((await admin.get(`/workers/${worker.id}/builds`)).body.builds[0]).toMatchObject({ baseVersion: '2.1.99-fake-1' });
+    expect(app.runtime.baseImageVersions).toContain('2.1.99');
+    expect(app.runtime.builds.at(-1)!.dockerfile).toContain('FROM claude-task/agent-base:2.1.99-fake-1');
+
+    const count = app.runtime.builds.length;
+    await admin.patch(`/workers/${worker.id}`, { description: 'Same version' });
+    await app.settle();
+    expect(app.runtime.builds).toHaveLength(count);
+    await admin.patch(`/workers/${worker.id}`, { claudeCodeVersion: '2.1.100' });
+    await app.settle();
+    expect(app.runtime.builds).toHaveLength(count + 1);
+    expect(app.runtime.builds.at(-1)!.dockerfile).toContain('FROM claude-task/agent-base:2.1.100-fake-1');
+    expect((await getWorker(admin, worker.id)).claudeCodeVersion).toBe('2.1.100');
   });
 
   it('fails a build whose image does not end as USER agent, and keeps the previous image when a rebuild fails', async () => {
@@ -192,7 +221,7 @@ describe('workers', () => {
     const worker = await createWorker(app, admin, { minimum: 1 });
     const before = app.runtime.builds.length;
     await app.server.ctx.db.execute(sql`insert into worker_builds (worker_id, dockerfile, base_version, status)
-      values (${worker.id}::uuid, 'FROM claude-task/agent-base', 'fake-1', 'building')`);
+      values (${worker.id}::uuid, 'FROM claude-task/agent-base', '2.1.310-fake-1', 'building')`);
     const { resetInterruptedBuilds } = await import('../src/modules/workers/builds');
     await resetInterruptedBuilds(app.server.ctx.db);
     await app.server.ctx.scheduler.reconcileAll();
@@ -203,7 +232,7 @@ describe('workers', () => {
     await app.server.ctx.scheduler.reconcileAll();
     await app.settle();
     const builds = (await admin.get(`/workers/${worker.id}/builds`)).body.builds;
-    expect(builds[0].baseVersion).toBe('fake-2');
+    expect(builds[0].baseVersion).toBe('2.1.310-fake-2');
     expect(app.runtime.container(worker.id, 1)!.spec.image).toContain(builds[0].id.slice(0, 12));
 
     app.runtime.setState(worker.id, 1, 'exited');
@@ -213,10 +242,18 @@ describe('workers', () => {
 
   it('duplicates a Worker with its configuration and its own Build', async () => {
     const admin = await app.admin();
-    const worker = await createWorker(app, admin, { name: 'Flutter', services: ['mysql'], minimum: 1, cap: 3, cpuLimit: 1.5 });
+    const worker = await createWorker(app, admin, { name: 'Flutter', services: ['mysql'], minimum: 1, cap: 3, cpuLimit: 1.5, claudeCodeVersion: '2.1.88' });
     const res = await admin.post(`/workers/${worker.id}/duplicate`, {});
     expect(res.status).toBe(201);
-    expect(res.body.worker).toMatchObject({ name: 'Flutter (copy)', services: ['mysql'], minimum: 1, cap: 3, cpuLimit: 1.5, dockerfile: worker.dockerfile });
+    expect(res.body.worker).toMatchObject({
+      name: 'Flutter (copy)',
+      services: ['mysql'],
+      minimum: 1,
+      cap: 3,
+      cpuLimit: 1.5,
+      dockerfile: worker.dockerfile,
+      claudeCodeVersion: '2.1.88',
+    });
     await app.settle();
     expect(app.runtime.container(res.body.worker.id, 1)).toBeDefined();
     expect((await admin.post(`/workers/${worker.id}/duplicate`, { name: 'Flutter' })).status).toBe(409);

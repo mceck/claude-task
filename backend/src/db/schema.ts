@@ -469,6 +469,8 @@ export const workers = pgTable(
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     dockerfile: text('dockerfile').notNull(),
+    /** The Claude Code version its Base Image installs (docs/specs/workers.md). */
+    claudeCodeVersion: text('claude_code_version').notNull().default('2.1.310'),
     services: jsonb('services').$type<AgentService[]>().notNull().default(['postgres', 'redis']),
     /** Per Worker Container. */
     cpuLimit: doublePrecision('cpu_limit'),

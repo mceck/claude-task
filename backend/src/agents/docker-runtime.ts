@@ -42,11 +42,12 @@ function runnerFiles(dir: string, rel = ''): string[] {
 
 /** Talks to the host's Docker daemon over its socket (dockerode). */
 export class DockerRuntime implements WorkerRuntime {
-  readonly baseVersion: string;
   private readonly docker: Docker;
   private readonly baseDockerfile: string;
   private readonly baseScripts: Record<string, Buffer>;
   private readonly runner: { dir: string; files: string[] };
+  /** Base Image versions by Claude Code version; one fingerprinting sees the same sources. */
+  private readonly baseVersions = new Map<string, string>();
 
   constructor(
     private readonly config: AgentsConfig,
@@ -59,20 +60,29 @@ export class DockerRuntime implements WorkerRuntime {
       `agent-base/${name}`, readFileSync(path.join(path.dirname(paths.baseDockerfile), name)),
     ]));
     this.runner = { dir: paths.runnerDir, files: runnerFiles(paths.runnerDir) };
-    // The platform version: pinned CLI + Base Image recipe + Runner sources.
-    const h = createHash('sha256').update(config.claudeCodeVersion).update('\0').update(this.baseDockerfile);
-    for (const [name, content] of Object.entries(this.baseScripts)) h.update('\0').update(name).update('\0').update(content);
-    for (const f of this.runner.files) h.update('\0').update(f).update('\0').update(readFileSync(path.join(this.runner.dir, f)));
-    this.baseVersion = `${config.claudeCodeVersion}-${h.digest('hex').slice(0, 12)}`;
   }
 
-  async ensureBaseImage(onLog: (chunk: string) => void): Promise<void> {
-    const tag = `${BASE_IMAGE}:${this.baseVersion}`;
+  /** The Platform Version: the Claude Code version plus a fingerprint of the recipe and Runner sources. */
+  baseVersionFor(claudeCodeVersion: string): string {
+    let baseVersion = this.baseVersions.get(claudeCodeVersion);
+    if (!baseVersion) {
+      const h = createHash('sha256').update(claudeCodeVersion).update('\0').update(this.baseDockerfile);
+      for (const [name, content] of Object.entries(this.baseScripts)) h.update('\0').update(name).update('\0').update(content);
+      for (const f of this.runner.files) h.update('\0').update(f).update('\0').update(readFileSync(path.join(this.runner.dir, f)));
+      baseVersion = `${claudeCodeVersion}-${h.digest('hex').slice(0, 12)}`;
+      this.baseVersions.set(claudeCodeVersion, baseVersion);
+    }
+    return baseVersion;
+  }
+
+  async ensureBaseImage(claudeCodeVersion: string, onLog: (chunk: string) => void): Promise<void> {
+    const baseVersion = this.baseVersionFor(claudeCodeVersion);
+    const tag = `${BASE_IMAGE}:${baseVersion}`;
     if (await this.imageExists(tag)) return;
-    onLog(`Building ${tag} (Claude Code ${this.config.claudeCodeVersion})…\n`);
+    onLog(`Building ${tag} (Claude Code ${claudeCodeVersion})…\n`);
     const files: Record<string, Buffer | string> = { Dockerfile: this.baseDockerfile, ...this.baseScripts };
     for (const f of this.runner.files) files[path.posix.join('runner', f.split(path.sep).join('/'))] = readFileSync(path.join(this.runner.dir, f));
-    await this.build(files, { t: tag, buildargs: { CLAUDE_CODE_VERSION: this.config.claudeCodeVersion, RUNNER_VERSION: this.baseVersion } }, onLog);
+    await this.build(files, { t: tag, buildargs: { CLAUDE_CODE_VERSION: claudeCodeVersion, RUNNER_VERSION: baseVersion } }, onLog);
     await this.docker.getImage(tag).tag({ repo: BASE_IMAGE, tag: 'latest' });
   }
 
@@ -198,16 +208,20 @@ export class DockerRuntime implements WorkerRuntime {
     return removed;
   }
 
-  async removeOldBaseImages(): Promise<number> {
-    const current = `${BASE_IMAGE}:${this.baseVersion}`;
-    const currentId = await this.docker.getImage(current).inspect().then((i) => i.Id, () => null);
+  async removeOldBaseImages(keepClaudeCodeVersions: string[]): Promise<number> {
+    const keep = new Set(keepClaudeCodeVersions.map((version) => `${BASE_IMAGE}:${this.baseVersionFor(version)}`));
+    const keptIds = new Set<string>();
+    for (const tag of keep) {
+      const id = await this.docker.getImage(tag).inspect().then((i) => i.Id, () => null);
+      if (id) keptIds.add(id);
+    }
     const images = await this.docker.listImages({ filters: JSON.stringify({ reference: [BASE_IMAGE] }) });
     let removed = 0;
     for (const image of images) {
       for (const tag of image.RepoTags ?? []) {
-        if (!tag.startsWith(`${BASE_IMAGE}:`) || tag === current) continue;
+        if (!tag.startsWith(`${BASE_IMAGE}:`) || keep.has(tag)) continue;
         const latest = tag === `${BASE_IMAGE}:latest`;
-        if (latest && image.Id === currentId) continue;
+        if (latest && keptIds.has(image.Id)) continue;
         // Untagging leaves the layers that Worker Images still build on.
         const ok = await this.docker.getImage(tag).remove().then(() => true, () => false);
         if (ok && !latest) removed++;
@@ -240,7 +254,7 @@ export class DockerRuntime implements WorkerRuntime {
     const orphan = (labels: Record<string, string> | null | undefined) => !!labels?.[WORKER_LABEL] && !knownIds.has(labels[WORKER_LABEL]);
 
     if (!input.anyBuilding) {
-      await attempt('old base images', async () => (removed.baseImages = await this.removeOldBaseImages()));
+      await attempt('old base images', async () => (removed.baseImages = await this.removeOldBaseImages(known.map((w) => w.claudeCodeVersion))));
       await attempt('untagged images', async () => {
         const untagged = JSON.stringify({ dangling: ['true'], label: [PLATFORM_LABEL] });
         const dangling = await this.docker.listImages({ filters: untagged });

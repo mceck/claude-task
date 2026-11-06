@@ -50,14 +50,13 @@ These are backend environment settings. The supplied Compose file exposes a subs
 | `WORKER_STOP_WHEN_UNUSED` | Stop a Worker Container above its Worker's minimum once it has had no Job, and start it again when work arrives. Defaults to `true`; set `false` to keep every running Worker Container up. See [Workers](workers.md). |
 | `WORKER_IDLE_MINUTES` | Minutes without a Job before a Worker Container above the minimum stops. Default `10`. |
 | `WORKER_STOP_ON_SHUTDOWN` | Stop this installation's Worker Containers on graceful backend shutdown. Defaults to `true` in local development and `false` with `NODE_ENV=production`; the supplied Compose stack explicitly defaults to `true`. Set `false` to keep Workers running through backend restarts. |
-| `CLAUDE_CODE_VERSION` | Pinned Claude Code version used in the Base Image and every Worker image; current default `2.1.310`. |
 | `AGENT_COMMIT_EMAIL_DOMAIN` | Email domain used for Agent commits; default `agents.claude-task.local`. |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` | Optional environment-managed GitHub App connection. The key accepts literal `\n` line breaks. |
 | `GITLAB_URL`, `GITLAB_TOKEN` | Optional environment-managed GitLab connection; URL defaults to `https://gitlab.com`. |
 | `FCM_SERVICE_ACCOUNT_FILE` | Optional Firebase service-account file for native push notifications; mount the file and set its container path. |
 | `AGENT_RUNTIME` | Default `docker`. `fake` simulates Worker images and containers for tests and demos and does not run Claude. |
 
-The old setting names `AGENT_STOP_WHEN_UNUSED`, `AGENT_WIKI_IDLE_MINUTES` and `AGENT_STOP_ON_SHUTDOWN` are obsolete. The backend logs a warning naming the replacement when it finds one of them, and ignores it.
+The old setting names `AGENT_STOP_WHEN_UNUSED`, `AGENT_WIKI_IDLE_MINUTES` and `AGENT_STOP_ON_SHUTDOWN` are obsolete. The backend logs a warning naming the replacement when it finds one of them, and ignores it. `CLAUDE_CODE_VERSION` is obsolete too: the Claude Code version is set on each Worker instead, defaulting to `2.1.310`.
 
 Terminate HTTPS at your reverse proxy and forward both HTTP and WebSocket traffic. The normal web frontend and backend share the same origin. Set public and Agent-facing URLs separately when only the proxy is reachable to Users.
 

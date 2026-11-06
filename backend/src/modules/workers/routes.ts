@@ -74,6 +74,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     });
     if (
       (body.dockerfile !== undefined && body.dockerfile !== before.dockerfile) ||
+      (body.claudeCodeVersion !== undefined && body.claudeCodeVersion !== before.claudeCodeVersion) ||
       (body.services !== undefined && JSON.stringify(body.services) !== JSON.stringify(before.services))
     )
       ctx.scheduler.build(id);
@@ -110,6 +111,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
         name: name ?? copyName(source.name, (await ctx.db.select({ name: workers.name }).from(workers)).map((r) => r.name)),
         description: source.description,
         dockerfile: source.dockerfile,
+        claudeCodeVersion: source.claudeCodeVersion,
         services: source.services,
         cpuLimit: source.cpuLimit,
         memoryMb: source.memoryMb,

@@ -4,7 +4,7 @@ import { jobs, tasks } from '../../src/db/schema';
 import { FakeGitProvider } from '../../src/git/fake-provider';
 // Test-only server: real API/DB + fake containers and controllable Runner WebSockets.
 // This entry point is never included in the production bundle.
-import { API_PREFIX, RUNNER_PROTOCOL_VERSION, RUNNER_WS_PATH } from '@claude-task/shared';
+import { API_PREFIX, DEFAULT_CLAUDE_CODE_VERSION, RUNNER_PROTOCOL_VERSION, RUNNER_WS_PATH } from '@claude-task/shared';
 import type { BackendToRunner, RunnerToBackend } from '@claude-task/shared';
 import WebSocket from 'ws';
 import { FakeRuntime } from '../../src/agents/fake-runtime';
@@ -30,7 +30,7 @@ runtime.onContainerCreated = (workerId, slot, spec) => {
         type: 'hello',
         protocolVersion: RUNNER_PROTOCOL_VERSION,
         runnerVersion: 'e2e',
-        claudeVersion: config.agents.claudeCodeVersion,
+        claudeVersion: DEFAULT_CLAUDE_CODE_VERSION,
         activeJobId: null,
       } satisfies RunnerToBackend),
     ),

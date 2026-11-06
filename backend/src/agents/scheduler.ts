@@ -252,7 +252,7 @@ export class Scheduler {
       .cleanup({
         anyBuilding: this.building.size > 0,
         workers: async () => {
-          const rows = await db.select({ id: workers.id, imageTag: workers.imageTag }).from(workers);
+          const rows = await db.select({ id: workers.id, imageTag: workers.imageTag, claudeCodeVersion: workers.claudeCodeVersion }).from(workers);
           return rows.map((w) => ({ ...w, building: this.building.has(w.id) }));
         },
       })
@@ -371,8 +371,9 @@ export class Scheduler {
     const { db, runtime, hub } = this.ctx;
     const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
     if (!worker) return;
+    const baseVersion = runtime.baseVersionFor(worker.claudeCodeVersion);
     const build = await db.transaction(async (tx) => {
-      const [row] = await tx.insert(workerBuilds).values({ workerId, dockerfile: worker.dockerfile, baseVersion: runtime.baseVersion }).returning();
+      const [row] = await tx.insert(workerBuilds).values({ workerId, dockerfile: worker.dockerfile, baseVersion }).returning();
       await tx.update(workers).set({ imageState: 'building' }).where(eq(workers.id, workerId));
       return row!;
     });
@@ -404,9 +405,9 @@ export class Scheduler {
     let imageTag: string | null = null;
     let error: string | null = null;
     try {
-      await runtime.ensureBaseImage((chunk) => onLog(chunk));
+      await runtime.ensureBaseImage(worker.claudeCodeVersion, (chunk) => onLog(chunk));
       const result = await runtime.buildWorkerImage(
-        { workerId, buildId: build.id, dockerfile: pinAgentBase(worker.dockerfile, runtime.baseVersion, worker.services) },
+        { workerId, buildId: build.id, dockerfile: pinAgentBase(worker.dockerfile, baseVersion, worker.services) },
         onLog,
       );
       if (!isAgentUser(result.user)) {
@@ -429,7 +430,7 @@ export class Scheduler {
       // A failed build keeps the previous image (and containers) in service.
       await tx
         .update(workers)
-        .set(imageTag ? { imageState: 'built', imageTag, imageBaseVersion: runtime.baseVersion } : { imageState: 'failed' })
+        .set(imageTag ? { imageState: 'built', imageTag, imageBaseVersion: baseVersion } : { imageState: 'failed' })
         .where(eq(workers.id, workerId));
       return row;
     });
@@ -442,13 +443,20 @@ export class Scheduler {
     hub.publish(workerTopic(workerId), { type: 'build.updated', build: done });
     await this.publishWorkerNow(workerId);
     if (imageTag) await this.reconcile(workerId);
-    // Base Images of older Platform Versions, unless another Build may still need its parent.
+    // Base Images of versions no Worker uses any more, unless another Build may still need its parent.
     if (imageTag && this.ctx.config.agents.cleanup && [...this.building].every((id) => id === workerId)) {
-      await runtime.removeOldBaseImages().catch((err) => this.ctx.log.warn({ err }, 'could not remove old base images'));
+      const versions = await this.claudeCodeVersions();
+      await runtime.removeOldBaseImages(versions).catch((err) => this.ctx.log.warn({ err }, 'could not remove old base images'));
     }
   }
 
   // Containers
+
+  /** Every Claude Code version a Worker uses: their Base Images are kept. */
+  private async claudeCodeVersions(): Promise<string[]> {
+    const rows = await this.ctx.db.selectDistinct({ version: workers.claudeCodeVersion }).from(workers);
+    return rows.map((r) => r.version);
+  }
 
   reconcileAll(): Promise<void> {
     if (this.stopping) return Promise.resolve();
@@ -471,7 +479,7 @@ export class Scheduler {
     const { db, runtime } = this.ctx;
     const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
     if (!worker) return;
-    const stale = worker.imageState === 'built' && worker.imageBaseVersion !== runtime.baseVersion;
+    const stale = worker.imageState === 'built' && worker.imageBaseVersion !== runtime.baseVersionFor(worker.claudeCodeVersion);
     if ((worker.imageState === 'none' || stale) && !this.building.has(workerId)) this.build(workerId);
 
     const desired = desiredContainerSpec(worker);
