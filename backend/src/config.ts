@@ -49,8 +49,6 @@ export interface AgentsConfig {
   /** `docker` talks to the host's Docker socket; `fake` simulates containers (e2e tests, demos). */
   runtime: 'docker' | 'fake';
   dockerSocket: string;
-  /** The pinned Claude Code CLI version baked into the Base Image. */
-  claudeCodeVersion: string;
   /** How Worker Containers reach this backend (HTTP base URL; the Runner derives the WebSocket URL). */
   backendUrl: string;
   /** Docker network Worker Containers join (e.g. the compose network with the backend); null = default bridge. */
@@ -78,10 +76,8 @@ export const OBSOLETE_SETTINGS: Record<string, string> = {
   AGENT_STOP_WHEN_UNUSED: 'WORKER_STOP_WHEN_UNUSED',
   AGENT_WIKI_IDLE_MINUTES: 'WORKER_IDLE_MINUTES',
   AGENT_STOP_ON_SHUTDOWN: 'WORKER_STOP_ON_SHUTDOWN',
+  CLAUDE_CODE_VERSION: "the Worker's Claude Code version",
 };
-
-/** The Claude Code version the Base Image installs, verified against the stream-json format in tests. */
-export const DEFAULT_CLAUDE_CODE_VERSION = '2.1.310';
 
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === '') return fallback;
@@ -181,7 +177,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     agents: {
       runtime: env.AGENT_RUNTIME === 'fake' ? 'fake' : 'docker',
       dockerSocket: env.DOCKER_SOCKET ?? '/var/run/docker.sock',
-      claudeCodeVersion: env.CLAUDE_CODE_VERSION?.trim() || DEFAULT_CLAUDE_CODE_VERSION,
       backendUrl: (env.AGENT_BACKEND_URL?.trim() || `http://host.docker.internal:${env.PORT ?? 3000}`).replace(/\/+$/, ''),
       network: env.AGENT_NETWORK?.trim() || null,
       commitEmailDomain: env.AGENT_COMMIT_EMAIL_DOMAIN?.trim() || 'agents.claude-task.local',

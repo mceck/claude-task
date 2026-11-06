@@ -39,7 +39,9 @@ describe('Cleanup', () => {
     const before = app.runtime.cleanups.length;
 
     const cleanup = await cleanUp(app, admin);
-    expect(app.runtime.cleanups.slice(before)).toEqual([{ anyBuilding: false, workers: [{ id: app.workerId, imageTag: expect.any(String), building: false }] }]);
+    expect(app.runtime.cleanups.slice(before)).toEqual([
+      { anyBuilding: false, workers: [{ id: app.workerId, imageTag: expect.any(String), claudeCodeVersion: '2.1.310', building: false }] },
+    ]);
     expect(cleanup).toMatchObject({
       trigger: 'manual',
       requestedBy: { name: 'Ada Admin' },

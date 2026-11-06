@@ -39,10 +39,11 @@ Open **Workers** in the sidebar. Each card shows the Worker's state, its busy an
 1. Open **Workers** and click **New worker**.
 2. Enter **Name** and an optional **Description**.
 3. Set **Minimum** and **Cap**. The minimum is how many Worker Containers stay running; 0 starts them only when work arrives. The cap, from 1 to 20, is the most Tasks the Worker can run at once.
-4. Under **Services**, select the Development Services to install in every container: PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO and Chrome. PostgreSQL and Redis are selected by default.
-5. Edit the **Dockerfile** to install the toolchains your Projects need. It must start `FROM claude-task/agent-base` and finish as `USER agent`.
-6. Optionally set a **CPU limit** and **Memory (MB)** per Worker Container.
-7. Leave **Enabled** checked and click **Create worker**.
+4. Set the **Claude Code version** the Worker installs, such as `2.1.310`. Leave the default unless a Project needs another release.
+5. Under **Services**, select the Development Services to install in every container: PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO and Chrome. PostgreSQL and Redis are selected by default.
+6. Edit the **Dockerfile** to install the toolchains your Projects need. It must start `FROM claude-task/agent-base` and finish as `USER agent`.
+7. Optionally set a **CPU limit** and **Memory (MB)** per Worker Container.
+8. Leave **Enabled** checked and click **Create worker**.
 
 Creating a Worker starts its first image Build immediately. The Worker shows **Building** until the Build succeeds. It then starts the containers from slot 1 to the minimum, and further containers as work arrives.
 
@@ -89,13 +90,13 @@ Open the **Configuration** tab. Admins edit every field; other Users can read th
 
 ![The Worker Configuration tab with automatic save status](images/workers/configuration.png)
 
-The **Dockerfile**, **Services** and **CPU** and **Memory** limits apply together with **Save Docker configuration**. An unfinished Dockerfile therefore never reaches running containers.
+The **Claude Code version**, **Dockerfile**, **Services** and **CPU** and **Memory** limits apply together with **Save Docker configuration**. An unfinished Dockerfile therefore never reaches running containers.
 
 ![Docker configuration with Development Services and the Dockerfile editor](images/workers/docker-configuration.png)
 
 | Change | Effect |
 | --- | --- |
-| Dockerfile or Services | Starts a new Build. On success, each container switches to the new image as soon as it has no active Job. |
+| Claude Code version, Dockerfile or Services | Starts a new Build. On success, each container switches to the new image as soon as it has no active Job. |
 | CPU or memory limit | Recreates each container with the new limits as soon as it has no active Job, without a Build. |
 | Minimum | Raising it starts the missing slots. Lowering it lets the extra slots stop when idle. |
 | Cap | Raising it lets the Worker start more containers when work waits. Lowering it stops the extra slots as soon as each is free, keeping their data. |
@@ -136,7 +137,7 @@ When exactly one Worker exists, the forms preselect it. When none exists, the fo
 ## Disable, duplicate or delete a Worker
 
 - **Disable** a Worker to take no new work. Running Jobs finish normally, its Queue keeps growing, and its containers stop once each has been idle. A due Schedule whose Worker is disabled is skipped with **worker unavailable**.
-- **Duplicate** a Worker to start a variant of its toolchain. The copy takes every configuration field: description, Dockerfile, services, limits, minimum, cap and enabled choice. Its name is the one given, or the first free "‹name› (copy)", "‹name› (copy 2)", and so on. It gets its own Build and empty volumes; Projects, Queue and Build history stay with the original.
+- **Duplicate** a Worker to start a variant of its toolchain. The copy takes every configuration field: description, Dockerfile, Claude Code version, services, limits, minimum, cap and enabled choice. Its name is the one given, or the first free "‹name› (copy)", "‹name› (copy 2)", and so on. It gets its own Build and empty volumes; Projects, Queue and Build history stay with the original.
 - **Delete** a Worker once no Project, Wiki or Schedule uses it. The app names the Projects that still use it and refuses the deletion. Deleting removes its containers, images, Worker Volume and Service Volumes, including every Worktree and Claude transcript on it.
 
 ## Use Workers in the native app

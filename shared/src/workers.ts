@@ -6,6 +6,9 @@ import type { AgentRef, AgentService, BuildStatus, ImageState, TaskRef } from '.
 /** The highest cap a Worker can have. */
 export const WORKER_CAP_MAX = 20;
 
+/** The Claude Code version the Base Image installs, and the one a new Worker starts with. */
+export const DEFAULT_CLAUDE_CODE_VERSION = '2.1.310';
+
 /** What the Workers list shows, derived from configuration, image, containers and Jobs. */
 export type WorkerState = 'disabled' | 'building' | 'build_failed' | 'offline' | 'idle' | 'working';
 
@@ -42,6 +45,8 @@ export interface AgentProfileError {
 export interface Worker extends WorkerRef {
   description: string;
   dockerfile: string;
+  /** The Claude Code version the Worker's Base Image installs. */
+  claudeCodeVersion: string;
   services: AgentService[];
   /** Per Worker Container. */
   cpuLimit: number | null;
@@ -78,10 +83,19 @@ export interface WorkerBuild {
 
 const name = z.string().trim().min(1).max(100);
 
+/** A version mise can install and Docker can use in a tag. */
+const claudeCodeVersion = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[0-9A-Za-z][0-9A-Za-z._-]*$/, 'Use a Claude Code version mise can install, like 2.1.310');
+
 const workerFields = {
   name,
   description: z.string().max(2000),
   dockerfile: z.string().min(1).max(100_000),
+  claudeCodeVersion,
   services: z.array(z.enum(AGENT_SERVICES)).max(AGENT_SERVICES.length)
     .refine((v) => new Set(v).size === v.length, 'Duplicate service')
     .transform((v) => AGENT_SERVICES.filter((service) => v.includes(service))),
@@ -99,6 +113,7 @@ export const createWorkerBody = z
   .strictObject({
     ...workerFields,
     description: workerFields.description.default(''),
+    claudeCodeVersion: workerFields.claudeCodeVersion.default(DEFAULT_CLAUDE_CODE_VERSION),
     services: workerFields.services.default(DEFAULT_AGENT_SERVICES),
     cpuLimit: workerFields.cpuLimit.default(null),
     memoryMb: workerFields.memoryMb.default(null),
@@ -113,6 +128,7 @@ export const updateWorkerBody = z.strictObject({
   name: workerFields.name.optional(),
   description: workerFields.description.optional(),
   dockerfile: workerFields.dockerfile.optional(),
+  claudeCodeVersion: workerFields.claudeCodeVersion.optional(),
   services: workerFields.services.optional(),
   cpuLimit: workerFields.cpuLimit.optional(),
   memoryMb: workerFields.memoryMb.optional(),

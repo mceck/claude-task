@@ -7,7 +7,7 @@ Workers are the platform's execution environments. A **Worker** is a Docker envi
 - A **Worker** is global: Admins configure it and every User sees it. Each Project (ordinary, Wiki or Schedule) runs on exactly one Worker, and one Worker serves any number of Projects. Every Job of a Project's Tasks runs on that Worker, for whichever Agent is assigned.
 - A Worker runs between its **minimum** and its **cap** of **Worker Containers** (cap from 1 to 20). Each Worker Container occupies one **Worker Slot**, a stable number from 1 to the cap. A Worker Container runs one Job at a time, for any Agent; the same Agent can run Jobs on several Worker Containers at once.
 - The **Base Image** (`claude-task/agent-base`) is the platform-provided image every Worker Image builds on. It carries the default `claude` CLI, the Runner, the git credential helper, mise, the Development Service scripts and the non-root `agent` user.
-- The **Platform Version** is the Base Image's version. It combines the default Claude Code version with a fingerprint of the Base Image recipe, its scripts and the Runner sources, so any change to one of them produces a new version.
+- The **Platform Version** is the Base Image's version. It combines the Worker's Claude Code version with a fingerprint of the Base Image recipe, its scripts and the Runner sources, so any change to one of them produces a new version. Workers that select different Claude Code versions build on different Base Images.
 - A **Worker Image** is built from the Worker's Dockerfile on top of the Base Image at the current Platform Version. A **Build** is one attempt to produce it, with its log and outcome. Every Worker Container of the Worker runs the same Worker Image.
 - The **Worker Volume** is shared by every Worker Container of one Worker and mounted as the agent user's home. It holds Bare Clones, Worktrees, Session transcripts, mise tool installs and Agent Profiles, so any Worker Container of the Worker can resume any Session of its Projects.
 - A **Service Volume** belongs to one Worker Slot and holds the data and logs of that slot's Development Services. It survives the Worker Container being stopped or recreated, and is deleted with the Worker or when a Cleanup removes its slot.
@@ -44,6 +44,7 @@ An Admin creates a Worker from the Workers page with "Create worker", which subm
 | Name | 1 to 100 characters, trimmed, unique ignoring case (a duplicate gets `409`) | required |
 | Description | up to 2,000 characters | empty |
 | Dockerfile | 1 to 100,000 characters, validated as described in [Worker Dockerfiles](#worker-dockerfiles) | `FROM claude-task/agent-base` followed by `USER agent` |
+| Claude Code version | 1 to 100 characters from `[A-Za-z0-9._-]`, starting with a letter or digit: a version mise can install and Docker can use in a tag, such as `2.1.310` or `latest` | `2.1.310` |
 | Services | any subset of PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO and Chrome, without duplicates | PostgreSQL and Redis |
 | CPU limit | per Worker Container: more than 0 and up to 256 CPUs, fractions allowed | no limit |
 | Memory limit | per Worker Container: 256 to 1,048,576 MB | no limit |
@@ -59,11 +60,11 @@ Creating the Worker starts its first Build right away and answers immediately; t
 
 Admins edit a Worker from its Configuration tab. Name, description, minimum, cap and enabled save automatically after 600 ms without edits or when a field loses focus, with the same saving, saved or failed state, Retry and ordering as the Agent form (see [Agents](agents.md#editing-an-agent)).
 
-Docker configuration groups the Dockerfile, Development Services and CPU and memory limits. These fields are applied together through "Save Docker configuration", after validation, so an unfinished Dockerfile stays in the editor and the running Worker Containers keep their configuration until the Admin applies it. Each saved change takes effect as follows:
+Docker configuration groups the Claude Code version, the Dockerfile, Development Services and CPU and memory limits. These fields are applied together through "Save Docker configuration", after validation, so an unfinished Dockerfile stays in the editor and the running Worker Containers keep their configuration until the Admin applies it. Each saved change takes effect as follows:
 
 | Change | Effect |
 | --- | --- |
-| Dockerfile (when its text differs) or services (when the selection differs) | A new Build starts; on success each Worker Container is recreated with the new image as soon as it has no active Job, independently of the others |
+| Dockerfile (when its text differs), Claude Code version or services (when the selection differs) | A new Build starts; on success each Worker Container is recreated with the new image as soon as it has no active Job, independently of the others |
 | CPU or memory limit | Each Worker Container is recreated with the new limits as soon as it has no active Job, with no Build |
 | Minimum | Raising it starts the slots up to the new minimum; lowering it makes the slots above it subject to the idle stop |
 | Cap | Raising it lets the Worker start more slots when work waits; lowering it stops the slots above the new cap as soon as each is free, keeping their Service Volumes, so raising the cap again reuses their databases. A Cleanup removes a slot above the cap once it has had no Job for 7 days (see [Cleanup](#cleanup)) |
@@ -74,7 +75,7 @@ A stopped Worker Container whose recreation is pending gets it at its next start
 
 ### Duplicating a Worker
 
-An Admin duplicates a Worker to start a variant of an existing toolchain. The copy takes every configuration field of the source: description, Dockerfile, services, limits, minimum, cap and enabled flag, so it starts disabled only when the source is disabled. Its name is the one given, or the first free one of "‹name› (copy)", "‹name› (copy 2)", and so on, shortened to fit 100 characters. The copy gets its own Build, an empty Worker Volume and empty Service Volumes; Projects, Queue and Builds stay with the source.
+An Admin duplicates a Worker to start a variant of an existing toolchain. The copy takes every configuration field of the source: description, Dockerfile, Claude Code version, services, limits, minimum, cap and enabled flag, so it starts disabled only when the source is disabled. Its name is the one given, or the first free one of "‹name› (copy)", "‹name› (copy 2)", and so on, shortened to fit 100 characters. The copy gets its own Build, an empty Worker Volume and empty Service Volumes; Projects, Queue and Builds stay with the source.
 
 ### Disabling a Worker
 
@@ -124,7 +125,7 @@ The Workers list shows every Worker with its state, the number of busy and runni
 - **Containers**: one row per slot, from 1 to the cap plus any slot above the cap that is still running. Each row shows the container state (`running`, `exited`, `restarting`, `missing`, ...), whether its Runner is connected, the Task and Agent of its current Job, the Runner and Claude versions it reported, its last activity (updated at most every 10 seconds while a Job streams output) and a pending recreation. Admins get Restart, Force recreate and Logs per row; Logs shows the last 500 lines of the container output, refreshed every three seconds (the API serves 1 to 5,000 lines). Below the rows, the synchronizations of Agent Profiles that are running or failed on this Worker, with the Agent and the error.
 - **Queue**: the Worker's Queue, each entry with its Task and Agent, reordered and edited by any User (see [Agent sessions](agent-sessions.md#the-queue)).
 - **Builds**: the 20 most recent Builds with status, start time and Platform Version. The latest Build's log comes with the list and updates live while building; older logs load on request.
-- **Configuration** (Admins): the Worker form, with a Dockerfile editor that highlights instructions and checks the Base Image rule before saving.
+- **Configuration** (Admins): the Worker form with its Claude Code version and a Dockerfile editor that highlights instructions and checks the Base Image rule before saving.
 - **Projects**: the Projects of every kind that run on the Worker.
 
 Admin actions on the page: Rebuild image, Recreate when idle, Duplicate, Delete. Restart and Force recreate ask for confirmation, since they interrupt the running Job.
@@ -152,7 +153,7 @@ The Base Image is Ubuntu 24.04 (the `buildpack-deps:noble` image) with:
 - bash, ca-certificates, curl, git, jq, less, OpenSSH client, procps and vim;
 - FFmpeg and ffprobe for audio/video processing and inspection, ImageMagick's `convert` and `identify` commands for image transformations, and libvips' command-line tools for image processing;
 - ripgrep (`rg`) and fd (`fdfind`) for searching source text and filenames, Poppler's tools for extracting text and rendering PDF pages, and the `sqlite3` CLI for inspecting and querying SQLite databases;
-- the `claude` CLI at the platform's default version, installed through mise outside the agent's home so that the Worker Volume mounted there leaves it visible, with the auto-updater turned off. The Runner resolves `claude` through mise's shims, so a Repository or user mise configuration can select another version;
+- the `claude` CLI at the Worker's Claude Code version, installed through mise outside the agent's home so that the Worker Volume mounted there leaves it visible, with the auto-updater turned off. The Runner resolves `claude` through mise's shims, so a Repository or user mise configuration can select another version;
 - Node.js and Python, installed through mise outside the agent's home and available as defaults during Worker Image builds and in every Worker Container, including login shells. The Base Image build arguments `NODE_VERSION` and `PYTHON_VERSION` select their versions, defaulting to `26` and `3.14`. Release-line requests select the latest available patch when installed. Repository mise shims take precedence when a Project declares its own runtime versions;
 - the Runner and the git credential helper, compiled from the Runner sources in the same build and configured system-wide as git's credential helper (see [Git integration](git-integration.md));
 - mise, which initializes its user and system shim paths through its shell activation script for login shells, Worker Image build commands and the Runner's environment, and the `flutter` mise plugin. The backend runs Claude's Plugin commands through mise's command execution so they also resolve the selected tools. The Base Image's default tools are selected in mise's system configuration and installed in its system installs directory; mise manages their shims and reuses those installs when a Repository requests matching versions. User shims precede system shims. The plugin is installed outside the agent's home, and the container entrypoint links it into the Worker Volume's mise data when that has no plugin of the same name, so existing Worker Volumes get it too. Every Node.js that mise installs gets Corepack enabled, so `pnpm` and `yarn` are on the `PATH` at the version a `package.json`'s `packageManager` field names, downloaded without Corepack's confirmation prompt (a prompt would stall a Job). The container entrypoint also enables Corepack for Node.js versions already in the Worker Volume. Node.js 25 and later ship without Corepack: repositories on those versions declare `pnpm` or `yarn` in their mise configuration instead;
@@ -161,11 +162,11 @@ The Base Image is Ubuntu 24.04 (the `buildpack-deps:noble` image) with:
 
 The Base Image sets `PLAYWRIGHT_MCP_ALLOW_UNRESTRICTED_FILE_ACCESS=true`, so Playwright MCP can save screenshots and read files outside the Worktree, including in `/tmp`. File access follows the `agent` user's filesystem permissions throughout the Worker Container.
 
-The backend builds the Base Image locally through the Docker socket, without a registry. It is built on demand, as the first step of a Worker's Build, whenever the image for the current Platform Version is missing, and is tagged with the Platform Version and as `latest`. Its build output appears in the log of the Build that triggered it. The production backend image ships the Base Image recipe and the Runner sources, so it builds the Base Image without a source checkout.
+The backend builds the Base Image locally through the Docker socket, without a registry. It builds one Base Image per Claude Code version in use, on demand as the first step of a Worker's Build, whenever the image for that Worker's Platform Version is missing; each is tagged with its Platform Version and the most recently built one also as `latest`. Its build output appears in the log of the Build that triggered it. The production backend image ships the Base Image recipe and the Runner sources, so it builds the Base Image without a source checkout.
 
-The default Claude Code version comes from the `CLAUDE_CODE_VERSION` setting (2.1.310 by default). Repository and user mise configurations can override it, just like Node.js and Python. The selected Claude version is responsible for compatibility with the platform's stream-json contract.
+The Claude Code version is chosen on the Worker (2.1.310 by default). Repository and user mise configurations can override it, just like Node.js and Python. The selected Claude version is responsible for compatibility with the platform's stream-json contract.
 
-**Platform upgrades.** When the backend starts with a different Platform Version (a new Claude Code version, Base Image recipe, service scripts or Runner), the reconciler finds every Worker whose last successful image was built on an older version and rebuilds it. Each Worker Container keeps working during the Build and switches to the new image as soon as it is free, following the normal recreation rule. Workers whose latest Build failed keep their state until their next Build (a Dockerfile or service change, or a manual Rebuild).
+**Platform upgrades.** When a Worker's Platform Version changes (its Claude Code version, the Base Image recipe, service scripts or Runner), the reconciler finds every Worker whose last successful image was built on an older version and rebuilds it. A Base Image change therefore rebuilds every Worker that uses it, once; Workers on another Claude Code version are unaffected. Each Worker Container keeps working during the Build and switches to the new image as soon as it is free, following the normal recreation rule. Workers whose latest Build failed keep their state until their next Build (a Dockerfile or service change, or a manual Rebuild).
 
 ### Worker Dockerfiles
 
@@ -184,12 +185,12 @@ stateDiagram-v2
   none --> building: reconciler or create
   building --> built: image built and final user is agent
   building --> failed: build error or wrong final user
-  built --> building: Dockerfile or services changed, Rebuild, new Platform Version
+  built --> building: Dockerfile, Claude Code version or services changed, Rebuild, new Platform Version
   failed --> building: Dockerfile or services changed, Rebuild
   building --> none: backend restarted mid-build
 ```
 
-A Build runs when a Worker is created or duplicated, when its Dockerfile or service selection changes, when an Admin clicks Rebuild, when the reconciler finds no image yet, and after a Platform Version change. One Build runs per Worker at a time; a request arriving during a Build queues exactly one more Build after it, which uses the configuration current at that point.
+A Build runs when a Worker is created or duplicated, when its Dockerfile, Claude Code version or service selection changes, when an Admin clicks Rebuild, when the reconciler finds no image yet, and after a Platform Version change. One Build runs per Worker at a time; a request arriving during a Build queues exactly one more Build after it, which uses the configuration current at that point.
 
 Each Build records the Dockerfile as saved, the Platform Version, its status (`building`, `succeeded`, `failed`), its log and its start and end times. The log keeps the most recent 256 KB, is saved every half second, and streams live to everyone viewing the Worker. A failed Build appends "Build failed:" with the reason to the log.
 
@@ -197,7 +198,7 @@ Each Build records the Dockerfile as saved, the Platform Version, its status (`b
 - **Failure**: the Worker shows `build_failed`; the previous image and its Worker Containers stay in service, so a broken Dockerfile leaves the Worker's Projects working.
 - **Backend restart during a Build**: on startup the interrupted Build is marked failed with the note "The backend restarted during this build", and the Worker goes back to having no Build in progress, which makes the reconciler build it again.
 
-Each time a Worker Container is created, the Worker's older images that no container uses any more are removed. A stopped Worker Container still on an older image is removed by the reconciler (see [Cleanup](#cleanup)), so once every slot has moved on or been removed, only the current image is left. After each successful Build, Base Images of older Platform Versions are untagged as well.
+Each time a Worker Container is created, the Worker's older images that no container uses any more are removed. A stopped Worker Container still on an older image is removed by the reconciler (see [Cleanup](#cleanup)), so once every slot has moved on or been removed, only the current image is left. After each successful Build, Base Images of Platform Versions that no Worker uses any more are untagged as well.
 
 ### Worker Containers and the reconciler
 
@@ -421,7 +422,7 @@ A Cleanup frees the space that the Installation's Workers no longer need, on the
 
 **What it removes**, in this order:
 
-1. **Old Base Images.** Every tag of the Base Image other than the current Platform Version, and the `latest` tag when it points to another image. Tags are removed without force: Docker keeps the layers a Worker Image still builds on, and frees them once no image needs them. This step covers every Base Image on the host, labelled or not, since a Base Image holds no data and any Installation rebuilds a missing one at its next Build.
+1. **Old Base Images.** Every tag of the Base Image other than the Platform Versions of the Installation's Workers, and the `latest` tag when it points to another image. Tags are removed without force: Docker keeps the layers a Worker Image still builds on, and frees them once no image needs them. This step covers every Base Image on the host, labelled or not, since a Base Image holds no data and any Installation rebuilds a missing one at its next Build.
 2. **Untagged platform images.** Every stage of the Base Image recipe carries the `claude-task.platform` label, which Worker Images and the intermediate images of every platform Build inherit. The untagged images that carry it, and that no container uses, are pruned, whichever Installation of the host built them: like Base Images, they hold no data.
 3. **Older Worker Images.** For each Worker of the Installation, every tag of its image repository other than its current image. An image that a container still uses stays.
 4. **Slots above the cap.** A slot above the Worker's cap, with its container stopped or missing and no active Job, is removed with its container, its Service Volume and its record once it has had no Job for 7 days (counted like the idle stop, from its last Job's end or from the last start of its container). A manual Cleanup removes such slots whatever their age. Jobs that ran there keep their slot number in their history.
@@ -510,7 +511,6 @@ When the backend stops, the scheduler stops and Runner connections close. Worker
 | --- | --- | --- |
 | `AGENT_RUNTIME` | `docker` manages real containers, `fake` simulates them | `docker` |
 | `DOCKER_SOCKET` | Docker daemon socket the backend uses | `/var/run/docker.sock` |
-| `CLAUDE_CODE_VERSION` | Default Claude Code version in the Base Image; changing it rebuilds every Worker Image. Repository and user mise configurations can override it | `2.1.310` |
 | `AGENT_BACKEND_URL` | How Worker Containers reach the backend (HTTP base URL; the Runner, MCP and Git Proxy URLs derive from it) | `http://host.docker.internal:‹PORT›` |
 | `AGENT_NETWORK` | Docker network Worker Containers join | Docker's default bridge |
 | `AGENT_COMMIT_EMAIL_DOMAIN` | Domain of Agents' commit email addresses (see [Git integration](git-integration.md)) | `agents.claude-task.local` |
@@ -529,7 +529,7 @@ Fixed values: Cleanup every 24 hours, slots above the cap removed after 7 days w
 
 - **Installation**: one record with the Installation id and its creation time.
 - **Cleanup**: trigger (`automatic` or `manual`), the User who asked (kept empty once that User is deleted), start and end times, counts removed per kind (Base Images, Worker Images, untagged images, leftover containers, volumes and images, slots, Projects cleaned from Worker Volumes, Agent Profiles), approximate bytes reclaimed, Worker Volumes still to answer, errors. The 20 latest are kept.
-- **Worker**: name (unique ignoring case), description, Dockerfile, services, CPU limit, memory limit, minimum, cap, enabled; current image and its Platform Version, image state (`none`, `building`, `built`, `failed`), pending Build flag, the Cleanup whose Worker Volume request waits for an answer, timestamps.
+- **Worker**: name (unique ignoring case), description, Dockerfile, Claude Code version, services, CPU limit, memory limit, minimum, cap, enabled; current image and its Platform Version, image state (`none`, `building`, `built`, `failed`), pending Build flag, the Cleanup whose Worker Volume request waits for an answer, timestamps.
 - **Worker Container**: one record per Worker Slot that has been started, until a Cleanup removes the slot. Worker and slot number (unique together), Runner token hash, the image and limits the container was created with, last observed container state, pending forced recreation flag, Runner connection and disconnection times, Runner and Claude versions reported by the Runner, last Job end time (for the idle stop and the slot retention), last activity. Deleted with its Worker or by a Cleanup.
 - **Build**: Worker, Dockerfile as saved, Platform Version, status (`building`, `succeeded`, `failed`), image produced, log (latest 256 KB), start and end times. Deleted with its Worker.
 - **Agent Profile synchronization**: Worker and Agent (unique together), applied Extensions revision, error, in-progress flag. Deleted with its Worker or its Agent.
@@ -569,7 +569,7 @@ erDiagram
 - **A file lock per Bare Clone.** Worker Containers of one Worker run Jobs of the same Project in parallel, and concurrent fetches and worktree changes on one clone collide on git's own lock files or race each other. An exclusive lock next to the clone, taken by the Runner around those commands, serializes them across containers.
 - **A failed Build keeps the previous image in service, and each recreation waits for its container to be free.** A Worker's Projects stay online through a typo in its Dockerfile, and a rebuild interrupts work in progress only when an Admin forces it. Recreating container by container rolls a change out as soon as each one frees up.
 - **The Runner token is handed to the Runner alone.** Every tool the Agent runs shares the `agent` user, which can read any of its processes' start-up environment. The entrypoint therefore re-executes without the token and passes it over a pipe, the Runner scrubs it and makes itself non-dumpable, and the backend's own execs blank it. The token outlives any single Job, unlike the Job token, so it has to stay out of reach of Agent code. One token per Worker Container lets the backend tell containers apart and replace one without touching the others.
-- **The Base Image is built locally from bundled sources, with a default Claude Code version.** The platform supplies a tested `claude` default with the auto-updater off. Repository and user mise configurations can choose a different version for their work. Building locally needs no registry and keeps the Runner and the Base Image versioned together. The Platform Version fingerprints the default CLI version, the recipe, its scripts and the Runner sources, so any of them changing rebuilds every Worker on its own.
+- **The Base Image is built locally from bundled sources, one per Claude Code version.** Each Worker selects its Claude Code version, defaulting to a tested `claude` release, with the auto-updater off. Repository and user mise configurations can choose a different version for their work. Building locally needs no registry and keeps the Runner and the Base Image versioned together. The Platform Version fingerprints the Worker's CLI version, the recipe, its scripts and the Runner sources, so any of them changing rebuilds every Worker that uses that version on its own.
 - **Mise manages the base toolchains as system installs.** Claude Code, Node.js and Python share the image's tool manager, system configuration and shims. System installs keep the defaults available across home-volume mounts and image upgrades, while Repository and user configurations select their own versions of any tool, including Claude Code. The agent user owns the system installs and shims so mise can maintain its version aliases and language package managers can add global commands.
 - **Worker Dockerfiles start from the Base Image and end as the `agent` user.** `bypassPermissions` refuses to run as root, and the Runner, credential helper and entrypoint come from the Base Image. The backend pins the base to the exact Platform Version itself, so a Dockerfile naming any tag still builds on the current platform.
 - **Chrome is installed, not started.** Browser clients (the Playwright MCP server, test runners) launch their own browser per session, so a resident browser would only cost memory on every idle container and share one profile across Tasks. Unconfigured, the Playwright MCP server looks for Google Chrome, which has no Linux arm64 build, and runs it headed with the sandbox, which needs a display and user namespaces; the entrypoint's variables point it at Chromium instead.

@@ -2,7 +2,7 @@
 // It removes every outdated claude-task/agent-base tag of the host, as a real Cleanup would.
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { BASE_IMAGE } from '@claude-task/shared';
+import { BASE_IMAGE, DEFAULT_CLAUDE_CODE_VERSION } from '@claude-task/shared';
 import { describe, expect, it } from 'vitest';
 import { DockerRuntime } from '../src/agents/docker-runtime';
 import type { AgentsConfig } from '../src/config';
@@ -23,10 +23,10 @@ describe.skipIf(!enabled)('Cleanup on a real Docker daemon', () => {
     const installation = randomUUID();
     const known = randomUUID();
     const gone = randomUUID();
-    const config = { dockerSocket: process.env.DOCKER_SOCKET ?? '/var/run/docker.sock', claudeCodeVersion: '2.1.310' } as AgentsConfig;
+    const config = { dockerSocket: process.env.DOCKER_SOCKET ?? '/var/run/docker.sock' } as AgentsConfig;
     const runtime = new DockerRuntime(config, installation);
     docker('pull', '-q', 'busybox');
-    const current = `${BASE_IMAGE}:${runtime.baseVersion}`;
+    const current = `${BASE_IMAGE}:${runtime.baseVersionFor(DEFAULT_CLAUDE_CODE_VERSION)}`;
     const hadCurrent = ok('image', 'inspect', current);
     const old = `${BASE_IMAGE}:cleanup-test-${known.slice(0, 8)}`;
     docker('tag', 'busybox', old);
@@ -46,7 +46,10 @@ describe.skipIf(!enabled)('Cleanup on a real Docker daemon', () => {
     const unlabelledVolume = docker('volume', 'create', '--label', `claude-task.worker=${gone}`);
     const orphanContainer = docker('create', ...mine, '--label', `claude-task.worker=${gone}`, 'busybox', 'true');
     try {
-      const report = await runtime.cleanup({ anyBuilding: false, workers: async () => [{ id: known, imageTag: `${repo}:current`, building: false }] });
+      const report = await runtime.cleanup({
+        anyBuilding: false,
+        workers: async () => [{ id: known, imageTag: `${repo}:current`, claudeCodeVersion: DEFAULT_CLAUDE_CODE_VERSION, building: false }],
+      });
       expect(report.errors).toEqual([]);
       expect(report.removed).toMatchObject({ workerImages: 1, orphanContainers: 1, orphanVolumes: 1 });
       expect(report.removed.baseImages).toBeGreaterThanOrEqual(1);

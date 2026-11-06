@@ -107,6 +107,7 @@ export async function loadWorkers(db: Executor, isReady: (containerId: string) =
       name: w.name,
       description: w.description,
       dockerfile: w.dockerfile,
+      claudeCodeVersion: w.claudeCodeVersion,
       services: w.services,
       cpuLimit: w.cpuLimit,
       memoryMb: w.memoryMb,

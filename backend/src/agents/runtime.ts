@@ -35,6 +35,8 @@ export interface KnownWorker {
   id: string;
   /** Its current image, which always stays; null before the first successful Build. */
   imageTag: string | null;
+  /** The Base Image it builds on: the Cleanup keeps that Base Image. */
+  claudeCodeVersion: string;
   /** A Build of it runs: its images are left alone. */
   building: boolean;
 }
@@ -58,10 +60,10 @@ export interface DockerCleanupReport {
 }
 
 export interface WorkerRuntime {
-  /** Base Image version: changes with the pinned Claude Code version and the Runner. */
-  readonly baseVersion: string;
+  /** The Base Image version for a Claude Code version: it also changes with the recipe and the Runner. */
+  baseVersionFor(claudeCodeVersion: string): string;
   /** Builds `claude-task/agent-base:<baseVersion>` if it's missing. */
-  ensureBaseImage(onLog: (chunk: string) => void): Promise<void>;
+  ensureBaseImage(claudeCodeVersion: string, onLog: (chunk: string) => void): Promise<void>;
   buildWorkerImage(input: { workerId: string; buildId: string; dockerfile: string }, onLog: (chunk: string) => void): Promise<BuildResult>;
   /** Creates the slot's container, replacing an existing one. The Worker Volume and the slot's Service Volume are kept. */
   createContainer(workerId: string, slot: number, spec: ContainerSpec): Promise<void>;
@@ -76,8 +78,8 @@ export interface WorkerRuntime {
   removeSlot(workerId: string, slot: number): Promise<void>;
   /** The Worker's images other than `keepTag` that no container uses; returns how many went. */
   removeUnusedImages(workerId: string, keepTag: string): Promise<number>;
-  /** Untags the Base Images of other Platform Versions (never while a Build runs); returns how many went. */
-  removeOldBaseImages(): Promise<number>;
+  /** Untags every Base Image other than those of `keepClaudeCodeVersions`; returns how many went. */
+  removeOldBaseImages(keepClaudeCodeVersions: string[]): Promise<number>;
   /** The Docker part of a Cleanup (docs/specs/workers.md, "Cleanup"). */
   cleanup(input: DockerCleanupInput): Promise<DockerCleanupReport>;
   inspect(workerId: string, slot: number): Promise<ContainerInfo>;

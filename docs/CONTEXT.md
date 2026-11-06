@@ -330,7 +330,7 @@ The summary of a Worker's condition: disabled, building, build_failed, offline (
 The platform-provided image every Worker Image is built on.
 
 **Platform Version**:
-The version of the Base Image, made from the pinned Claude Code version and the image recipe including the Runner.
+The version of the Base Image a Worker builds on, made from the Worker's Claude Code version and the image recipe including the Runner. Workers on the same Claude Code version share one Platform Version.
 
 **Worker Image**:
 A Worker's own image, built from its Dockerfile on top of the Base Image. Every Worker Container of the Worker runs it.

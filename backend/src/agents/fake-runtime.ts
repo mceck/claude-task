@@ -45,16 +45,23 @@ export class FakeRuntime implements WorkerRuntime {
   /** Holds the Docker part of Cleanups until it resolves. */
   cleanupHold: Promise<void> | null = null;
   baseImageBuilds = 0;
-  private baseBuilt = false;
+  /** One entry per Base Image built, in order: the Claude Code version it installed. */
+  readonly baseImageVersions: string[] = [];
+  private readonly baseBuilt = new Set<string>();
   /** Called with each new container, e.g. to hand its Runner token to a fake Runner. */
   onContainerCreated: ((workerId: string, slot: number, spec: ContainerSpec) => void) | null = null;
 
-  constructor(public baseVersion = 'fake-1') {}
+  /** Fingerprint of the Base Image recipe and Runner sources; `upgrade` changes it. */
+  private platform = 'fake-1';
 
-  /** Simulates a new pinned Claude Code version or Runner: the Base Image must be rebuilt. */
-  upgrade(version: string): void {
-    this.baseVersion = version;
-    this.baseBuilt = false;
+  baseVersionFor(claudeCodeVersion: string): string {
+    return `${claudeCodeVersion}-${this.platform}`;
+  }
+
+  /** Simulates a new Base Image recipe or Runner: every Base Image must be rebuilt. */
+  upgrade(platform = 'fake-2'): void {
+    this.platform = platform;
+    this.baseBuilt.clear();
   }
 
   scriptBuild(outcome: { fail?: string; user?: string; log?: string; hold?: Promise<void> }): void {
@@ -76,17 +83,20 @@ export class FakeRuntime implements WorkerRuntime {
     if (c) c.state = state;
   }
 
-  async ensureBaseImage(onLog: (chunk: string) => void): Promise<void> {
-    if (this.baseBuilt) return;
-    this.baseBuilt = true;
+  async ensureBaseImage(claudeCodeVersion: string, onLog: (chunk: string) => void): Promise<void> {
+    const tag = this.baseVersionFor(claudeCodeVersion);
+    if (this.baseBuilt.has(tag)) return;
+    this.baseBuilt.add(tag);
     this.baseImageBuilds++;
-    onLog(`Built claude-task/agent-base:${this.baseVersion}\n`);
+    this.baseImageVersions.push(claudeCodeVersion);
+    onLog(`Built claude-task/agent-base:${tag}\n`);
   }
 
   async buildWorkerImage(input: { workerId: string; buildId: string; dockerfile: string }, onLog: (chunk: string) => void): Promise<BuildResult> {
     this.builds.push(input);
     const next = this.script.shift() ?? {};
-    onLog(next.log ?? `Step 1/1 : FROM claude-task/agent-base:${this.baseVersion}\n`);
+    const from = /^\s*FROM\s+(\S+)/im.exec(input.dockerfile)?.[1] ?? 'claude-task/agent-base';
+    onLog(next.log ?? `Step 1/1 : FROM ${from}\n`);
     await next.hold;
     if (next.fail) throw new Error(next.fail);
     return { imageTag: `${workerImageRepo(input.workerId)}:${input.buildId.slice(0, 12)}`, user: next.user ?? 'agent' };

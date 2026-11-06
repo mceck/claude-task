@@ -155,5 +155,5 @@ test('autosaves worker capacity while Docker settings need their own save', asyn
   await page.getByRole('button', { name: 'Save Docker configuration', exact: true }).click();
   await expect(page.getByText('Docker configuration saved', { exact: true })).toBeVisible();
   expect(await read()).toMatchObject({ cpuLimit: 2, memoryMb: 512, services: ['redis'] });
-  expect(Object.keys(patches.at(-1)!).sort()).toEqual(['cpuLimit', 'dockerfile', 'memoryMb', 'services']);
+  expect(Object.keys(patches.at(-1)!).sort()).toEqual(['claudeCodeVersion', 'cpuLimit', 'dockerfile', 'memoryMb', 'services']);
 });
