@@ -23,7 +23,7 @@ import (
 
 const token = "test-runner-token"
 
-var runnerBin, fakeClaudeBin, credentialBin string
+var runnerBin, fakeClaudeBin, credentialBin, controllerBin string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "runner-test-bin")
@@ -33,7 +33,8 @@ func TestMain(m *testing.M) {
 	runnerBin = filepath.Join(dir, "runner")
 	fakeClaudeBin = filepath.Join(dir, "fakeclaude")
 	credentialBin = filepath.Join(dir, "git-credential-claude-task")
-	for bin, pkg := range map[string]string{runnerBin: "../cmd/runner", fakeClaudeBin: "../cmd/fakeclaude", credentialBin: "../cmd/git-credential-claude-task"} {
+	controllerBin = filepath.Join(dir, "host-controller")
+	for bin, pkg := range map[string]string{controllerBin: "../cmd/host-controller", runnerBin: "../cmd/runner", fakeClaudeBin: "../cmd/fakeclaude", credentialBin: "../cmd/git-credential-claude-task"} {
 		args := []string{"build", "-o", bin}
 		if os.Getenv("RUNNER_TEST_RACE") == "1" {
 			args = append(args, "-race") // race-check the binaries themselves
