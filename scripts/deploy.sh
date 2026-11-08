@@ -54,6 +54,27 @@ fi
 # The new docker group is not active in this shell yet, so fall back to sudo.
 if docker info >/dev/null 2>&1; then DOCKER=(docker); else DOCKER=(sudo -E docker); fi
 
+# A Host needs only the Controller and Docker; it keeps no backend settings or database.
+if [[ ${1-} == host ]]; then
+  ask HOST_BACKEND_URL "Backend URL"
+  [[ $HOST_BACKEND_URL == https://* || $HOST_BACKEND_URL == http://* ]] || { echo "Use an absolute http or https URL"; exit 1; }
+  ask_secret HOST_TOKEN "Host Token"
+  [[ -n $HOST_TOKEN ]] || { echo "Host Token is required"; exit 1; }
+  HOST_INSECURE=false
+  if [[ $HOST_BACKEND_URL == http://* ]]; then
+    yesno "Allow insecure connections (also enable this on the Host in the app)?" n || exit 1
+    HOST_INSECURE=true
+  fi
+  "${DOCKER[@]}" build --target host-controller -t claude-task/host-controller .
+  "${DOCKER[@]}" rm -f claude-task-host-controller >/dev/null 2>&1 || true
+  "${DOCKER[@]}" run -d --name claude-task-host-controller --restart unless-stopped \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -e "CLAUDE_TASK_URL=$HOST_BACKEND_URL" -e "CLAUDE_TASK_HOST_TOKEN=$HOST_TOKEN" \
+    -e "CLAUDE_TASK_ALLOW_INSECURE=$HOST_INSECURE" claude-task/host-controller
+  say "Host Controller started. Its connection state is shown in the app's Hosts tab."
+  exit 0
+fi
+
 # --- Settings -------------------------------------------------------------
 if [[ -f .env ]]; then
   yesno ".env already exists. Overwrite it (a backup is kept)?" n || { echo "Keeping .env, starting the stack."; SKIP_ASK=1; }
