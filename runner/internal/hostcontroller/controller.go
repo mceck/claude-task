@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -224,8 +225,10 @@ func session(parent context.Context, cfg Config) (bool, error) {
 			}
 		case end:
 			if s != nil {
-				if err := s.conn.CloseWrite(); err != nil {
-					return false, err
+				if err := s.conn.CloseWrite(); err != nil && !errors.Is(err, syscall.ENOTCONN) && !errors.Is(err, net.ErrClosed) {
+					if err := send(closeStream, id, []byte(err.Error())); err != nil {
+						return false, err
+					}
 				}
 				finish(id, s, false)
 			}
