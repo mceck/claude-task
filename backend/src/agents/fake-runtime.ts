@@ -136,6 +136,8 @@ export class FakeRuntime implements WorkerRuntime {
     return 0;
   }
 
+  async removeInstallation(): Promise<void> { this.containers.clear(); this.profiles.clear(); }
+
   async removeOldBaseImages(): Promise<number> {
     this.oldBaseImageRemovals++;
     return 0;

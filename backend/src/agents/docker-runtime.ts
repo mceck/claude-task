@@ -200,6 +200,22 @@ export class DockerRuntime implements WorkerRuntime {
     for (const v of Volumes ?? []) await this.docker.getVolume(v.Name).remove().catch(ignore(404));
   }
 
+  async removeInstallation(): Promise<void> {
+    const filters = JSON.stringify({ label: [`${INSTALLATION_LABEL}=${this.installationId}`] });
+    const [containers, volumes, images, networks] = await Promise.all([
+      this.docker.listContainers({ all: true, filters }), this.docker.listVolumes({ filters }),
+      this.docker.listImages({ filters }), this.docker.listNetworks({ filters }),
+    ]);
+    const errors: unknown[] = [];
+    const remove = async (actions: Promise<unknown>[]) => { for (const result of await Promise.allSettled(actions)) if (result.status === 'rejected') errors.push(result.reason); };
+    await remove(containers.map((c) => this.docker.getContainer(c.Id).remove({ force: true }).catch(ignore(404))));
+    await remove((volumes.Volumes ?? []).map((v) => this.docker.getVolume(v.Name).remove().catch(ignore(404))));
+    await remove(images.map((i) => this.docker.getImage(i.Id).remove({ force: true }).catch(ignore(404))));
+    await remove(networks.map((n) => this.docker.getNetwork(n.Id).remove().catch(ignore(404))));
+    await this.removeOldBaseImages([]);
+    if (errors.length) throw new AggregateError(errors, 'Some Host resources could not be removed');
+  }
+
   async removeSlot(workerId: string, slot: number): Promise<void> {
     await this.removeContainer(workerId, slot);
     await this.docker.getVolume(serviceVolumeName(workerId, slot)).remove().catch(ignore(404));

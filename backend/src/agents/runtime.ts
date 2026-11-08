@@ -74,6 +74,8 @@ export interface WorkerRuntime {
   stopContainer(workerId: string, slot: number): Promise<void>;
   /** Removes one slot's container (its Service Volume stays). */
   removeContainer(workerId: string, slot: number): Promise<void>;
+  /** Removes this Installation from a retired Host. */
+  removeInstallation(): Promise<void>;
   /** Every container, image and volume of the Worker. */
   removeWorker(workerId: string): Promise<void>;
   /** Removes one slot's container and its Service Volume. */

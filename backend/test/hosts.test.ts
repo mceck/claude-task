@@ -98,6 +98,19 @@ describe('Hosts', () => {
     expect((await waitForHost(app, host.id, 'disconnected')).error).toContain(error);
   });
 
+  it('removes installation resources before closing a deleted Controller with 4004', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Retiring' })).body;
+    const controller = await connectController(app, token); await waitForHost(app, host.id, 'connected');
+    const runtime = app.runtimeFor(host.id);
+    await runtime.createContainer('leftover', 1, { image: 'old', env: {}, cpuLimit: null, memoryMb: null });
+    const closed = new Promise((resolve) => controller.once('close', (code) => resolve(code)));
+    expect((await admin.delete(`/hosts/${host.id}`)).status).toBe(204);
+    expect(await closed).toBe(4004);
+    expect(runtime.containers.size).toBe(0);
+    await expect(connectController(app, token)).rejects.toThrow('401');
+  });
+
 });
 
 describe('Local Host disabled', () => {

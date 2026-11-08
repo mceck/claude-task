@@ -67,6 +67,7 @@ export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (used.length) throw conflict(`These workers use the Host: ${used.map((w) => w.name).join(', ')}. Move them first.`);
     await ctx.db.delete(hosts).where(eq(hosts.id, id));
     ctx.hub.publish(WORKERS_TOPIC, { type: 'host.deleted', hostId: id });
+    ctx.controllers.retire(id);
     return reply.status(204).send();
   });
 }

@@ -109,6 +109,14 @@ export class HostControllers {
       }));
     });
   }
+  retire(id: string): void {
+    const runtime = this.ctx.runtimes.has(id) ? this.ctx.runtimes.get(id) : null;
+    this.track((async () => {
+      try { await runtime?.removeInstallation(); }
+      catch (err) { this.ctx.log.warn({ err, hostId: id }, 'could not remove retired Host resources'); }
+      finally { this.disconnect(id, 4004, 'host deleted'); }
+    })());
+  }
   async closeAll(): Promise<void> {
     for (const conn of this.connections.values()) conn.socket.terminate();
     await new Promise<void>((resolve) => setImmediate(resolve));
