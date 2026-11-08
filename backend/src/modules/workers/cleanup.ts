@@ -70,6 +70,7 @@ export async function loadCleanup(db: Executor, id?: string): Promise<Cleanup | 
     removed: { ...EMPTY_CLEANUP_COUNTS, ...c.removed },
     reclaimedBytes: c.reclaimedBytes,
     volumesPending: c.volumesPending,
+    hostsPending: c.hostsPending,
     errors: c.errors,
   };
 }

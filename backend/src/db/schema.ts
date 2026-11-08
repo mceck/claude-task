@@ -459,13 +459,44 @@ export const cleanups = pgTable('cleanups', {
   removed: jsonb('removed').$type<CleanupCounts>().notNull(),
   reclaimedBytes: bigint('reclaimed_bytes', { mode: 'number' }).notNull().default(0),
   volumesPending: integer('volumes_pending').notNull().default(0),
+  hostsPending: integer('hosts_pending').notNull().default(0),
   errors: text('errors').array().notNull().default(sql`'{}'::text[]`),
 });
+
+export const hosts = pgTable('hosts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: text('kind').$type<'local' | 'remote'>().notNull(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  tokenHash: text('token_hash'),
+  backendUrlOverride: text('backend_url_override'),
+  allowInsecure: boolean('allow_insecure').notNull().default(false),
+  network: text('network'),
+  reportedUrl: text('reported_url'),
+  controllerVersion: text('controller_version'),
+  protocolVersion: integer('protocol_version'),
+  dockerVersion: text('docker_version'),
+  os: text('os'),
+  architecture: text('architecture'),
+  cpus: integer('cpus'),
+  memoryBytes: bigint('memory_bytes', { mode: 'number' }),
+  connectedAt: timestamp('connected_at', { withTimezone: true }),
+  disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
+  error: text('error'),
+  cleanupPending: uuid('cleanup_pending').references(() => cleanups.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex('hosts_name_unique').on(sql`lower(${t.name})`),
+  uniqueIndex('hosts_token_unique').on(t.tokenHash),
+  uniqueIndex('hosts_local_unique').on(t.kind).where(sql`${t.kind} = 'local'`),
+]);
 
 export const workers = pgTable(
   'workers',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    hostId: uuid('host_id').notNull().references(() => hosts.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     dockerfile: text('dockerfile').notNull(),

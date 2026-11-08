@@ -11,7 +11,7 @@ import type { Config } from '../../src/config';
 import { SecretBox } from '../../src/secrets';
 import { bootstrapAdmin } from '../../src/modules/users/service';
 import { createServer } from '../../src/server';
-import { workers } from '../../src/db/schema';
+import { hosts, workers } from '../../src/db/schema';
 import { DEFAULT_AGENT_DOCKERFILE } from '@claude-task/shared';
 import type { Server } from '../../src/server';
 import { ApiClient } from './client';
@@ -84,7 +84,7 @@ async function createDefaultWorker(t: TestApp, options: TestAppOptions): Promise
   if (options.defaultWorker === false) return;
   const [row] = await t.server.ctx.db
     .insert(workers)
-    .values({ name: TEST_WORKER, dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: options.worker?.minimum ?? 1, cap: options.worker?.cap ?? 1 })
+    .values({ hostId: (await t.server.ctx.db.select().from(hosts))[0]!.id, name: TEST_WORKER, dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: options.worker?.minimum ?? 1, cap: options.worker?.cap ?? 1 })
     .returning();
   t.workerId = row!.id;
   t.server.ctx.scheduler.build(row!.id);
@@ -182,4 +182,5 @@ export async function truncateAll(server: Server): Promise<void> {
     `select tablename from pg_tables where schemaname = 'public'`,
   );
   await server.ctx.db.$client.query(`truncate ${rows.map((r) => `"${r.tablename}"`).join(', ')} cascade`);
+  await server.ctx.db.insert(hosts).values({ kind: 'local', name: 'Local' });
 }

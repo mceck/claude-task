@@ -11,6 +11,7 @@ const WORKER_STATE_LABEL: Record<WorkerState, string> = {
   idle: 'Idle',
   working: 'Working',
   offline: 'Offline',
+  host_offline: 'Host offline',
   disabled: 'Disabled',
   building: 'Building',
   build_failed: 'Build failed',

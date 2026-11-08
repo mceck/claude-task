@@ -6,7 +6,7 @@ import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { copyName } from '../copy-name';
 import type { Executor } from '../../db/client';
-import { projects, queueEntries, workerBuilds, workerContainers, workers } from '../../db/schema';
+import { hosts, projects, queueEntries, workerBuilds, workerContainers, workers } from '../../db/schema';
 import { badRequest, conflict, notFound, parse } from '../../errors';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { loadJobs } from '../agents/service';
@@ -56,7 +56,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(createWorkerBody, request.body);
     assertDockerfile(body.dockerfile);
     await assertUniqueName(ctx.db, body.name);
-    const [row] = await ctx.db.insert(workers).values(body).returning();
+    const [row] = await ctx.db.insert(workers).values({ ...body, hostId: (await ctx.db.select().from(hosts).where(eq(hosts.kind, 'local')))[0]!.id }).returning();
     ctx.scheduler.build(row!.id);
     return reply.status(201).send({ worker: await loadWorker(ctx.db, ready, row!.id) });
   });
@@ -109,6 +109,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
       .insert(workers)
       .values({
         name: name ?? copyName(source.name, (await ctx.db.select({ name: workers.name }).from(workers)).map((r) => r.name)),
+        hostId: source.hostId,
         description: source.description,
         dockerfile: source.dockerfile,
         claudeCodeVersion: source.claudeCodeVersion,

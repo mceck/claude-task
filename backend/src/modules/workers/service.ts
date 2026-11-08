@@ -4,7 +4,7 @@ import type { AgentRef, Worker, WorkerBuild, WorkerContainer, WorkerContainerSta
 import { and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentProfiles, agents, jobs, projects, queueEntries, tasks, workerBuilds, workerContainers, workers } from '../../db/schema';
+import { hosts, agentProfiles, agents, jobs, projects, queueEntries, tasks, workerBuilds, workerContainers, workers } from '../../db/schema';
 import { notFound } from '../../errors';
 import { ACTIVE_JOB_STATES, agentRefs, taskRefs } from '../agents/service';
 
@@ -52,6 +52,7 @@ export async function loadWorkers(db: Executor, isReady: (containerId: string) =
     .where(ids ? inArray(workers.id, ids) : undefined)
     .orderBy(asc(sql`lower(${workers.name})`));
   if (rows.length === 0) return [];
+  const hostRows = await db.select().from(hosts);
   const workerIds = rows.map((r) => r.id);
   const containers = await db.select().from(workerContainers).where(inArray(workerContainers.workerId, workerIds)).orderBy(asc(workerContainers.slot));
   const active = await db
@@ -105,6 +106,7 @@ export async function loadWorkers(db: Executor, isReady: (containerId: string) =
     return {
       id: w.id,
       name: w.name,
+      host: { id: w.hostId, name: hostRows.find((h) => h.id === w.hostId)!.name, state: 'connected' as const },
       description: w.description,
       dockerfile: w.dockerfile,
       claudeCodeVersion: w.claudeCodeVersion,

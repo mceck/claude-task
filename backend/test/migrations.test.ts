@@ -9,6 +9,9 @@ import { FakeRunner } from './helpers/runner';
 
 /** The schema before Workers: Agents with their own container, one Session per (Task, Agent), Queues per Agent. */
 const BEFORE_WORKERS = `
+  ALTER TABLE workers DROP COLUMN host_id;
+  DROP TABLE hosts;
+  ALTER TABLE cleanups DROP COLUMN hosts_pending;
   ALTER TABLE agents ADD COLUMN dockerfile text NOT NULL DEFAULT 'FROM claude-task/agent-base', ADD COLUMN services jsonb NOT NULL DEFAULT '["postgres","redis"]',
     ADD COLUMN configured_extensions_revision integer NOT NULL DEFAULT -1, ADD COLUMN extensions_error text, ADD COLUMN cpu_limit double precision,
     ADD COLUMN memory_mb integer, ADD COLUMN runner_token_hash text, ADD COLUMN image_tag text, ADD COLUMN image_state image_state NOT NULL DEFAULT 'none',
@@ -47,6 +50,19 @@ describe('migration upgrades', () => {
   // The migrations take about 2 seconds. DROP DATABASE forces a checkpoint, which has to fsync everything the other
   // test files wrote meanwhile: on a disk with slow fsync that took up to a minute while the whole suite was running.
   const DROP_DATABASE_SLACK_MS = 120_000;
+
+  it('assigns existing Workers to the Local Host when upgrading', async () => {
+    const { db } = app.server.ctx;
+    const before = (await db.$client.query('SELECT id, name FROM workers ORDER BY id')).rows;
+    const journal = JSON.parse(await readFile(path.join(migrationsFolder(), 'meta/_journal.json'), 'utf8'));
+    const migration = journal.entries.find((entry: { tag: string }) => entry.tag === '0039_remote_hosts');
+    expect(migration).toBeDefined();
+    await db.$client.query('ALTER TABLE workers DROP COLUMN host_id; DROP TABLE hosts; ALTER TABLE cleanups DROP COLUMN hosts_pending');
+    await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= $1', [migration.when]);
+    await runMigrations(db);
+    expect((await db.$client.query('SELECT w.id, w.name FROM workers w JOIN hosts h ON h.id = w.host_id WHERE h.kind = \'local\' ORDER BY w.id')).rows).toEqual(before);
+    expect((await db.$client.query('SELECT name FROM hosts')).rows).toEqual([{ name: 'Local' }]);
+  });
 
   it('serializes two processes migrating the same empty database', { timeout: DROP_DATABASE_SLACK_MS }, async () => {
     const name = `ct_mig_${randomBytes(4).toString('hex')}`;

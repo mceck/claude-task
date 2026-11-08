@@ -1,4 +1,5 @@
 // Workers, their Worker Containers and Builds (docs/specs/workers.md). Terms follow docs/CONTEXT.md.
+import type { HostRef } from './hosts';
 import { z } from 'zod';
 import { AGENT_SERVICES, DEFAULT_AGENT_SERVICES } from './agents';
 import type { AgentRef, AgentService, BuildStatus, ImageState, TaskRef } from './agents';
@@ -10,7 +11,7 @@ export const WORKER_CAP_MAX = 20;
 export const DEFAULT_CLAUDE_CODE_VERSION = '2.1.310';
 
 /** What the Workers list shows, derived from configuration, image, containers and Jobs. */
-export type WorkerState = 'disabled' | 'building' | 'build_failed' | 'offline' | 'idle' | 'working';
+export type WorkerState = 'disabled' | 'building' | 'build_failed' | 'offline' | 'host_offline' | 'idle' | 'working';
 
 /** One Worker Slot, as the Worker page shows it. */
 export type WorkerContainerState = 'stopped' | 'starting' | 'idle' | 'working';
@@ -43,6 +44,7 @@ export interface AgentProfileError {
 }
 
 export interface Worker extends WorkerRef {
+  host: HostRef;
   description: string;
   dockerfile: string;
   /** The Claude Code version the Worker's Base Image installs. */
@@ -181,5 +183,6 @@ export interface Cleanup {
   reclaimedBytes: number;
   /** Worker Volumes whose Runner has not answered yet. */
   volumesPending: number;
+  hostsPending: number;
   errors: string[];
 }
