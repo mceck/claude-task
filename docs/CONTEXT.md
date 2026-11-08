@@ -12,7 +12,7 @@ _Translations_: Utente
 _Avoid_: account, person
 
 **Admin**:
-A User who also manages users, Agents, Workers, Credentials, Extensions, Git Connections and Project Environment Variables, and can permanently delete Projects.
+A User who also manages users, Agents, Workers, Hosts, Credentials, Extensions, Git Connections and Project Environment Variables, and can permanently delete Projects.
 _Translations_: Amministratore
 
 **Member**:
@@ -387,9 +387,35 @@ _Avoid_: container env, secrets
 ### Workers
 
 **Worker**:
-A global, named execution environment an Admin configures: a Dockerfile, Development Services, CPU and memory limits per Worker Container, and a minimum and a cap of Worker Containers. Each Project runs on exactly one Worker, and the Worker starts and stops Worker Containers between its minimum and its cap to work its Queue.
+A global, named execution environment an Admin configures: a Dockerfile, Development Services, CPU and memory limits per Worker Container, and a minimum and a cap of Worker Containers. Each Project runs on exactly one Worker, each Worker runs on exactly one Host, and the Worker starts and stops Worker Containers between its minimum and its cap to work its Queue.
 _Translations_: Worker
-_Avoid_: runtime, pool, environment, sandbox
+_Avoid_: runtime, pool, environment, sandbox, remote worker (a remote machine is a Host)
+
+**Host**:
+A machine whose Docker daemon runs Worker Containers for the Installation: the Local Host, or a Remote Host. It can run any number of Workers.
+_Translations_: Host
+_Avoid_: Docker host, node, machine, server, remote worker, code host (that's GitHub or GitLab, reached through a Git Connection)
+
+**Local Host**:
+The Host whose Docker daemon the backend reaches directly. An Installation has one when the backend has access to a Docker daemon, and none otherwise.
+_Translations_: Host locale
+
+**Remote Host**:
+A Host connected to the Installation through its Host Controller.
+_Translations_: Host remoto
+
+**Host Controller**:
+The platform's process running on a Remote Host that carries out the backend's Docker work there: Builds, Worker Containers, logs and Cleanup.
+_Translations_: Controller dell'host
+_Avoid_: host agent, daemon, runner
+
+**Host State**:
+Whether a Host is connected or disconnected: for the Local Host, whether its Docker daemon answers; for a Remote Host, whether its Host Controller is connected.
+_Translations_: Stato dell'host
+
+**Host Token**:
+The secret identifying one Remote Host's Host Controller to the backend, shown once when an Admin creates the Remote Host or regenerates it.
+_Translations_: Token dell'host
 
 **Worker Container**:
 One running instance of a Worker, occupying one Worker Slot. It runs one Job at a time, for any Agent.
@@ -410,7 +436,7 @@ The persistent storage of one Worker Slot, holding the data of its Development S
 _Translations_: Volume dei servizi
 
 **Worker State**:
-The summary of a Worker's condition: disabled, building, build_failed, offline (no Worker Container running), idle or working (with the number of busy Worker Containers).
+The summary of a Worker's condition: disabled, host_offline (its Host is disconnected and none of its Runners is connected), building, build_failed, offline (no Worker Container running), idle or working (with the number of busy Worker Containers).
 _Translations_: Stato del Worker
 
 **Base Image**:
@@ -431,7 +457,7 @@ One attempt to produce a Worker Image, with its log.
 _Translations_: Build
 
 **Cleanup**:
-The removal of what the Installation's Workers no longer need from the Docker host and their Worker Volumes: outdated images, leftovers of deleted Workers, Worker Slots left above the cap, and Bare Clones and Agent Profiles that no Project or Agent uses there any more.
+The removal of what the Installation's Workers no longer need from their Hosts and Worker Volumes: outdated images, leftovers of deleted Workers, Worker Slots left above the cap, and Bare Clones and Agent Profiles that no Project or Agent uses there any more.
 _Translations_: Pulizia
 _Avoid_: prune, garbage collection
 

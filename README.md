@@ -47,6 +47,12 @@ On a fresh Amazon Linux EC2 instance, clone the repo and run `scripts/deploy.sh`
 
 A single production image serves the API, the WebSocket and the built frontend; Postgres runs alongside. An optional voice relay (TURN) can be added with `docker compose --profile turn up` by setting `VOICE_TURN_HOST`, `VOICE_TURN_SECRET` and `VOICE_TURN_EXTERNAL_IP`.
 
+Workers can also run on other machines. In **Workers → Hosts**, an Admin creates a Remote Host and gets a one-time Host Token. From a clone at the backend's version on that machine, run `scripts/deploy.sh host`: it installs Docker when needed, asks for the backend URL and token, builds the Host Controller image and starts it with the local Docker socket. The Controller connects outbound over WebSocket; the machine needs no inbound port. Use HTTPS, or explicitly allow insecure connections both on the Host and in the Controller for a trusted development network.
+
+Choose the Host when creating a Worker. Moving an existing Worker requires closing its started conversations first and starts it over with empty volumes, including Development Service data. A disconnected Controller delays Docker operations while connected Runners keep processing Jobs. An installation with only Remote Hosts can set `LOCAL_HOST=false` and omit the Docker socket mount from the backend.
+
+For a manual Controller deployment, build with `docker build --target host-controller -t claude-task/host-controller .`, then use the run command shown in the Host's connect dialog. The default `docker build -t claude-task .` still builds the backend image.
+
 The container exposes `GET /health` for orchestration: it needs no Login and answers `503` while the database is unreachable. `docker-compose.yml` uses it as the app's healthcheck.
 
 ## Testing

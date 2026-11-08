@@ -209,7 +209,7 @@ When a Task is closed or deleted, its Worktree is removed once its Session has n
 
 ### Git Proxy
 
-The Git Proxy serves git smart HTTP on the backend's main listener, outside the API prefix, at `<AGENT_BACKEND_URL>/git/<project id>.git`. It serves exactly three requests: the ref advertisement for `git-upload-pack` or `git-receive-pack`, a `git-upload-pack` POST (fetch) and a `git-receive-pack` POST (push). Anything else is answered directly:
+The Git Proxy serves git smart HTTP on the backend's main listener, outside the API prefix, at `<backend URL>/git/<project id>.git`, where the backend URL is that of the Host the Project's Worker runs on (`AGENT_BACKEND_URL` on the Local Host, see [Workers](workers.md#backend-url-per-host)). It serves exactly three requests: the ref advertisement for `git-upload-pack` or `git-receive-pack`, a `git-upload-pack` POST (fetch) and a `git-receive-pack` POST (push). Anything else is answered directly:
 
 | Request | Answer |
 | --- | --- |
@@ -392,7 +392,7 @@ flowchart LR
 - **Git sync**: a background loop every 5 minutes, also run at start. Each run rotates expiring GitLab tokens, refreshes open Pull Requests one by one, then re-checks Base Branch Protection older than 24 hours. Runs never overlap, and concurrent refreshes of the same Task share one provider call.
 - **Runner and credential helper**: prepare Bare Clones and Worktrees under the Bare Clone lock, remove Worktrees on request, and serve the Job token to git (see [Runner](runner.md)).
 
-The backend's public address `APP_URL` is used for Task links in Pull Request footers; the internal address `AGENT_BACKEND_URL` is what Worker Containers use for the Git Proxy.
+The backend's public address `APP_URL` is used for Task links in Pull Request footers; the backend URL of each Host (`AGENT_BACKEND_URL` for the Local Host, the Host's own for a Remote Host) is what Worker Containers use for the Git Proxy.
 
 ### API
 
@@ -420,7 +420,7 @@ The shared types package defines the payloads. Secrets are accepted on create an
 
 - **Credential isolation**: provider credentials (GitHub private keys and installation tokens, GitLab tokens) live only in the backend. The only git secret in a Worker Container is the Job token, valid while its Job is active (`dispatched`, `running` or `finishing`), for its own Project only.
 - **Secrets at rest**: connection secrets are encrypted with `SECRETS_MASTER_KEY`, write-only through the API (GitLab tokens show their last 4 characters), and absent from logs, API responses, raw Session events, error messages and the Worker Containers' environment.
-- **Transport**: the Job token travels over `AGENT_BACKEND_URL`, the backend's internal address, the same way as the Task Tools token. Provider traffic is HTTPS, except GitLab instances explicitly allowed over HTTP for development.
+- **Transport**: the Job token travels over the backend URL of the Worker's Host, the same way as the Task Tools token: the backend's internal address on the Local Host, and `https` on a Remote Host unless its Admin allowed insecure connections. Provider traffic is HTTPS, except GitLab instances explicitly allowed over HTTP for development.
 - **Streaming**: the proxy holds at most the push command section (64 KiB decoded, 1 MiB raw) in memory; packs of any size stream through. Large first clones put their bytes on the backend host; later fetches are incremental.
 - **Timeouts**: provider API calls 15 seconds; proxy idle 5 minutes; each Runner git command 30 minutes; credential helper 40 seconds.
 - **Freshness**: Pull Request state on the Board is at most 5 minutes old for open Pull Requests and at most 1 minute old when a Task is opened. Base Branch Protection is at most 24 hours old.

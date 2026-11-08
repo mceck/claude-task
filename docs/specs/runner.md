@@ -21,7 +21,7 @@ The **Runner** is the platform's process inside every Worker Container. It dials
 
 ### Starting up
 
-The Worker Container's entrypoint starts the Worker's Development Services, then the Runner, all as the non-root `agent` user. Each service keeps its data and logs in the slot's Service Volume, and the entrypoint removes stale locks there before starting it, so several Worker Containers sharing one home start their services side by side (see [Workers](workers.md)). The container receives the backend's Runner endpoint URL and its own Runner token as environment variables. The entrypoint re-executes itself without the token and hands it to the Runner alone over a pipe, so the container's first process, the services and every later `docker exec` carry no token in their environment. Backend execs into the container (for example to synchronize an Agent Profile) set the token variable to empty.
+The Worker Container's entrypoint starts the Worker's Development Services, then the Runner, all as the non-root `agent` user. Each service keeps its data and logs in the slot's Service Volume, and the entrypoint removes stale locks there before starting it, so several Worker Containers sharing one home start their services side by side (see [Workers](workers.md)). The container receives the backend's Runner endpoint URL, derived from its Host's backend URL (see [Workers](workers.md#backend-url-per-host)), and its own Runner token as environment variables. The entrypoint re-executes itself without the token and hands it to the Runner alone over a pipe, so the container's first process, the services and every later `docker exec` carry no token in their environment. Backend execs into the container (for example to synchronize an Agent Profile) set the token variable to empty.
 
 On start the Runner:
 
@@ -298,7 +298,7 @@ flowchart LR
 - **Git credential helper**: a small separate binary git calls; it only relays to the socket of its own container's Runner.
 - **Backend Runner endpoint**: authenticates the Runner token and maps it to its Worker Container, keeps at most one connection per Worker Container, processes messages from one Runner one at a time and in arrival order, and acknowledges them. Its handling of each message (Turns, Timeline projection, Queue, recovery) is described in [Agent sessions](agent-sessions.md).
 
-The Runner reaches the backend at its internal URL; every connection starts from inside the Worker Container.
+The Runner reaches the backend at its Host's backend URL, whether the Worker Container runs on the Local Host or on a Remote Host; every connection starts from inside the Worker Container.
 
 ### Configuration
 

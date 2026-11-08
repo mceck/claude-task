@@ -277,7 +277,7 @@ Each step leaves the project working and can be committed on its own. Tests are 
 
 17. **Host on the Worker sheet.**
     - Show the Host name and support `host_offline` in the model, state dot and pickers.
-    Verification: `flutter analyze` and the app's tests pass (formatted with Flutter 3.41.7's `dart format`); the sheet shows the Host on a running app.
+    Verification: `flutter analyze` and the app's tests pass (formatted with Flutter 3.41.7's `dart format`); the sheet shows the Host on a running app. The current package requires Flutter 3.47.6 for analysis and tests; Flutter 3.41.7 is used for formatting. Five existing layout golden failures are reproduced on the starting commit; the Host parsing and sheet tests pass.
 
 ### Wrap-up
 
