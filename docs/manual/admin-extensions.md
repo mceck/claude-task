@@ -115,4 +115,4 @@ An import merges variables: matching names are overwritten; other existing names
 
 ---
 
-← [Workers](workers.md) · [Installation and operations](installation-and-operations.md) →
+← [Remote Hosts](hosts.md) · [Installation and operations](installation-and-operations.md) →

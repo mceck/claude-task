@@ -2,7 +2,7 @@
 
 # Set up Workers and capacity
 
-A Worker is the Docker environment where Agents work. Every Project, Wiki and Schedule runs on one Worker, and one Worker can serve many Projects. Admins create and configure Workers. Every User can see them, choose them for Projects, Wikis and Schedules, and manage their Queue.
+A Worker is the Docker environment where Agents work. Every Worker runs on one [Host](hosts.md), the machine that holds its containers and volumes. Every Project, Wiki and Schedule runs on one Worker, and one Worker can serve many Projects. Admins create and configure Workers. Every User can see them, choose them for Projects and Wikis, and manage their Queue. Admins also choose the Worker of a Schedule.
 
 Create at least one Worker before the first Project. The Project, Wiki and Schedule forms cannot be submitted until a Worker exists.
 
@@ -21,15 +21,16 @@ A Project's Tasks always run on that Project's Worker. Changing the Agent of a T
 
 ## Read the Workers list
 
-Open **Workers** in the sidebar. Each card shows the Worker's state, its busy and running containers against its cap, how many entries wait in its Queue, and the Projects it runs.
+Open **Workers** in the sidebar. Choose the **Workers** tab. Each card shows the Worker's state, its Host, its busy and running containers against its cap, how many entries wait in its Queue, and the Projects it runs.
 
-![The Workers list with a working environment and an offline one](images/workers/workers.png)
+![The Workers tab showing each environment’s Host, state and capacity](images/workers/workers.png)
 
 | State | Meaning |
 | --- | --- |
 | **Idle** | Enabled, with an image and at least one connected Worker Container, and no active Job. |
 | **Working** | At least one Worker Container runs a Job. The card also shows how many containers are busy. |
-| **Offline** | Enabled, but no Worker Container is running. A Worker with minimum 0 rests here until work arrives. |
+| **Host offline** | The Host is disconnected and none of the Worker's Runners is connected. Docker work waits for the Controller to return. |
+| **Offline** | Enabled, but no Worker Container has a connected Runner. A Worker with minimum 0 can rest here until work arrives. |
 | **Building** | The latest image Build is running. Existing containers keep working on the previous image. |
 | **Build failed** | The latest Build failed. Existing containers keep working on the previous successful image. |
 | **Disabled** | The Worker takes no new work. Its Queue keeps accumulating entries. |
@@ -37,7 +38,7 @@ Open **Workers** in the sidebar. Each card shows the Worker's state, its busy an
 ## Create a Worker
 
 1. Open **Workers** and click **New worker**.
-2. Enter **Name** and an optional **Description**.
+2. Choose **Host**, then enter **Name** and an optional **Description**. **Local** is preselected when enabled; otherwise the only available Host is preselected. See [Remote Hosts](hosts.md) to connect another machine.
 3. Set **Minimum** and **Cap**. The minimum is how many Worker Containers stay running; 0 starts them only when work arrives. The cap, from 1 to 20, is the most Tasks the Worker can run at once.
 4. Set the **Claude Code version** the Worker installs, such as `2.1.310`. Leave the default unless a Project needs another release.
 5. Under **Services**, select the Development Services to install in every container: PostgreSQL, Redis, MySQL, Mailpit, RustFS/MinIO and Chrome. PostgreSQL and Redis are selected by default.
@@ -45,13 +46,13 @@ Open **Workers** in the sidebar. Each card shows the Worker's state, its busy an
 7. Optionally set a **CPU limit** and **Memory (MB)** per Worker Container.
 8. Leave **Enabled** checked and click **Create worker**.
 
-Creating a Worker starts its first image Build immediately. The Worker shows **Building** until the Build succeeds. It then starts the containers from slot 1 to the minimum, and further containers as work arrives.
+Creating a Worker starts its first image Build immediately when its Host is connected. A disconnected Host keeps the Build pending until it reconnects. The Worker shows **Building** until the Build succeeds. It then starts the containers from slot 1 to the minimum, and further containers as work arrives.
 
 ## Work with Worker Containers
 
 Open a Worker and use the **Containers** tab. Each row is one **Worker Slot**, numbered from 1 to the cap. A row shows the container state, whether its Runner is connected, its Docker state, the Task and Agent of its current Job, the Claude version and the last activity.
 
-![The Containers tab with a working slot and two stopped slots](images/workers/containers.png)
+![The Containers tab showing slot states and Runner connections](images/workers/containers.png)
 
 Admins have three actions per row:
 
@@ -62,6 +63,8 @@ Admins have three actions per row:
 | **Logs** | Shows the last 500 lines of the container output, refreshed every three seconds. |
 
 **Restart** and **Force recreate** ask for confirmation because they interrupt work. A recreation waiting for a running Job appears as a notice in the row and runs as soon as the Job ends.
+
+When the Host is disconnected, **Restart**, **Force recreate**, **Logs** and **Rebuild image** answer **Host disconnected**. Connected Runners keep processing Jobs; **Recreate when idle** keeps its request until the Host returns.
 
 Whole-Worker actions are at the top of the page:
 
@@ -90,6 +93,8 @@ Open the **Configuration** tab. Admins edit every field; other Users can read th
 
 ![The Worker Configuration tab with automatic save status](images/workers/configuration.png)
 
+**Host** applies separately after a confirmation with **Move worker**. The Worker starts over on the new machine with empty volumes, and every started open conversation must be closed first. Read [Move a Worker to another Host](hosts.md#choose-or-move-a-workers-host) before confirming.
+
 The **Claude Code version**, **Dockerfile**, **Services** and **CPU** and **Memory** limits apply together with **Save Docker configuration**. An unfinished Dockerfile therefore never reaches running containers.
 
 ![Docker configuration with Development Services and the Dockerfile editor](images/workers/docker-configuration.png)
@@ -101,6 +106,7 @@ The **Claude Code version**, **Dockerfile**, **Services** and **CPU** and **Memo
 | Minimum | Raising it starts the missing slots. Lowering it lets the extra slots stop when idle. |
 | Cap | Raising it lets the Worker start more containers when work waits. Lowering it stops the extra slots as soon as each is free, keeping their data. |
 | Enabled | See [Disable, duplicate or delete a Worker](#disable-duplicate-or-delete-a-worker). |
+| Host | Moves the Worker to another machine with empty volumes after confirmation; see [Remote Hosts](hosts.md#choose-or-move-a-workers-host). |
 | Name, Description | Display only. |
 
 The Dockerfile is checked while you edit and again on save:
@@ -137,16 +143,24 @@ When exactly one Worker exists, the forms preselect it. When none exists, the fo
 ## Disable, duplicate or delete a Worker
 
 - **Disable** a Worker to take no new work. Running Jobs finish normally, its Queue keeps growing, and its containers stop once each has been idle. A due Schedule whose Worker is disabled is skipped with **worker unavailable**.
-- **Duplicate** a Worker to start a variant of its toolchain. The copy takes every configuration field: description, Dockerfile, Claude Code version, services, limits, minimum, cap and enabled choice. Its name is the one given, or the first free "‹name› (copy)", "‹name› (copy 2)", and so on. It gets its own Build and empty volumes; Projects, Queue and Build history stay with the original.
+- **Duplicate** a Worker to start a variant of its toolchain. The copy keeps the same Host and takes every configuration field: description, Dockerfile, Claude Code version, services, limits, minimum, cap and enabled choice. Its name is the one given, or the first free "‹name› (copy)", "‹name› (copy 2)", and so on. It gets its own Build and empty volumes; Projects, Queue and Build history stay with the original.
 - **Delete** a Worker once no Project, Wiki or Schedule uses it. The app names the Projects that still use it and refuses the deletion. Deleting removes its containers, images, Worker Volume and Service Volumes, including every Worktree and Claude transcript on it.
+
+## Reclaim unused resources
+
+Admins can click **Clean up** on the Workers page, review the confirmation and start a Cleanup. The report shows what was removed, approximate space freed, errors and any Hosts or Worker Volumes still pending. Resources in use stay in place.
+
+A disconnected Host waits for its Controller to reconnect. A Worker Volume waits for a Runner to answer. Their results are added to the report when available. The last Cleanup is shown under the page header; open its pending or error details for more information.
 
 ## Use Workers in the native app
 
-On a phone, open the drawer and choose **Workers**; on native desktop, open **Settings** → **Workers**. The list shows each Worker's state and capacity. Open a Worker to see its Worker Slots, their state, Runner connection and current Job.
+On a phone, open the drawer and choose **Workers**; on native desktop, open **Settings** → **Workers**. The list shows each Worker's state and capacity. Open a Worker to see its Host, Worker Slots, their state, Runner connection and current Job. **host offline** has the same meaning as **Host offline** on the web. Manage Hosts and move Workers in the web app.
 
 Admins can choose **Rebuild image** and **Recreate when idle** for the Worker, and **Restart** or **Force recreate** for a slot, with the same confirmations as the web app. Build history and container logs are in the web app.
 
 ## Related
+
+- [Remote Hosts](hosts.md): connect machines, inspect their state and move Workers.
 
 - [Agents and credentials](admin-agents.md): configure the Claude Code side that runs on Workers.
 - [Projects and boards](projects-and-boards.md): choose a Worker and default Agent for a Project.
@@ -156,4 +170,4 @@ Admins can choose **Rebuild image** and **Recreate when idle** for the Worker, a
 
 ---
 
-← [Agents and credentials](admin-agents.md) · [Extensions and environment](admin-extensions.md) →
+← [Agents and credentials](admin-agents.md) · [Remote Hosts](hosts.md) →

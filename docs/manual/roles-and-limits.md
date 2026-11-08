@@ -22,12 +22,14 @@ Use this reference when an action is unavailable or an input is rejected. All ac
 | Reorder or remove eligible Worker Queue entries; Stop and Retry | Yes | Yes |
 | Choose the Worker of a Project or Wiki | Yes | Yes |
 | Choose the Worker of a Schedule | No | Yes |
+| See Hosts and which Host each Worker uses | Yes | Yes |
+| Create, edit, regenerate tokens and delete Remote Hosts; move Workers between Hosts | No | Yes |
 | Configure Agents, Workers and Credentials | No | Yes |
 | Manage Users, Git Connections and Extensions | No | Yes |
 | Create, import or delete Project environment variables | No | Yes |
 | Manage own notification preferences | Yes | Yes |
 
-The same role permissions apply in the web and native apps. Native Settings include Project Repositories and Base Branches for every User, Workers with their slots and restart actions, and Extensions, Git Connections and Agent configuration for Admins. Use the web app for a Worker's Dockerfile, Development Services, resource limits, Build history and container logs, and for Project environment variables.
+The same role permissions apply in the web and native apps. Native Settings include Project Repositories and Base Branches for every User, Workers with their slots and restart actions, and Extensions, Git Connections and Agent configuration for Admins. Use the web app to manage Hosts and move Workers, and for a Worker's Dockerfile, Development Services, resource limits, Build history and container logs, and for Project environment variables.
 
 Members can read Project environment variable names and plain values, but secret values are redacted. Internal Notes are visible to every User, including Members. Admins cannot edit someone else's Comment.
 
@@ -56,6 +58,10 @@ Members can read Project environment variable names and plain values, but secret
 | Wiki name | 200 characters |
 | Wiki description | 100,000 characters |
 | Agent avatar upload | 2 MB; PNG, JPEG, GIF or WebP |
+| Host name | 1 to 100 characters, unique ignoring case, including Local |
+| Host description | 2,000 characters |
+| Host backend URL override | Absolute http or https URL, with no query or fragment; http requires insecure connections to be allowed |
+| Host Docker network | 1 to 128 letters, digits, underscores, dots or hyphens; starts with a letter or digit; empty uses the default bridge |
 | Worker name | 100 characters |
 | Worker description | 2,000 characters |
 | Worker Dockerfile | 100,000 characters |
@@ -77,6 +83,7 @@ Logins expire after 30 days without activity. Password resets and deactivation e
 
 - [Users and access](admin-users.md): change roles and restore access.
 - [Workers](workers.md): configure capacity and execution environments.
+- [Remote Hosts](hosts.md): choose where Workers run.
 - [Troubleshooting](troubleshooting.md): understand rejected actions.
 
 ---

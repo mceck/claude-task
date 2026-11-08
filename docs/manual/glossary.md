@@ -34,6 +34,11 @@ These are the terms you will meet while using Claude Task.
 | Agent | A named Claude Code configuration: Credential, model, instructions, environment and Extensions. Its Jobs run on Workers. |
 | Default Agent | A Project’s Agent choice assigned to new Tasks when enabled. The first regular Comment starts work. |
 | Worker | A Docker execution environment with a Dockerfile, Development Services, limits and a number of Worker Containers. Every Project, Wiki and Schedule runs on one Worker. |
+| Host | The machine whose Docker daemon runs a Worker's containers, images and volumes. |
+| Local Host | The backend's own Docker machine, named Local. |
+| Remote Host | Another machine connected to the backend by a Host Controller. |
+| Host Controller | The process you run on a Remote Host; it connects outward to let the backend manage Docker there. |
+| Host Token | The one-time secret used to connect one Remote Host's Controller. |
 | Worker Container | One running container of a Worker, one per Worker Slot. It runs one Job at a time for any Agent. |
 | Worker Slot | A numbered place in a Worker, from 1 to its cap. It keeps its own Development Service data. |
 | Worker Image | The image built from a Worker's Dockerfile on top of the platform Base Image. |
@@ -42,7 +47,7 @@ These are the terms you will meet while using Claude Task.
 | Service Volume | The storage of one Worker Slot's Development Services, kept across container restarts. |
 | Agent Profile | An Agent's own Claude Code configuration directory inside a Worker Volume, holding its Skills, Plugins and settings. |
 | Build | One attempt to build a Worker Image from its Dockerfile, with a log and an outcome. |
-| Worker State | The status shown for a Worker: idle, working, offline, building, build failed or disabled. |
+| Worker State | The status shown for a Worker: idle, working, offline, host offline, building, build failed or disabled. |
 | Assignment | Linking an Agent to a Task; a regular Comment starts its work. |
 | Session | One continuing Claude Code conversation on one Task or Wiki Chat, whichever Agent works it. |
 | Job | A period when an Agent runs work for a Session in a Worker Container. |
@@ -80,6 +85,7 @@ These are the terms you will meet while using Claude Task.
 
 - [Agent sessions and queues](agent-sessions-and-queues.md): see how Sessions, Jobs and Turns fit together.
 - [Workers](workers.md): see how Worker Containers, Slots and Volumes fit together.
+- [Remote Hosts](hosts.md): see how machines and Controllers relate to Workers.
 - [Projects and boards](projects-and-boards.md): use Statuses and Categories.
 
 ---

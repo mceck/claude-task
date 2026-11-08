@@ -51,7 +51,9 @@ Open **Projects settings**, choose a Project, then open **Agent setup** to choos
 
 Everyone can read the Project's environment variables. Admins can choose **Add variable**, tap an existing variable to edit it, or use its delete button. Secret values stay hidden; editing a saved secret requires a replacement value. Choose **Import .env** to paste configuration or **Choose file** to load it. Review the variable names and overwrite indicators, optionally enable **Import as secrets**, then choose **Import variables**. Existing secrets stay secret during imports.
 
-Dockerfiles, Development Services, resource limits, Build history and container logs are configured in the web app. The native **Workers** settings show each Worker's slots and offer **Rebuild image**, **Recreate when idle** and per-slot **Restart** and **Force recreate** to Admins.
+Host management and Worker moves, Dockerfiles, Development Services, resource limits, Build history and container logs are configured in the web app. The native **Workers** settings show each Worker's Host and slots and offer **Rebuild image**, **Recreate when idle** and per-slot **Restart** and **Force recreate** to Admins.
+
+A Worker showing **host offline** has a disconnected Host and no connected Runner. Existing connected Runners can continue processing Jobs while the Host Controller reconnects. See [Remote Hosts](hosts.md#understand-a-disconnected-host).
 
 ## Find and update work
 
@@ -120,6 +122,7 @@ Alerts are sent for completed or failed Agent Turns and failed Jobs requiring at
 - [Getting started](getting-started.md): access and your first useful result.
 - [Extensions and environment](admin-extensions.md): manage the shared catalog and Agent assignments.
 - [Workers](workers.md): see capacity, slots and restart actions from the phone.
+- [Remote Hosts](hosts.md): manage the machines behind Workers in the web app.
 - [Git repositories](git-repositories.md): configure connections and Project Repositories.
 - [Tasks and conversations](tasks-and-conversations.md): Comments, Attachments and delivery.
 - [Troubleshooting](troubleshooting.md): resolve sign-in and Agent problems.

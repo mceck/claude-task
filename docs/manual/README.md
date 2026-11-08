@@ -1,10 +1,10 @@
 # Claude Task manual
 
-**Last updated:** 3 November 2026.
+**Last updated:** 8 November 2026.
 
 Claude Task is your team's shared board for planning work and working with Claude Code Agents. Organize Tasks, discuss them with colleagues, ask Agents to make changes, put Agents to work on a schedule, and maintain shared Wikis backed by Git repositories. Agents run in the Docker environments of Workers, which Admins configure once and share across Projects.
 
-Every active User can work on every Project and Wiki. Admins also configure access, Agents, Workers and the installation.
+Every active User can work on every Project and Wiki. Admins also configure access, Agents, Workers, Hosts and the installation.
 
 ## Where to start
 
@@ -30,13 +30,14 @@ Every active User can work on every Project and Wiki. Admins also configure acce
 10. [Users and access](admin-users.md): add Users, reset passwords and manage roles.
 11. [Agents and credentials](admin-agents.md): configure Agents, their models, instructions and Credentials.
 12. [Workers and capacity](workers.md): create execution environments, run Builds, manage containers and Queues.
-13. [Extensions and environment](admin-extensions.md): add Skills, MCP servers, Plugins and Project variables.
-14. [Installation and operations](installation-and-operations.md): deploy, configure, back up and recover access.
+13. [Remote Hosts](hosts.md): connect other machines and move Workers between them.
+14. [Extensions and environment](admin-extensions.md): add Skills, MCP servers, Plugins and Project variables.
+15. [Installation and operations](installation-and-operations.md): deploy, configure, back up and recover access.
 
 ## Find an answer
 
-15. [Roles and limits](roles-and-limits.md): compare permissions and check input and file limits.
-16. [Glossary](glossary.md): understand the terms used by the app.
-17. [Troubleshooting](troubleshooting.md): resolve sign-in, delivery, Worker and Agent problems.
+16. [Roles and limits](roles-and-limits.md): compare permissions and check input and file limits.
+17. [Glossary](glossary.md): understand the terms used by the app.
+18. [Troubleshooting](troubleshooting.md): resolve sign-in, delivery, Worker and Agent problems.
 
 Screenshots use fictional demo data and a dark theme. Browser and native desktop views use 1280 × 800; phone views use 390 × 844. Native screenshots render the Flutter application against a simulated demo installation. Agent and Git connections in all demo views are simulated.

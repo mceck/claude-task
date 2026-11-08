@@ -46,7 +46,9 @@ If you see **waiting for retry**, open the Agent's **Jobs** tab and **Details** 
 | Message or symptom | What to do |
 | --- | --- |
 | A Worker shows **Build failed** | Open its **Builds** tab and read the end of the log. Existing containers keep working on the previous image until a Build succeeds. |
-| A Worker shows **Offline** | With minimum 0 this is the resting state. A queued Comment starts a container. If work waits and nothing starts, an Admin checks the container, its Runner and `AGENT_BACKEND_URL`. |
+| A Worker shows **Host offline** | Open **Workers** → **Hosts** and read the Host's connection error. Restore its Controller connection; work waits while no Runner is reachable. |
+| **Host disconnected** | Docker actions wait for the Controller. Check its container and network on the Host, then retry after it reconnects. Connected Runners can keep processing Jobs. |
+| A Worker shows **Offline** | With minimum 0 this is the resting state. A queued Comment starts a container. If work waits and nothing starts, an Admin checks the container, its Runner and the Host's backend URL (`AGENT_BACKEND_URL` for Local). |
 | A Worker is **Disabled** | Its Queue keeps growing and its containers stop when idle. An Admin enables it again. |
 | A slot shows **Stopped** | It starts when the minimum or work needs it. Use **Recreate when idle** for a planned replacement, not to force idle work. |
 | A Task waits behind others | Reorder or remove entries in the Worker's **Queue**. The running Job always finishes first. |
@@ -54,6 +56,21 @@ If you see **waiting for retry**, open the Agent's **Jobs** tab and **Details** 
 | A Project's Worker cannot change | Close every Task whose Session is started and open, then try again. The app lists them. For a Wiki, delete its started Chats first. |
 | An Extension synchronization fails | Read the error on the Agent page or the Worker page. Fix the Skill name conflict, Plugin or marketplace, then wait for the automatic retry. |
 | A Worker cannot be deleted | A Project, Wiki or Schedule still uses it. Move them to another Worker first; the app names them. |
+
+## Remote Host problems
+
+| Message or symptom | What to do |
+| --- | --- |
+| A new Host stays **disconnected** | Start its Controller with the token from **Connect the machine**. Check its backend URL, outbound network access and Controller logs. |
+| **The backend URL must use https unless insecure connections are allowed** | Use an HTTPS URL, or enable **Allow insecure connections** for a trusted development connection and allow it in the Controller setup too. |
+| The Host error asks you to **rebuild it from this version** | Use a clone at the backend's version and run `scripts/deploy.sh host` again, or rebuild and replace the Controller manually. |
+| The Controller's token is refused | After token regeneration, copy the new token and replace the Controller with it. A deleted Host needs a new Host record and token. |
+| **Local Host disabled (LOCAL_HOST=false)** | Ask the operator to enable local Docker, or move the remaining Workers to connected Remote Hosts after closing their started conversations. |
+| A Worker's Host move lists Tasks | Close every listed Task's conversation and wait for active Jobs to end. For a Wiki, delete its started Chats. The move starts over with empty volumes. |
+| A Host cannot be deleted | Move the named Workers to another Host first. |
+| Cleanup shows pending Hosts | Their Controllers are disconnected. Results are added after reconnection; a newer Cleanup replaces the pending request. |
+
+See [Remote Hosts](hosts.md) for connection, token replacement and move procedures.
 
 ## The Agent missed instructions
 
@@ -123,6 +140,7 @@ Use [Native app and notifications](native-app-and-notifications.md) to check con
 
 - [Roles and limits](roles-and-limits.md): check permissions and accepted sizes.
 - [Workers](workers.md): inspect capacity, Builds and container states.
+- [Remote Hosts](hosts.md): inspect machine connections and manage tokens.
 - [Installation and operations](installation-and-operations.md): operator configuration and recovery.
 
 ---
