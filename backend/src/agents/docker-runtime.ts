@@ -99,11 +99,12 @@ export class DockerRuntime implements WorkerRuntime {
   async createContainer(workerId: string, slot: number, spec: ContainerSpec): Promise<void> {
     await this.removeContainer(workerId, slot);
     const labels = this.labels(workerId);
-    if (this.config.network && this.config.network !== 'bridge') {
-      try { await this.docker.getNetwork(this.config.network).inspect(); }
+    const network = spec.network === undefined ? this.config.network : spec.network;
+    if (network && network !== 'bridge') {
+      try { await this.docker.getNetwork(network).inspect(); }
       catch (err) {
         if ((err as { statusCode?: number }).statusCode !== 404) throw err;
-        await this.docker.createNetwork({ Name: this.config.network, Labels: { [INSTALLATION_LABEL]: this.installationId } }).catch(ignore(409));
+        await this.docker.createNetwork({ Name: network, Labels: { [INSTALLATION_LABEL]: this.installationId } }).catch(ignore(409));
       }
     }
     await this.docker.createVolume({ Name: volumeName(workerId), Labels: labels }).catch(ignore(409));
@@ -117,7 +118,7 @@ export class DockerRuntime implements WorkerRuntime {
         RestartPolicy: { Name: 'unless-stopped' },
         // The home is shared by every Worker Container of the Worker; service data belongs to the slot.
         Binds: [`${volumeName(workerId)}:${AGENT_HOME}`, `${serviceVolumeName(workerId, slot)}:${SERVICE_DATA_DIR}`],
-        NetworkMode: this.config.network ?? 'bridge',
+        NetworkMode: network ?? 'bridge',
         // So `host.docker.internal` reaches a backend running on the host (Linux needs this).
         ExtraHosts: ['host.docker.internal:host-gateway'],
         ...(spec.cpuLimit ? { NanoCpus: Math.round(spec.cpuLimit * 1e9) } : {}),

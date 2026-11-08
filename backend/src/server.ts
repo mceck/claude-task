@@ -2,7 +2,7 @@ import { HostControllers } from './hosts/controllers';
 import { RuntimeRegistry } from './hosts/runtimes';
 import { hosts, workers } from './db/schema';
 import { eq } from 'drizzle-orm';
-import { refreshLocalHost } from './modules/hosts/service';
+import { refreshLocalHost, workerConnection } from './modules/hosts/service';
 import { FirebasePushTransport } from './notifications/transport';
 import type { PushTransport } from './notifications/transport';
 import { PushDispatcher } from './notifications/dispatcher';
@@ -86,7 +86,13 @@ export async function createServer(
     const [local] = await db.select().from(hosts).where(eq(hosts.kind, 'local'));
     if (config.localHost !== false) ctx.runtimes.attach(local!.id, overrides.runtime ?? (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents, installationId)));
     ctx.controllers = new HostControllers(ctx);
-    ctx.uploads = new UploadRequests(ctx.runners, config.agents.backendUrl, config.agents.uploadTimeoutMs);
+    ctx.uploads = new UploadRequests(ctx.runners, async (containerId) => {
+      const [row] = await db.select({ hostId: workers.hostId }).from(workerContainers).innerJoin(workers, eq(workers.id, workerContainers.workerId)).where(eq(workerContainers.id, containerId));
+      if (!row) throw new Error('Worker Container no longer exists');
+      const connection = await workerConnection(ctx, db, row.hostId);
+      if (!connection.backendUrl) throw new Error('Host has no backend URL yet');
+      return connection.backendUrl;
+    }, config.agents.uploadTimeoutMs);
     ctx.skillRequests = new ProjectSkillRequests(ctx.runners);
     ctx.worktreeStatus = new WorktreeStatusRequests(ctx.runners);
     ctx.pushDispatcher = new PushDispatcher(ctx);

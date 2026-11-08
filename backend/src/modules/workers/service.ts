@@ -1,4 +1,4 @@
-import { hostState } from '../hosts/service';
+import { hostState, hostConnection } from '../hosts/service';
 // Workers: configuration, Worker Containers and Builds (docs/specs/workers.md).
 import { WORKERS_TOPIC, workerTopic } from '@claude-task/shared';
 import type { AgentRef, Worker, WorkerBuild, WorkerContainer, WorkerContainerState, WorkerState } from '@claude-task/shared';
@@ -27,8 +27,8 @@ export async function workerOfTask(db: Executor, taskId: string): Promise<string
 }
 
 /** What each container should be: compared with what it was created with to spot pending recreations. */
-export function desiredContainerSpec(w: Pick<WorkerRow, 'imageTag' | 'cpuLimit' | 'memoryMb'>): string | null {
-  return w.imageTag ? JSON.stringify({ image: w.imageTag, cpu: w.cpuLimit, mem: w.memoryMb }) : null;
+export function desiredContainerSpec(w: Pick<WorkerRow, 'imageTag' | 'cpuLimit' | 'memoryMb'>, connection: { backendUrl: string | null; network: string | null }): string | null {
+  return w.imageTag ? JSON.stringify({ image: w.imageTag, cpu: w.cpuLimit, mem: w.memoryMb, ...connection }) : null;
 }
 
 export async function containerRows(db: Executor, workerId: string): Promise<WorkerContainerRow[]> {
@@ -45,7 +45,8 @@ export async function ensureContainerRow(db: Executor, workerId: string, slot: n
 /** Docker states in which a container is up (running, or about to be again). */
 export const isUp = (state: string) => ['running', 'restarting'].includes(state);
 
-export async function loadWorkers(db: Executor, isReady: (containerId: string) => boolean, ids?: string[]): Promise<Worker[]> {
+export async function loadWorkers(ctx: AppContext, isReady: (containerId: string) => boolean, ids?: string[]): Promise<Worker[]> {
+  const db = ctx.db;
   if (ids && ids.length === 0) return [];
   const rows = await db
     .select()
@@ -79,7 +80,7 @@ export async function loadWorkers(db: Executor, isReady: (containerId: string) =
     .where(and(inArray(agentProfiles.workerId, workerIds), isNotNull(agentProfiles.error)));
 
   return rows.map((w) => {
-    const desired = desiredContainerSpec(w);
+    const desired = desiredContainerSpec(w, hostConnection(ctx, hostRows.find((h) => h.id === w.hostId)!));
     const mine = containers.filter((c) => c.workerId === w.id);
     const highest = Math.max(w.cap, ...mine.map((c) => c.slot));
     const slots: WorkerContainer[] = [];
@@ -139,15 +140,15 @@ function workerState(w: WorkerRow, ready: number, busy: number): WorkerState {
   return busy > 0 ? 'working' : 'idle';
 }
 
-export async function loadWorker(db: Executor, isReady: (containerId: string) => boolean, id: string): Promise<Worker> {
-  const [worker] = await loadWorkers(db, isReady, [id]);
+export async function loadWorker(ctx: AppContext, isReady: (containerId: string) => boolean, id: string): Promise<Worker> {
+  const [worker] = await loadWorkers(ctx, isReady, [id]);
   if (!worker) throw notFound('Worker');
   return worker;
 }
 
 /** Publishes the Worker's current state on the Workers topics (loaded after commit). */
 export async function publishWorker(ctx: AppContext, workerId: string): Promise<void> {
-  const [worker] = await loadWorkers(ctx.db, (id) => ctx.runners.isReady(id), [workerId]);
+  const [worker] = await loadWorkers(ctx, (id) => ctx.runners.isReady(id), [workerId]);
   if (!worker) {
     ctx.hub.publish(WORKERS_TOPIC, { type: 'worker.deleted', workerId });
     ctx.hub.publish(workerTopic(workerId), { type: 'worker.deleted', workerId });

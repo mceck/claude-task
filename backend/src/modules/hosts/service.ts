@@ -1,7 +1,7 @@
 import type { Host, HostState } from '@claude-task/shared';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
-import { hosts, workerContainers, workers } from '../../db/schema';
+import { hosts, projects, tasks, workerContainers, workers } from '../../db/schema';
 import { notFound } from '../../errors';
 
 export type HostRow = typeof hosts.$inferSelect;
@@ -46,4 +46,20 @@ export async function loadHost(ctx: AppContext, id: string): Promise<Host> {
   const host = (await loadHosts(ctx)).find((h) => h.id === id);
   if (!host) throw notFound('Host');
   return host;
+}
+
+export function hostConnection(ctx: AppContext, host: HostRow): { backendUrl: string | null; network: string | null } {
+  return { backendUrl: backendUrlFor(ctx, host), network: host.kind === 'local' ? ctx.config.agents.network : host.network };
+}
+export async function workerConnection(ctx: AppContext, db: import('../../db/client').Executor, hostId: string) {
+  const [host] = await db.select().from(hosts).where(eq(hosts.id, hostId));
+  if (!host) throw notFound('Host');
+  return hostConnection(ctx, host);
+}
+export async function taskBackendUrl(ctx: AppContext, db: import('../../db/client').Executor, taskId: string): Promise<string> {
+  const [row] = await db.select({ host: hosts }).from(tasks).innerJoin(projects, eq(projects.id, tasks.projectId)).innerJoin(workers, eq(workers.id, projects.workerId)).innerJoin(hosts, eq(hosts.id, workers.hostId)).where(eq(tasks.id, taskId));
+  if (!row) throw notFound('Task');
+  const url = backendUrlFor(ctx, row.host);
+  if (!url) throw new Error('Host has no backend URL yet');
+  return url;
 }

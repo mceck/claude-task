@@ -1,4 +1,4 @@
-import { refreshLocalHost } from '../modules/hosts/service';
+import { refreshLocalHost, workerConnection } from '../modules/hosts/service';
 // Background work around Workers: dispatching, image builds, the reconciler that starts and stops
 // Worker Containers between a Worker's minimum and cap, Agent Profile synchronization, and
 // publishing scheduling state to browsers. Everything it starts is tracked so tests can settle.
@@ -489,7 +489,7 @@ export class Scheduler {
     const stale = worker.imageState === 'built' && worker.imageBaseVersion !== runtime.baseVersionFor(worker.claudeCodeVersion);
     if ((worker.imageState === 'none' || stale) && !this.building.has(workerId)) this.build(workerId);
 
-    const desired = desiredContainerSpec(worker);
+    const desired = desiredContainerSpec(worker, await workerConnection(this.ctx, db, worker.hostId));
     let changed = false;
     let started = false;
     const rows = await containerRows(db, workerId);
@@ -645,6 +645,7 @@ export class Scheduler {
 
   private async recreate(worker: WorkerRow, row: WorkerContainerRow, desired: string): Promise<void> {
     const runtime = this.ctx.runtimes.get(worker.hostId);
+    const connection = await workerConnection(this.ctx, this.ctx.db, worker.hostId);
     const { token, hash } = newToken();
     // A new token for every container: the old one stops working with the old container.
     // `containerSpec` stays null until the container exists, so a crash or a failed create
@@ -664,9 +665,10 @@ export class Scheduler {
     await runtime.createContainer(worker.id, row.slot, {
       image: worker.imageTag!,
       env: {
-        CLAUDE_TASK_BACKEND_URL: runnerWsUrl(this.ctx.config.agents.backendUrl),
+        CLAUDE_TASK_BACKEND_URL: runnerWsUrl(connection.backendUrl!),
         CLAUDE_TASK_RUNNER_TOKEN: token,
       },
+      network: connection.network,
       cpuLimit: worker.cpuLimit,
       memoryMb: worker.memoryMb,
     });

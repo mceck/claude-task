@@ -3,6 +3,7 @@
 import type { CleanupCounts, InstalledPlugin, InstalledSkill } from '@claude-task/shared';
 
 export interface ContainerSpec {
+  network?: string | null;
   image: string;
   /** Only what the Runner needs to connect; Credentials and Project env travel per Job. */
   env: Record<string, string>;

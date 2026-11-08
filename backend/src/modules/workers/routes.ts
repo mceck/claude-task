@@ -45,11 +45,11 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
   const admin = { config: { auth: 'admin' as const } };
   const ready = (id: string) => ctx.runners.isReady(id);
 
-  app.get('/workers', async () => ({ workers: await loadWorkers(ctx.db, ready) }));
+  app.get('/workers', async () => ({ workers: await loadWorkers(ctx, ready) }));
 
   app.get('/workers/:id', async (request) => {
     const { id } = parse(params, request.params);
-    return { worker: await loadWorker(ctx.db, ready, id) };
+    return { worker: await loadWorker(ctx, ready, id) };
   });
 
   app.post('/workers', admin, async (request, reply) => {
@@ -58,7 +58,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     await assertUniqueName(ctx.db, body.name);
     const [row] = await ctx.db.insert(workers).values({ ...body, hostId: (await ctx.db.select().from(hosts).where(eq(hosts.kind, 'local')))[0]!.id }).returning();
     ctx.scheduler.build(row!.id);
-    return reply.status(201).send({ worker: await loadWorker(ctx.db, ready, row!.id) });
+    return reply.status(201).send({ worker: await loadWorker(ctx, ready, row!.id) });
   });
 
   app.patch('/workers/:id', admin, async (request) => {
@@ -81,7 +81,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     else await ctx.scheduler.reconcile(id);
     ctx.scheduler.kick(id);
     ctx.scheduler.publishWorker(id);
-    return { worker: await loadWorker(ctx.db, ready, id) };
+    return { worker: await loadWorker(ctx, ready, id) };
   });
 
   app.delete('/workers/:id', admin, async (request, reply) => {
@@ -123,14 +123,14 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
       })
       .returning();
     ctx.scheduler.build(row!.id);
-    return reply.status(201).send({ worker: await loadWorker(ctx.db, ready, row!.id) });
+    return reply.status(201).send({ worker: await loadWorker(ctx, ready, row!.id) });
   });
 
   app.post('/workers/:id/rebuild', admin, async (request) => {
     const { id } = parse(params, request.params);
     await getWorkerRow(ctx.db, id);
     ctx.scheduler.build(id);
-    return { worker: await loadWorker(ctx.db, ready, id) };
+    return { worker: await loadWorker(ctx, ready, id) };
   });
 
   /** Every Worker Container is recreated with the current image and limits as soon as it is free. */
@@ -140,7 +140,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (!worker.imageTag) throw conflict('The worker has no image yet');
     await ctx.db.update(workerContainers).set({ containerSpec: 'recreate' }).where(eq(workerContainers.workerId, id));
     await ctx.scheduler.reconcile(id);
-    return { worker: await loadWorker(ctx.db, ready, id) };
+    return { worker: await loadWorker(ctx, ready, id) };
   });
 
   app.post('/workers/:id/containers/:slot/restart', admin, async (request) => {
@@ -159,7 +159,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
       .set({ idleSince: new Date(), runnerDisconnectedAt: new Date() })
       .where(eq(workerContainers.id, row.id));
     await ctx.scheduler.reconcile(id);
-    return { worker: await loadWorker(ctx.db, ready, id) };
+    return { worker: await loadWorker(ctx, ready, id) };
   });
 
   /** Recreates one container now, interrupting its Job; the Job resumes after the new Runner connects. */
@@ -171,7 +171,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (!row) throw conflict('This worker container does not exist yet');
     await ctx.db.update(workerContainers).set({ containerSpec: 'recreate', forceRecreate: true }).where(eq(workerContainers.id, row.id));
     await ctx.scheduler.reconcile(id);
-    return { worker: await loadWorker(ctx.db, ready, id) };
+    return { worker: await loadWorker(ctx, ready, id) };
   });
 
   app.get('/workers/:id/containers/:slot/logs', admin, async (request) => {

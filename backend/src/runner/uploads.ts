@@ -41,7 +41,7 @@ export class UploadRequests {
 
   constructor(
     private readonly runners: RunnerHub,
-    private readonly backendUrl: string,
+    private readonly backendUrl: (containerId: string) => Promise<string>,
     private readonly timeoutMs = UPLOAD_TIMEOUT_MS,
   ) {}
 
@@ -49,7 +49,8 @@ export class UploadRequests {
    * Asks the Runner for the files and waits for them. Rejects with a message for the model when
    * the Runner isn't connected or the upload doesn't finish in time.
    */
-  request(containerId: string, jobId: string, paths: string[]): Promise<UploadedFiles> {
+  async request(containerId: string, jobId: string, paths: string[]): Promise<UploadedFiles> {
+    const backendUrl = await this.backendUrl(containerId);
     const requestId = randomUUID();
     return new Promise<UploadedFiles>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -61,7 +62,7 @@ export class UploadRequests {
         type: 'job.upload',
         jobId,
         requestId,
-        url: `${this.backendUrl}${RUNNER_UPLOADS_PATH}/${requestId}`,
+        url: `${backendUrl}${RUNNER_UPLOADS_PATH}/${requestId}`,
         files: paths.map((path) => ({ path })),
       });
       if (!sent) {

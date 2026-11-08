@@ -1,0 +1,55 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { describe, expect, it } from 'vitest';
+import { DEFAULT_AGENT_DOCKERFILE } from '@claude-task/shared';
+import { workers } from '../src/db/schema';
+import { useTestApp } from './helpers/app';
+import { connectController, waitForHost } from './helpers/controller';
+import { createAgent, createProject, createTask, assignAndStart } from './helpers/fixtures';
+import { FakeRunner } from './helpers/runner';
+
+describe('Workers on Remote Hosts', () => {
+  const app = useTestApp();
+  it('uses the Host URL for its Runner and Job and recreates free containers after connection settings change', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Remote' })).body;
+    const controller = await connectController(app, token);
+    await waitForHost(app, host.id, 'connected');
+    // Upgrade fixture: Host selection is introduced by the following plan step.
+    const [worker] = await app.server.ctx.db.insert(workers).values({ name: 'Remote worker', hostId: host.id, dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: 1 }).returning();
+    app.server.ctx.scheduler.build(worker!.id); await app.settle();
+    const runtime = app.runtimeFor(host.id);
+    expect(runtime.container(worker!.id, 1)!.spec.env.CLAUDE_TASK_BACKEND_URL).toBe('wss://backend.example/api/v1/runner');
+    const first = runtime.container(worker!.id, 1)!.created;
+    expect((await admin.patch(`/hosts/${host.id}`, { backendUrlOverride: 'https://vpn.example', network: 'vpn' })).status).toBe(200);
+    await app.settle();
+    expect(runtime.container(worker!.id, 1)!.created).toBeGreaterThan(first);
+    expect(runtime.container(worker!.id, 1)!.spec).toMatchObject({ network: 'vpn', env: { CLAUDE_TASK_BACKEND_URL: 'wss://vpn.example/api/v1/runner' } });
+    const runner = await FakeRunner.connect(app, { workerId: worker!.id, slot: 1 }, { token: runtime.container(worker!.id, 1)!.spec.env.CLAUDE_TASK_RUNNER_TOKEN });
+    const { agent } = await createAgent(app, admin);
+    const { project } = await createProject(admin, { workerId: worker!.id });
+    await admin.put(`/projects/${project.id}/repository`, { connectionId: 'env-github', providerRepoId: '1' });
+    const task = await createTask(admin, project.id);
+    const form = new FormData(); form.set('body', 'Attached specification'); form.append('files', new Blob(['specification'], { type: 'text/plain' }), 'spec.txt');
+    expect((await admin.request('POST', `/tasks/${task.id}/comments`, { form })).status).toBe(201);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    expect(JSON.parse(start.claudeArgs.mcpConfig).mcpServers['claude-task'].url).toBe('https://vpn.example/api/v1/mcp');
+    expect(start.git!.cloneUrl).toBe(`https://vpn.example/git/${project.id}.git`);
+    expect(start.attachmentsToFetch?.[0]?.url).toMatch(/^https:\/\/vpn.example\/api\/v1\/runner\/attachments\//);
+    runner.accept(start.jobId); await runner.drain();
+    const mcp = JSON.parse(start.claudeArgs.mcpConfig).mcpServers['claude-task'];
+    const client = new Client({ name: 'remote-test', version: '1' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp.url.replace('https://vpn.example', app.url)), { requestInit: { headers: mcp.headers } }));
+    const uploading = client.callTool({ name: 'send_files', arguments: { paths: ['output.txt'] } });
+    const upload = await runner.next('job.upload');
+    expect(upload.url).toMatch(/^https:\/\/vpn.example\/api\/v1\/runner\/uploads\//);
+    const files = new FormData(); files.set('manifest', JSON.stringify([{ path: 'output.txt', error: 'Fixture has no file' }]));
+    await fetch(upload.url.replace('https://vpn.example', app.url), { method: 'POST', headers: { authorization: `Bearer ${runtime.container(worker!.id, 1)!.spec.env.CLAUDE_TASK_RUNNER_TOKEN}` }, body: files });
+    await uploading; await client.close();
+    const busyCreated = runtime.container(worker!.id, 1)!.created;
+    await admin.patch(`/hosts/${host.id}`, { network: 'later' }); await app.settle();
+    expect(runtime.container(worker!.id, 1)!.created).toBe(busyCreated);
+    await runner.close(); controller.close();
+  });
+});

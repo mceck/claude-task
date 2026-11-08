@@ -1,3 +1,4 @@
+import { taskBackendUrl } from '../modules/hosts/service';
 // What an Agent receives: the Message content blocks (Comments, Task snapshots, notices)
 // and the system prompt its Session runs with.
 import { AGENT_SERVICE_INFO, API_PREFIX, RUNNER_ATTACHMENTS_PATH, commandName } from '@claude-task/shared';
@@ -78,7 +79,7 @@ export async function renderTaskFiles(
   const lines: string[] = [];
   for (const f of files) {
     const path = attachmentPath(f.id, f.filename);
-    result.fetch.push({ url: `${ctx.config.agents.backendUrl}${RUNNER_ATTACHMENTS_PATH}/${f.id}`, path });
+    result.fetch.push({ url: `${await taskBackendUrl(ctx, db, taskId)}${RUNNER_ATTACHMENTS_PATH}/${f.id}`, path });
     let shown = '';
     if (IMAGE_TYPES.has(f.contentType) && f.size <= IMAGE_BLOCK_MAX_BYTES && spend(budget, f.size)) {
       const data = await readBlob(ctx, f.blobId);
@@ -140,7 +141,7 @@ export async function renderComments(
         }
       }
       const path = attachmentPath(c.id, f.filename);
-      parts.fetch.push({ url: `${ctx.config.agents.backendUrl}${RUNNER_ATTACHMENTS_PATH}/${f.id}`, path });
+      parts.fetch.push({ url: `${await taskBackendUrl(ctx, db, c.taskId)}${RUNNER_ATTACHMENTS_PATH}/${f.id}`, path });
       text += `\n(Attached file: \`${path}\`)`;
     }
     parts.blocks.push({ type: 'text', text }, ...images);

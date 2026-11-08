@@ -1,3 +1,4 @@
+import { workerConnection } from '../modules/hosts/service';
 import { randomUUID } from 'node:crypto';
 import { gitSlug, taskBranch } from '../git/branches';
 import { scheduleOfProject } from '../modules/schedules/service';
@@ -74,7 +75,7 @@ export async function profileReady(db: Executor, workerId: string, agentId: stri
 /** The Worker Containers that can take a Job now, lowest slot first. */
 export async function freeContainers(ctx: AppContext, db: Executor, worker: WorkerRow): Promise<WorkerContainerRow[]> {
   if (!worker.enabled) return [];
-  const desired = desiredContainerSpec(worker);
+  const desired = desiredContainerSpec(worker, await workerConnection(ctx, db, worker.hostId));
   if (!desired) return [];
   const rows = await db
     .select()
@@ -113,8 +114,9 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
   return transactWithRetry(ctx, async (tx, after) => {
     await tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, head.taskId)).for('key share');
     const worker = await getWorkerRow(tx, workerId, { lock: true });
+    const connection = await workerConnection(ctx, tx, worker.hostId);
     const [container] = await tx.select().from(workerContainers).where(eq(workerContainers.id, containerId)).for('update');
-    const desired = desiredContainerSpec(worker);
+    const desired = desiredContainerSpec(worker, connection);
     const ready =
       worker.enabled &&
       !!container &&
@@ -282,7 +284,7 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
         repository && branch
           ? {
               // Agents reach git only through the Git Proxy, with their Job token (docs/specs/git-integration.md).
-              cloneUrl: gitProxyUrl(ctx.config.agents.backendUrl, project!.id),
+              cloneUrl: gitProxyUrl(connection.backendUrl!, project!.id),
               token: jobToken.token,
               repositoryId: `${repository.connectionId}/${repository.providerRepoId}`,
               baseBranch: repository.baseBranch,
@@ -317,7 +319,7 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
             ...resolvedMcp(ctx, extensions.mcpServers),
             'claude-task': {
               type: 'http',
-              url: `${ctx.config.agents.backendUrl}${MCP_PATH}`,
+              url: `${connection.backendUrl!}${MCP_PATH}`,
               headers: { Authorization: `Bearer ${jobToken.token}` },
             },
           },
