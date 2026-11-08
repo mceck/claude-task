@@ -47,6 +47,7 @@ export interface Config {
 }
 
 export interface AgentsConfig {
+  hostPingIntervalMs?: number;
   /** `docker` talks to the host's Docker socket; `fake` simulates containers (e2e tests, demos). */
   runtime: 'docker' | 'fake';
   dockerSocket: string;

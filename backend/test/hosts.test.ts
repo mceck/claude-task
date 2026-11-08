@@ -1,3 +1,4 @@
+import { connectController, waitForHost } from './helpers/controller';
 import { describe, expect, it } from 'vitest';
 import { createUser } from './helpers/fixtures';
 import { createHash } from 'node:crypto';
@@ -70,6 +71,33 @@ describe('Hosts', () => {
     expect((await client.delete(`/hosts/${host.id}`)).status).toBe(403);
   });
 
+  it('authenticates Controllers, replaces connections, records hello and disconnects on token rotation', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Controller' })).body;
+    await expect(connectController(app, 'unknown')).rejects.toThrow('401');
+    const first = await connectController(app, token);
+    expect(await waitForHost(app, host.id, 'connected')).toMatchObject({ controllerVersion: 'test-1', dockerVersion: 'fake', architecture: 'amd64', cpus: 4 });
+    const replaced = new Promise((resolve) => first.once('close', (code) => resolve(code)));
+    const second = await connectController(app, token);
+    expect(await replaced).toBe(4001);
+    await waitForHost(app, host.id, 'connected');
+    const rotated = new Promise((resolve) => second.once('close', (code) => resolve(code)));
+    await admin.post(`/hosts/${host.id}/token`);
+    expect(await rotated).toBe(4007);
+    await waitForHost(app, host.id, 'disconnected');
+    await expect(connectController(app, token)).rejects.toThrow('401');
+  });
+  it.each([
+    { hello: { protocolVersion: 99 }, code: 4005, error: 'rebuild it from this version' },
+    { hello: { backendUrl: 'http://backend.example' }, code: 4006, error: 'does not allow insecure connections' },
+  ])('refuses invalid hello with $code and records the error', async ({ hello, code, error }) => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Refused' })).body;
+    const socket = await connectController(app, token, hello);
+    expect(await new Promise((resolve) => socket.once('close', (value) => resolve(value)))).toBe(code);
+    expect((await waitForHost(app, host.id, 'disconnected')).error).toContain(error);
+  });
+
 });
 
 describe('Local Host disabled', () => {
@@ -81,5 +109,16 @@ describe('Local Host disabled', () => {
     const [local] = await app.server.ctx.db.select().from(hosts);
     await app.server.ctx.db.insert(workers).values({ name: 'Existing', hostId: local!.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent' });
     expect((await admin.get('/hosts')).body.hosts).toEqual([expect.objectContaining({ name: 'Local', state: 'disconnected', error: 'Local Host disabled (LOCAL_HOST=false)' })]);
+  });
+});
+
+describe('Controller heartbeat', () => {
+  const app = useTestApp({ agents: { hostPingIntervalMs: 30 } });
+  it('disconnects a Controller that misses a full ping round', async () => {
+    const { host, token } = (await (await app.admin()).post('/hosts', { name: 'Silent' })).body;
+    const socket = await connectController(app, token, {}, false);
+    await waitForHost(app, host.id, 'connected');
+    await new Promise((resolve) => socket.once('close', resolve));
+    await waitForHost(app, host.id, 'disconnected');
   });
 });

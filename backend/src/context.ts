@@ -1,3 +1,4 @@
+import type { HostControllers } from './hosts/controllers';
 import type { PushTransport } from './notifications/transport';
 import type { PushDispatcher } from './notifications/dispatcher';
 import type { GitConnections } from './git/connections';
@@ -30,6 +31,7 @@ export interface AppContext {
   loginRevocations: LoginRevocations;
   blobs: BlobStore;
   runtimes: RuntimeRegistry;
+  controllers: HostControllers;
   /** Labels every Docker resource the backend creates, so Installations sharing a host stay apart. */
   installationId: string;
   /** Git Connections and their providers. */

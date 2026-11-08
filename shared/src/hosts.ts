@@ -1,5 +1,7 @@
+import { API_PREFIX } from './api';
+
 export const HOST_PROTOCOL_VERSION = 1;
-export const HOST_CONTROLLER_PATH = '/api/host-controller';
+export const HOST_CONTROLLER_PATH = `${API_PREFIX}/host-controller`;
 export type HostState = 'connected' | 'disconnected';
 export interface HostRef { id: string; name: string; state: HostState }
 export interface Host extends HostRef {

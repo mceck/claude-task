@@ -1,3 +1,4 @@
+import { hostControllerRoutes } from './hosts/routes';
 import { hostRoutes } from './modules/hosts/routes';
 import { scheduleRoutes } from './modules/schedules/routes';
 import { wikiRoutes } from './modules/wikis/routes';
@@ -131,6 +132,7 @@ export async function buildApp(
       agentRoutes(api, ctx);
       workerRoutes(api, ctx);
       hostRoutes(api, ctx);
+      hostControllerRoutes(api, ctx);
       extensionRoutes(api, ctx);
       agentSettingsRoutes(api, ctx);
       realtimeRoutes(api, ctx);
@@ -158,6 +160,7 @@ export async function buildApp(
 
   app.addHook('onClose', async () => {
     ctx.hub.closeAll();
+    await ctx.controllers.closeAll();
     await ctx.runners.closeAll();
   });
   return app;

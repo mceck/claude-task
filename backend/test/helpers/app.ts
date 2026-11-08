@@ -162,6 +162,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
 
   if (!options.keepData) {
     beforeEach(async () => {
+      await t.server.ctx.controllers.closeAll();
       await t.server.ctx.runners.closeAll();
       await t.server.ctx.scheduler.settle();
       await t.server.ctx.gitSync.settle();

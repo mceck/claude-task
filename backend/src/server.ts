@@ -1,3 +1,4 @@
+import { HostControllers } from './hosts/controllers';
 import { RuntimeRegistry } from './hosts/runtimes';
 import { hosts, workers } from './db/schema';
 import { eq } from 'drizzle-orm';
@@ -84,6 +85,7 @@ export async function createServer(
     } as AppContext;
     const [local] = await db.select().from(hosts).where(eq(hosts.kind, 'local'));
     if (config.localHost !== false) ctx.runtimes.attach(local!.id, overrides.runtime ?? (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents, installationId)));
+    ctx.controllers = new HostControllers(ctx);
     ctx.uploads = new UploadRequests(ctx.runners, config.agents.backendUrl, config.agents.uploadTimeoutMs);
     ctx.skillRequests = new ProjectSkillRequests(ctx.runners);
     ctx.worktreeStatus = new WorktreeStatusRequests(ctx.runners);

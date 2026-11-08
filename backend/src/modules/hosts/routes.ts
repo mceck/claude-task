@@ -55,6 +55,7 @@ export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
     await remote(id);
     const { token, hash } = newToken();
     await ctx.db.update(hosts).set({ tokenHash: hash, updatedAt: new Date() }).where(eq(hosts.id, id));
+    ctx.controllers.disconnect(id, 4007, 'token regenerated');
     return connect(id, token);
   });
   app.delete('/hosts/:id', admin, async (request, reply) => {
