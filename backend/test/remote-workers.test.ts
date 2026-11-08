@@ -2,7 +2,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_AGENT_DOCKERFILE } from '@claude-task/shared';
-import { workers } from '../src/db/schema';
 import { useTestApp } from './helpers/app';
 import { connectController, waitForHost } from './helpers/controller';
 import { createAgent, createProject, createTask, assignAndStart } from './helpers/fixtures';
@@ -15,9 +14,9 @@ describe('Workers on Remote Hosts', () => {
     const { host, token } = (await admin.post('/hosts', { name: 'Remote' })).body;
     const controller = await connectController(app, token);
     await waitForHost(app, host.id, 'connected');
-    // Upgrade fixture: Host selection is introduced by the following plan step.
-    const [worker] = await app.server.ctx.db.insert(workers).values({ name: 'Remote worker', hostId: host.id, dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: 1 }).returning();
-    app.server.ctx.scheduler.build(worker!.id); await app.settle();
+    const response = await admin.post('/workers', { name: 'Remote worker', hostId: host.id, dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: 1 });
+    expect(response.status).toBe(201);
+    const worker = response.body.worker; await app.settle();
     const runtime = app.runtimeFor(host.id);
     expect(runtime.container(worker!.id, 1)!.spec.env.CLAUDE_TASK_BACKEND_URL).toBe('wss://backend.example/api/v1/runner');
     const first = runtime.container(worker!.id, 1)!.created;
@@ -51,5 +50,44 @@ describe('Workers on Remote Hosts', () => {
     await admin.patch(`/hosts/${host.id}`, { network: 'later' }); await app.settle();
     expect(runtime.container(worker!.id, 1)!.created).toBe(busyCreated);
     await runner.close(); controller.close();
+  });
+  it('keeps the Host on duplicate and moves a free Worker with empty containers and volumes', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Destination' })).body;
+    const controller = await connectController(app, token); await waitForHost(app, host.id, 'connected');
+    const moving = await admin.patch(`/workers/${app.workerId}`, { hostId: host.id });
+    expect(moving.status).toBe(200); await app.settle();
+    expect(moving.body.worker.host.id).toBe(host.id);
+    expect(app.runtime.removed).toContain(app.workerId);
+    expect(app.runtimeFor(host.id).container(app.workerId, 1)).toBeDefined();
+    const duplicate = await admin.post(`/workers/${app.workerId}/duplicate`, {});
+    expect(duplicate.body.worker.host.id).toBe(host.id);
+    const { project } = await createProject(admin, { workerId: app.workerId });
+    const { agent } = await createAgent(app, admin, { connect: false });
+    const runner = await FakeRunner.connect(app, app.workerId, { token: app.runtimeFor(host.id).container(app.workerId, 1)!.spec.env.CLAUDE_TASK_RUNNER_TOKEN });
+    const task = await createTask(admin, project.id); await assignAndStart(admin, task.id, agent.id);
+    await runner.next('job.start');
+    const local = (await admin.get('/hosts')).body.hosts.find((h: any) => h.kind === 'local');
+    const refused = await admin.patch(`/workers/${app.workerId}`, { hostId: local.id });
+    expect(refused.status).toBe(409); expect(refused.body.error.message).toContain(task.key);
+    await runner.close(); controller.close();
+  });
+
+});
+
+describe('Host selection without a Local Host', () => {
+  const app = useTestApp({ config: { localHost: false }, defaultWorker: false });
+  it('requires a Host, defaults to the only Remote Host, and rejects the disabled Local Host', async () => {
+    const admin = await app.admin();
+    const body = { name: 'Worker', dockerfile: DEFAULT_AGENT_DOCKERFILE };
+    expect((await admin.post('/workers', body)).body.error.message).toBe('Choose a host');
+    const { hosts } = await import('../src/db/schema');
+    const [local] = await app.server.ctx.db.select().from(hosts);
+    expect((await admin.post('/workers', { ...body, hostId: local!.id })).body.error.message).toBe('Unknown host');
+    expect((await admin.post('/workers', { ...body, hostId: '00000000-0000-4000-8000-000000000000' })).body.error.message).toBe('Unknown host');
+    const { host } = (await admin.post('/hosts', { name: 'Only' })).body;
+    expect((await admin.post('/workers', body)).body.worker.host.id).toBe(host.id);
+    await admin.post('/hosts', { name: 'Second' });
+    expect((await admin.post('/workers', { ...body, name: 'Ambiguous' })).body.error.message).toBe('Choose a host');
   });
 });

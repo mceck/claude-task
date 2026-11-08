@@ -143,7 +143,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
     if (!address || typeof address === 'string') throw new Error('no address');
     t.url = `http://127.0.0.1:${address.port}`;
     t.server = server;
-    t.runtimeFor = (hostId) => server.ctx.runtimes.get(hostId) as FakeRuntime;
+    t.runtimeFor = (hostId) => (server.ctx.controllers.fakeRuntimes.get(hostId) ?? server.ctx.runtimes.get(hostId)) as FakeRuntime;
     t.client = () => new ApiClient(t.url);
     t.admin = async () => {
       const c = t.client();

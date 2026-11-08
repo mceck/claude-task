@@ -94,6 +94,7 @@ const claudeCodeVersion = z
   .regex(/^[0-9A-Za-z][0-9A-Za-z._-]*$/, 'Use a Claude Code version mise can install, like 2.1.310');
 
 const workerFields = {
+  hostId: z.uuid().optional(),
   name,
   description: z.string().max(2000),
   dockerfile: z.string().min(1).max(100_000),
@@ -127,6 +128,7 @@ export const createWorkerBody = z
 export type CreateWorkerBody = z.input<typeof createWorkerBody>;
 
 export const updateWorkerBody = z.strictObject({
+  hostId: workerFields.hostId,
   name: workerFields.name.optional(),
   description: workerFields.description.optional(),
   dockerfile: workerFields.dockerfile.optional(),

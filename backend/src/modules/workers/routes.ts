@@ -1,3 +1,4 @@
+import { chooseHost, moveWorker } from '../hosts/assign';
 import { WORKER_CAP_MAX, checkAgentDockerfile, createWorkerBody, duplicateWorkerBody, moveQueueEntryBody, updateWorkerBody } from '@claude-task/shared';
 import { and, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -6,7 +7,7 @@ import { transact } from '../../context';
 import type { AppContext } from '../../context';
 import { copyName } from '../copy-name';
 import type { Executor } from '../../db/client';
-import { hosts, projects, queueEntries, workerBuilds, workerContainers, workers } from '../../db/schema';
+import { projects, queueEntries, workerBuilds, workerContainers, workers } from '../../db/schema';
 import { badRequest, conflict, notFound, parse } from '../../errors';
 import { loadQueue, moveEntry, removeEntry } from '../../sessions/queue';
 import { loadJobs } from '../agents/service';
@@ -56,7 +57,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(createWorkerBody, request.body);
     assertDockerfile(body.dockerfile);
     await assertUniqueName(ctx.db, body.name);
-    const [row] = await ctx.db.insert(workers).values({ ...body, hostId: (await ctx.db.select().from(hosts).where(eq(hosts.kind, 'local')))[0]!.id }).returning();
+    const [row] = await ctx.db.insert(workers).values({ ...body, hostId: await chooseHost(ctx, ctx.db, body.hostId) }).returning();
     ctx.scheduler.build(row!.id);
     return reply.status(201).send({ worker: await loadWorker(ctx, ready, row!.id) });
   });
@@ -66,13 +67,20 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(updateWorkerBody, request.body);
     if (body.dockerfile !== undefined) assertDockerfile(body.dockerfile);
     if (body.name !== undefined) await assertUniqueName(ctx.db, body.name, id);
+    let movedContainers: string[] = [];
     const before = await ctx.db.transaction(async (tx) => {
       const row = await getWorkerRow(tx, id, { lock: true });
       if ((body.minimum ?? row.minimum) > (body.cap ?? row.cap)) throw badRequest('The minimum cannot exceed the cap');
+      if (body.hostId && body.hostId !== row.hostId) movedContainers = await moveWorker(ctx, tx, row, body.hostId);
       await tx.update(workers).set({ ...body, updatedAt: new Date() }).where(eq(workers.id, id));
       return row;
     });
+    if (body.hostId && body.hostId !== before.hostId) {
+      for (const containerId of movedContainers) ctx.runners.disconnect(containerId, 4002, 'container recreated');
+      if (ctx.runtimes.has(before.hostId)) void ctx.runtimes.get(before.hostId).removeWorker(id).catch((err) => ctx.log.warn({ err }, 'could not remove moved Worker resources'));
+    }
     if (
+      (body.hostId !== undefined && body.hostId !== before.hostId) ||
       (body.dockerfile !== undefined && body.dockerfile !== before.dockerfile) ||
       (body.claudeCodeVersion !== undefined && body.claudeCodeVersion !== before.claudeCodeVersion) ||
       (body.services !== undefined && JSON.stringify(body.services) !== JSON.stringify(before.services))

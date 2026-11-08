@@ -424,6 +424,13 @@ export class Scheduler {
       error = err instanceof Error ? err.message : String(err);
       onLog(`\nBuild failed: ${error}\n`);
     }
+    const [currentWorker] = await db.select().from(workers).where(eq(workers.id, workerId));
+    if (currentWorker && currentWorker.hostId !== worker.hostId) {
+      imageTag = null;
+      onLog('\nThe Worker moved to another Host during this build.\n');
+      await runtime.removeWorker(workerId).catch(() => {});
+      this.buildAgain.add(workerId);
+    }
     if (timer) clearTimeout(timer);
     await flushing.catch(() => {});
 
@@ -437,7 +444,7 @@ export class Scheduler {
       await tx
         .update(workers)
         .set(imageTag ? { imageState: 'built', imageTag, imageBaseVersion: baseVersion } : { imageState: 'failed' })
-        .where(eq(workers.id, workerId));
+        .where(and(eq(workers.id, workerId), eq(workers.hostId, worker.hostId)));
       return row;
     });
     if (!finished) {

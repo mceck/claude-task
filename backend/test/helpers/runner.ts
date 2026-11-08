@@ -44,7 +44,7 @@ export class FakeRunner {
   /** The token the backend put in the Worker Container's env. */
   static token(app: TestApp, to: RunnerTarget): string {
     const { workerId, slot } = target(to);
-    const token = app.runtime.container(workerId, slot)?.spec.env.CLAUDE_TASK_RUNNER_TOKEN;
+    const token = [app.runtime, ...app.server.ctx.controllers.fakeRuntimes.values()].map((runtime) => runtime.container(workerId, slot)?.spec.env.CLAUDE_TASK_RUNNER_TOKEN).find(Boolean);
     if (!token) throw new Error(`no container for worker ${workerId} slot ${slot}`);
     return token;
   }
