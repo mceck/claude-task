@@ -10,17 +10,35 @@ describe('Hosts', () => {
     const admin = await app.admin();
     const response = await admin.get('/hosts');
     expect(response.status).toBe(200);
-    expect(response.body.hosts).toEqual([expect.objectContaining({ name: 'Local', kind: 'local', state: 'connected', workers: [{ id: app.workerId, name: 'Test worker' }], error: null })]);
+    expect(response.body.hosts).toEqual([
+      expect.objectContaining({
+        name: 'Local',
+        kind: 'local',
+        state: 'connected',
+        workers: [{ id: app.workerId, name: 'Test worker' }],
+        error: null,
+      }),
+    ]);
     const host = response.body.hosts[0];
     expect((await admin.get(`/hosts/${host.id}`)).body.host).toEqual(host);
     expect((await admin.get(`/workers/${app.workerId}`)).body.worker.host).toEqual({ id: host.id, name: 'Local', state: 'connected' });
   });
   it('creates a Remote Host, reveals its token once, edits it, rotates and deletes it', async () => {
     const admin = await app.admin();
-    const created = await admin.post('/hosts', { name: '  ARM box  ', description: 'Build machine', backendUrlOverride: 'https://backend.example/path///', network: 'agents-1' });
+    const created = await admin.post('/hosts', {
+      name: '  ARM box  ',
+      description: 'Build machine',
+      backendUrlOverride: 'https://backend.example/path///',
+      network: 'agents-1',
+    });
     expect(created.status).toBe(201);
     const { host, token, commands } = created.body;
-    expect(host).toMatchObject({ name: 'ARM box', state: 'disconnected', backendUrlOverride: 'https://backend.example/path', network: 'agents-1' });
+    expect(host).toMatchObject({
+      name: 'ARM box',
+      state: 'disconnected',
+      backendUrlOverride: 'https://backend.example/path',
+      network: 'agents-1',
+    });
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(commands).toHaveLength(3);
     expect(commands[1]).toContain(token);
@@ -36,10 +54,19 @@ describe('Hosts', () => {
   });
 
   it.each([
-    { name: '' }, { name: 'x'.repeat(101) }, { name: 'Box', description: 'x'.repeat(2001) },
-    { name: 'Box', backendUrlOverride: '/relative' }, { name: 'Box', backendUrlOverride: 'ftp://example.com' },
-    { name: 'Box', backendUrlOverride: 'https://example.com?a=1' }, { name: 'Box', backendUrlOverride: 'https://example.com#fragment' },
-    { name: 'Box', backendUrlOverride: 'http://example.com' }, { name: 'Box', network: '-oops' }, { name: 'Box', network: 'a b' }, { name: 'Box', network: 'x'.repeat(129) },
+    { name: '' },
+    { name: 'x'.repeat(101) },
+    { name: 'Box', description: 'x'.repeat(2001) },
+    { name: 'Box', backendUrlOverride: '/relative' },
+    { name: 'Box', backendUrlOverride: 'ftp://example.com' },
+    { name: 'Box', backendUrlOverride: 'https://example.com?a=1' },
+    { name: 'Box', backendUrlOverride: 'https://example.com#fragment' },
+    { name: 'Box', backendUrlOverride: 'http://example.com' },
+    { name: 'Box', backendUrlOverride: 'HTTP://example.com' },
+    { name: 'Box', backendUrlOverride: 'HTTP://user:pass@example.com', allowInsecure: true },
+    { name: 'Box', network: '-oops' },
+    { name: 'Box', network: 'a b' },
+    { name: 'Box', network: 'x'.repeat(129) },
   ])('rejects invalid Host fields: %j', async (body) => {
     expect((await (await app.admin()).post('/hosts', body)).status).toBe(400);
   });
@@ -56,7 +83,9 @@ describe('Hosts', () => {
     expect((await admin.post('/hosts', { name: 'BOX' })).status).toBe(409);
     expect((await admin.patch(`/hosts/${created.body.host.id}`, { allowInsecure: false })).status).toBe(400);
     const { workers } = await import('../src/db/schema');
-    await app.server.ctx.db.insert(workers).values({ name: 'Used', hostId: created.body.host.id, dockerfile: 'FROM claude-task/agent-base' });
+    await app.server.ctx.db
+      .insert(workers)
+      .values({ name: 'Used', hostId: created.body.host.id, dockerfile: 'FROM claude-task/agent-base' });
     expect((await admin.delete(`/hosts/${created.body.host.id}`)).body.error.message).toContain('Used');
   });
   it('lets Members read Hosts and refuses every write', async () => {
@@ -76,7 +105,12 @@ describe('Hosts', () => {
     const { host, token } = (await admin.post('/hosts', { name: 'Controller' })).body;
     await expect(connectController(app, 'unknown')).rejects.toThrow('401');
     const first = await connectController(app, token);
-    expect(await waitForHost(app, host.id, 'connected')).toMatchObject({ controllerVersion: 'test-1', dockerVersion: 'fake', architecture: 'amd64', cpus: 4 });
+    expect(await waitForHost(app, host.id, 'connected')).toMatchObject({
+      controllerVersion: 'test-1',
+      dockerVersion: 'fake',
+      architecture: 'amd64',
+      cpus: 4,
+    });
     const replaced = new Promise((resolve) => first.once('close', (code) => resolve(code)));
     const second = await connectController(app, token);
     expect(await replaced).toBe(4001);
@@ -89,7 +123,7 @@ describe('Hosts', () => {
   });
   it.each([
     { hello: { protocolVersion: 99 }, code: 4005, error: 'rebuild it from this version' },
-    { hello: { backendUrl: 'http://backend.example' }, code: 4006, error: 'does not allow insecure connections' },
+    { hello: { backendUrl: 'HTTP://backend.example' }, code: 4006, error: 'does not allow insecure connections' },
   ])('refuses invalid hello with $code and records the error', async ({ hello, code, error }) => {
     const admin = await app.admin();
     const { host, token } = (await admin.post('/hosts', { name: 'Refused' })).body;
@@ -101,7 +135,8 @@ describe('Hosts', () => {
   it('removes installation resources before closing a deleted Controller with 4004', async () => {
     const admin = await app.admin();
     const { host, token } = (await admin.post('/hosts', { name: 'Retiring' })).body;
-    const controller = await connectController(app, token); await waitForHost(app, host.id, 'connected');
+    const controller = await connectController(app, token);
+    await waitForHost(app, host.id, 'connected');
     const runtime = app.runtimeFor(host.id);
     await runtime.createContainer('leftover', 1, { image: 'old', env: {}, cpuLimit: null, memoryMb: null });
     const closed = new Promise((resolve) => controller.once('close', (code) => resolve(code)));
@@ -111,6 +146,21 @@ describe('Hosts', () => {
     await expect(connectController(app, token)).rejects.toThrow('401');
   });
 
+  it('starts a new backend with Remote Hosts disconnected until their Controllers reconnect', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Restarted' })).body;
+    const controller = await connectController(app, token);
+    await waitForHost(app, host.id, 'connected');
+    const { createServer } = await import('../src/server');
+    const restarted = await createServer(app.server.ctx.config, { logger: false, startScheduler: false });
+    try {
+      const response = await restarted.app.inject({ method: 'GET', url: `/api/v1/hosts/${host.id}`, headers: { cookie: admin.cookie! } });
+      expect(response.json().host.state).toBe('disconnected');
+    } finally {
+      await restarted.close();
+      controller.close();
+    }
+  });
 });
 
 describe('Local Host disabled', () => {
@@ -120,8 +170,12 @@ describe('Local Host disabled', () => {
     expect((await admin.get('/hosts')).body.hosts).toEqual([]);
     const { hosts, workers } = await import('../src/db/schema');
     const [local] = await app.server.ctx.db.select().from(hosts);
-    await app.server.ctx.db.insert(workers).values({ name: 'Existing', hostId: local!.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent' });
-    expect((await admin.get('/hosts')).body.hosts).toEqual([expect.objectContaining({ name: 'Local', state: 'disconnected', error: 'Local Host disabled (LOCAL_HOST=false)' })]);
+    await app.server.ctx.db
+      .insert(workers)
+      .values({ name: 'Existing', hostId: local!.id, dockerfile: 'FROM claude-task/agent-base\nUSER agent' });
+    expect((await admin.get('/hosts')).body.hosts).toEqual([
+      expect.objectContaining({ name: 'Local', state: 'disconnected', error: 'Local Host disabled (LOCAL_HOST=false)' }),
+    ]);
   });
 });
 

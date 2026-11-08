@@ -39,6 +39,14 @@ describe('Cleanup', () => {
     controller.close();
   });
 
+
+  it('stops waiting for a deleted unused Host', async () => {
+    const admin = await app.admin();
+    const { host } = (await admin.post('/hosts', { name: 'Retired while pending' })).body;
+    expect((await cleanUp(app, admin)).hostsPending).toBe(1);
+    expect((await admin.delete(`/hosts/${host.id}`)).status).toBe(204);
+    expect((await admin.get('/cleanup')).body.cleanup.hostsPending).toBe(0);
+  });
   it('runs one at backend start', () => {
     expect(app.runtime.cleanups.length).toBeGreaterThan(0);
   });
@@ -213,5 +221,21 @@ describe('Cleanup', () => {
     await next.close();
     const later = await FakeRunner.connect(app, { workerId: app.workerId, slot: 1 });
     expect(await later.none('volume.cleanup')).toBe(true);
+  });
+});
+
+
+describe('Local Docker recovery', () => {
+  const app = useTestApp({ agents: { reconcileIntervalMs: 30, cleanup: false } });
+  it('completes the pending Docker part after local ping recovers', async () => {
+    const admin = await app.admin();
+    const local = (await admin.get('/hosts')).body.hosts[0];
+    let failing = true;
+    app.runtime.ping = async () => { if (failing) throw new Error('Daemon unavailable'); };
+    await waitForHost(app, local.id, 'disconnected');
+    expect((await cleanUp(app, admin)).hostsPending).toBe(1);
+    failing = false;
+    await waitForHost(app, local.id, 'connected'); await app.settle();
+    expect((await admin.get('/cleanup')).body.cleanup.hostsPending).toBe(0);
   });
 });

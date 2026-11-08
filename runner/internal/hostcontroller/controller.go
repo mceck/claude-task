@@ -138,6 +138,20 @@ func session(parent context.Context, cfg Config) (bool, error) {
 		defer stop()
 		return c.Write(writeCtx, websocket.MessageBinary, frame)
 	}
+	discard := func(id uint32, s *stream) bool {
+		mu.Lock()
+		current := streams[id] == s
+		if current {
+			delete(streams, id)
+		}
+		mu.Unlock()
+		if current {
+			if err := s.conn.Close(); err != nil {
+				log.Printf("closing Docker stream: %v", err)
+			}
+		}
+		return current
+	}
 	finish := func(id uint32, s *stream, reading bool) {
 		mu.Lock()
 		if reading {
@@ -205,7 +219,7 @@ func session(parent context.Context, cfg Config) (bool, error) {
 								cancel()
 							}
 							finish(id, s, true)
-						} else if ctx.Err() == nil {
+						} else if ctx.Err() == nil && discard(id, s) {
 							if err := send(closeStream, id, []byte(err.Error())); err != nil {
 								cancel()
 							}
@@ -219,6 +233,7 @@ func session(parent context.Context, cfg Config) (bool, error) {
 				continue
 			}
 			if _, err := s.conn.Write(payload); err != nil {
+				discard(id, s)
 				if err := send(closeStream, id, []byte(err.Error())); err != nil {
 					return false, err
 				}
@@ -234,12 +249,7 @@ func session(parent context.Context, cfg Config) (bool, error) {
 			}
 		case closeStream:
 			if s != nil {
-				mu.Lock()
-				delete(streams, id)
-				mu.Unlock()
-				if err := s.conn.Close(); err != nil {
-					log.Printf("closing Docker stream: %v", err)
-				}
+				discard(id, s)
 			}
 		default:
 			return false, fmt.Errorf("unknown tunnel operation %d", op)

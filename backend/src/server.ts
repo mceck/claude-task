@@ -1,7 +1,7 @@
 import { HostControllers } from './hosts/controllers';
 import { RuntimeRegistry } from './hosts/runtimes';
 import { hosts, workers } from './db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, isNull, or } from 'drizzle-orm';
 import { refreshLocalHost, workerConnection } from './modules/hosts/service';
 import { FirebasePushTransport } from './notifications/transport';
 import type { PushTransport } from './notifications/transport';
@@ -70,6 +70,7 @@ export async function createServer(
   try {
     await runMigrations(db);
     const installationId = await ensureInstallationId(db);
+    await db.update(hosts).set({ disconnectedAt: new Date() }).where(and(eq(hosts.kind, 'remote'), isNotNull(hosts.connectedAt), or(isNull(hosts.disconnectedAt), gt(hosts.connectedAt, hosts.disconnectedAt))));
     const ctx = {
       config,
       db,

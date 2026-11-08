@@ -712,8 +712,8 @@ export class Scheduler {
       cpuLimit: worker.cpuLimit,
       memoryMb: worker.memoryMb,
     });
-    const [current] = await this.ctx.db.select({ id: workers.id }).from(workers).where(eq(workers.id, worker.id));
-    if (!current) {
+    const [current] = await this.ctx.db.select({ id: workers.id, hostId: workers.hostId }).from(workers).where(eq(workers.id, worker.id));
+    if (!current || current.hostId !== worker.hostId) {
       // The Worker was deleted while Docker was creating its container.
       await runtime.removeWorker(worker.id).catch(() => {});
       return;
@@ -731,6 +731,7 @@ export class Scheduler {
     const key = `${workerId}:${agentId}`;
     if (this.stopping || this.syncing.has(key)) return;
     this.syncing.add(key);
+    let retry = false;
     this.track(
       (async () => {
         const { db } = this.ctx;
@@ -738,7 +739,8 @@ export class Scheduler {
         if (!worker || !this.ctx.runtimes.has(worker.hostId)) return;
         const runtime = this.ctx.runtimes.get(worker.hostId);
         const pending = await db.transaction(async (tx) => {
-          await getWorkerRow(tx, workerId, { lock: true });
+          const current = await getWorkerRow(tx, workerId, { lock: true });
+          if (current.hostId !== worker.hostId) { retry = true; return null; }
           const [agent] = await tx.select().from(agents).where(eq(agents.id, agentId));
           if (!agent) return null;
           const [profile] = await tx.select().from(agentProfiles).where(and(eq(agentProfiles.workerId, workerId), eq(agentProfiles.agentId, agentId)));
@@ -774,16 +776,19 @@ export class Scheduler {
           this.syncingIn.delete(container.id);
         }
         const values = error ? { error } : { appliedRevision: pending.revision, error: null };
-        await db
-          .insert(agentProfiles)
-          .values({ workerId, agentId, appliedRevision: error ? -1 : pending.revision, error, updatedAt: new Date() })
-          .onConflictDoUpdate({ target: [agentProfiles.workerId, agentProfiles.agentId], set: { ...values, updatedAt: new Date() } })
-          // The Worker or the Agent may have been deleted meanwhile.
-          .catch((err) => this.ctx.log.warn({ err, workerId, agentId }, 'could not record an Agent Profile synchronization'));
+        const recorded = await db.transaction(async (tx) => {
+          const [current] = await tx.select().from(workers).where(eq(workers.id, workerId)).for('update');
+          if (!current || current.hostId !== worker.hostId) return false;
+          await tx.insert(agentProfiles)
+            .values({ workerId, agentId, appliedRevision: error ? -1 : pending.revision, error, updatedAt: new Date() })
+            .onConflictDoUpdate({ target: [agentProfiles.workerId, agentProfiles.agentId], set: { ...values, updatedAt: new Date() } });
+          return true;
+        }).catch((err) => { this.ctx.log.warn({ err, workerId, agentId }, 'could not record an Agent Profile synchronization'); return false; });
+        if (!recorded) { retry = true; return; }
         this.publishWorker(workerId);
         this.publishAgent(agentId);
         if (!error) this.kick(workerId);
-      })().finally(() => this.syncing.delete(key)),
+      })().finally(() => { this.syncing.delete(key); if (retry) this.kick(workerId); }),
     );
   }
 

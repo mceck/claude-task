@@ -14,20 +14,34 @@ it('deploys a Controller with the entered URL and token and skips backend config
     const calls = join(dir, 'calls');
     await writeFile(join(dir, 'sudo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     await writeFile(join(dir, 'docker'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DEPLOY_TEST_CALLS"\n', { mode: 0o755 });
-    const child = spawn('bash', [resolve('../scripts/deploy.sh'), 'host'], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, DEPLOY_TEST_CALLS: calls } });
-    let output = ''; child.stdout.on('data', (data) => { output += data; }); child.stderr.on('data', (data) => { output += data; });
-    const finished = new Promise<number | null>((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
+    const child = spawn('bash', [resolve('../scripts/deploy.sh'), 'host'], {
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, DEPLOY_TEST_CALLS: calls },
+    });
+    let output = '';
+    child.stdout.on('data', (data) => {
+      output += data;
+    });
+    child.stderr.on('data', (data) => {
+      output += data;
+    });
+    const finished = new Promise<number | null>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', resolve);
+    });
     child.stdin.end('http://backend.example\nfixture-token\ny\n');
     expect(await finished, output).toBe(0);
     const commands = await readFile(calls, 'utf8');
     expect(commands).toContain('build --target host-controller -t claude-task/host-controller .');
     expect(commands).toContain('rm -f claude-task-host-controller');
-    expect(commands).toContain('-e CLAUDE_TASK_URL=http://backend.example -e CLAUDE_TASK_HOST_TOKEN=fixture-token -e CLAUDE_TASK_ALLOW_INSECURE=true');
+    expect(commands).toContain(
+      '-e CLAUDE_TASK_URL=http://backend.example -e CLAUDE_TASK_HOST_TOKEN=fixture-token -e CLAUDE_TASK_ALLOW_INSECURE=true',
+    );
     expect(commands).not.toContain('compose up');
     expect(output).toContain('Host Controller started');
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-
 
 describe.skipIf(process.env.HOST_DEPLOY_DOCKER !== '1')('Controller image deployment', () => {
   const app = useTestApp();
@@ -41,9 +55,20 @@ describe.skipIf(process.env.HOST_DEPLOY_DOCKER !== '1')('Controller image deploy
       // Docker is already installed on this machine; the Linux service/group setup has no work to do.
       await writeFile(join(dir, 'sudo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
       const { host, token } = (await (await app.admin()).post('/hosts', { name: 'Real Controller', allowInsecure: true })).body;
-      const child = spawn('bash', [resolve('../scripts/deploy.sh'), 'host'], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } });
-      let output = ''; child.stdout.on('data', (data) => { output += data; }); child.stderr.on('data', (data) => { output += data; });
-      const finished = new Promise<number | null>((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
+      const child = spawn('bash', [resolve('../scripts/deploy.sh'), 'host'], {
+        env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+      });
+      let output = '';
+      child.stdout.on('data', (data) => {
+        output += data;
+      });
+      child.stderr.on('data', (data) => {
+        output += data;
+      });
+      const finished = new Promise<number | null>((resolve, reject) => {
+        child.on('error', reject);
+        child.on('close', resolve);
+      });
       child.stdin.end(`${app.url.replace('127.0.0.1', 'host.docker.internal')}\n${token}\ny\n`);
       expect(await finished, output).toBe(0);
       expect((await waitForHost(app, host.id, 'connected')).controllerVersion).toMatch(/^1-/);

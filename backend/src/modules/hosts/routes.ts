@@ -1,3 +1,4 @@
+import { addToCleanup, publishCleanup } from '../workers/cleanup';
 import { createHostBody, updateHostBody, WORKERS_TOPIC } from '@claude-task/shared';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
@@ -26,11 +27,15 @@ export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
   const connect = async (id: string, token: string) => {
     const host = await publish(id);
     const url = ctx.config.webUrl ?? 'http://localhost:3000';
-    return { host, token, commands: [
-      'docker build --target host-controller -t claude-task/host-controller .',
-      `docker run -d --name claude-task-host-controller --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -e ${quote(`CLAUDE_TASK_URL=${url}`)} -e ${quote(`CLAUDE_TASK_HOST_TOKEN=${token}`)}${url.startsWith('http:') && host.allowInsecure ? ' -e CLAUDE_TASK_ALLOW_INSECURE=true' : ''} claude-task/host-controller`,
-      'scripts/deploy.sh host',
-    ] };
+    return {
+      host,
+      token,
+      commands: [
+        'docker build --target host-controller -t claude-task/host-controller .',
+        `docker run -d --name claude-task-host-controller --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -e ${quote(`CLAUDE_TASK_URL=${url}`)} -e ${quote(`CLAUDE_TASK_HOST_TOKEN=${token}`)}${url.startsWith('http:') && host.allowInsecure ? ' -e CLAUDE_TASK_ALLOW_INSECURE=true' : ''} claude-task/host-controller`,
+        'scripts/deploy.sh host',
+      ],
+    };
   };
   app.get('/hosts', async () => ({ hosts: await loadHosts(ctx) }));
   app.get('/hosts/:id', async (request) => ({ host: await loadHost(ctx, parse(params, request.params).id) }));
@@ -38,7 +43,10 @@ export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(createHostBody, request.body);
     validateTransport(body);
     const { token, hash } = newToken();
-    const [row] = await ctx.db.insert(hosts).values({ ...body, kind: 'remote', tokenHash: hash }).returning();
+    const [row] = await ctx.db
+      .insert(hosts)
+      .values({ ...body, kind: 'remote', tokenHash: hash })
+      .returning();
     return reply.status(201).send(await connect(row!.id, token));
   });
   app.patch('/hosts/:id', admin, async (request) => {
@@ -46,7 +54,10 @@ export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
     const body = parse(updateHostBody, request.body);
     const before = await remote(id);
     validateTransport({ ...before, ...body });
-    await ctx.db.update(hosts).set({ ...body, updatedAt: new Date() }).where(eq(hosts.id, id));
+    await ctx.db
+      .update(hosts)
+      .set({ ...body, updatedAt: new Date() })
+      .where(eq(hosts.id, id));
     for (const worker of await ctx.db.select().from(workers).where(eq(workers.hostId, id))) await ctx.scheduler.reconcile(worker.id);
     return { host: await publish(id) };
   });
@@ -65,12 +76,19 @@ export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
     if (row.kind === 'local') throw conflict('The Local Host cannot be deleted');
     const used = await ctx.db.select().from(workers).where(eq(workers.hostId, id));
     if (used.length) throw conflict(`These workers use the Host: ${used.map((w) => w.name).join(', ')}. Move them first.`);
-    await ctx.db.delete(hosts).where(eq(hosts.id, id));
+    const cleanupId = await ctx.db.transaction(async (tx) => {
+      const [current] = await tx.select().from(hosts).where(eq(hosts.id, id)).for('update');
+      if (current?.cleanupPending) await addToCleanup(tx, current.cleanupPending, { hostsPending: -1 });
+      await tx.delete(hosts).where(eq(hosts.id, id));
+      return current?.cleanupPending;
+    });
+    if (cleanupId) await publishCleanup(ctx, cleanupId);
     ctx.hub.publish(WORKERS_TOPIC, { type: 'host.deleted', hostId: id });
     ctx.controllers.retire(id);
     return reply.status(204).send();
   });
 }
 function validateTransport(host: { backendUrlOverride: string | null; allowInsecure: boolean }): void {
-  if (host.backendUrlOverride?.startsWith('http:') && !host.allowInsecure) throw badRequest('The backend URL must use https unless insecure connections are allowed');
+  if (host.backendUrlOverride?.startsWith('http:') && !host.allowInsecure)
+    throw badRequest('The backend URL must use https unless insecure connections are allowed');
 }

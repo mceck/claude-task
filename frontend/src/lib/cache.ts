@@ -304,6 +304,10 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       qc.removeQueries({ queryKey: keys.agent(event.agentId) });
       return;
     case 'host.updated':
+      for (const worker of event.host.workers) void qc.invalidateQueries({ queryKey: keys.worker(worker.id) });
+      void qc.invalidateQueries({ queryKey: keys.workers });
+      void qc.invalidateQueries({ queryKey: keys.hosts });
+      return;
     case 'host.deleted':
       void qc.invalidateQueries({ queryKey: keys.hosts });
       return;
