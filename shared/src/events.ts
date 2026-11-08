@@ -1,3 +1,4 @@
+import type { Host } from './hosts';
 // Real-time events pushed to browsers over the WebSocket. Events are notifications
 // carrying the new projection; on reconnect clients refetch instead of replaying.
 import type { UserEvent } from './mobile';
@@ -63,6 +64,8 @@ export type AgentEvent =
 
 /** Events on `workers` (the Workers list) and `worker:<id>` (a Worker's page). */
 export type WorkerEvent =
+  | { type: 'host.updated'; host: Host }
+  | { type: 'host.deleted'; hostId: string }
   | { type: 'worker.updated'; worker: Worker }
   | { type: 'worker.deleted'; workerId: string }
   | { type: 'queue.changed'; workerId: string; entries: QueueEntry[] }
