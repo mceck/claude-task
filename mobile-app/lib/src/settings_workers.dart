@@ -182,7 +182,7 @@ class _WorkerSheetState extends State<_WorkerSheet> {
       final path = '/workers/${w.id}';
       return SheetScaffold(
         title: w.name,
-        subtitle: workerSummary(w),
+        subtitle: '${workerSummary(w)} · Host: ${w.hostName}',
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,

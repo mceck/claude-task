@@ -287,7 +287,10 @@ Future<void> tapLive(WidgetTester tester, Finder finder) async {
 /// The text field labelled [label], above it or inside it.
 Finder input(String label) {
   final labelled = find.descendant(
-    of: find.ancestor(of: find.text(label), matching: find.byType(LabeledField)),
+    of: find.ancestor(
+      of: find.text(label),
+      matching: find.byType(LabeledField),
+    ),
     matching: find.byType(TextField),
   );
   if (labelled.evaluate().isNotEmpty) return labelled;
@@ -604,6 +607,7 @@ void main() {
     expect(h.live.topics, contains('workers'));
     await tapLive(tester, find.text('Default worker'));
     expect(h.live.topics, contains('worker:worker-1'));
+    expect(find.textContaining('Host: Local'), findsOneWidget);
     expect(find.text('Slot 1'), findsOneWidget);
     expect(find.text('Slot 2'), findsOneWidget);
     expect(

@@ -5,6 +5,15 @@ import 'support.dart';
 
 void main() {
   group('parsing', () {
+    test('a Worker names its Host and preserves host_offline', () {
+      final worker = Worker.fromJson({
+        ...workerData(),
+        'host': {'id': 'host-1', 'name': 'ARM box', 'state': 'disconnected'},
+        'state': 'host_offline',
+      });
+      expect(worker.hostName, 'ARM box');
+      expect(worker.state, 'host_offline');
+    });
     test('an Agent carries its Jobs and per-Worker sync errors', () {
       final agent = Agent.fromJson({
         'id': 'agent-1',

@@ -8,6 +8,7 @@ import 'ui/widgets.dart';
 /// What the Workers list and pickers say about a Worker's state.
 String workerStateLabel(String state) => switch (state) {
   'build_failed' => 'build failed',
+  'host_offline' => 'host offline',
   '' => 'unknown',
   _ => state,
 };

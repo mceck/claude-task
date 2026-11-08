@@ -72,7 +72,7 @@ Widget? stateDot(String state) {
     'building' || 'starting' => const PulseDot(color: Palette.info, size: 11),
     'build_failed' => const Dot(color: Palette.danger, size: 11),
     'disabled' => hollow(Palette.danger),
-    'offline' || 'stopped' => hollow(Palette.fgSubtle),
+    'offline' || 'host_offline' || 'stopped' => hollow(Palette.fgSubtle),
     _ => null,
   };
 }
@@ -528,7 +528,8 @@ class TaskDetails extends StatelessWidget {
                           field: 'tagIds',
                           title: 'Tags',
                           current: t.tagIds,
-                          empty: 'This Project has no Tags yet. Type a name to create one.',
+                          empty:
+                              'This Project has no Tags yet. Type a name to create one.',
                           createNoun: 'tag',
                           onCreate: (name) async {
                             final tag = await c.createTag(name);
@@ -1006,7 +1007,8 @@ Future<void> confirmMergePullRequest(
   final accepted = await confirm(
     context,
     title: 'Merge $noun?',
-    message: 'It is merged into the base branch with the provider\'s default merge method. The Task keeps its Status.',
+    message:
+        'It is merged into the base branch with the provider\'s default merge method. The Task keeps its Status.',
     confirmLabel: 'Merge',
   );
   if (accepted && context.mounted) {

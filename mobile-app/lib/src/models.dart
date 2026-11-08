@@ -127,12 +127,12 @@ class Agent implements Identified {
       activeTasks = objects(json['activeTasks']).map(TaskRef.fromJson).toList(),
       extensionsPending = json['extensionsPending'] == true,
       extensionsError = json['extensionsError'] as String?,
-      extensionErrors = objects(json['extensionErrors'])
-          .map(ProfileError.ofWorker)
-          .toList(),
-      skillCommands = objects(json['skillCommands'])
-          .map(SkillCommand.fromJson)
-          .toList();
+      extensionErrors = objects(
+        json['extensionErrors'],
+      ).map(ProfileError.ofWorker).toList(),
+      skillCommands = objects(
+        json['skillCommands'],
+      ).map(SkillCommand.fromJson).toList();
 
   /// The Agent's name with its Credential's name in parentheses, as pickers
   /// show it: `Sonnet (Mattia)`.
@@ -171,9 +171,9 @@ class ProfileError {
 class Worker implements Identified {
   @override
   final String id;
-  final String name, description;
+  final String name, description, hostName;
 
-  /// `disabled`, `building`, `build_failed`, `offline`, `idle` or `working`.
+  /// `disabled`, `building`, `build_failed`, `offline`, `host_offline`, `idle` or `working`.
   final String state;
 
   /// `none`, `building`, `built` or `failed`.
@@ -190,6 +190,7 @@ class Worker implements Identified {
   Worker.fromJson(Json json)
     : id = json['id'] as String,
       name = json['name'] as String? ?? '',
+      hostName = (json['host'] as Map?)?['name'] as String? ?? 'Local',
       description = json['description'] as String? ?? '',
       state = json['state'] as String? ?? '',
       imageState = json['imageState'] as String? ?? 'none',
@@ -199,13 +200,13 @@ class Worker implements Identified {
       busy = (json['busy'] as num?)?.toInt() ?? 0,
       running = (json['running'] as num?)?.toInt() ?? 0,
       queueLength = (json['queueLength'] as num?)?.toInt() ?? 0,
-      containers = objects(json['containers'])
-          .map(WorkerContainer.fromJson)
-          .toList(),
+      containers = objects(
+        json['containers'],
+      ).map(WorkerContainer.fromJson).toList(),
       projects = objects(json['projects']),
-      profileErrors = objects(json['profileErrors'])
-          .map(ProfileError.ofAgent)
-          .toList();
+      profileErrors = objects(
+        json['profileErrors'],
+      ).map(ProfileError.ofAgent).toList();
 }
 
 /// One Worker Slot and the container that fills it.
@@ -676,12 +677,12 @@ class Survey {
   Survey.fromJson(Json json)
     : items = QuestionItem.list(json['items']),
       open = json['state'] == 'open',
-      expectedRespondents = objects(json['expectedRespondents'])
-          .map(Actor.fromJson)
-          .toList(),
-      responses = objects(json['responses'])
-          .map(SurveyResponse.fromJson)
-          .toList(),
+      expectedRespondents = objects(
+        json['expectedRespondents'],
+      ).map(Actor.fromJson).toList(),
+      responses = objects(
+        json['responses'],
+      ).map(SurveyResponse.fromJson).toList(),
       closedBy = Actor.maybe(json['closedBy']),
       closedAt = DateTime.tryParse(json['closedAt'] as String? ?? '');
 
