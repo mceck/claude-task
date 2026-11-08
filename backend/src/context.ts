@@ -6,7 +6,7 @@ import type { ClickUpClientFactory } from './clickup/client';
 import type { ClickUpSync } from './clickup/sync';
 import type { RealtimeEvent, Topic } from '@claude-task/shared';
 import type { FastifyBaseLogger } from 'fastify';
-import type { WorkerRuntime } from './agents/runtime';
+import type { RuntimeRegistry } from './hosts/runtimes';
 import type { Scheduler } from './agents/scheduler';
 import type { BlobStore } from './blobstore';
 import type { Config } from './config';
@@ -29,7 +29,7 @@ export interface AppContext {
   hub: RealtimeHub;
   loginRevocations: LoginRevocations;
   blobs: BlobStore;
-  runtime: WorkerRuntime;
+  runtimes: RuntimeRegistry;
   /** Labels every Docker resource the backend creates, so Installations sharing a host stay apart. */
   installationId: string;
   /** Git Connections and their providers. */

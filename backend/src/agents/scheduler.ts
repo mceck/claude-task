@@ -249,19 +249,21 @@ export class Scheduler {
   }
 
   private async runCleanup(id: string, trigger: CleanupTrigger): Promise<void> {
-    const { db, runtime } = this.ctx;
-    const report = await runtime
-      .cleanup({
-        anyBuilding: this.building.size > 0,
-        workers: async () => {
-          const rows = await db.select({ id: workers.id, imageTag: workers.imageTag, claudeCodeVersion: workers.claudeCodeVersion }).from(workers);
-          return rows.map((w) => ({ ...w, building: this.building.has(w.id) }));
-        },
-      })
-      .catch((err: unknown) => ({ removed: {}, reclaimedBytes: 0, errors: [`Docker: ${errorText(err)}`] }));
-    for (const error of report.errors) this.ctx.log.warn({ cleanupId: id }, `cleanup: ${error}`);
-    await addToCleanup(db, id, report);
-    await publishCleanup(this.ctx, id);
+    const { db } = this.ctx;
+    for (const [hostId, runtime] of this.ctx.runtimes.entries()) {
+      const report = await runtime
+        .cleanup({
+          anyBuilding: this.building.size > 0,
+          workers: async () => {
+            const rows = await db.select({ id: workers.id, imageTag: workers.imageTag, claudeCodeVersion: workers.claudeCodeVersion }).from(workers).where(eq(workers.hostId, hostId));
+            return rows.map((w) => ({ ...w, building: this.building.has(w.id) }));
+          },
+        })
+        .catch((err: unknown) => ({ removed: {}, reclaimedBytes: 0, errors: [`Docker: ${errorText(err)}`] }));
+      for (const error of report.errors) this.ctx.log.warn({ cleanupId: id }, `cleanup: ${error}`);
+      await addToCleanup(db, id, report);
+      await publishCleanup(this.ctx, id);
+    }
 
     const errors: string[] = [];
     let slots = 0;
@@ -297,7 +299,8 @@ export class Scheduler {
 
   /** Slots above the cap, stopped and idle for at least `minIdleMs`: container, Service Volume and record go. */
   private async removeSlotsAboveCap(workerId: string, minIdleMs: number, errors: string[]): Promise<number> {
-    const { db, runtime } = this.ctx;
+    const { db } = this.ctx;
+    const runtime = await this.ctx.runtimes.forWorker(workerId);
     const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
     if (!worker) return 0;
     let removed = 0;
@@ -370,7 +373,8 @@ export class Scheduler {
   }
 
   private async runBuild(workerId: string): Promise<void> {
-    const { db, runtime, hub } = this.ctx;
+    const { db, hub } = this.ctx;
+    const runtime = await this.ctx.runtimes.forWorker(workerId);
     const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
     if (!worker) return;
     const baseVersion = runtime.baseVersionFor(worker.claudeCodeVersion);
@@ -478,7 +482,8 @@ export class Scheduler {
 
   private async reconcileOnce(workerId: string): Promise<void> {
     if (this.stopping) return;
-    const { db, runtime } = this.ctx;
+    const { db } = this.ctx;
+    const runtime = await this.ctx.runtimes.forWorker(workerId);
     const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
     if (!worker) return;
     const stale = worker.imageState === 'built' && worker.imageBaseVersion !== runtime.baseVersionFor(worker.claudeCodeVersion);
@@ -629,16 +634,17 @@ export class Scheduler {
     if (!stopping) return false;
     this.ctx.runners.disconnect(row.id, 4003, 'container stopped: no work');
     try {
-      await this.ctx.runtime.stopContainer(worker.id, row.slot);
+      await (await this.ctx.runtimes.forWorker(worker.id)).stopContainer(worker.id, row.slot);
     } catch (err) {
       // Keep the stored state true to Docker's, so the next reconcile decides again.
-      await this.ctx.db.update(workerContainers).set({ containerState: (await this.ctx.runtime.inspect(worker.id, row.slot)).state }).where(eq(workerContainers.id, row.id));
+      await this.ctx.db.update(workerContainers).set({ containerState: (await (await this.ctx.runtimes.forWorker(worker.id)).inspect(worker.id, row.slot)).state }).where(eq(workerContainers.id, row.id));
       throw err;
     }
     return true;
   }
 
   private async recreate(worker: WorkerRow, row: WorkerContainerRow, desired: string): Promise<void> {
+    const runtime = this.ctx.runtimes.get(worker.hostId);
     const { token, hash } = newToken();
     // A new token for every container: the old one stops working with the old container.
     // `containerSpec` stays null until the container exists, so a crash or a failed create
@@ -655,7 +661,7 @@ export class Scheduler {
       })
       .where(eq(workerContainers.id, row.id));
     this.ctx.runners.disconnect(row.id, 4002, 'container recreated');
-    await this.ctx.runtime.createContainer(worker.id, row.slot, {
+    await runtime.createContainer(worker.id, row.slot, {
       image: worker.imageTag!,
       env: {
         CLAUDE_TASK_BACKEND_URL: runnerWsUrl(this.ctx.config.agents.backendUrl),
@@ -667,7 +673,7 @@ export class Scheduler {
     const [current] = await this.ctx.db.select({ id: workers.id }).from(workers).where(eq(workers.id, worker.id));
     if (!current) {
       // The Worker was deleted while Docker was creating its container.
-      await this.ctx.runtime.removeWorker(worker.id).catch(() => {});
+      await runtime.removeWorker(worker.id).catch(() => {});
       return;
     }
     await this.ctx.db.update(workerContainers).set({ containerSpec: desired, containerState: 'running' }).where(eq(workerContainers.id, row.id));
@@ -685,7 +691,8 @@ export class Scheduler {
     this.syncing.add(key);
     this.track(
       (async () => {
-        const { db, runtime } = this.ctx;
+        const { db } = this.ctx;
+        const runtime = await this.ctx.runtimes.forWorker(workerId);
         const pending = await db.transaction(async (tx) => {
           await getWorkerRow(tx, workerId, { lock: true });
           const [agent] = await tx.select().from(agents).where(eq(agents.id, agentId));

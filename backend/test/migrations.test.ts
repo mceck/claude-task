@@ -47,6 +47,14 @@ const BEFORE_WORKERS = `
 describe('migration upgrades', () => {
   const app = useTestApp();
 
+  // Replaying an upgrade replaces the seeded Host id; reattach the harness's local daemon.
+  async function migrateApp(): Promise<void> {
+    await runMigrations(app.server.ctx.db);
+    const [{ id }] = (await app.server.ctx.db.$client.query("SELECT id FROM hosts WHERE kind = 'local'")).rows;
+    app.server.ctx.runtimes.attach(id, app.runtime);
+  }
+
+
   // The migrations take about 2 seconds. DROP DATABASE forces a checkpoint, which has to fsync everything the other
   // test files wrote meanwhile: on a disk with slow fsync that took up to a minute while the whole suite was running.
   const DROP_DATABASE_SLACK_MS = 120_000;
@@ -59,7 +67,7 @@ describe('migration upgrades', () => {
     expect(migration).toBeDefined();
     await db.$client.query('ALTER TABLE workers DROP COLUMN host_id; DROP TABLE hosts; ALTER TABLE cleanups DROP COLUMN hosts_pending');
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= $1', [migration.when]);
-    await runMigrations(db);
+    await migrateApp();
     expect((await db.$client.query('SELECT w.id, w.name FROM workers w JOIN hosts h ON h.id = w.host_id WHERE h.kind = \'local\' ORDER BY w.id')).rows).toEqual(before);
     expect((await db.$client.query('SELECT name FROM hosts')).rows).toEqual([{ name: 'Local' }]);
   });
@@ -119,9 +127,9 @@ describe('migration upgrades', () => {
     expect((await db.$client.query('SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 1')).rows[0].hash)
       .toBe('ab1884a99d4a0f6b79ea3b44125718e9d2613eb18b1d6748ec4039800ac590f7');
 
-    await runMigrations(db);
+    await migrateApp();
     const first = (await db.$client.query('SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at')).rows;
-    await runMigrations(db);
+    await migrateApp();
     expect((await db.$client.query('SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at')).rows).toEqual(first);
     expect((await admin.get(`/tasks/${task.id}`)).body.task).toMatchObject({ title: 'Existing task', description: 'Keep this content', chatGeneration: 0 });
     // The upgrade to Workers keeps the Session, which starts a new conversation on the new Worker Volume.
@@ -170,7 +178,7 @@ describe('migration upgrades', () => {
     )).rows;
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= $1', [workers.when]);
 
-    await runMigrations(db);
+    await migrateApp();
     const sessions = (await db.$client.query('SELECT id, state, started, last_agent_id FROM sessions WHERE task_id = $1', [task.id])).rows;
     expect(sessions).toEqual([{ id: current!.id, state: 'pending', started: false, last_agent_id: agent.id }]);
     expect((await db.$client.query('SELECT 1 FROM sessions WHERE id = $1', [older])).rows).toEqual([]);
@@ -213,8 +221,8 @@ describe('migration upgrades', () => {
       await db.$client.query('UPDATE drizzle.__drizzle_migrations SET hash = $1, created_at = $2 WHERE id = $3', [hash, when, original.id]);
       const before = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows;
 
-      await runMigrations(db);
-      await runMigrations(db);
+      await migrateApp();
+      await migrateApp();
 
       const after = (await db.$client.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows;
       expect(after.slice(0, before.length)).toEqual(before);

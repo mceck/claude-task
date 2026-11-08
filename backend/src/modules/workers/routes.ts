@@ -86,6 +86,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   app.delete('/workers/:id', admin, async (request, reply) => {
     const { id } = parse(params, request.params);
+    const runtime = await ctx.runtimes.forWorker(id).catch(() => null);
     const containers = await ctx.db.transaction(async (tx) => {
       await getWorkerRow(tx, id, { lock: true });
       const used = await tx.select({ name: projects.name }).from(projects).where(eq(projects.workerId, id));
@@ -95,7 +96,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
       return rows;
     });
     for (const c of containers) ctx.runners.disconnect(c.id, 4003, 'worker deleted');
-    void ctx.runtime.removeWorker(id).catch((err) => ctx.log.warn({ err, workerId: id }, 'could not remove the worker containers'));
+    void runtime?.removeWorker(id).catch((err) => ctx.log.warn({ err, workerId: id }, 'could not remove the worker containers'));
     ctx.scheduler.publishWorker(id);
     return reply.status(204).send();
   });
@@ -148,7 +149,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const row = await getContainerRow(ctx.db, id, slot);
     if (!row || row.containerState === 'missing') throw conflict('This worker container does not exist yet');
     if (!isUp(row.containerState)) throw conflict('This worker container is stopped; it starts when work arrives');
-    await ctx.runtime.restartContainer(id, slot).catch((err) => {
+    await (await ctx.runtimes.forWorker(id)).restartContainer(id, slot).catch((err) => {
       throw conflict(`Could not restart the container: ${(err as Error).message}`);
     });
     // A restart starts a fresh Runner and gives the container a fresh idle window; without this
@@ -177,7 +178,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
     const { id, slot } = parse(slotParams, request.params);
     const { tail } = parse(logsQuery, request.query);
     await getWorkerRow(ctx.db, id);
-    return { logs: await ctx.runtime.logs(id, slot, tail).catch(() => '') };
+    return { logs: await (await ctx.runtimes.forWorker(id)).logs(id, slot, tail).catch(() => '') };
   });
 
   app.get('/workers/:id/builds', async (request) => {

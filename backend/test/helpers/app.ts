@@ -45,6 +45,7 @@ export interface TestApp {
   admin(): Promise<ApiClient>;
   /** The in-memory Docker stand-in. */
   runtime: FakeRuntime;
+  runtimeFor(hostId: string): FakeRuntime;
   /** Behind every GitHub connection; `env-github` exists unless the config removes it. */
   git: FakeGitProvider;
   /** Behind every GitLab connection. */
@@ -142,6 +143,7 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
     if (!address || typeof address === 'string') throw new Error('no address');
     t.url = `http://127.0.0.1:${address.port}`;
     t.server = server;
+    t.runtimeFor = (hostId) => server.ctx.runtimes.get(hostId) as FakeRuntime;
     t.client = () => new ApiClient(t.url);
     t.admin = async () => {
       const c = t.client();
@@ -170,6 +172,10 @@ export function useTestApp(options: TestAppOptions = {}): TestApp {
       t.runtime.onContainerCreated = null;
       t.runners.clear();
       await truncateAll(t.server);
+      t.server.ctx.runtimes.clear();
+      const [local] = await t.server.ctx.db.select().from(hosts);
+      if (configLocalEnabled(t.server)) t.server.ctx.runtimes.attach(local!.id, t.runtime);
+      await refreshLocalHost(t.server.ctx);
       await bootstrapAdmin(t.server.ctx.db, t.server.ctx.config.bootstrapAdmin);
       await createDefaultWorker(t, options);
     });
@@ -184,5 +190,7 @@ export async function truncateAll(server: Server): Promise<void> {
   );
   await server.ctx.db.$client.query(`truncate ${rows.map((r) => `"${r.tablename}"`).join(', ')} cascade`);
   await server.ctx.db.insert(hosts).values({ kind: 'local', name: 'Local' });
-  await refreshLocalHost(server.ctx);
+
 }
+
+function configLocalEnabled(server: Server): boolean { return server.ctx.config.localHost !== false; }

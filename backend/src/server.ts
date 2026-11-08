@@ -1,3 +1,6 @@
+import { RuntimeRegistry } from './hosts/runtimes';
+import { hosts, workers } from './db/schema';
+import { eq } from 'drizzle-orm';
 import { refreshLocalHost } from './modules/hosts/service';
 import { FirebasePushTransport } from './notifications/transport';
 import type { PushTransport } from './notifications/transport';
@@ -75,12 +78,12 @@ export async function createServer(
       clickup: overrides.clickup ?? httpClickUpClient,
       hub: new RealtimeHub(),
       blobs: overrides.blobs ?? createBlobStore(config),
-      runtime:
-        overrides.runtime ??
-        (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents, installationId)),
+      runtimes: new RuntimeRegistry(db),
       runners: new RunnerHub(() => ctx.log),
       runs: new RunRegistry(),
     } as AppContext;
+    const [local] = await db.select().from(hosts).where(eq(hosts.kind, 'local'));
+    if (config.localHost !== false) ctx.runtimes.attach(local!.id, overrides.runtime ?? (config.agents.runtime === 'fake' ? new FakeRuntime() : new DockerRuntime(config.agents, installationId)));
     ctx.uploads = new UploadRequests(ctx.runners, config.agents.backendUrl, config.agents.uploadTimeoutMs);
     ctx.skillRequests = new ProjectSkillRequests(ctx.runners);
     ctx.worktreeStatus = new WorktreeStatusRequests(ctx.runners);
@@ -131,10 +134,12 @@ export async function createServer(
           let stopFailure: unknown;
           const stopContainers = async (onlyRunning = false) => {
             if (!config.agents.stopOnShutdown) return;
-            const rows = await db.select({ workerId: workerContainers.workerId, slot: workerContainers.slot }).from(workerContainers);
-            const results = await Promise.allSettled(rows.map(async ({ workerId, slot }) => {
-              if (onlyRunning && !isUp((await ctx.runtime.inspect(workerId, slot)).state)) return;
-              await ctx.runtime.stopContainer(workerId, slot);
+            const rows = await db.select({ workerId: workerContainers.workerId, slot: workerContainers.slot, hostId: workers.hostId }).from(workerContainers).innerJoin(workers, eq(workers.id, workerContainers.workerId));
+            const results = await Promise.allSettled(rows.map(async ({ workerId, slot, hostId }) => {
+              if (!ctx.runtimes.has(hostId)) { app.log.info({ hostId, workerId }, 'skipping disconnected Host for backend shutdown'); return; }
+              const runtime = ctx.runtimes.get(hostId);
+              if (onlyRunning && !isUp((await runtime.inspect(workerId, slot)).state)) return;
+              await runtime.stopContainer(workerId, slot);
               app.log.info({ workerId, slot }, 'stopped Worker Container for backend shutdown');
             }));
             const errors: unknown[] = [];

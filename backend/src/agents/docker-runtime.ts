@@ -53,8 +53,9 @@ export class DockerRuntime implements WorkerRuntime {
     private readonly config: AgentsConfig,
     private readonly installationId: string,
     paths = defaultPaths(),
+    docker?: Docker,
   ) {
-    this.docker = new Docker({ socketPath: config.dockerSocket });
+    this.docker = docker ?? new Docker({ socketPath: config.dockerSocket });
     this.baseDockerfile = readFileSync(paths.baseDockerfile, 'utf8');
     this.baseScripts = Object.fromEntries(['install-services.sh', 'entrypoint.sh', 'minio-shim.sh'].map((name) => [
       `agent-base/${name}`, readFileSync(path.join(path.dirname(paths.baseDockerfile), name)),
@@ -98,6 +99,13 @@ export class DockerRuntime implements WorkerRuntime {
   async createContainer(workerId: string, slot: number, spec: ContainerSpec): Promise<void> {
     await this.removeContainer(workerId, slot);
     const labels = this.labels(workerId);
+    if (this.config.network && this.config.network !== 'bridge') {
+      try { await this.docker.getNetwork(this.config.network).inspect(); }
+      catch (err) {
+        if ((err as { statusCode?: number }).statusCode !== 404) throw err;
+        await this.docker.createNetwork({ Name: this.config.network, Labels: { [INSTALLATION_LABEL]: this.installationId } }).catch(ignore(409));
+      }
+    }
     await this.docker.createVolume({ Name: volumeName(workerId), Labels: labels }).catch(ignore(409));
     await this.docker.createVolume({ Name: serviceVolumeName(workerId, slot), Labels: { ...labels, 'claude-task.slot': String(slot) } }).catch(ignore(409));
     const container = await this.docker.createContainer({

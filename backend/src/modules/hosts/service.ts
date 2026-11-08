@@ -14,7 +14,7 @@ export async function refreshLocalHost(ctx: AppContext): Promise<void> {
   let error: string | null = null;
   try {
     if (ctx.config.localHost === false) throw new Error('Local Host disabled (LOCAL_HOST=false)');
-    await ctx.runtime.ping();
+    await ctx.runtimes.get(local.id).ping();
   } catch (err) { error = (err as Error).message.slice(0, 2000); }
   // Preserve the time of the transition, rather than resetting it on every ping.
   const connected = !error;
