@@ -38,6 +38,7 @@ const DOT: Record<string, string> = {
   paused: 'bg-amber-400',
   closed: 'border-[1.5px] border-muted-foreground/60',
   offline: 'border-[1.5px] border-muted-foreground/60',
+  host_offline: 'border-[1.5px] border-muted-foreground/60',
   disabled: 'border-[1.5px] border-red-400',
   building: 'bg-sky-400',
   build_failed: 'bg-red-500',

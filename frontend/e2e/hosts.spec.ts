@@ -44,3 +44,27 @@ test('shows Hosts to a Member without management actions', async ({ browser }) =
   await expect(page.getByRole('button', { name: 'Regenerate token', exact: true })).toHaveCount(0);
   await member.close(); await admin.close();
 });
+
+test('creates a Worker on a chosen Host, confirms a move, and shows Tasks blocking another move', async ({ page }) => {
+  const { HEADERS, createProject, createTask, seedAgent, startJob } = await import('./helpers');
+  await login(page.request);
+  const host = (await (await page.request.post('/api/v1/hosts', { headers: HEADERS, data: { name: `Destination ${Date.now()}` } })).json()).host;
+  await page.goto('/workers'); await page.getByRole('button', { name: 'New worker' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Worker name').fill(`Hosted ${Date.now()}`);
+  await dialog.getByRole('combobox', { name: 'Host', exact: true }).click(); await page.getByRole('option', { name: host.name, exact: true }).click();
+  await dialog.getByRole('button', { name: 'Create worker' }).click();
+  await expect(page.getByText('Host offline', { exact: true })).toBeVisible();
+  const workerId = page.url().split('/').pop()!;
+  await page.getByRole('tab', { name: 'Configuration', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Host', exact: true }).click(); await page.getByRole('option', { name: 'Local', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('empty volumes');
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Move worker', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Host', exact: true })).toContainText('Local');
+  const project = await createProject(page.request, 'Hosted project', workerId);
+  const agent = await seedAgent(page.request, 'Hosted agent'); const task = await createTask(page.request, project, 'Close before moving');
+  await startJob(page.request, agent.id, task.id, workerId);
+  await page.getByRole('combobox', { name: 'Host', exact: true }).click(); await page.getByRole('option', { name: host.name, exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Move worker', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: task.key })).toBeVisible();
+});

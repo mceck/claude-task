@@ -1,3 +1,4 @@
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { workerTopic } from '@claude-task/shared';
 import type { QueueEntry, Worker, WorkerBuild, WorkerContainer } from '@claude-task/shared';
 import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -98,10 +99,11 @@ function WorkerDetail({ worker }: { worker: Worker }) {
       <header className="flex flex-wrap items-center gap-4">
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-semibold tracking-tight">{worker.name}</h1>
-          <p className="text-sm text-muted-foreground">{worker.description}</p>
+          <p className="text-sm text-muted-foreground">{worker.description}</p><p className="text-sm text-muted-foreground">Host: {worker.host.name}</p>
         </div>
         <WorkerStateBadge state={worker.state} />
       </header>
+      {worker.host.state === 'disconnected' && worker.state !== 'host_offline' && <Alert><AlertDescription>Host {worker.host.name} is disconnected: containers cannot be started, stopped or rebuilt until it reconnects</AlertDescription></Alert>}
       <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-card p-4 text-sm">
         <span>
           Containers: <b>{worker.busy}</b> busy · <b>{worker.running}</b> running · cap {worker.cap} · minimum {worker.minimum}

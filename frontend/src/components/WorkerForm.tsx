@@ -1,3 +1,5 @@
+import { useHosts } from '../api/queries';
+import { HostSelect, defaultHostId } from './HostSelect';
 import {
   AGENT_SERVICES,
   AGENT_SERVICE_INFO,
@@ -17,7 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { errorMessage } from '../api/client';
 import { useAutosave } from '../lib/useAutosave';
 import { AutosaveStatus } from './AutosaveStatus';
-import { Field } from './common';
+import { Field, useConfirm } from './common';
 
 const DEFAULT_DOCKERFILE = 'FROM claude-task/agent-base\nUSER agent\n';
 
@@ -77,6 +79,9 @@ export function WorkerForm({
   onCreate?: (body: CreateWorkerBody) => Promise<void>;
   onUpdate?: (body: UpdateWorkerBody) => Promise<void>;
 }) {
+  const hosts = useHosts();
+  const confirm = useConfirm();
+  const [hostId, setHostId] = useState('');
   const [name, setName] = useState(worker?.name ?? '');
   const [description, setDescription] = useState(worker?.description ?? '');
   const [minimum, setMinimum] = useState(String(worker?.minimum ?? 0));
@@ -116,7 +121,7 @@ export function WorkerForm({
     setSaving(true);
     setError('');
     try {
-      await onCreate!({ name, description, minimum: Number(minimum), cap: Number(cap), enabled, ...docker() });
+      await onCreate!({ hostId: hostId || defaultHostId(hosts.data) || undefined, name, description, minimum: Number(minimum), cap: Number(cap), enabled, ...docker() });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -141,6 +146,17 @@ export function WorkerForm({
   return (
     <form onSubmit={submit} onBlur={editing ? () => void autosave.flush() : undefined} className="space-y-5">
       {editing && <AutosaveStatus {...autosave} label="Worker configuration save status" />}
+      <Field label="Host">
+        {readOnly && worker ? <p>{worker.host.name}</p> : <HostSelect hosts={hosts.data} value={worker?.host.id ?? (hostId || defaultHostId(hosts.data))} disabled={saving || hosts.isPending} onChange={(id) => {
+          if (!worker) { setHostId(id); return; }
+          void (async () => {
+            const host = hosts.data?.find((h) => h.id === id);
+            if (!await confirm({ title: `Move worker to ${host?.name}?`, description: `The worker will start over on ${host?.name} with empty volumes: Development Service data is lost, and the first Job of each Project rebuilds the image, clones the repository and reinstalls tools.`, confirmLabel: 'Move worker', destructive: true })) return;
+            setSaving(true); setError('');
+            try { await onUpdate!({ hostId: id }); } catch (err) { setError(errorMessage(err)); } finally { setSaving(false); }
+          })();
+        }} />}
+      </Field>
       <fieldset disabled={readOnly} className="space-y-5">
         <Field label="Name">
           <Input aria-label="Worker name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />

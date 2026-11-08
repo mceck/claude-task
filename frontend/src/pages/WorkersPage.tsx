@@ -94,6 +94,7 @@ function WorkerCard({ worker }: { worker: Worker }) {
         <span aria-label="Containers">
           {worker.busy} busy · {worker.running} running / cap {worker.cap}
         </span>
+        <span>Host: {worker.host.name}</span>
         <span>{worker.queueLength} queued</span>
         <span className="min-w-0 truncate">
           {worker.projects.length ? `Projects: ${worker.projects.map((p) => p.name).join(', ')}` : 'No projects'}
