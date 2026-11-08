@@ -1,3 +1,4 @@
+import { refreshLocalHost } from '../../src/modules/hosts/service';
 import { FakeGitProvider } from '../../src/git/fake-provider';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -183,4 +184,5 @@ export async function truncateAll(server: Server): Promise<void> {
   );
   await server.ctx.db.$client.query(`truncate ${rows.map((r) => `"${r.tablename}"`).join(', ')} cascade`);
   await server.ctx.db.insert(hosts).values({ kind: 'local', name: 'Local' });
+  await refreshLocalHost(server.ctx);
 }

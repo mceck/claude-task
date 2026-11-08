@@ -1,3 +1,4 @@
+import { hostState } from '../hosts/service';
 // Workers: configuration, Worker Containers and Builds (docs/specs/workers.md).
 import { WORKERS_TOPIC, workerTopic } from '@claude-task/shared';
 import type { AgentRef, Worker, WorkerBuild, WorkerContainer, WorkerContainerState, WorkerState } from '@claude-task/shared';
@@ -106,7 +107,7 @@ export async function loadWorkers(db: Executor, isReady: (containerId: string) =
     return {
       id: w.id,
       name: w.name,
-      host: { id: w.hostId, name: hostRows.find((h) => h.id === w.hostId)!.name, state: 'connected' as const },
+      host: { id: w.hostId, name: hostRows.find((h) => h.id === w.hostId)!.name, state: hostState(hostRows.find((h) => h.id === w.hostId)!) },
       description: w.description,
       dockerfile: w.dockerfile,
       claudeCodeVersion: w.claudeCodeVersion,

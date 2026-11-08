@@ -34,6 +34,7 @@ export interface Config {
   loginRateLimit: { max: number; windowMs: number };
   /** Encrypts Credentials and secret env values (`SECRETS_MASTER_KEY`). */
   secrets: SecretBox;
+  localHost?: boolean;
   agents: AgentsConfig;
   webUrl?: string;
   push?: { serviceAccountFile: string };
@@ -174,6 +175,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : null,
     gitlab: env.GITLAB_TOKEN?.trim() ? { baseUrl: env.GITLAB_URL?.trim() || 'https://gitlab.com', token: env.GITLAB_TOKEN.trim() } : null,
     gitlabAllowHttp: bool(env.GITLAB_ALLOW_HTTP, false),
+    localHost: env.LOCAL_HOST !== 'false',
     agents: {
       runtime: env.AGENT_RUNTIME === 'fake' ? 'fake' : 'docker',
       dockerSocket: env.DOCKER_SOCKET ?? '/var/run/docker.sock',

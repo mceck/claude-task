@@ -24,6 +24,13 @@ describe('configuration', () => {
   });
 });
 
+describe('Local Host configuration', () => {
+  it('enables the Local Host unless LOCAL_HOST=false', () => {
+    expect(loadConfig(base).localHost).toBe(true);
+    expect(loadConfig({ ...base, LOCAL_HOST: 'false' }).localHost).toBe(false);
+  });
+});
+
 describe('cleanup configuration', () => {
   it('runs the automatic Cleanup unless WORKER_CLEANUP is false', () => {
     expect(loadConfig(base).agents.cleanup).toBe(true);

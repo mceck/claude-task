@@ -1,3 +1,4 @@
+import { refreshLocalHost } from '../modules/hosts/service';
 // Background work around Workers: dispatching, image builds, the reconciler that starts and stops
 // Worker Containers between a Worker's minimum and cap, Agent Profile synchronization, and
 // publishing scheduling state to browsers. Everything it starts is tracked so tests can settle.
@@ -114,6 +115,7 @@ export class Scheduler {
   }
 
   private async tick(): Promise<void> {
+    await refreshLocalHost(this.ctx);
     await this.reconcileAll();
     await this.runSchedules();
     await recoverAbandonedJobs(this.ctx);

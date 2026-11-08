@@ -16,6 +16,7 @@ export const containerKey = (workerId: string, slot: number) => `${workerId}:${s
  * as soon as they're created. Used by the backend tests and with `AGENT_RUNTIME=fake`.
  */
 export class FakeRuntime implements WorkerRuntime {
+  async ping(): Promise<void> {}
   /** The latest profile synchronized per (Worker, Agent), keyed `workerId:agentId`. */
   readonly profiles = new Map<string, ProfileSpec & { slot: number }>();
   /** Every synchronization, in order. */

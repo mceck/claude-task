@@ -1,3 +1,4 @@
+import { hostRoutes } from './modules/hosts/routes';
 import { scheduleRoutes } from './modules/schedules/routes';
 import { wikiRoutes } from './modules/wikis/routes';
 import { notificationRoutes } from './notifications/routes';
@@ -129,6 +130,7 @@ export async function buildApp(
       gitRoutes(api, ctx);
       agentRoutes(api, ctx);
       workerRoutes(api, ctx);
+      hostRoutes(api, ctx);
       extensionRoutes(api, ctx);
       agentSettingsRoutes(api, ctx);
       realtimeRoutes(api, ctx);

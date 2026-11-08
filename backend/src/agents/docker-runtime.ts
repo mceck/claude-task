@@ -62,6 +62,8 @@ export class DockerRuntime implements WorkerRuntime {
     this.runner = { dir: paths.runnerDir, files: runnerFiles(paths.runnerDir) };
   }
 
+  async ping(): Promise<void> { await this.docker.ping(); }
+
   /** The Platform Version: the Claude Code version plus a fingerprint of the recipe and Runner sources. */
   baseVersionFor(claudeCodeVersion: string): string {
     let baseVersion = this.baseVersions.get(claudeCodeVersion);

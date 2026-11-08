@@ -1,3 +1,4 @@
+import { refreshLocalHost } from './modules/hosts/service';
 import { FirebasePushTransport } from './notifications/transport';
 import type { PushTransport } from './notifications/transport';
 import { PushDispatcher } from './notifications/dispatcher';
@@ -90,6 +91,7 @@ export async function createServer(
     ctx.clickupSync = new ClickUpSync(ctx);
     const app = await buildApp(ctx, { logger: overrides.logger });
     ctx.log = app.log;
+    await refreshLocalHost(ctx);
     await seedPlatformSkill(ctx);
     loginRevocations = ctx.loginRevocations = new LoginRevocations(config.databaseUrl, ctx.hub, app.log);
     await loginRevocations.start();

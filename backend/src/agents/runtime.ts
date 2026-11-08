@@ -60,6 +60,7 @@ export interface DockerCleanupReport {
 }
 
 export interface WorkerRuntime {
+  ping(): Promise<void>;
   /** The Base Image version for a Claude Code version: it also changes with the recipe and the Runner. */
   baseVersionFor(claudeCodeVersion: string): string;
   /** Builds `claude-task/agent-base:<baseVersion>` if it's missing. */
