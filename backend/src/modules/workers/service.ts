@@ -119,7 +119,7 @@ export async function loadWorkers(ctx: AppContext, isReady: (containerId: string
       cap: w.cap,
       enabled: w.enabled,
       imageState: w.imageState,
-      state: workerState(w, ready, busy),
+      state: workerState(w, ready, busy, hostState(hostRows.find((h) => h.id === w.hostId)!) === 'connected'),
       containers: slots,
       busy,
       running,
@@ -132,8 +132,9 @@ export async function loadWorkers(ctx: AppContext, isReady: (containerId: string
   });
 }
 
-function workerState(w: WorkerRow, ready: number, busy: number): WorkerState {
+function workerState(w: WorkerRow, ready: number, busy: number, hostConnected: boolean): WorkerState {
   if (!w.enabled) return 'disabled';
+  if (!hostConnected && ready === 0) return 'host_offline';
   if (w.imageState === 'building' || (w.imageState === 'none' && !w.imageTag)) return 'building';
   if (w.imageState === 'failed') return 'build_failed';
   if (ready === 0) return 'offline';

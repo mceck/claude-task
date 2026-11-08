@@ -374,9 +374,13 @@ export class Scheduler {
 
   private async runBuild(workerId: string): Promise<void> {
     const { db, hub } = this.ctx;
-    const runtime = await this.ctx.runtimes.forWorker(workerId);
     const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
     if (!worker) return;
+    if (!this.ctx.runtimes.has(worker.hostId)) {
+      await db.update(workers).set({ imageState: 'none' }).where(eq(workers.id, workerId));
+      return;
+    }
+    const runtime = this.ctx.runtimes.get(worker.hostId);
     const baseVersion = runtime.baseVersionFor(worker.claudeCodeVersion);
     const build = await db.transaction(async (tx) => {
       const [row] = await tx.insert(workerBuilds).values({ workerId, dockerfile: worker.dockerfile, baseVersion }).returning();
@@ -410,18 +414,23 @@ export class Scheduler {
 
     let imageTag: string | null = null;
     let error: string | null = null;
+    let interrupted = false;
     try {
+      const result = await this.ctx.runtimes.run(worker.hostId, async () => {
       await runtime.ensureBaseImage(worker.claudeCodeVersion, (chunk) => onLog(chunk));
-      const result = await runtime.buildWorkerImage(
+      return runtime.buildWorkerImage(
         { workerId, buildId: build.id, dockerfile: pinAgentBase(worker.dockerfile, baseVersion, worker.services) },
         onLog,
       );
+      });
       if (!isAgentUser(result.user)) {
         throw new Error(`The image must end with \`USER agent\`, but its user is ${result.user ? `\`${result.user}\`` : 'root'}.`);
       }
       imageTag = result.imageTag;
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      interrupted = !this.ctx.runtimes.has(worker.hostId) || (err instanceof Error && err.message === 'Host disconnected');
+      error = interrupted ? 'The Host disconnected during this build' : (err instanceof Error ? err.message : String(err));
+      if (interrupted) this.buildAgain.add(workerId);
       onLog(`\nBuild failed: ${error}\n`);
     }
     const [currentWorker] = await db.select().from(workers).where(eq(workers.id, workerId));
@@ -443,7 +452,7 @@ export class Scheduler {
       // A failed build keeps the previous image (and containers) in service.
       await tx
         .update(workers)
-        .set(imageTag ? { imageState: 'built', imageTag, imageBaseVersion: baseVersion } : { imageState: 'failed' })
+        .set(imageTag ? { imageState: 'built', imageTag, imageBaseVersion: baseVersion } : { imageState: interrupted ? 'none' : 'failed' })
         .where(and(eq(workers.id, workerId), eq(workers.hostId, worker.hostId)));
       return row;
     });
@@ -490,9 +499,9 @@ export class Scheduler {
   private async reconcileOnce(workerId: string): Promise<void> {
     if (this.stopping) return;
     const { db } = this.ctx;
-    const runtime = await this.ctx.runtimes.forWorker(workerId);
     const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
-    if (!worker) return;
+    if (!worker || !this.ctx.runtimes.has(worker.hostId)) return;
+    const runtime = this.ctx.runtimes.get(worker.hostId);
     const stale = worker.imageState === 'built' && worker.imageBaseVersion !== runtime.baseVersionFor(worker.claudeCodeVersion);
     if ((worker.imageState === 'none' || stale) && !this.building.has(workerId)) this.build(workerId);
 
@@ -701,7 +710,9 @@ export class Scheduler {
     this.track(
       (async () => {
         const { db } = this.ctx;
-        const runtime = await this.ctx.runtimes.forWorker(workerId);
+        const [worker] = await db.select().from(workers).where(eq(workers.id, workerId));
+        if (!worker || !this.ctx.runtimes.has(worker.hostId)) return;
+        const runtime = this.ctx.runtimes.get(worker.hostId);
         const pending = await db.transaction(async (tx) => {
           await getWorkerRow(tx, workerId, { lock: true });
           const [agent] = await tx.select().from(agents).where(eq(agents.id, agentId));

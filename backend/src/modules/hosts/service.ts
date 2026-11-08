@@ -14,15 +14,17 @@ export async function refreshLocalHost(ctx: AppContext): Promise<void> {
   let error: string | null = null;
   try {
     if (ctx.config.localHost === false) throw new Error('Local Host disabled (LOCAL_HOST=false)');
-    await ctx.runtimes.get(local.id).ping();
+    await ctx.runtimes.probe(local.id).ping();
   } catch (err) { error = (err as Error).message.slice(0, 2000); }
   // Preserve the time of the transition, rather than resetting it on every ping.
   const connected = !error;
+  ctx.runtimes.setConnected(local.id, connected);
   await ctx.db.update(hosts).set({
     error,
     ...(connected && hostState(local) !== 'connected' ? { connectedAt: new Date() } : {}),
     ...(!connected && (hostState(local) !== 'disconnected' || !local.disconnectedAt) ? { disconnectedAt: new Date() } : {}),
   }).where(eq(hosts.id, local.id));
+  if (hostState(local) !== (connected ? 'connected' : 'disconnected') && ctx.controllers) await ctx.controllers.publish(local.id);
 }
 
 export async function loadHosts(ctx: AppContext): Promise<Host[]> {

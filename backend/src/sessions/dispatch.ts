@@ -80,7 +80,7 @@ export async function freeContainers(ctx: AppContext, db: Executor, worker: Work
   const rows = await db
     .select()
     .from(workerContainers)
-    .where(and(eq(workerContainers.workerId, worker.id), eq(workerContainers.containerState, 'running'), eq(workerContainers.containerSpec, desired), eq(workerContainers.forceRecreate, false)))
+    .where(and(eq(workerContainers.workerId, worker.id), eq(workerContainers.containerState, 'running'), ctx.runtimes.has(worker.hostId) ? eq(workerContainers.containerSpec, desired) : undefined, eq(workerContainers.forceRecreate, false)))
     .orderBy(asc(workerContainers.slot));
   const busy = new Set(
     (await db.select({ containerId: jobs.containerId }).from(jobs).where(and(eq(jobs.workerId, worker.id), inArray(jobs.state, [...ACTIVE_JOB_STATES])))).map((r) => r.containerId),
@@ -124,7 +124,7 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
       container.containerState === 'running' &&
       !container.forceRecreate &&
       container.containerSpec !== null &&
-      container.containerSpec === desired &&
+      (!ctx.runtimes.has(worker.hostId) || container.containerSpec === desired) &&
       ctx.runners.isReady(container.id);
     if (!ready) return 'not_ready' as const;
     const [busy] = await tx

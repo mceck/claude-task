@@ -73,6 +73,54 @@ describe('Workers on Remote Hosts', () => {
     await runner.close(); controller.close();
   });
 
+  it('keeps dispatching through a connected Runner while Docker work waits for the Controller', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Intermittent' })).body;
+    const controller = await connectController(app, token); await waitForHost(app, host.id, 'connected');
+    const worker = (await admin.post('/workers', { name: 'Resilient', hostId: host.id, dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: 1 })).body.worker;
+    await app.settle();
+    const runner = await FakeRunner.connect(app, worker.id);
+    const { agent } = await createAgent(app, admin);
+    const { project } = await createProject(admin, { workerId: worker.id });
+    const prepared = await createTask(admin, project.id); await assignAndStart(admin, prepared.id, agent.id);
+    const first = await runner.next('job.start');
+    const { Stream } = await import('./helpers/stream'); const stream = new Stream(first.sessionId);
+    runner.accept(first.jobId); await runner.play(first.jobId, [stream.init(), stream.result()]); await runner.next('job.end'); await runner.exit(first.jobId); await app.settle();
+    const runtime = app.runtimeFor(host.id); const original = runtime.container(worker.id, 1)!.created;
+    controller.close(); await waitForHost(app, host.id, 'disconnected');
+    expect((await admin.get(`/workers/${worker.id}`)).body.worker).toMatchObject({ state: 'idle', host: { state: 'disconnected' } });
+    for (const action of ['rebuild', 'containers/1/restart', 'containers/1/force-recreate']) expect((await admin.post(`/workers/${worker.id}/${action}`)).body.error.message).toBe('Host disconnected');
+    expect((await admin.get(`/workers/${worker.id}/containers/1/logs`)).body.error.message).toBe('Host disconnected');
+    await admin.patch(`/workers/${worker.id}`, { dockerfile: DEFAULT_AGENT_DOCKERFILE + '\n# changed' });
+    await app.server.ctx.scheduler.reconcileAll(); await app.settle();
+    expect(runtime.container(worker.id, 1)!.created).toBe(original);
+    const task = await createTask(admin, project.id); await assignAndStart(admin, task.id, agent.id);
+    expect((await runner.next('job.start', (m) => m.jobId !== first.jobId)).git).toBeNull();
+    await runner.close(); await app.settle();
+    expect((await admin.get(`/workers/${worker.id}`)).body.worker.state).toBe('host_offline');
+    const reconnected = await connectController(app, token); await waitForHost(app, host.id, 'connected'); await app.settle();
+    expect(runtime.builds.at(-1)!.dockerfile).toContain('# changed');
+    reconnected.close();
+  });
+
+  it('fails a Build interrupted by a dropped Controller and rebuilds after reconnection', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Build connection' })).body;
+    const controller = await connectController(app, token); await waitForHost(app, host.id, 'connected');
+    const worker = (await admin.post('/workers', { name: 'Building', hostId: host.id, dockerfile: DEFAULT_AGENT_DOCKERFILE })).body.worker;
+    await app.settle();
+    const runtime = app.runtimeFor(host.id); let release!: () => void;
+    runtime.scriptBuild({ hold: new Promise<void>((resolve) => { release = resolve; }) });
+    await admin.post(`/workers/${worker.id}/rebuild`);
+    controller.close(); await waitForHost(app, host.id, 'disconnected'); await app.settle();
+    const builds = (await admin.get(`/workers/${worker.id}/builds`)).body.builds;
+    expect(builds[0]).toMatchObject({ status: 'failed', log: expect.stringContaining('The Host disconnected during this build') });
+    release();
+    const reconnected = await connectController(app, token); await waitForHost(app, host.id, 'connected'); await app.settle();
+    expect((await admin.get(`/workers/${worker.id}`)).body.worker.imageState).toBe('built');
+    reconnected.close();
+  });
+
 });
 
 describe('Host selection without a Local Host', () => {
