@@ -145,10 +145,13 @@ export class FakeRuntime implements WorkerRuntime {
 
   async cleanup(input: DockerCleanupInput): Promise<DockerCleanupReport> {
     await this.cleanupHold;
-    this.cleanups.push({ anyBuilding: input.anyBuilding, workers: await input.workers() });
+    const known = await input.workers();
+    this.cleanups.push({ anyBuilding: input.anyBuilding, workers: known });
+    let orphanContainers = 0;
+    for (const [key, c] of this.containers) if (!known.some((w) => w.id === c.workerId)) { this.containers.delete(key); orphanContainers++; }
     return (
       this.cleanupReport ?? {
-        removed: noDockerCleanupCounts(),
+        removed: { ...noDockerCleanupCounts(), orphanContainers },
         reclaimedBytes: 0,
         errors: [],
       }

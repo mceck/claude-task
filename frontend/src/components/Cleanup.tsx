@@ -148,6 +148,7 @@ function CleanupResult({ cleanup }: { cleanup: Cleanup }) {
       ) : (
         cleanup.finishedAt && <p className="text-muted-foreground">Nothing to remove so far.</p>
       )}
+      {cleanup.hostsPending > 0 && <p className="text-sm text-muted-foreground">{cleanup.hostsPending} {cleanup.hostsPending === 1 ? 'host is' : 'hosts are'} still to be cleaned when the Controller reconnects.</p>}
       {cleanup.volumesPending > 0 && (
         <p className="text-muted-foreground">
           {cleanup.volumesPending === 1 ? '1 worker volume is' : `${cleanup.volumesPending} worker volumes are`} still to be cleaned, as soon as a container of

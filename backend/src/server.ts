@@ -163,16 +163,12 @@ export async function createServer(
             stopFailure = err;
           });
           try {
-            const results = await Promise.allSettled([
-              app.close(),
-              (async () => {
-                await ctx.scheduler.settle();
-                await stopping;
-                // A create/restart can finish after the early stop. Stop it without
-                // waiting for HTTP keepalive connections to finish closing.
-                await stopContainers(true);
-              })(),
-            ]);
+            await stopping;
+            const results = await Promise.allSettled([(async () => {
+              await ctx.scheduler.settle();
+              await stopContainers(true);
+            })()]);
+            await app.close();
             // Runner close handlers can publish state while the first drain completes.
             await ctx.scheduler.settle();
             const failure = results.find((result) => result.status === 'rejected');

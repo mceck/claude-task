@@ -30,7 +30,7 @@ export async function createCleanup(db: Executor, trigger: CleanupTrigger, userI
 export async function addToCleanup(
   db: Executor,
   id: string,
-  add: { removed?: Partial<CleanupCounts>; reclaimedBytes?: number; errors?: string[]; volumesPending?: number; finished?: boolean },
+  add: { removed?: Partial<CleanupCounts>; reclaimedBytes?: number; errors?: string[]; volumesPending?: number; hostsPending?: number; finished?: boolean },
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [row] = await tx.select().from(cleanups).where(eq(cleanups.id, id)).for('update');
@@ -43,6 +43,7 @@ export async function addToCleanup(
         removed,
         reclaimedBytes: row.reclaimedBytes + Math.max(0, Math.round(add.reclaimedBytes ?? 0)),
         errors: [...row.errors, ...(add.errors ?? [])],
+        hostsPending: Math.max(0, row.hostsPending + (add.hostsPending ?? 0)),
         volumesPending: Math.max(0, row.volumesPending + (add.volumesPending ?? 0)),
         ...(add.finished ? { finishedAt: new Date() } : {}),
       })

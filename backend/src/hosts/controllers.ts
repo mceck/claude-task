@@ -89,6 +89,7 @@ export class HostControllers {
           connectedAt: new Date(), disconnectedAt: null, error: null,
         }).where(eq(hosts.id, host.id));
         conn.ready = true;
+        await this.ctx.scheduler.hostReconnected(host.id);
         await this.publish(host.id);
         for (const worker of await this.ctx.db.select().from(workers).where(eq(workers.hostId, host.id))) await this.ctx.scheduler.reconcile(worker.id);
       }).catch((err) => { this.ctx.log.warn({ err, hostId: host.id }, 'Host hello failed'); socket.close(1011, 'hello failed'); });

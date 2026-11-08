@@ -1,3 +1,4 @@
+import { connectController, waitForHost } from './helpers/controller';
 import { WORKERS_TOPIC } from '@claude-task/shared';
 import type { Cleanup, Worker } from '@claude-task/shared';
 import { and, eq } from 'drizzle-orm';
@@ -21,6 +22,22 @@ async function cleanUp(app: ReturnType<typeof useTestApp>, admin: ApiClient): Pr
 
 describe('Cleanup', () => {
   const app = useTestApp({ agents: { cleanup: true } });
+
+
+  it('records disconnected Hosts as pending, replaces old requests and adds results after reconnection', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Later' })).body;
+    const first = await cleanUp(app, admin);
+    expect(first.hostsPending).toBe(1);
+    const second = await cleanUp(app, admin);
+    expect(second.hostsPending).toBe(1);
+    expect((await admin.get('/cleanup')).body.cleanup.id).toBe(second.id);
+    const controller = await connectController(app, token); await waitForHost(app, host.id, 'connected');
+    await app.settle();
+    expect((await admin.get('/cleanup')).body.cleanup.hostsPending).toBe(0);
+    expect(app.runtimeFor(host.id).cleanups).toHaveLength(1);
+    controller.close();
+  });
 
   it('runs one at backend start', () => {
     expect(app.runtime.cleanups.length).toBeGreaterThan(0);

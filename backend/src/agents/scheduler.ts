@@ -6,7 +6,7 @@ import { agentTopic, pinAgentBase, projectTopic, taskTopic, workerTopic } from '
 import type { BackendToRunner, CleanupTrigger } from '@claude-task/shared';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { AppContext } from '../context';
-import { agentProfiles, agents, jobs, projects, queueEntries, sessions, tasks, workerBuilds, workerContainers, workers } from '../db/schema';
+import { agentProfiles, agents, hosts, jobs, projects, queueEntries, sessions, tasks, workerBuilds, workerContainers, workers } from '../db/schema';
 import { loadTimelinePositions } from '../db/activity';
 import { ACTIVE_JOB_STATES, loadJobs, publishAgent } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
@@ -51,6 +51,7 @@ export class Scheduler {
   private cleanupTimer: NodeJS.Timeout | null = null;
   /** The id of the running Cleanup, if any. */
   private cleaning: Promise<string> | null = null;
+  private readonly hostCleanups = new Map<string, Promise<void>>();
   private stopping = false;
 
   // Coalesced real-time publishing, flushed in order.
@@ -250,25 +251,23 @@ export class Scheduler {
 
   private async runCleanup(id: string, trigger: CleanupTrigger): Promise<void> {
     const { db } = this.ctx;
-    for (const [hostId, runtime] of this.ctx.runtimes.entries()) {
-      const report = await runtime
-        .cleanup({
-          anyBuilding: this.building.size > 0,
-          workers: async () => {
-            const rows = await db.select({ id: workers.id, imageTag: workers.imageTag, claudeCodeVersion: workers.claudeCodeVersion }).from(workers).where(eq(workers.hostId, hostId));
-            return rows.map((w) => ({ ...w, building: this.building.has(w.id) }));
-          },
-        })
-        .catch((err: unknown) => ({ removed: {}, reclaimedBytes: 0, errors: [`Docker: ${errorText(err)}`] }));
-      for (const error of report.errors) this.ctx.log.warn({ cleanupId: id }, `cleanup: ${error}`);
-      await addToCleanup(db, id, report);
-      await publishCleanup(this.ctx, id);
+    for (const host of await db.select().from(hosts)) {
+      if (host.kind === 'local' && this.ctx.config.localHost === false && !(await db.select().from(workers).where(eq(workers.hostId, host.id))).length) continue;
+      await db.transaction(async (tx) => {
+        const [current] = await tx.select().from(hosts).where(eq(hosts.id, host.id)).for('update');
+        if (!current || current.cleanupPending === id) return;
+        if (current.cleanupPending) await addToCleanup(tx, current.cleanupPending, { hostsPending: -1 });
+        await tx.update(hosts).set({ cleanupPending: id }).where(eq(hosts.id, host.id));
+        await addToCleanup(tx, id, { hostsPending: 1 });
+      });
+      if (this.ctx.runtimes.has(host.id)) await this.hostReconnected(host.id);
     }
 
     const errors: string[] = [];
     let slots = 0;
-    const all = await db.select({ id: workers.id, name: workers.name }).from(workers);
+    const all = await db.select({ id: workers.id, name: workers.name, hostId: workers.hostId }).from(workers);
     for (const worker of all) {
+      if (!this.ctx.runtimes.has(worker.hostId)) continue;
       slots += await this.onWorker(worker.id, () => this.removeSlotsAboveCap(worker.id, trigger === 'manual' ? 0 : SLOT_RETENTION_MS, errors)).catch((err: unknown) => {
         errors.push(`${worker.name}: ${errorText(err)}`);
         return 0;
@@ -280,6 +279,31 @@ export class Scheduler {
     for (const error of errors) this.ctx.log.warn({ cleanupId: id }, `cleanup: ${error}`);
     await addToCleanup(db, id, { removed: { slots }, errors, finished: true });
     await publishCleanup(this.ctx, id);
+  }
+
+  /** Completes the Docker part that waited for this Host, serialized across reconnects. */
+  hostReconnected(hostId: string): Promise<void> {
+    const previous = this.hostCleanups.get(hostId) ?? Promise.resolve();
+    const run = previous.catch(() => {}).then(async () => {
+      const { db } = this.ctx;
+      const [host] = await db.select().from(hosts).where(eq(hosts.id, hostId));
+      if (!host?.cleanupPending || !this.ctx.runtimes.has(hostId)) return;
+      const id = host.cleanupPending;
+      const known = async () => (await db.select().from(workers).where(eq(workers.hostId, hostId))).map((w) => ({ id: w.id, imageTag: w.imageTag, claudeCodeVersion: w.claudeCodeVersion, building: this.building.has(w.id) }));
+      const current = await known();
+      const report = await this.ctx.runtimes.get(hostId).cleanup({ anyBuilding: current.some((w) => w.building), workers: known })
+        .catch((err: unknown) => ({ removed: {}, reclaimedBytes: 0, errors: [`Docker: ${errorText(err)}`] }));
+      await db.transaction(async (tx) => {
+        const [latest] = await tx.select().from(hosts).where(eq(hosts.id, hostId)).for('update');
+        const done = latest?.cleanupPending === id && this.ctx.runtimes.has(hostId);
+        if (done) await tx.update(hosts).set({ cleanupPending: null }).where(eq(hosts.id, hostId));
+        await addToCleanup(tx, id, { ...report, hostsPending: done ? -1 : 0 });
+      });
+      await publishCleanup(this.ctx, id);
+    });
+    this.hostCleanups.set(hostId, run);
+    void run.finally(() => { if (this.hostCleanups.get(hostId) === run) this.hostCleanups.delete(hostId); }).catch(() => {});
+    return this.track(run);
   }
 
   /** Runs `fn` after the Worker's earlier reconciles and Cleanup steps: they never overlap. */
@@ -466,8 +490,8 @@ export class Scheduler {
     await this.publishWorkerNow(workerId);
     if (imageTag) await this.reconcile(workerId);
     // Base Images of versions no Worker uses any more, unless another Build may still need its parent.
-    if (imageTag && this.ctx.config.agents.cleanup && [...this.building].every((id) => id === workerId)) {
-      const versions = await this.claudeCodeVersions();
+    if (imageTag && this.ctx.config.agents.cleanup && (await db.select().from(workers).where(eq(workers.hostId, worker.hostId))).every((w) => w.id === workerId || !this.building.has(w.id))) {
+      const versions = await this.claudeCodeVersions(worker.hostId);
       await runtime.removeOldBaseImages(versions).catch((err) => this.ctx.log.warn({ err }, 'could not remove old base images'));
     }
   }
@@ -475,8 +499,8 @@ export class Scheduler {
   // Containers
 
   /** Every Claude Code version a Worker uses: their Base Images are kept. */
-  private async claudeCodeVersions(): Promise<string[]> {
-    const rows = await this.ctx.db.selectDistinct({ version: workers.claudeCodeVersion }).from(workers);
+  private async claudeCodeVersions(hostId: string): Promise<string[]> {
+    const rows = await this.ctx.db.selectDistinct({ version: workers.claudeCodeVersion }).from(workers).where(eq(workers.hostId, hostId));
     return rows.map((r) => r.version);
   }
 

@@ -141,3 +141,23 @@ describe('shutdown with a Docker failure', () => {
     expect(app.server.app.server.listening).toBe(false);
   });
 });
+
+describe('shutdown across Hosts', () => {
+  const app = useTestApp({ agents: { stopOnShutdown: true } });
+  it('stops Local and connected Remote containers and skips disconnected Hosts', async () => {
+    const { connectController, waitForHost } = await import('./helpers/controller');
+    const admin = await app.admin();
+    const connected = (await admin.post('/hosts', { name: 'Connected' })).body;
+    await connectController(app, connected.token); await waitForHost(app, connected.host.id, 'connected');
+    const online = await createWorker(app, admin, { hostId: connected.host.id, minimum: 1 });
+    const disconnected = (await admin.post('/hosts', { name: 'Disconnected' })).body;
+    const controller = await connectController(app, disconnected.token); await waitForHost(app, disconnected.host.id, 'connected');
+    const offline = await createWorker(app, admin, { hostId: disconnected.host.id, minimum: 1 });
+    const onlineRuntime = app.runtimeFor(connected.host.id), offlineRuntime = app.runtimeFor(disconnected.host.id);
+    controller.close(); await waitForHost(app, disconnected.host.id, 'disconnected');
+    await app.server.close();
+    expect(app.runtime.container(app.workerId, 1)!.state).toBe('exited');
+    expect(onlineRuntime.container(online.id, 1)!.state).toBe('exited');
+    expect(offlineRuntime.container(offline.id, 1)!.state).toBe('running');
+  });
+});
