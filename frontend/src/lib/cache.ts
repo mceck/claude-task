@@ -303,9 +303,15 @@ export function applyEvent(qc: QueryClient, event: RealtimeEvent): void {
       qc.setQueryData<Agent[]>(keys.agents, (list) => list?.filter((a) => a.id !== event.agentId));
       qc.removeQueries({ queryKey: keys.agent(event.agentId) });
       return;
+    case 'host.updated':
+    case 'host.deleted':
+      void qc.invalidateQueries({ queryKey: keys.hosts });
+      return;
     case 'worker.updated':
+      void qc.invalidateQueries({ queryKey: keys.hosts });
       return upsertWorker(qc, event.worker);
     case 'worker.deleted':
+      void qc.invalidateQueries({ queryKey: keys.hosts });
       qc.setQueryData<Worker[]>(keys.workers, (list) => list?.filter((w) => w.id !== event.workerId));
       qc.removeQueries({ queryKey: keys.worker(event.workerId) });
       return;

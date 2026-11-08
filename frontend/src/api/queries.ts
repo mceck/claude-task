@@ -1,4 +1,5 @@
 import type {
+  Host,
   Cleanup,
   Schedule,
   ScheduleRun,
@@ -36,6 +37,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { get } from './client';
 
 export const keys = {
+  hosts: ['hosts'] as const,
   schedules: ['schedules'] as const,
   schedule: (id: string) => ['schedules', id] as const,
   scheduleRuns: (id: string) => ['schedules', id, 'runs'] as const,
@@ -319,3 +321,5 @@ export function useWikiChats(id: string | undefined) {
     enabled: !!id,
   });
 }
+
+export function useHosts() { return useQuery({ queryKey: keys.hosts, queryFn: () => get<{ hosts: Host[] }>('/hosts').then((r) => r.hosts), staleTime: 30_000 }); }

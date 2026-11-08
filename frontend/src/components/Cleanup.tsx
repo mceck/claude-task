@@ -179,6 +179,7 @@ export function LastCleanup() {
       Last cleanup <Time iso={cleanup.startedAt} />
       {cleanup.trigger === 'automatic' ? ' (automatic)' : cleanup.requestedBy ? ` by ${cleanup.requestedBy.name}` : ''}
       {cleanup.finishedAt ? ` · about ${formatBytes(cleanup.reclaimedBytes)} freed` : ' · running…'}
+      {(cleanup.hostsPending > 0 || cleanup.volumesPending > 0) && <button type="button" className="ml-1 underline" onClick={() => setDetails(true)}>· {cleanup.hostsPending} hosts and {cleanup.volumesPending} worker volumes pending</button>}
       {cleanup.errors.length > 0 && (
         <>
           {' · '}

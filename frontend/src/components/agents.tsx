@@ -30,6 +30,7 @@ export function AgentAvatar({ agent, size = 'sm', state, className }: { agent: A
 
 // Hollow marks the waiting and inactive states (idle, offline, closed, disabled); every other state is filled.
 const DOT: Record<string, string> = {
+  connected: 'bg-emerald-400',
   running: 'bg-emerald-400',
   working: 'bg-emerald-400',
   pending: 'bg-sky-400',

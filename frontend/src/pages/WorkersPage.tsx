@@ -1,3 +1,5 @@
+import { HostsPanel } from '../components/Hosts';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { WORKERS_TOPIC } from '@claude-task/shared';
 import type { Worker } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
@@ -34,6 +36,7 @@ export function WorkersPage() {
           </>
         )}
       </PageHeader>
+      <Tabs defaultValue="workers"><TabsList className="mb-5"><TabsTrigger value="workers">Workers</TabsTrigger><TabsTrigger value="hosts">Hosts</TabsTrigger></TabsList><TabsContent value="hosts"><HostsPanel /></TabsContent><TabsContent value="workers">
       {admin && <LastCleanup />}
       {workers.isPending ? (
         <Loading />
@@ -50,6 +53,7 @@ export function WorkersPage() {
           ))}
         </div>
       )}
+      </TabsContent></Tabs>
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
