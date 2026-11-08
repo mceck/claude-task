@@ -1,3 +1,6 @@
+import { DockerTunnel } from './tunnel';
+import { DockerRuntime } from '../agents/docker-runtime';
+import type { WorkerRuntime } from '../agents/runtime';
 import { HOST_PROTOCOL_VERSION, WORKERS_TOPIC } from '@claude-task/shared';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -32,6 +35,7 @@ export class HostControllers {
   attach(host: HostRow, socket: WebSocket): void {
     this.disconnect(host.id, 4001, 'replaced');
     this.ctx.runtimes.detach(host.id);
+    const tunnel = this.ctx.config.agents.runtime === 'fake' ? null : new DockerTunnel(socket);
     const conn: Connection = { socket, chain: Promise.resolve(), ready: false };
     this.connections.set(host.id, conn);
     let alive = true;
@@ -65,13 +69,23 @@ export class HostControllers {
         // Recheck the hash: a token may have been rotated while this socket upgraded.
         const [current] = await this.ctx.db.select().from(hosts).where(and(eq(hosts.id, host.id), eq(hosts.tokenHash, host.tokenHash!)));
         if (!current) { socket.close(4007, 'token regenerated'); return; }
-        if (this.ctx.config.agents.runtime !== 'fake') throw new Error('Docker tunnel is not available');
-        let runtime = this.fakeRuntimes.get(host.id);
-        if (!runtime) { runtime = new FakeRuntime(); this.fakeRuntimes.set(host.id, runtime); }
+        let runtime: WorkerRuntime;
+        let info = { dockerVersion: 'fake', os: 'linux', architecture: 'amd64', cpus: 4, memoryBytes: 8 * 1024 ** 3 };
+        if (tunnel) {
+          const docker = tunnel.createClient();
+          const [version, system] = await Promise.all([docker.version(), docker.info()]);
+          info = { dockerVersion: version.Version, os: system.OSType, architecture: system.Architecture, cpus: system.NCPU, memoryBytes: system.MemTotal };
+          runtime = new DockerRuntime({ ...this.ctx.config.agents, network: current.network }, this.ctx.installationId, undefined, docker);
+        } else {
+          let fake = this.fakeRuntimes.get(host.id);
+          if (!fake) { fake = new FakeRuntime(); this.fakeRuntimes.set(host.id, fake); }
+          runtime = fake;
+        }
+        if (this.connections.get(host.id) !== conn || socket.readyState !== socket.OPEN) return;
         this.ctx.runtimes.attach(host.id, runtime);
         await this.ctx.db.update(hosts).set({
           reportedUrl: hello.backendUrl.replace(/\/+$/, ''), controllerVersion: hello.controllerVersion, protocolVersion: hello.protocolVersion,
-          dockerVersion: 'fake', os: 'linux', architecture: 'amd64', cpus: 4, memoryBytes: 8 * 1024 ** 3,
+          ...info,
           connectedAt: new Date(), disconnectedAt: null, error: null,
         }).where(eq(hosts.id, host.id));
         conn.ready = true;
@@ -86,6 +100,7 @@ export class HostControllers {
       if (this.connections.get(host.id) !== conn) return;
       this.connections.delete(host.id);
       this.ctx.runtimes.detach(host.id);
+      tunnel?.close();
       this.track(conn.chain.then(async () => {
         // A new Controller can arrive while the previous hello is finishing.
         if (this.connections.has(host.id)) return;
