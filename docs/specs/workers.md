@@ -144,7 +144,7 @@ An Admin adds a Remote Host with "Add host":
 | Allow insecure connections | yes or no | no |
 | Docker network | empty, or 1 to 128 characters from `[A-Za-z0-9_.-]` starting with a letter or digit | empty: Docker's default bridge |
 
-An invalid field is answered with `400`; an `http` backend URL without insecure connections allowed, and turning them off while the backend URL is `http`, are answered with "The backend URL must use https unless insecure connections are allowed". The same rules apply when an Admin edits the Host.
+An invalid field is answered with `400`; an `http` backend URL without insecure connections allowed, and turning them off while the backend URL is `http`, are answered with "The backend URL must use https unless insecure connections are allowed". The same rules apply when an Admin edits the Host. Turning insecure connections off while the Controller last connected over `http` is answered with `400` "The Host Controller connects over http: reconnect it over https before disallowing insecure connections", because the Controller's URL is checked only when it connects.
 
 Creating the Host returns its **Host Token** once, and the web app shows it in a "Connect the machine" view with the note "This token is shown only once" and three commands, each with a copy button:
 
@@ -179,13 +179,14 @@ sequenceDiagram
 
 - A Controller speaking another protocol version is refused with the error "The Host Controller speaks protocol ‹n›, this backend needs ‹m›: rebuild it from this version".
 - A Controller configured with an `http` URL on a Host that does not allow insecure connections is refused with the error "The Host Controller connects over http, but this Host does not allow insecure connections".
+- A connection whose first message is not a valid `hello`, or that sends none within 15 seconds, is closed with 4005 without recording an error.
 - An accepted Controller clears the error. The backend stores the reported URL and versions, reads Docker's version, OS, architecture, CPUs and memory through the tunnel, publishes the Host and its Workers, runs this Host's part of a pending Cleanup and reconciles each of its Workers.
 
 The backend pings each Controller every 30 seconds and drops a connection that misses a whole round. A dropped connection makes the Host `disconnected` and fails the Docker calls in flight on it.
 
 Each tunnel stream handles its own socket shutdown, so a completed Docker request leaves the Controller connection available for other requests. The Controller image reports a version derived from its sources.
 
-The Controller retries a lost connection with exponential backoff from 1 second up to 30 seconds, forever. After a `401` answer or the code 4004 ("host deleted") it stays running and logs the reason without reconnecting, so its container's restart policy does not repeat a refusal in a loop. A missing setting, or an `http` URL without `CLAUDE_TASK_ALLOW_INSECURE=true`, is logged the same way. Close codes: 4001 replaced, 4004 host deleted, 4005 incompatible controller, 4006 insecure, 4007 token regenerated.
+The Controller retries a lost connection with exponential backoff from 1 second up to 30 seconds, forever; the backoff starts again from 1 second once the backend has accepted a connection (its first tunnel frame). After a `401` answer or the code 4004 ("host deleted") it stays running and logs the reason without reconnecting, so its container's restart policy does not repeat a refusal in a loop. A missing setting, or an `http` URL without `CLAUDE_TASK_ALLOW_INSECURE=true`, is logged the same way. Close codes: 4001 replaced, 4004 host deleted, 4005 incompatible controller (also a missing or invalid `hello`), 4006 insecure, 4007 token regenerated.
 
 #### The tunnel
 
@@ -392,7 +393,7 @@ Recreating a Worker Container replaces it with a new one on the same Worker Volu
 
 On a graceful backend shutdown, every Worker Container of this Installation is stopped when `WORKER_STOP_ON_SHUTDOWN` is enabled, on the Local Host and on every connected Remote Host, before the Controller connections close. A Remote Host that is disconnected keeps its containers, and the backend logs it. The setting defaults to enabled during local development and disabled when `NODE_ENV=production`; an explicit true or false overrides that default. The supplied local Compose stack enables it and allows 30 seconds for shutdown. Closing a web or native client leaves the backend and its Worker Containers running.
 
-The backend stops scheduling new Jobs, Builds and reconciliations and starts stopping the Installation's containers while already started work drains. This lets containers stop within the Compose grace period even while a Build is running. After the scheduler drains, it stops any containers left running by a creation or restart that finished during shutdown. Container stops and scheduler drain run alongside HTTP shutdown, so an HTTP keepalive timeout leaves container stops free to finish. Stops run concurrently across Workers and slots. Docker gets 10 seconds per container to stop its processes before terminating them. Missing and already stopped containers count as stopped. An error stopping one container is logged, the remaining stops are attempted, and backend cleanup finishes with a failed shutdown result.
+The backend stops scheduling new Jobs, Builds and reconciliations and starts stopping the Installation's containers while already started work drains. This lets containers stop within the Compose grace period even while a Build is running. After the scheduler drains, it stops any containers left running by a creation or restart that finished during shutdown. The scheduler drain and the container stops finish before HTTP shutdown starts, because Builds and stops on Remote Hosts go through the Controller connections, which close with the HTTP server; an HTTP keepalive timeout therefore never delays a container stop. Stops run concurrently across Workers and slots. Docker gets 10 seconds per container to stop its processes before terminating them. Missing and already stopped containers count as stopped. An error stopping one container is logged, the remaining stops are attempted, and backend cleanup finishes with a failed shutdown result.
 
 Stopping preserves containers, images, Worker Volumes and Service Volumes. At the next backend start the reconciler starts the minimum slots of every enabled Worker and the slots its Queue needs; Jobs interrupted by the stop recover through the Runner reconnection and Session resume rules, which queue their resumption and so start a container. With the setting disabled, Worker Containers continue running through backend restarts and their Runners reconnect.
 

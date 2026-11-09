@@ -63,6 +63,8 @@ describe('Hosts', () => {
     { name: 'Box', backendUrlOverride: 'https://example.com#fragment' },
     { name: 'Box', backendUrlOverride: 'http://example.com' },
     { name: 'Box', backendUrlOverride: 'HTTP://example.com' },
+    { name: 'Box', backendUrlOverride: 'https:///example.com' },
+    { name: 'Box', backendUrlOverride: 'https:////user:pass@example.com', allowInsecure: true },
     { name: 'Box', backendUrlOverride: 'HTTP://user:pass@example.com', allowInsecure: true },
     { name: 'Box', network: '-oops' },
     { name: 'Box', network: 'a b' },
@@ -130,6 +132,18 @@ describe('Hosts', () => {
     const socket = await connectController(app, token, hello);
     expect(await new Promise((resolve) => socket.once('close', (value) => resolve(value)))).toBe(code);
     expect((await waitForHost(app, host.id, 'disconnected')).error).toContain(error);
+  });
+
+  it('refuses to disallow insecure connections while the Controller connects over http', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Plain', allowInsecure: true })).body;
+    const controller = await connectController(app, token, { backendUrl: 'http://backend.example' });
+    expect((await waitForHost(app, host.id, 'connected')).backendUrl).toBe('http://backend.example');
+    const refused = await admin.patch(`/hosts/${host.id}`, { allowInsecure: false, backendUrlOverride: 'https://backend.example' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error.message).toContain('connects over http');
+    expect((await admin.get(`/hosts/${host.id}`)).body.host).toMatchObject({ allowInsecure: true, state: 'connected' });
+    controller.close();
   });
 
   it('removes installation resources before closing a deleted Controller with 4004', async () => {

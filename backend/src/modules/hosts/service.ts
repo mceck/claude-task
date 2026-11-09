@@ -1,6 +1,8 @@
+import { LOCAL_HOST_DISABLED } from '@claude-task/shared';
 import type { Host, HostState } from '@claude-task/shared';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { AppContext } from '../../context';
+import type { Executor } from '../../db/client';
 import { hosts, projects, tasks, workerContainers, workers } from '../../db/schema';
 import { notFound } from '../../errors';
 
@@ -15,7 +17,7 @@ export async function refreshLocalHost(ctx: AppContext): Promise<void> {
   if (!local) return;
   let error: string | null = null;
   try {
-    if (ctx.config.localHost === false) throw new Error('Local Host disabled (LOCAL_HOST=false)');
+    if (ctx.config.localHost === false) throw new Error(LOCAL_HOST_DISABLED);
     await ctx.runtimes.probe(local.id).ping();
   } catch (err) {
     error = (err as Error).message.slice(0, 2000);
@@ -33,8 +35,8 @@ export async function refreshLocalHost(ctx: AppContext): Promise<void> {
     .where(eq(hosts.id, local.id));
   if (hostState(local) !== (connected ? 'connected' : 'disconnected') && ctx.controllers) {
     await ctx.controllers.publish(local.id);
-    if (connected) await ctx.scheduler.hostReconnected(local.id);
   }
+  if (connected && local.cleanupPending) await ctx.scheduler.hostReconnected(local.id);
 }
 
 export async function loadHosts(ctx: AppContext): Promise<Host[]> {
@@ -83,12 +85,12 @@ export async function loadHost(ctx: AppContext, id: string): Promise<Host> {
 export function hostConnection(ctx: AppContext, host: HostRow): { backendUrl: string | null; network: string | null } {
   return { backendUrl: backendUrlFor(ctx, host), network: host.kind === 'local' ? ctx.config.agents.network : host.network };
 }
-export async function workerConnection(ctx: AppContext, db: import('../../db/client').Executor, hostId: string) {
+export async function workerConnection(ctx: AppContext, db: Executor, hostId: string) {
   const [host] = await db.select().from(hosts).where(eq(hosts.id, hostId));
   if (!host) throw notFound('Host');
   return hostConnection(ctx, host);
 }
-export async function taskBackendUrl(ctx: AppContext, db: import('../../db/client').Executor, taskId: string): Promise<string> {
+export async function taskBackendUrl(ctx: AppContext, db: Executor, taskId: string): Promise<string> {
   const [row] = await db
     .select({ host: hosts })
     .from(tasks)
@@ -97,7 +99,20 @@ export async function taskBackendUrl(ctx: AppContext, db: import('../../db/clien
     .innerJoin(hosts, eq(hosts.id, workers.hostId))
     .where(eq(tasks.id, taskId));
   if (!row) throw notFound('Task');
-  const url = backendUrlFor(ctx, row.host);
+  return requiredBackendUrl(ctx, row.host);
+}
+export async function containerBackendUrl(ctx: AppContext, db: Executor, containerId: string): Promise<string> {
+  const [row] = await db
+    .select({ host: hosts })
+    .from(workerContainers)
+    .innerJoin(workers, eq(workers.id, workerContainers.workerId))
+    .innerJoin(hosts, eq(hosts.id, workers.hostId))
+    .where(eq(workerContainers.id, containerId));
+  if (!row) throw new Error('Worker Container no longer exists');
+  return requiredBackendUrl(ctx, row.host);
+}
+function requiredBackendUrl(ctx: AppContext, host: HostRow): string {
+  const url = backendUrlFor(ctx, host);
   if (!url) throw new Error('Host has no backend URL yet');
   return url;
 }

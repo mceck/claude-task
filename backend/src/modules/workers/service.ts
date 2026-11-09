@@ -1,4 +1,3 @@
-import { hostState, hostConnection } from '../hosts/service';
 // Workers: configuration, Worker Containers and Builds (docs/specs/workers.md).
 import { WORKERS_TOPIC, workerTopic } from '@claude-task/shared';
 import type { AgentRef, Worker, WorkerBuild, WorkerContainer, WorkerContainerState, WorkerState } from '@claude-task/shared';
@@ -8,6 +7,7 @@ import type { Executor } from '../../db/client';
 import { hosts, agentProfiles, agents, jobs, projects, queueEntries, tasks, workerBuilds, workerContainers, workers } from '../../db/schema';
 import { notFound } from '../../errors';
 import { ACTIVE_JOB_STATES, agentRefs, taskRefs } from '../agents/service';
+import { hostState, hostConnection } from '../hosts/service';
 
 export type WorkerRow = typeof workers.$inferSelect;
 export type WorkerContainerRow = typeof workerContainers.$inferSelect;
@@ -80,7 +80,8 @@ export async function loadWorkers(ctx: AppContext, isReady: (containerId: string
     .where(and(inArray(agentProfiles.workerId, workerIds), isNotNull(agentProfiles.error)));
 
   return rows.map((w) => {
-    const desired = desiredContainerSpec(w, hostConnection(ctx, hostRows.find((h) => h.id === w.hostId)!));
+    const host = hostRows.find((h) => h.id === w.hostId)!;
+    const desired = desiredContainerSpec(w, hostConnection(ctx, host));
     const mine = containers.filter((c) => c.workerId === w.id);
     const highest = Math.max(w.cap, ...mine.map((c) => c.slot));
     const slots: WorkerContainer[] = [];
@@ -108,7 +109,7 @@ export async function loadWorkers(ctx: AppContext, isReady: (containerId: string
     return {
       id: w.id,
       name: w.name,
-      host: { id: w.hostId, name: hostRows.find((h) => h.id === w.hostId)!.name, state: hostState(hostRows.find((h) => h.id === w.hostId)!) },
+      host: { id: host.id, name: host.name, state: hostState(host) },
       description: w.description,
       dockerfile: w.dockerfile,
       claudeCodeVersion: w.claudeCodeVersion,
@@ -119,7 +120,7 @@ export async function loadWorkers(ctx: AppContext, isReady: (containerId: string
       cap: w.cap,
       enabled: w.enabled,
       imageState: w.imageState,
-      state: workerState(w, ready, busy, hostState(hostRows.find((h) => h.id === w.hostId)!) === 'connected'),
+      state: workerState(w, ready, busy, hostState(host) === 'connected'),
       containers: slots,
       busy,
       running,

@@ -21,6 +21,8 @@ import (
 	"github.com/coder/websocket"
 )
 
+// The protocol mirrors HOST_PROTOCOL_VERSION and HOST_CONTROLLER_PATH in shared/src/hosts.ts, and the
+// frames (opcode byte, big-endian stream id, payload) mirror backend/src/hosts/tunnel.ts.
 const protocolVersion = 1
 const controllerPath = "/api/v1/host-controller"
 const (
@@ -56,9 +58,12 @@ func FromEnv(version string) (Config, error) {
 func Run(ctx context.Context, cfg Config) {
 	backoff := time.Second
 	for ctx.Err() == nil {
-		terminal, err := session(ctx, cfg)
+		connected, terminal, err := session(ctx, cfg)
 		if ctx.Err() != nil {
 			return
+		}
+		if connected {
+			backoff = time.Second
 		}
 		if terminal {
 			log.Printf("Host Controller stopped reconnecting: %v", err)
@@ -80,12 +85,13 @@ type stream struct {
 	readDone, writeDone bool
 }
 
-func session(parent context.Context, cfg Config) (bool, error) {
+// session runs one connection; connected reports whether the backend accepted it, which resets the backoff.
+func session(parent context.Context, cfg Config) (connected, terminal bool, err error) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	u, err := url.Parse(cfg.URL)
 	if err != nil {
-		return true, err
+		return false, true, err
 	}
 	if u.Scheme == "https" {
 		u.Scheme = "wss"
@@ -97,7 +103,7 @@ func session(parent context.Context, cfg Config) (bool, error) {
 	c, response, err := websocket.Dial(dialCtx, u.String(), &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + cfg.Token}}})
 	stopDial()
 	if err != nil {
-		return response != nil && response.StatusCode == 401, err
+		return false, response != nil && response.StatusCode == 401, err
 	}
 	defer func() {
 		if err := c.CloseNow(); err != nil {
@@ -107,10 +113,10 @@ func session(parent context.Context, cfg Config) (bool, error) {
 	c.SetReadLimit(4 << 20)
 	hello, err := json.Marshal(map[string]any{"type": "hello", "protocolVersion": protocolVersion, "controllerVersion": cfg.Version, "backendUrl": cfg.URL})
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if err := c.Write(ctx, websocket.MessageText, hello); err != nil {
-		return false, err
+		return false, false, err
 	}
 	var mu sync.Mutex
 	streams := make(map[uint32]*stream)
@@ -176,11 +182,13 @@ func session(parent context.Context, cfg Config) (bool, error) {
 	for {
 		kind, frame, err := c.Read(ctx)
 		if err != nil {
-			return websocket.CloseStatus(err) == 4004, err
+			return connected, websocket.CloseStatus(err) == 4004, err
 		}
 		if kind != websocket.MessageBinary || len(frame) < 5 {
-			return false, errors.New("invalid tunnel frame")
+			return connected, false, errors.New("invalid tunnel frame")
 		}
+		// The backend tunnels its first Docker call only once it has accepted the hello.
+		connected = true
 		op, id, payload := frame[0], binary.BigEndian.Uint32(frame[1:5]), frame[5:]
 		mu.Lock()
 		s := streams[id]
@@ -188,12 +196,12 @@ func session(parent context.Context, cfg Config) (bool, error) {
 		switch op {
 		case open:
 			if s != nil {
-				return false, fmt.Errorf("duplicate stream %d", id)
+				return connected, false, fmt.Errorf("duplicate stream %d", id)
 			}
 			local, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "unix", cfg.Socket)
 			if err != nil {
 				if err := send(closeStream, id, []byte(err.Error())); err != nil {
-					return false, err
+					return connected, false, err
 				}
 				continue
 			}
@@ -235,14 +243,14 @@ func session(parent context.Context, cfg Config) (bool, error) {
 			if _, err := s.conn.Write(payload); err != nil {
 				discard(id, s)
 				if err := send(closeStream, id, []byte(err.Error())); err != nil {
-					return false, err
+					return connected, false, err
 				}
 			}
 		case end:
 			if s != nil {
 				if err := s.conn.CloseWrite(); err != nil && !errors.Is(err, syscall.ENOTCONN) && !errors.Is(err, net.ErrClosed) {
 					if err := send(closeStream, id, []byte(err.Error())); err != nil {
-						return false, err
+						return connected, false, err
 					}
 				}
 				finish(id, s, false)
@@ -252,7 +260,7 @@ func session(parent context.Context, cfg Config) (bool, error) {
 				discard(id, s)
 			}
 		default:
-			return false, fmt.Errorf("unknown tunnel operation %d", op)
+			return connected, false, fmt.Errorf("unknown tunnel operation %d", op)
 		}
 	}
 }

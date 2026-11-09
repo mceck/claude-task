@@ -1,4 +1,3 @@
-import { refreshLocalHost, workerConnection } from '../modules/hosts/service';
 // Background work around Workers: dispatching, image builds, the reconciler that starts and stops
 // Worker Containers between a Worker's minimum and cap, Agent Profile synchronization, and
 // publishing scheduling state to browsers. Everything it starts is tracked so tests can settle.
@@ -24,6 +23,8 @@ import { dispatchNext, readyEntries, runnerWsUrl } from '../sessions/dispatch';
 import { repoPathOf } from '../sessions/lifecycle';
 import { loadQueue } from '../sessions/queue';
 import { loadTaskSession } from '../sessions/view';
+import { refreshLocalHost, workerConnection } from '../modules/hosts/service';
+import { HostDisconnectedError } from '../errors';
 
 const BUILD_LOG_CAP = 256 * 1024;
 /** The automatic Cleanup's interval. */
@@ -452,7 +453,7 @@ export class Scheduler {
       }
       imageTag = result.imageTag;
     } catch (err) {
-      interrupted = !this.ctx.runtimes.has(worker.hostId) || (err instanceof Error && err.message === 'Host disconnected');
+      interrupted = !this.ctx.runtimes.has(worker.hostId) || err instanceof HostDisconnectedError;
       error = interrupted ? 'The Host disconnected during this build' : (err instanceof Error ? err.message : String(err));
       if (interrupted) this.buildAgain.add(workerId);
       onLog(`\nBuild failed: ${error}\n`);
@@ -718,6 +719,8 @@ export class Scheduler {
       await runtime.removeWorker(worker.id).catch(() => {});
       return;
     }
+    const [liveContainer] = await this.ctx.db.select({ id: workerContainers.id }).from(workerContainers).where(eq(workerContainers.id, row.id));
+    if (!liveContainer) { await runtime.removeContainer(worker.id, row.slot).catch(() => {}); return; }
     await this.ctx.db.update(workerContainers).set({ containerSpec: desired, containerState: 'running' }).where(eq(workerContainers.id, row.id));
   }
 
@@ -779,6 +782,8 @@ export class Scheduler {
         const recorded = await db.transaction(async (tx) => {
           const [current] = await tx.select().from(workers).where(eq(workers.id, workerId)).for('update');
           if (!current || current.hostId !== worker.hostId) return false;
+          const [liveContainer] = await tx.select({ id: workerContainers.id }).from(workerContainers).where(eq(workerContainers.id, container.id));
+          if (!liveContainer) return false;
           await tx.insert(agentProfiles)
             .values({ workerId, agentId, appliedRevision: error ? -1 : pending.revision, error, updatedAt: new Date() })
             .onConflictDoUpdate({ target: [agentProfiles.workerId, agentProfiles.agentId], set: { ...values, updatedAt: new Date() } });

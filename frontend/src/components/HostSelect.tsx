@@ -1,7 +1,7 @@
-import type { Host } from '@claude-task/shared';
+import { LOCAL_HOST_DISABLED, type Host } from '@claude-task/shared';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-export const selectableHost = (host: Host) => host.kind !== 'local' || host.error !== 'Local Host disabled (LOCAL_HOST=false)';
+export const selectableHost = (host: Host) => host.kind !== 'local' || host.error !== LOCAL_HOST_DISABLED;
 export function defaultHostId(hosts: Host[] | undefined): string {
   const choices = hosts?.filter(selectableHost) ?? [];
   return choices.find((host) => host.kind === 'local')?.id ?? (choices.length === 1 ? choices[0]!.id : '');

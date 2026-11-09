@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_AGENT_DOCKERFILE } from '@claude-task/shared';
 import { useTestApp } from './helpers/app';
 import { connectController, waitForHost } from './helpers/controller';
-import { createAgent, createProject, createTask, assignAndStart } from './helpers/fixtures';
+import { createAgent, createProject, createTask, assignAndStart, comment, moveToStatus, statusByName } from './helpers/fixtures';
 import { FakeRunner } from './helpers/runner';
 
 describe('Workers on Remote Hosts', () => {
@@ -154,6 +154,73 @@ describe('Workers on Remote Hosts', () => {
     reconnected.close();
   });
 
+  it('refuses a move while a closed Task\'s Job still runs, and points to wiki chats', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Guarded' })).body;
+    const controller = await connectController(app, token);
+    await waitForHost(app, host.id, 'connected');
+    const { agent, runner } = await createAgent(app, admin);
+    const bundle = await createProject(admin);
+    const task = await createTask(admin, bundle.project.id);
+    await assignAndStart(admin, task.id, agent.id);
+    const start = await runner.next('job.start');
+    runner.accept(start.jobId);
+    await moveToStatus(admin, task.id, statusByName(bundle, 'Closed').id);
+    const busy = await admin.patch(`/workers/${app.workerId}`, { hostId: host.id });
+    expect(busy.status).toBe(409);
+    expect(busy.body.error.message).toBe(`An agent is still running a job of this worker: ${task.key}. Try again when it ends.`);
+    await runner.exit(start.jobId);
+    await app.settle();
+    const wiki = (
+      await admin.post('/wikis', { name: 'Docs', agentId: agent.id, workerId: app.workerId, repository: { connectionId: 'env-github', providerRepoId: '1' } })
+    ).body.wiki;
+    await comment(admin, wiki.taskId, 'Write the docs');
+    const chat = await runner.next('job.start', (m) => m.jobId !== start.jobId);
+    runner.accept(chat.jobId);
+    const { Stream } = await import('./helpers/stream');
+    await runner.play(chat.jobId, [new Stream(chat.sessionId).init()]);
+    const open = await admin.patch(`/workers/${app.workerId}`, { hostId: host.id });
+    expect(open.status).toBe(409);
+    expect(open.body.error.message).toContain('(delete the chats of a wiki)');
+    await runner.exit(chat.jobId);
+    await runner.close();
+    controller.close();
+  });
+
+  it('never recreates past the Runner reconnect timeout while disconnected, and applies a Recreate after reconnection', async () => {
+    const admin = await app.admin();
+    const { host, token } = (await admin.post('/hosts', { name: 'Recreating' })).body;
+    const controller = await connectController(app, token);
+    await waitForHost(app, host.id, 'connected');
+    const worker = (await admin.post('/workers', { name: 'Waiting', hostId: host.id, dockerfile: DEFAULT_AGENT_DOCKERFILE, minimum: 1 })).body.worker;
+    await app.settle();
+    const runtime = app.runtimeFor(host.id);
+    const runner = await FakeRunner.connect(app, worker.id);
+    await runner.close();
+    await app.settle();
+    const original = runtime.container(worker.id, 1)!.created;
+    controller.close();
+    await waitForHost(app, host.id, 'disconnected');
+    const { agents } = app.server.ctx.config;
+    const timeout = agents.runnerReconnectTimeoutMs;
+    agents.runnerReconnectTimeoutMs = 0;
+    try {
+      await app.server.ctx.scheduler.reconcileAll();
+      await app.settle();
+      expect(runtime.container(worker.id, 1)!.created).toBe(original);
+    } finally {
+      agents.runnerReconnectTimeoutMs = timeout;
+    }
+    expect((await admin.post(`/workers/${worker.id}/recreate`)).status).toBe(200);
+    await app.settle();
+    expect(runtime.container(worker.id, 1)!.created).toBe(original);
+    const reconnected = await connectController(app, token);
+    await waitForHost(app, host.id, 'connected');
+    await app.settle();
+    expect(runtime.container(worker.id, 1)!.created).toBeGreaterThan(original);
+    reconnected.close();
+  });
+
   it('fails a Build interrupted by a dropped Controller and rebuilds after reconnection', async () => {
     const admin = await app.admin();
     const { host, token } = (await admin.post('/hosts', { name: 'Build connection' })).body;
@@ -182,7 +249,7 @@ describe('Workers on Remote Hosts', () => {
     reconnected.close();
   });
 
-  it('repeats an Agent Profile synchronization on the new Host after an in-flight move', async () => {
+  it.each([false, true])('repeats an Agent Profile synchronization after an in-flight move (return home: %s)', async (returnHome) => {
     const admin = await app.admin();
     const { host, token } = (await admin.post('/hosts', { name: 'New profile storage' })).body;
     const controller = await connectController(app, token);
@@ -190,19 +257,32 @@ describe('Workers on Remote Hosts', () => {
     const { agent, runner } = await createAgent(app, admin);
     const { project } = await createProject(admin);
     const task = await createTask(admin, project.id);
+    const localId = (await admin.get(`/workers/${app.workerId}`)).body.worker.host.id;
     let release!: () => void;
+    const configure = app.runtime.configureProfile.bind(app.runtime);
+    let syncing = false;
+    app.runtime.configureProfile = async (...args) => {
+      syncing = true;
+      await configure(...args);
+    };
     app.runtime.profileHold = new Promise<void>((resolve) => {
       release = resolve;
     });
     await assignAndStart(admin, task.id, agent.id);
+    for (let i = 0; i < 100 && !syncing; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(syncing).toBe(true);
     expect((await admin.patch(`/workers/${app.workerId}`, { hostId: host.id })).status).toBe(200);
+    if (returnHome) expect((await admin.patch(`/workers/${app.workerId}`, { hostId: localId })).status).toBe(200);
     release();
     app.runtime.profileHold = null;
     await app.settle();
-    const remote = app.runtimeFor(host.id);
+    const remote = returnHome ? app.runtime : app.runtimeFor(host.id);
     const newRunner = await FakeRunner.connect(app, app.workerId);
     expect(await newRunner.next('job.start')).toMatchObject({ mode: 'new' });
-    expect(remote.profileSyncs.some((sync) => sync.workerId === app.workerId && sync.agentId === agent.id)).toBe(true);
+    expect(remote.profileSyncs.filter((sync) => sync.workerId === app.workerId && sync.agentId === agent.id)).toHaveLength(
+      returnHome ? 2 : 1,
+    );
+    app.runtime.configureProfile = configure;
     await newRunner.close();
     await runner.close();
     controller.close();

@@ -136,8 +136,8 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
 
   app.post('/workers/:id/rebuild', admin, async (request) => {
     const { id } = parse(params, request.params);
-    await getWorkerRow(ctx.db, id);
-    await ctx.runtimes.forWorker(id);
+    const worker = await getWorkerRow(ctx.db, id);
+    ctx.runtimes.assertConnected(worker.hostId);
     ctx.scheduler.build(id);
     return { worker: await loadWorker(ctx, ready, id) };
   });
@@ -175,7 +175,7 @@ export function workerRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/workers/:id/containers/:slot/force-recreate', admin, async (request) => {
     const { id, slot } = parse(slotParams, request.params);
     const worker = await getWorkerRow(ctx.db, id);
-    ctx.runtimes.get(worker.hostId);
+    ctx.runtimes.assertConnected(worker.hostId);
     if (!worker.imageTag) throw conflict('The worker has no image yet');
     const row = await getContainerRow(ctx.db, id, slot);
     if (!row) throw conflict('This worker container does not exist yet');

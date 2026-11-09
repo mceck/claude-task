@@ -1,4 +1,3 @@
-import { taskBackendUrl } from '../modules/hosts/service';
 // What an Agent receives: the Message content blocks (Comments, Task snapshots, notices)
 // and the system prompt its Session runs with.
 import { AGENT_SERVICE_INFO, API_PREFIX, RUNNER_ATTACHMENTS_PATH, commandName } from '@claude-task/shared';
@@ -8,6 +7,7 @@ import type { AppContext } from '../context';
 import type { Executor } from '../db/client';
 import { attachments, comments, tags, projects, statuses, taskTags, tasks } from '../db/schema';
 import { actorResolver } from '../modules/actors';
+import { taskBackendUrl } from '../modules/hosts/service';
 
 export type CommentRow = typeof comments.$inferSelect;
 

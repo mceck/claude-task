@@ -21,6 +21,13 @@ export const notFound = (what = 'Resource') => new HttpError(404, 'not_found', `
 export const conflict = (message: string, extra?: Record<string, unknown>) =>
   new HttpError(409, 'conflict', message, undefined, extra);
 
+/** A Docker call on a Host whose control path is gone: its Controller or local daemon. */
+export class HostDisconnectedError extends HttpError {
+  constructor() {
+    super(409, 'conflict', 'Host disconnected');
+  }
+}
+
 export function parse<T>(schema: ZodType<T>, data: unknown): T {
   const result = schema.safeParse(data);
   if (!result.success) {

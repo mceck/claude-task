@@ -2,13 +2,16 @@ import Docker from 'dockerode';
 import { Agent } from 'node:http';
 import { Duplex } from 'node:stream';
 import type { WebSocket } from 'ws';
+import { HostDisconnectedError } from '../errors';
 
+// Frames are an opcode byte, a big-endian stream id and a payload, mirrored by the Go Host Controller
+// (runner/internal/hostcontroller/controller.go).
 const OPEN = 1,
   DATA = 2,
   END = 3,
   CLOSE = 4;
 const MAX_BUFFERED = 4 * 1024 * 1024;
-const disconnected = () => new Error('Host disconnected');
+const disconnected = () => new HostDisconnectedError();
 
 class TunnelStream extends Duplex {
   remoteClosed = false;

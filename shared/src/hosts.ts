@@ -1,7 +1,10 @@
+import { z } from 'zod';
 import { API_PREFIX } from './api';
 
 export const HOST_PROTOCOL_VERSION = 1;
 export const HOST_CONTROLLER_PATH = `${API_PREFIX}/host-controller`;
+/** The error a Local Host carries while `LOCAL_HOST=false`: it cannot be chosen for a Worker. */
+export const LOCAL_HOST_DISABLED = 'Local Host disabled (LOCAL_HOST=false)';
 export type HostState = 'connected' | 'disconnected';
 export interface HostRef {
   id: string;
@@ -28,7 +31,6 @@ export interface Host extends HostRef {
   runningContainers: number;
 }
 
-import { z } from 'zod';
 const nullableText = (schema: z.ZodType<string>) => schema.nullable().transform((v) => v || null);
 const hostFields = {
   name: z.string().trim().min(1).max(100),
@@ -40,7 +42,12 @@ const hostFields = {
       .transform((value) => value.replace(/^https?:/i, (scheme) => scheme.toLowerCase()))
       .refine((value) => {
         if (!value) return true;
-        return z.url({ protocol: /^https?$/ }).safeParse(value).success && !/[?#]/.test(value) && !/^https?:\/\/[^/]*@/i.test(value);
+        return (
+          /^https?:\/\/[^/\\?#\s]+(?:\/[^\\?#]*)?$/.test(value) &&
+          z.url({ protocol: /^https?$/ }).safeParse(value).success &&
+          !/[?#]/.test(value) &&
+          !/^https?:\/\/[^/]*@/i.test(value)
+        );
       }, 'Use an absolute http or https URL without query or fragment')
       .transform((v) => v.replace(/\/+$/, '')),
   ),

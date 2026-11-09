@@ -192,3 +192,35 @@ func TestHostControllerFailedSocketDial(t *testing.T) {
 		t.Fatalf("failed dial: %q", data)
 	}
 }
+
+func TestHostControllerBackoffResetsAfterAcceptedConnection(t *testing.T) {
+	var accepted atomic.Int64
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		if _, _, err := c.Read(r.Context()); err != nil {
+			return
+		}
+		// A tunnel frame tells the Controller its hello was accepted; then the connection drops.
+		if err := c.Write(r.Context(), websocket.MessageBinary, []byte{4, 0, 0, 0, 1}); err != nil {
+			return
+		}
+		accepted.Add(1)
+		time.Sleep(50 * time.Millisecond)
+	}))
+	defer backend.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 4500*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, controllerBin)
+	cmd.Env = append(os.Environ(), "CLAUDE_TASK_URL="+backend.URL, "CLAUDE_TASK_HOST_TOKEN=token", "CLAUDE_TASK_ALLOW_INSECURE=true", "DOCKER_SOCKET="+filepath.Join(t.TempDir(), "docker.sock"))
+	if err := cmd.Run(); err == nil {
+		t.Fatal("Controller should remain running")
+	}
+	// 1 s between reconnections gives 5 connections; a growing backoff (1, 2, 4 s) gives 3.
+	if n := accepted.Load(); n < 4 {
+		t.Fatalf("accepted connections: %d", n)
+	}
+}

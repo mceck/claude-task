@@ -238,4 +238,21 @@ describe('Local Docker recovery', () => {
     await waitForHost(app, local.id, 'connected'); await app.settle();
     expect((await admin.get('/cleanup')).body.cleanup.hostsPending).toBe(0);
   });
+  it('resumes a pending Local Cleanup at startup even when the stored Host was connected', async () => {
+    const admin = await app.admin();
+    let release!: () => void;
+    app.runtime.cleanupHold = new Promise<void>((resolve) => { release = resolve; });
+    await admin.post('/cleanup', {});
+    for (let i = 0; i < 100; i++) {
+      if ((await admin.get('/cleanup')).body.cleanup?.hostsPending === 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const { createServer } = await import('../src/server');
+    const restarted = await createServer(app.server.ctx.config, { logger: false, startScheduler: false });
+    try {
+      const response = await restarted.app.inject({ method: 'GET', url: '/api/v1/cleanup', headers: { cookie: admin.cookie! } });
+      expect(response.json().cleanup.hostsPending).toBe(0);
+    } finally { release(); app.runtime.cleanupHold = null; await restarted.close(); await app.settle(); }
+  });
+
 });

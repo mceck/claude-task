@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { workers } from '../db/schema';
 import type { WorkerRuntime } from '../agents/runtime';
-import { conflict } from '../errors';
+import { conflict, HostDisconnectedError } from '../errors';
 
 /** A disconnected control path must never fall back to another machine's daemon. */
 export class RuntimeRegistry {
@@ -24,9 +24,13 @@ export class RuntimeRegistry {
   has(hostId: string): boolean {
     return this.runtimes.has(hostId) && !this.offline.has(hostId);
   }
+  /** Refuses an Admin action that needs Docker now with `409` "Host disconnected". */
+  assertConnected(hostId: string): void {
+    this.get(hostId);
+  }
   get(hostId: string): WorkerRuntime {
     const runtime = this.runtimes.get(hostId);
-    if (!runtime || this.offline.has(hostId)) throw conflict('Host disconnected');
+    if (!runtime || this.offline.has(hostId)) throw new HostDisconnectedError();
     return runtime;
   }
   entries(): [string, WorkerRuntime][] {
@@ -34,7 +38,7 @@ export class RuntimeRegistry {
   }
   probe(hostId: string): WorkerRuntime {
     const runtime = this.runtimes.get(hostId);
-    if (!runtime) throw conflict('Host disconnected');
+    if (!runtime) throw new HostDisconnectedError();
     return runtime;
   }
   setConnected(id: string, connected: boolean): void {
@@ -56,7 +60,7 @@ export class RuntimeRegistry {
     const signal = this.signals.get(hostId)!.signal;
     let abort!: () => void;
     const dropped = new Promise<never>((_resolve, reject) => {
-      abort = () => reject(conflict('Host disconnected'));
+      abort = () => reject(new HostDisconnectedError());
       signal.addEventListener('abort', abort, { once: true });
     });
     try {

@@ -1,4 +1,3 @@
-import type { Host } from './hosts';
 // Real-time events pushed to browsers over the WebSocket. Events are notifications
 // carrying the new projection; on reconnect clients refetch instead of replaying.
 import type { UserEvent } from './mobile';
@@ -6,6 +5,7 @@ import type { VoiceCommand, VoiceServerMessage, VoiceRoom } from './voice';
 import type { Agent, ContextUsage, Job, LiveDelta, QueueEntry, RunMessage, RunSummary, TaskSession } from './agents';
 import type { Worker, WorkerBuild } from './workers';
 import type { AgentItem, Comment, Tag, Project, Revision, ScheduledMessage, Status, Task, TaskCard } from './domain';
+import type { Host } from './hosts';
 
 export type Topic = `project:${string}` | `task:${string}` | 'agents' | 'wikis' | 'schedules' | 'projects' | 'workers' | `agent:${string}` | `worker:${string}` | `user:${string}`;
 

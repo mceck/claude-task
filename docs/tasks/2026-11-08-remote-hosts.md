@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Remote Hosts
@@ -308,25 +308,25 @@ Cases each behaviour needs:
 
 ## Acceptance Criteria
 
-- [ ] Existing Installations upgrade with every Worker on the Local Host and nothing else changing.
-- [ ] An Admin can add a Remote Host and sees its token and connect commands only once; Members see Hosts without changing them.
-- [ ] A Host Controller started with the commands connects with no inbound port on its machine, and the Host shows connected with its versions, OS, architecture, CPUs and memory.
-- [ ] Unknown and regenerated tokens are refused; regenerating disconnects the current Controller.
-- [ ] A Controller with another protocol version is refused with the rebuild message; an `http` Controller is refused unless the Host allows insecure connections.
-- [ ] A Worker on a Remote Host builds its image on that Host, scales between its minimum and cap, synchronizes Agent Profiles, runs Jobs, shows logs and is cleaned up as on the Local Host.
-- [ ] Worker Containers on a Remote Host use the Host's effective backend URL for the Runner, Git Proxy, MCP, attachments and uploads; changing it or the network recreates containers when free.
-- [ ] Workers are created on the chosen Host, with the default rule applied when none is chosen; duplicates keep the Host.
-- [ ] Moving a Worker is refused while a Project has a started open Session or the Worker has an active Job, with the Tasks listed; an accepted move starts over on the new Host and the old Host's resources are removed.
-- [ ] The web app warns about data loss before moving a Worker.
-- [ ] With a disconnected Host, Jobs keep running on connected Runners; Docker work waits and resumes on reconnection; Restart, Force recreate, Logs and Rebuild answer "Host disconnected".
-- [ ] Worker State shows `host_offline` when the Host is disconnected and no Runner is connected, and a banner otherwise.
-- [ ] A used Host cannot be deleted; deleting a connected Host removes the Installation's resources from the machine and stops its Controller from reconnecting; deleting a disconnected Host warns about leftovers.
-- [ ] Each Cleanup covers every Host, reports disconnected Hosts as pending and completes them on reconnection.
-- [ ] `WORKER_STOP_ON_SHUTDOWN` stops containers on connected Remote Hosts too.
-- [ ] `LOCAL_HOST=false` runs the backend without a Local Host.
-- [ ] `scripts/deploy.sh host` sets up a machine as a Remote Host.
-- [ ] The native app shows the Worker's Host and the `host_offline` state.
-- [ ] `pnpm typecheck`, `pnpm test`, the Go tests and `pnpm test:e2e` pass.
+- [x] Existing Installations upgrade with every Worker on the Local Host and nothing else changing.
+- [x] An Admin can add a Remote Host and sees its token and connect commands only once; Members see Hosts without changing them.
+- [x] A Host Controller started with the commands connects with no inbound port on its machine, and the Host shows connected with its versions, OS, architecture, CPUs and memory.
+- [x] Unknown and regenerated tokens are refused; regenerating disconnects the current Controller.
+- [x] A Controller with another protocol version is refused with the rebuild message; an `http` Controller is refused unless the Host allows insecure connections.
+- [x] A Worker on a Remote Host builds its image on that Host, scales between its minimum and cap, synchronizes Agent Profiles, runs Jobs, shows logs and is cleaned up as on the Local Host.
+- [x] Worker Containers on a Remote Host use the Host's effective backend URL for the Runner, Git Proxy, MCP, attachments and uploads; changing it or the network recreates containers when free.
+- [x] Workers are created on the chosen Host, with the default rule applied when none is chosen; duplicates keep the Host.
+- [x] Moving a Worker is refused while a Project has a started open Session or the Worker has an active Job, with the Tasks listed; an accepted move starts over on the new Host and the old Host's resources are removed.
+- [x] The web app warns about data loss before moving a Worker.
+- [x] With a disconnected Host, Jobs keep running on connected Runners; Docker work waits and resumes on reconnection; Restart, Force recreate, Logs and Rebuild answer "Host disconnected".
+- [x] Worker State shows `host_offline` when the Host is disconnected and no Runner is connected, and a banner otherwise.
+- [x] A used Host cannot be deleted; deleting a connected Host removes the Installation's resources from the machine and stops its Controller from reconnecting; deleting a disconnected Host warns about leftovers.
+- [x] Each Cleanup covers every Host, reports disconnected Hosts as pending and completes them on reconnection.
+- [x] `WORKER_STOP_ON_SHUTDOWN` stops containers on connected Remote Hosts too.
+- [x] `LOCAL_HOST=false` runs the backend without a Local Host.
+- [x] `scripts/deploy.sh host` sets up a machine as a Remote Host.
+- [x] The native app shows the Worker's Host and the `host_offline` state.
+- [ ] `pnpm typecheck`, `pnpm test`, the Go tests and `pnpm test:e2e` pass. (Typecheck, backend and Go tests pass; three e2e tests outside this task, in `board.spec.ts` and `skill-assignment.spec.ts`, already failed before it at `c46e7aa`.)
 
 ## Out of Scope
 

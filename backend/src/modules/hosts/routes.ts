@@ -13,10 +13,10 @@ const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 
 export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
   const admin = { config: { auth: 'admin' as const } };
-  const remote = async (id: string) => {
+  const remote = async (id: string, action: 'edited' | 'deleted' = 'edited') => {
     const [row] = await ctx.db.select().from(hosts).where(eq(hosts.id, id));
     if (!row) throw notFound('Host');
-    if (row.kind === 'local') throw conflict('The Local Host cannot be edited');
+    if (row.kind === 'local') throw conflict(`The Local Host cannot be ${action}`);
     return row;
   };
   const publish = async (id: string) => {
@@ -71,9 +71,7 @@ export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
   });
   app.delete('/hosts/:id', admin, async (request, reply) => {
     const { id } = parse(params, request.params);
-    const [row] = await ctx.db.select().from(hosts).where(eq(hosts.id, id));
-    if (!row) throw notFound('Host');
-    if (row.kind === 'local') throw conflict('The Local Host cannot be deleted');
+    await remote(id, 'deleted');
     const used = await ctx.db.select().from(workers).where(eq(workers.hostId, id));
     if (used.length) throw conflict(`These workers use the Host: ${used.map((w) => w.name).join(', ')}. Move them first.`);
     const cleanupId = await ctx.db.transaction(async (tx) => {
@@ -88,7 +86,11 @@ export function hostRoutes(app: FastifyInstance, ctx: AppContext): void {
     return reply.status(204).send();
   });
 }
-function validateTransport(host: { backendUrlOverride: string | null; allowInsecure: boolean }): void {
-  if (host.backendUrlOverride?.startsWith('http:') && !host.allowInsecure)
+function validateTransport(host: { backendUrlOverride: string | null; reportedUrl?: string | null; allowInsecure: boolean }): void {
+  if (host.allowInsecure) return;
+  if (host.backendUrlOverride?.startsWith('http:'))
     throw badRequest('The backend URL must use https unless insecure connections are allowed');
+  // The Controller's own connection is checked only at hello, so refuse to leave an http one in place.
+  if (host.reportedUrl?.startsWith('http:'))
+    throw badRequest('The Host Controller connects over http: reconnect it over https before disallowing insecure connections');
 }
