@@ -25,6 +25,7 @@ import { loadQueue } from '../sessions/queue';
 import { loadTaskSession } from '../sessions/view';
 import { refreshLocalHost, workerConnection } from '../modules/hosts/service';
 import { HostDisconnectedError } from '../errors';
+import { BuildLogCompactor } from './build-log';
 
 const BUILD_LOG_CAP = 256 * 1024;
 /** The automatic Cleanup's interval. */
@@ -430,12 +431,15 @@ export class Scheduler {
       flushing = flushing.then(() => db.update(workerBuilds).set({ log: snapshot }).where(eq(workerBuilds.id, build.id))).then(() => {});
       return flushing;
     };
-    const onLog = (chunk: string) => {
+    const compactor = new BuildLogCompactor();
+    const append = (chunk: string) => {
+      if (!chunk) return;
       log = (log + chunk).slice(-BUILD_LOG_CAP);
       version++;
       hub.publish(workerTopic(workerId), { type: 'build.log', workerId, buildId: build.id, chunk });
       timer ??= setTimeout(() => void flush().catch(() => {}), BUILD_LOG_FLUSH_MS);
     };
+    const onLog = (chunk: string) => append(compactor.push(chunk));
 
     let imageTag: string | null = null;
     let error: string | null = null;
@@ -465,6 +469,7 @@ export class Scheduler {
       await runtime.removeWorker(workerId).catch(() => {});
       this.buildAgain.add(workerId);
     }
+    append(compactor.end());
     if (timer) clearTimeout(timer);
     await flushing.catch(() => {});
 
