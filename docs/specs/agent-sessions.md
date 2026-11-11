@@ -6,11 +6,12 @@ Agent Sessions are how an **Agent** works a **Task**. Assigning an Agent opens t
 
 - An **Assignment** links one Agent to a Task. A Task has at most one Agent at a time. The first Assignment creates the Session in `pending` and starts nothing.
 - A **Session** belongs to one Task (to one Chat in a Wiki), and there is exactly one per Task, whichever Agent is assigned. It keeps the Claude session identity, the Worktree path, whether `claude` has already created the conversation (**started**), the last Task version the Agent has read, when its latest Job was dispatched, and the Worker Slot and Agent of its latest Job. Changing the Agent resumes the same conversation with the new Agent's configuration.
-- The **Claude session identity** is the id passed to `claude` with `--session-id` or `--resume`. It defaults to the Session's own id. Delete Chat on a Wiki replaces it with a fresh one (see [Claude session identity](#claude-session-identity)).
+- The **Claude session identity** is the id passed to `claude` with `--session-id` or `--resume`. It defaults to the Session's own id. Delete Chat on a Wiki and Clear on any Task replace it with a fresh one (see [Claude session identity](#claude-session-identity) and [Clear the conversation](#clear-the-conversation)).
 - A **Job** is one `claude` process for a Session on one Worker Container, from dispatch to exit, configured by the Task's Agent at dispatch. A Worker Container, a Session and a Worktree each have at most one Job at a time; an Agent can have Jobs on any number of Worker Containers at once. A Job contains one or more **Turns**; each Turn ends with a `result` event in the stream.
+- A **Btw** is a side question about the Session. A **Btw Thread** is the forked, tool-less Claude conversation that answers it and its replies; the Session itself is never changed by it (see [Btw](#btw)). A **Btw Job** is a Job that only runs a Btw.
 - A **Message** is what the Agent receives: one or more Comments merged into one stream-json user message, the opening Task snapshot of a new Session, or a platform notice (change list, resume notice or Agent Change Notice).
 - The **Agent Change Notice** opens the first Message a started Session receives after its Agent changed, telling the new Agent who it is now and which Agent worked before (see [Changing the Agent](#changing-the-agent)).
-- The **Queue** is the ordered list of pending work of one Worker, for the Tasks of every Project that runs on it, whatever their Agent. It holds at most one **Queue Entry** per Task. An entry has a kind (`start`, `messages` or `resume_interrupted`), a position, and the Comments waiting to be delivered with it. An entry can be **held**: it stays in the Queue but waits for a Retry or a new Comment.
+- The **Queue** is the ordered list of pending work of one Worker, for the Tasks of every Project that runs on it, whatever their Agent. It holds at most one **Queue Entry** per Task, plus at most one `btw` entry per Task. An entry has a kind (`start`, `messages`, `resume_interrupted` or `btw`), a position, and the Comments waiting to be delivered with it. An entry can be **held**: it stays in the Queue but waits for a Retry or a new Comment.
 - An **Agent Profile** is an Agent's Claude Code configuration directory inside a Worker Volume. Every Job runs with the Agent Profile of its Agent, and every Agent Profile of a Worker Volume shares the same Session transcripts (see [Workers](workers.md)).
 - A Comment's **Delivery** tells whether it reached the Agent: `queued`, `delivered` (with the Job), `handled` (the Agent has read it) or `not delivered` (with a reason).
 - **Agent output** lands on the Timeline as **Agent Comments** (the Agent's text, stored as Comments of kind agent), **System Comments** (errors and platform notices), and **Agent Items**: Thinking, Activity, Runs, Turn Summaries and short notices.
@@ -70,6 +71,8 @@ stateDiagram-v2
   idle --> running: Job dispatched
   running --> idle: Job ends (conversation exists)
   running --> pending: Job ends before claude created the conversation
+  idle --> pending: Clear takes effect
+  running --> pending: Job ends with a Clear pending
   pending --> paused: Agent removed
   idle --> paused: Agent removed
   running --> paused: Agent removed
@@ -85,7 +88,7 @@ stateDiagram-v2
 
 A Session is marked **started** as soon as the first stdout event of any of its Jobs is stored. From then on, every Job resumes it with `--resume`; before that, Jobs create it with `--session-id`.
 
-The Task view shows the Session as a chip: `queued #N` while the Task has a Queue Entry (N is its 1-based position in its Worker's Queue), `waiting for retry` while that entry is held, and otherwise `starting` (pending), `running`, `waiting for messages` (idle), `paused` or `closed`. The Board card shows the Agent's avatar with the Session state and the queue position, and, once a Turn has measured it, the Session's Context Usage.
+The Task view shows the Session as a chip (with "Clear pending" beside it while a Clear waits): `queued #N` while the Task has a Queue Entry (N is its 1-based position in its Worker's Queue), `waiting for retry` while that entry is held, and otherwise `starting` (pending), `running`, `waiting for messages` (idle), `paused` or `closed`. The Board card shows the Agent's avatar with the Session state and the queue position, and, once a Turn has measured it, the Session's Context Usage.
 
 Beside the Session chip, the Session shows its **Context Usage** once a model call has measured it, and keeps it current while the Turn runs: the conversation's tokens followed by the percentage of the model's window, such as `120.2K (53%)`. Counts below a thousand are shown whole, thousands with one decimal and a `K`, and a million or more with one decimal and an `M`, so `1.2M` replaces `1,200,000`; the decimal is rounded before it is shown, so 119,960 reads `120K`, not `120.0K`. The percentage is rounded to a whole number and capped at 100%; when the CLI reports no window the count is shown alone. Before the Session's first Turn, or when the stream says nothing about the context, no chip appears. The Task details, in the web panel and in the native sheet, repeat the same chip as a read-only property.
 
@@ -237,12 +240,12 @@ The dispatcher goes through the ready entries in Queue order. For each one:
 
 **The Message of a Job:**
 
-- **New Session** (`claude` has not created it, whatever the entry kind): "You have been assigned task KEY in project "Name"", the Task snapshot (key, title, Status with its Category, priority, tags, description and its linked files), the Task Branch when there is one, then "Conversation so far (oldest first):" followed by every non-internal, non-deleted User and Agent Comment, or "There are no comments yet."
+- **New Session** (`claude` has not created it, whatever the entry kind): "You have been assigned task KEY in project "Name"", the Task snapshot (key, title, Status with its Category, priority, tags, description and its linked files), the Task Branch when there is one, then "Conversation so far (oldest first):" followed by every non-internal, non-deleted User and Agent Comment after the latest Chat Cleared line (Btw Comments excluded), or "There are no comments yet."
 - **Existing Session**: the merged Comments of the entry. A `resume_interrupted` entry with no Comments sends "The previous run was interrupted by a restart; continue where you left off." When the Task's Agent differs from the Agent of the Session's latest Job, the Message opens with the Agent Change Notice (see [Changing the Agent](#changing-the-agent)).
 
 **The Job's environment and options** all come from the Task's Agent at dispatch, so a Job keeps its configuration until it ends, even when the Agent changes meanwhile. The environment is the Project's environment variables (secrets decrypted), then the Agent's environment (which wins over the Project's), then the Credential's variable (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`), and `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` for a resumed interrupted Turn. They travel in the Job's start message and never as container environment. The start also carries the Agent's model, effort and permission mode, the path of the Agent's Agent Profile, the composed system prompt, the MCP configuration (the Agent's catalog MCP servers plus the reserved `claude-task` server with the Job token as a bearer header), the Project's Setup Script, the Worktree path, the git settings, and the attachments to fetch. Every backend address in it (the Task Tools server, the Git Proxy clone URL, the attachment downloads, and later the upload URLs of Task Tool file requests) is built on the backend URL of the Host the Worker runs on, so a Worker Container on a Remote Host reaches the backend at the address that works from its machine (see [Workers](workers.md#backend-url-per-host)).
 
-**Native commands.** A User Comment whose body starts with `/name` runs as a native Claude Code command, as its own Job, in order with the other queued Comments. Commands that would replace the managed conversation or override the Agent's configuration (`clear`, `reset`, `new`, `resume`, `continue`, `branch`, `fork`, `exit`, `quit`, `background`, `bg`, `remote-control`, `rc`, `model`, `effort`, `config`, `settings`, `permissions`, `allowed-tools`, `fast`) are delivered as ordinary text. A command always waits in the Queue, so it starts at a Job boundary. When an entry holds a command, the Comments before it form one Job, the command alone forms the next, and the Comments after it follow. A command alone is written verbatim, without the header line. As the first Message of a new Session, the Task context comes in earlier blocks and the command is the last block, so `claude` runs it natively with the context available. Output a command prints locally is shown once as a System Comment.
+**Native commands.** A User Comment whose body starts with `/name` runs as a native Claude Code command, as its own Job, in order with the other queued Comments. `/btw` and `/clear` are handled by the platform before this step and never reach `claude` (see [Btw](#btw) and [Clear the conversation](#clear-the-conversation)). Commands that would replace the managed conversation or override the Agent's configuration (`reset`, `new`, `resume`, `continue`, `branch`, `fork`, `exit`, `quit`, `background`, `bg`, `remote-control`, `rc`, `model`, `effort`, `config`, `settings`, `permissions`, `allowed-tools`, `fast`) are delivered as ordinary text. A command always waits in the Queue, so it starts at a Job boundary. When an entry holds a command, the Comments before it form one Job, the command alone forms the next, and the Comments after it follow. A command alone is written verbatim, without the header line. As the first Message of a new Session, the Task context comes in earlier blocks and the command is the last block, so `claude` runs it natively with the context available. Output a command prints locally is shown once as a System Comment.
 
 The commands offered in the composers come from the `slash_commands` list reported at the start of the Session's latest Job (curated built-ins, plugin commands and MCP prompts; a plugin command, named `plugin:name`, is classed as a Skill so it is suggested anywhere in a comment and listed in the Task's Skills dialog), plus the Agent's user-invocable Skills, plus the user-invocable Project Skills the Runner reported for the Session's latest Job that reported any (see [Runner](runner.md)). Before any Job has reported, the list is `compact`, `context` and `usage` plus the Agent's Skills.
 
@@ -485,6 +488,54 @@ The Task view then shows a banner with **Notify agent**. Pressing it:
 
 Notify agent answers `409` when no Agent is assigned, when the Session is not `idle` or `running` ("nothing to be notified about yet"), and when there are no unseen changes.
 
+### Btw
+
+A Btw is answered by a fork of the Session's conversation, because Claude Code does not run `/btw` in headless mode. The fork is `claude -p "<question>" --resume <Claude session identity> --fork-session --output-format stream-json --verbose` in the Session's Worktree, with the model of the Job's Agent (the Task's Agent when no Job runs), every tool disabled and no MCP servers, so it can read the conversation and write only its answer. The system prompt addition tells it this is a side question to answer from the conversation so far, with no tools, while the main work continues. It runs with the Job's environment and Agent Profile, so it reads the same transcripts. Its answer is the last assistant text of its `result`.
+
+The fork gets its own Claude session identity, reported in its first stream line, and the Session's transcript stays as it was: a fork's transcript is a separate file. A reply to a Btw Thread runs `--resume <fork identity>` without `--fork-session`, so the thread keeps its earlier exchanges.
+
+A Btw Thread records the Session's Claude session identity it was forked from. A reply is accepted only while that is still the Session's current identity, so a Clear ends every thread.
+
+When a Btw Comment is posted, the backend decides how it runs, in the same transaction as the Comment:
+
+| Situation | Handling |
+| --- | --- |
+| The Session is `running`, its Job is `running` and not cancel-requested, and its Runner is connected | The fork runs in the Runner of that Job as a child of the Job (`job.btw`, see [Runner](runner.md#btw-forks)). The Job, its Queue position and the Session's state stay as they are. |
+| The Session is `idle`, or its Job is dispatched, finishing or cancel-requested, or its Runner is disconnected | A `btw` Queue Entry is added at the front of the Worker's Queue. It is ready like any entry (the Worktree must be free), and dispatches a **Btw Job** that prepares nothing, runs the fork and exits. The Session's state does not change. |
+| The Session is `pending`, `closed`, has no Agent, or a Btw of it is already working | `409` (see [Conversation](conversation.md#btw)). |
+
+The Session view carries a `btwWorking` flag (a thread of the Session has a fork in progress) and a `clearPending` flag, republished when they change.
+
+A Btw Job counts toward the one Job at a time of its Worker Container, Session and Worktree. The one-at-a-time rule is untouched: a fork run by the Runner of a running Job is part of that Job and is not a Job.
+
+The question Comment holds the thread and shows its state: working, answered or failed. When the fork ends:
+
+- with an answer: the answer is posted as an Agent Comment of the thread, from the fork's stream, and the thread goes back to idle for replies;
+- with an error, a non-zero exit, a Runner disconnect or 5 minutes without a result: a System Comment in the Btw style says why, the thread can still be replied to when the fork had reported its identity, and the Session is untouched.
+
+Fork stream lines are stored as Session Events tagged with the thread and are not projected onto the Timeline as a Turn: no Turn Summary, Activity, Thinking, Delivery change, Notification Event or `result` handling of the Job comes from them. The fork's cost and usage are kept on the Btw Thread. Stop and Cancel of the Job also end a fork the Job is running, and Recovery after a restart marks a fork whose Job was lost as failed.
+
+### Clear the conversation
+
+`/clear` replaces the Task's Claude conversation by a new one while keeping the Session, the Worktree, the Task Branch and every Comment. It rotates the Claude session identity as Delete Chat does (see [Claude session identity](#claude-session-identity)), without cancelling a Job or removing the Queue Entry's Comments.
+
+The Clear is **requested** when `/clear` is posted on a Task whose Session is `idle` or `running`; any other state answers `409` (see [Conversation](conversation.md#clear)). It is **effective** when no Job of the Session is active: at once for an `idle` Session, otherwise when the active Job ends, right before the dispatcher looks at the Queue. A Btw Job does not hold a Clear back. Requesting twice is one request. A pending request is stored on the Session, so a restart keeps it.
+
+While a Clear is pending:
+
+- the Turn in progress finishes, and the backend ends the Job after its `result` as usual instead of waiting for more Messages;
+- Comments posted meanwhile wait in the Task's Queue Entry (they are not written to the running process) and run in the new conversation;
+- a Btw is still accepted and forks the old conversation.
+
+When the Clear is effective, in one transaction:
+
+1. the Session gets a new random Claude session identity, is marked not started, its last-read Task version and last dispatch time are reset, and it goes to `pending`;
+2. the Task's Queue Entry, if any, becomes a `start` entry, so its Comments open the new conversation; with no entry the next Comment is the trigger;
+3. the Chat Cleared line is posted as a System Comment ("*Name* cleared the chat"), marked as a clear marker, with the position it has in the Timeline at that moment;
+4. the Session is republished, and the Btw Threads of the Task can no longer be continued.
+
+The first Message of the new conversation holds the Task snapshot and "Conversation so far" with the non-internal, non-deleted User and Agent Comments **after the latest Chat Cleared line** only; Btw Comments and Internal Notes stay out as always. Closing the Task drops a pending request. The Agent's Session recovery after a restart applies a pending request whose Job ended.
+
 ### Claude session identity
 
 A Session's Claude session identity defaults to the Session's own id. **Delete Chat** on a Wiki (a Chat is a Task of the Wiki Project, see [Wikis](wikis.md)) rotates it while keeping the Session, the Worktree and the Task Branch. On the Chat's Session, it:
@@ -494,7 +545,7 @@ A Session's Claude session identity defaults to the Session's own id. **Delete C
 - removes the Queue Entry of the conversation;
 - cancels any active Job and flags it to **discard its output**. That Job keeps its Worker Container and the Wiki's Worktree busy until the Runner reports its exit or failure; until then every message from it is acknowledged and ignored, a Runner that reconnects with it is told to cancel it again, recovery requeues nothing for it, and Comments posted meanwhile are queued instead of written to it.
 
-The next Comment in that Chat then starts a new conversation in the same Worktree. What Delete Chat clears and how clients learn about it are described in [Wikis](wikis.md).
+The next Comment in that Chat then starts a new conversation in the same Worktree. Clear uses the same rotation on any Task and keeps its Comments. What Delete Chat clears and how clients learn about it are described in [Wikis](wikis.md).
 
 ### Observability of the Queue
 
@@ -551,13 +602,14 @@ Workers, their Worker Containers, Worker Images, Agent Profiles and their synchr
 
 ## Data model
 
-- **Session**: Task (unique), state, Worktree path, Claude session identity (optional), started flag, last-read Task version, last dispatch time, the Worker Slot and the Agent of its latest Job (the Agent cleared when it is deleted), Project Skills read on request, Worktree removal pending flag, created and closed times. Deleted with its Task.
+- **Session**: Task (unique), state, pending Clear request (who and when, or none), Worktree path, Claude session identity (optional), started flag, last-read Task version, last dispatch time, the Worker Slot and the Agent of its latest Job (the Agent cleared when it is deleted), Project Skills read on request, Worktree removal pending flag, created and closed times. Deleted with its Task.
 - **Queue Entry**: Worker, Task (unique), Session, kind, position, held flag, queued time.
-- **Job**: Session, Task, Worker, Worker Slot, Agent (cleared when the Agent is deleted) and the Agent's name copied at dispatch, kind (the entry kind it came from), state (`dispatched`, `running`, `finishing`, `finished`, `failed`, `interrupted`), Job token hash, last processed sequence number, projection state, `claude` version, MCP servers and commands reported at start, Project Skills reported before start, Setup Script output and stderr (last 64 KB each), exit code, signal, failure stage (`worktree`, `setup`, `spawn`), error, cancel-requested and discard-output flags, created, started and finished times.
+- **Job**: Session, Task, Worker, Worker Slot, Agent (cleared when the Agent is deleted) and the Agent's name copied at dispatch, kind (the entry kind it came from, `btw` for a Btw Job), state (`dispatched`, `running`, `finishing`, `finished`, `failed`, `interrupted`), Job token hash, last processed sequence number, projection state, `claude` version, MCP servers and commands reported at start, Project Skills reported before start, Setup Script output and stderr (last 64 KB each), exit code, signal, failure stage (`worktree`, `setup`, `spawn`), error, cancel-requested and discard-output flags, created, started and finished times.
 - **Turn**: Job, Task, Agent (cleared when the Agent is deleted), index in the Job, start and end, `result` subtype, error flag, stop reason, duration, tool call count, cost, usage, context tokens and context window.
 - **Session Event**: Job, sequence number (unique together), received time, raw payload. Kept for audit and re-projection.
 - **Agent Item**: Task, Session, Job, Agent (cleared when the Agent is deleted), kind (`thinking`, `activity`, `run`, `turn_summary`, `notice`), payload, created and updated times. A `run` item carries the Run's summary; its transcript lives only in the Run Registry.
 - **Comment** (fields of this area): kind (`user`, `agent`, `system`), Delivery state (`none`, `queued`, `delivered`, `handled`, `not_delivered`), delivery reason, when the state last changed, the Job that delivered it and the `uuid` of the Message that carried it, the Queue Entry it waits in, the producing Job for Agent and projected System Comments, and for Notify agent notices the change list and the Task version it covers.
+- **Btw Thread**: Task, Session, the Claude session identity it forked from, its own Claude session identity (once reported), state (`idle`, `working`), cost, usage, created time. Its Comments carry its id.
 - **Rate-limit observation**: Credential, Agent (cleared when the Agent is deleted), payload, observed time. The latest one per Credential is shown.
 
 ## Non-functional requirements
@@ -608,6 +660,12 @@ Workers, their Worker Containers, Worker Images, Agent Profiles and their synchr
 - **The tool list is the contract.** A tool is offered only where it can succeed, so the model never spends a call and context on a tool that always fails, and the list itself tells it what kind of Task it is in. Offering every tool and refusing at call time was the first design; it cost a failed call per attempt and taught nothing the list could not say.
 - **The system prompt, the tool descriptions and the Platform Skill each say one thing.** The system prompt holds identity, place and the rules of the board, and is sent with every Turn; each tool's description holds its contract (what it does and answers, its limits), which Claude Code already sends with the tool; the Platform Skill holds the playbook (how tools combine, search recipes, coordination, special contexts) and loads only when needed. A one-line list of tools in the system prompt was rejected: it repeated the descriptions, cost context on every Turn and drifted from them.
 - **Compact JSON answers.** Every tool answer goes into the model's context; indentation made answers about a third longer for no reader.
+- **Btw runs as a fork, not through stdin.** Claude Code 2.1.310 never asks the model for `/btw` in headless mode (the command ends as `unavailable_headless` after the Turn). A `--fork-session` process answered in about 4 seconds while the main Turn continued untouched, kept the main transcript clean and knew the whole conversation. The alternative of calling the model API from the backend would need an API key and a copy of Claude Code's context handling.
+- **A running Job runs the fork itself; only an idle Session queues a Btw Job.** The fork must share the Worktree and the Agent Profile of the Turn in progress, and the Job it belongs to already owns them, so it keeps "one Job at a time per Worker Container, per Session and per Worktree" true. A Btw Job waits in the Queue like any other, at the front because it is short and interactive.
+- **The fork has no tools.** A side question answers from the conversation; giving it tools would let it act in the Worktree next to a running Turn.
+- **A Clear waits for the Job to end.** Interrupting the Turn would lose work and the Agent's own transcript must not change under it. The Turn finishes, then the conversation turns over.
+- **Clear reuses the Delete Chat rotation, and keeps the Comments.** The new Claude conversation is the only thing that resets; the Timeline is the team's record.
+- **Clear leaves the Session `pending`.** The first Comment after a Clear triggers the new conversation, as for a new Session, so the first-Comment rule of the Session needs no exception.
 
 ## Related specs
 
