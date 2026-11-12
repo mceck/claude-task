@@ -132,7 +132,12 @@ describe('Btw and Clear', () => {
     const busy = await ask(admin, task.id, 'second');
     expect(busy.status).toBe(409);
     expect(busy.body.error.message).toMatch(/still being answered/);
-    expect((await admin.post(`/tasks/${task.id}/comments`, { body: '/btw' })).status).toBe(400);
+    // `/btw` with nothing but spaces after it is the command with no question, not text for the Agent.
+    for (const body of ['/btw', '/btw ', '/btw  \n']) {
+      const empty = await admin.post(`/tasks/${task.id}/comments`, { body });
+      expect(empty.status, JSON.stringify(body)).toBe(400);
+      expect(empty.body.error.message).toMatch(/needs a question/);
+    }
     // A closed Task has to be reopened first.
     await runner.play(start.jobId, [stream.result()]);
     await runner.next('job.end', (m) => m.jobId === start.jobId);
