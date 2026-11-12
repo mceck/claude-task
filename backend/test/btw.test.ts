@@ -132,7 +132,10 @@ describe('Btw and Clear', () => {
     const busy = await ask(admin, task.id, 'second');
     expect(busy.status).toBe(409);
     expect(busy.body.error.message).toMatch(/still being answered/);
-    expect((await admin.post(`/tasks/${task.id}/comments`, { body: '/btw' })).status).toBe(400);
+    // Surrounding spaces make no difference: the command is still the command, never plain text for the Agent.
+    for (const body of ['/btw', '/btw ', '  /btw  \n']) {
+      expect((await admin.post(`/tasks/${task.id}/comments`, { body })).status, JSON.stringify(body)).toBe(400);
+    }
     // A closed Task has to be reopened first.
     await runner.play(start.jobId, [stream.result()]);
     await runner.next('job.end', (m) => m.jobId === start.jobId);
@@ -259,8 +262,8 @@ describe('Btw and Clear', () => {
       runner.accept(job.jobId);
       await answer(runner, job.jobId, job.btw!, 'Before.', 'fork-old');
       await runner.exit(job.jobId);
-      expect((await admin.post(`/tasks/${task.id}/comments`, { body: '/clear' })).status).toBe(201);
-      expect((await admin.post(`/tasks/${task.id}/comments`, { body: '/clear' })).status).toBe(409);
+      expect((await admin.post(`/tasks/${task.id}/comments`, { body: '  /clear \n' })).status).toBe(201);
+      expect((await admin.post(`/tasks/${task.id}/comments`, { body: '/clear ' })).status).toBe(409);
       const stale = await admin.post(`/tasks/${task.id}/comments`, { body: 'more', btwThread: idle.body.comment.btw.threadId });
       expect(stale.status).toBe(409);
       // And a new /btw has nothing to fork until the new conversation has started.
