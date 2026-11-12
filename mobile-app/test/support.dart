@@ -516,6 +516,10 @@ class FakeApi implements TaskApi {
   /// The body of the last `POST /tasks/:id/comments`.
   Json? lastCommentBody;
 
+  /// Answers `POST /tasks/:id/comments` instead of echoing the Comment (Btw,
+  /// Clear); it may throw an [ApiException].
+  Json Function(Json body)? commentTool;
+
   /// Each `POST /tasks/:id/session/<action>`, in order.
   final sessionActions = <String>[];
   final createdTags = <Json>[];
@@ -780,6 +784,7 @@ class FakeApi implements TaskApi {
       sendCount++;
       lastCommentBody = body;
       if (failSend) throw const SocketException('response lost');
+      if (commentTool != null) return commentTool!(body!);
       final entry = commentData(
         'sent-$sendCount',
         body!['body'] as String,
