@@ -88,7 +88,7 @@ export function TaskActivity({ task, statuses, tags, users, session, notice, rea
           {readOnly ? (
             <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">{readOnly}</p>
           ) : (
-            <Composer taskId={task.id} agentId={task.agentId} commands={session?.commands} interruptible={session?.interruptible ?? false} draft={draft} />
+            <Composer taskId={task.id} agentId={task.agentId} commands={session?.commands} interruptible={session?.interruptible ?? false} btwWorking={session?.btwWorking ?? false} draft={draft} />
           )}
         </div>
       </div>

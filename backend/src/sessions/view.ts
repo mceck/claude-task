@@ -1,8 +1,8 @@
 import { chatCommands } from '@claude-task/shared';
 import type { TaskSession } from '@claude-task/shared';
-import { and, desc, eq, gt, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import type { Executor } from '../db/client';
-import { agentSkills, jobs, queueEntries, sessions, skills, tasks, turns } from '../db/schema';
+import { agentSkills, btwThreads, jobs, queueEntries, sessions, skills, tasks, turns } from '../db/schema';
 import { agentRefs } from '../modules/agents/service';
 
 export type SessionRow = typeof sessions.$inferSelect;
@@ -46,13 +46,14 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
       position: sql<number>`(select count(*)::int from queue_entries q2 where q2.worker_id = queue_entries.worker_id and q2.position <= queue_entries.position)`,
     })
     .from(queueEntries)
-    .where(eq(queueEntries.taskId, taskId));
+    .where(and(eq(queueEntries.taskId, taskId), isNull(queueEntries.btwCommentId)));
   const [lastJob] = await db
     .select({ id: jobs.id, state: jobs.state, failureStage: jobs.failureStage, error: jobs.error, cancelRequested: jobs.cancelRequested, discardOutput: jobs.discardOutput })
     .from(jobs)
-    .where(eq(jobs.sessionId, s.id))
+    .where(and(eq(jobs.sessionId, s.id), ne(jobs.kind, 'btw')))
     .orderBy(desc(jobs.createdAt))
     .limit(1);
+  const [working] = await db.select({ id: btwThreads.id }).from(btwThreads).where(and(eq(btwThreads.sessionId, s.id), eq(btwThreads.state, 'working'))).limit(1);
   const [{ unseen } = { unseen: false }] = await db
     .select({ unseen: unseenChangesSql(taskId, s.lastSeenTaskVersion) })
     .from(sessions)
@@ -87,6 +88,8 @@ export async function loadTaskSession(db: Executor, taskId: string): Promise<Tas
     unseenChanges: (s.state === 'idle' || s.state === 'running') && unseen,
     context: lastTurn?.tokens == null ? null : { tokens: lastTurn.tokens, window: lastTurn.window ?? null },
     interruptible: s.state === 'running' && lastJob?.state === 'running' && !lastJob.cancelRequested && !lastJob.discardOutput,
+    btwWorking: !!working,
+    clearPending: s.clearRequestedAt !== null,
     lastJob: lastJob ? { id: lastJob.id, state: lastJob.state, failureStage: lastJob.failureStage, error: lastJob.error } : null,
   };
 }

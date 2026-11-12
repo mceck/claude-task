@@ -213,6 +213,8 @@ export const createCommentBody = z.strictObject({
   internal: z.boolean().default(false),
   /** Interrupt and send: interrupt the Agent's running Turn so it reads this Comment at once. */
   interrupt: z.boolean().default(false),
+  /** A reply to a Btw Thread: continues that thread instead of asking a new Btw. */
+  btwThread: z.uuid().optional(),
 });
 export type CreateCommentBody = z.input<typeof createCommentBody>;
 

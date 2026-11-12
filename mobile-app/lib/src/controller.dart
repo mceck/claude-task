@@ -1902,23 +1902,30 @@ class TaskController extends ChangeNotifier {
 
   /// [interrupt] is Interrupt and send: the Agent's running Turn is stopped
   /// so it reads the Comment at once, instead of after its current step.
-  Future<void> send({bool interrupt = false}) async {
+  ///
+  /// `/btw ` and `/clear` are System commands the server interprets: they need
+  /// a connection and are never held for later. Returns what to tell the User
+  /// when the result is not a new Comment ("Chat cleared").
+  Future<String?> send({bool interrupt = false}) async {
     if (sending || task == null || scheduleRunReadOnlyReason != null) {
-      return;
+      return null;
     }
+    final command = isSystemCommandBody(draft.text);
     if (!online) {
-      error = 'Offline. Draft saved; send manually after reconnecting.';
+      error = command
+          ? 'Offline. /btw and /clear need a connection: retry once back online. The draft is kept.'
+          : 'Offline. Draft saved; send manually after reconnecting.';
       notifyListeners();
-      return;
+      return null;
     }
     final current = task!, value = draft;
     if (value.ambiguous) {
       error =
           'Refresh and review the conversation before choosing Try manually.';
       notifyListeners();
-      return;
+      return null;
     }
-    if (value.text.trim().isEmpty && value.files.isEmpty) return;
+    if (value.text.trim().isEmpty && value.files.isEmpty) return null;
     sending = true;
     error = null;
     notifyListeners();
@@ -1932,14 +1939,16 @@ class TaskController extends ChangeNotifier {
         '/tasks/${current.id}/comments',
         body: {
           'body': value.text,
-          'internal': value.internal,
-          if (interrupt && interruptible && !value.internal) 'interrupt': true,
+          'internal': value.internal && value.btwThread == null,
+          if (value.btwThread != null) 'btwThread': value.btwThread,
+          if (interrupt && interruptible && !value.internal && !command)
+            'interrupt': true,
         },
         files: value.files,
       );
-      final comment = result['comment'] as Json;
+      final comment = result['comment'] as Json?;
       await storage.write('draft:${current.id}', const Draft().toJson());
-      if (task?.id == current.id) {
+      if (task?.id == current.id && comment != null) {
         _mergeTimeline([
           {
             'type': 'comment',
@@ -1952,6 +1961,12 @@ class TaskController extends ChangeNotifier {
         ]);
         await _cacheTask();
       }
+      if (value.text.trim() == '/clear') {
+        return result['clearPending'] == true
+            ? 'Clear pending: the chat will clear when the Agent finishes'
+            : 'Chat cleared';
+      }
+      return null;
     } catch (e) {
       final ambiguous = e is! ApiException || e.status >= 500;
       if (user != null) {
@@ -1967,7 +1982,19 @@ class TaskController extends ChangeNotifier {
       sending = false;
       notifyListeners();
     }
+    return null;
   }
+
+  /// Starts a reply to the Btw Thread of [entry]: the next send continues it.
+  Future<void> replyToBtw(TimelineEntry entry) async {
+    final thread = entry.btwThreadId;
+    if (thread == null) return;
+    await setDraft(
+      draft.copyWith(replyTo: thread, replyQuote: btwQuote(entry.body)),
+    );
+  }
+
+  Future<void> cancelBtwReply() => setDraft(draft.copyWith(clearReply: true));
 
   Future<void> reconcileSend() async {
     await _fetchTask(task!.id);

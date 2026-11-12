@@ -36,6 +36,18 @@ type ClaudeArgs struct {
 	ReplayUserMessages bool `json:"replayUserMessages"`
 }
 
+// BtwSpec describes a Btw fork: a tool-less `claude` that answers one side question.
+type BtwSpec struct {
+	ID       string `json:"id"`
+	Question string `json:"question"`
+	// Mode is "fork" (resume SessionID into a new session) or "resume" (continue the thread's session).
+	Mode      string  `json:"mode"`
+	SessionID string  `json:"sessionId"`
+	Model     *string `json:"model"`
+	// AppendSystemPrompt tells the fork it answers a side question without tools.
+	AppendSystemPrompt string `json:"appendSystemPrompt"`
+}
+
 type Attachment struct {
 	URL  string `json:"url"`
 	Path string `json:"path"`
@@ -77,6 +89,7 @@ type Incoming struct {
 	Files              []UploadFile      `json:"files"`
 	KeepProjects       []string          `json:"keepProjects"`
 	KeepAgents         []string          `json:"keepAgents"`
+	Btw                *BtwSpec          `json:"btw"`
 }
 
 // Outgoing message shapes (runner → backend). Job-scoped ones get jobId and seq from the runner.

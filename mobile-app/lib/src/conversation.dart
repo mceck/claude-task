@@ -542,6 +542,10 @@ class _ConversationState extends State<Conversation> {
       previous.content['kind'] == entry.content['kind'] &&
       previous.authorId == entry.authorId &&
       previous.internal == entry.internal &&
+      !previous.isBtw &&
+      !entry.isBtw &&
+      !previous.isClearMarker &&
+      !entry.isClearMarker &&
       entry.createdAt.difference(previous.createdAt).inMinutes < 5;
 }
 
@@ -693,6 +697,10 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
+          if (session?['clearPending'] == true) ...[
+            const SizedBox(width: 6),
+            const Pill(label: 'Clear pending', color: Palette.violet),
+          ],
           if (c.sessionContext != null) ...[
             const SizedBox(width: 6),
             ContextBadge(context: c.sessionContext),
@@ -1576,12 +1584,13 @@ class TimelineTile extends StatelessWidget {
         ),
       );
     }
+    if (e.isClearMarker) return _ClearDivider(entry: e);
     final own = kind == 'user' && e.authorId == controller.user?.id;
     final agent = kind == 'agent'
         ? controller.agents.byId(e.authorId) ??
               controller.agents.byId(controller.task?.agentId)
         : null;
-    final editable = e.isOwnCommentEditable && own;
+    final editable = e.isOwnCommentEditable && own && !e.isBtw;
     return _CommentView(
       entry: e,
       own: own,
@@ -1590,6 +1599,9 @@ class TimelineTile extends StatelessWidget {
       controller: controller,
       onActions: editable && controller.online
           ? (anchor) => _commentActions(anchor, e)
+          : null,
+      onReply: e.isBtw && e.btwRole != 'failure' && controller.online
+          ? () => perform(context, () => controller.replyToBtw(e))
           : null,
     );
   }
@@ -1728,6 +1740,9 @@ class _CommentView extends StatelessWidget {
   final Agent? agent;
   final TaskController controller;
   final void Function(BuildContext anchor)? onActions;
+
+  /// A Btw Comment's Reply action.
+  final VoidCallback? onReply;
   const _CommentView({
     required this.entry,
     required this.own,
@@ -1735,6 +1750,7 @@ class _CommentView extends StatelessWidget {
     required this.controller,
     this.agent,
     this.onActions,
+    this.onReply,
   });
   @override
   Widget build(BuildContext context) {
@@ -1743,8 +1759,12 @@ class _CommentView extends StatelessWidget {
     final delivery = e.content['delivery'] as Map?;
     final question = e.question, survey = e.survey;
     final limitResume = e.limitResume;
+    // A Btw is also an Internal Note on the wire, but it is drawn as a Btw.
+    final btw = e.isBtw;
     // Claude uses orange; Internal chat stays gray and System notices use amber.
-    final line = e.internal
+    final line = btw
+        ? Palette.violet.withValues(alpha: .85)
+        : e.internal
         ? Palette.slate.withValues(alpha: .65)
         : isAgent
         ? Palette.agent
@@ -1756,7 +1776,39 @@ class _CommentView extends StatelessWidget {
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (e.internal)
+        if (btw)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  size: 12,
+                  color: Palette.violet,
+                ),
+                const SizedBox(width: 5),
+                const Text(
+                  'Btw',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                    color: Palette.violet,
+                  ),
+                ),
+                if (e.btwWorking) ...[
+                  const SizedBox(width: 8),
+                  const Spinner(size: 11),
+                  const SizedBox(width: 5),
+                  const Text(
+                    'Thinking…',
+                    style: TextStyle(fontSize: 11, color: Palette.fgMuted),
+                  ),
+                ],
+              ],
+            ),
+          )
+        else if (e.internal)
           const Padding(
             padding: EdgeInsets.only(bottom: 8),
             child: Row(
@@ -1813,14 +1865,30 @@ class _CommentView extends StatelessWidget {
     );
     final bubble = _Bubble(
       line: line,
-      dashed: e.internal,
+      dashed: e.internal && !btw,
       radius: _bubbleRadius(own: own),
       child: body,
     );
+    final reply = onReply == null
+        ? null
+        : Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: TextButton.icon(
+              key: ValueKey('btw-reply:${e.id}'),
+              onPressed: onReply,
+              icon: const Icon(Icons.reply_rounded, size: 14),
+              label: const Text('Reply'),
+              style: TextButton.styleFrom(
+                foregroundColor: Palette.violet,
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(fontSize: 12),
+              ),
+            ),
+          );
     final meta = [
       if (e.content['editedAt'] != null)
         const Text('Edited', style: _metaStyle),
-      if (delivery != null)
+      if (delivery != null && !btw)
         _Delivery(
           delivery: delivery,
           agentName: controller.deliveryAgentName(delivery),
@@ -1849,6 +1917,7 @@ class _CommentView extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   bubble,
+                  ?reply,
                   const SizedBox(height: 4),
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -1942,6 +2011,7 @@ class _CommentView extends StatelessWidget {
               children: [
                 if (!grouped) ...[name, const SizedBox(height: 5)],
                 bubble,
+                ?reply,
                 if (meta.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -1961,6 +2031,37 @@ class _CommentView extends StatelessWidget {
   static String _time(DateTime date) {
     final d = date.toLocal();
     return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+/// The Chat Cleared line: a full-width centred divider, never grouped.
+class _ClearDivider extends StatelessWidget {
+  final TimelineEntry entry;
+  const _ClearDivider({required this.entry});
+  @override
+  Widget build(BuildContext context) {
+    const line = Expanded(child: Divider(color: Palette.borderStrong));
+    return Padding(
+      key: ValueKey('clear-marker:${entry.id}'),
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Row(
+        children: [
+          line,
+          Flexible(
+            flex: 4,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                '${entry.author} cleared the chat · ${_CommentView._time(entry.createdAt)}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Palette.fgSubtle),
+              ),
+            ),
+          ),
+          line,
+        ],
+      ),
+    );
   }
 }
 
@@ -3798,6 +3899,18 @@ class _ComposerState extends State<Composer> {
     'Send this message later, at a time you pick',
   );
 
+  /// `/btw` and `/clear`: System commands the server interprets. Picking
+  /// `/btw` inserts `/btw ` and stays in Comment mode; `/clear` is sent only
+  /// as the whole body.
+  static const _btwCommand = SkillCommand.system(
+    'btw',
+    'Ask a side question without interrupting the Agent',
+  );
+  static const _clearCommand = SkillCommand.system(
+    'clear',
+    'Start the Agent’s conversation over, keeping every Comment',
+  );
+
   bool get _softKeyboard =>
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
@@ -3833,10 +3946,10 @@ class _ComposerState extends State<Composer> {
         setState(() => _dueAt = null);
       }
     } else {
-      await perform(
-        context,
-        () => widget.controller.send(interrupt: interrupt),
-      );
+      await perform(context, () async {
+        final notice = await widget.controller.send(interrupt: interrupt);
+        if (notice != null && mounted) toast(context, notice, error: false);
+      });
     }
     if (mounted && restoreFocus) _focus.requestFocus();
   }
@@ -3875,6 +3988,29 @@ class _ComposerState extends State<Composer> {
       _send(interrupt: keyboard.isControlPressed || keyboard.isMetaPressed);
     }
     return KeyEventResult.handled;
+  }
+
+  /// `/btw` and `/clear` complete as text in Comment mode; they are not run
+  /// by picking them.
+  Future<void> _pickText(SkillCommand command) async {
+    final c = widget.controller;
+    // The suggestions already removed the token from the field.
+    final rest = _text.text.trim();
+    final text = command.name == 'btw'
+        ? '/btw $rest'
+        : rest.isEmpty
+        ? '/clear'
+        : rest;
+    if (command.name == 'clear' && rest.isNotEmpty) {
+      toast(context, '/clear is sent alone: remove the rest of the text.');
+      return;
+    }
+    await c.setDraft(c.draft.copyWith(text: text));
+    _text.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    if (mounted) _focus.requestFocus();
   }
 
   Future<void> _pickDue() async {
@@ -3977,6 +4113,38 @@ class _ComposerState extends State<Composer> {
                 ],
               ),
             ),
+          if (draft.btwThread != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 6, 0),
+              child: Row(
+                key: const Key('btw-reply-chip'),
+                children: [
+                  const Icon(
+                    Icons.reply_rounded,
+                    size: 14,
+                    color: Palette.violet,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Replying to btw${draft.btwQuote == null || draft.btwQuote!.isEmpty ? '' : ': ${draft.btwQuote}'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: Palette.violet,
+                      ),
+                    ),
+                  ),
+                  IconAction(
+                    icon: Icons.close_rounded,
+                    tooltip: 'Stop replying to btw',
+                    size: 28,
+                    onPressed: () => c.cancelBtwReply(),
+                  ),
+                ],
+              ),
+            ),
           if (due != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 6, 0),
@@ -4042,7 +4210,10 @@ class _ComposerState extends State<Composer> {
                       onPressed: c.sending
                           ? null
                           : () => c.setDraft(
-                              c.draft.copyWith(internal: !internal),
+                              c.draft.copyWith(
+                                internal: !internal,
+                                clearReply: !internal,
+                              ),
                             ),
                     ),
                   ),
@@ -4263,6 +4434,8 @@ class _ComposerState extends State<Composer> {
                               text: _text,
                               skills: [
                                 _scheduleCommand,
+                                _btwCommand,
+                                _clearCommand,
                                 ...c.session?['commands'] is List
                                     ? objects(c.session?['commands'])
                                           .map(SkillCommand.fromJson)
@@ -4277,7 +4450,10 @@ class _ComposerState extends State<Composer> {
                               ],
                               onSelected: (value) =>
                                   c.setDraft(c.draft.copyWith(text: value)),
-                              onSystem: (_) => _pickDue(),
+                              onSystem: (command) =>
+                                  command.name == 'schedule'
+                                  ? _pickDue()
+                                  : _pickText(command),
                             ),
                         ],
                       ),

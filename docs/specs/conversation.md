@@ -9,6 +9,8 @@ The conversation is the human side of a Task's Timeline: the Comments Users writ
   - `agent`: an **Agent Comment**, written by an Agent during a Turn. Its text is projected from the Agent's stream; files, Questions, Surveys and comments written in another Task are posted through the Task Tools (see [Agent sessions](agent-sessions.md)). A comment another Agent writes in a Task of a Project with Board Write Access is delivered to that Task's Agent like a User Comment.
   - `system`: a **System Comment** written by the platform, such as errors, resumes after a restart, and the notice that a User notified the Agent of Task changes.
 - An **Internal Note** is a User Comment flagged as internal when it is posted. It is shown to every User and delivered to no Agent.
+- A **Btw** is a side question a User asks with `/btw`. Its **Btw Comments** (the question, and the answer the Agent gives as a Comment of kind `agent`) form a **Btw Thread** and are shown to every User and delivered to no Agent (see [Btw](#btw)).
+- A **Chat Cleared line** is the System Comment left by `/clear` where the Task's Claude conversation started over (see [Clear](#clear)).
 - An **Attachment** is a file a User uploads or an Agent posts. A Comment carries up to 10 of them. Files uploaded from the Task description editor are Attachments of the Task itself rather than of a Comment.
 - A **Message** is what the Agent receives: one or more Comments merged together, or a system notice. Users write Comments; the platform turns them into Messages.
 - **Delivery** is the state of a Comment towards the Agent: queued, delivered, handled (the Turn that read it has ended), or not delivered with a reason. It applies to User Comments and to the few platform-written Comments that are Messages, including an Agent Comment another Agent wrote through its Task Tools.
@@ -41,7 +43,36 @@ The card's Comment count includes every Comment that is not deleted, of every ki
 
 In the web app the composer submits with Enter and inserts a new line with Shift+Enter. While the Agent works a Turn on the Task, Ctrl/⌘+Enter or the composer's "Interrupt and send" button posts the Comment with an Interrupt, so the Agent reads it at once; with an empty composer the same keys hurry the User's own Comments still waiting (see [Agent sessions](agent-sessions.md#comments-reaching-the-agent)). `POST /tasks/:id/comments` takes the flag as `interrupt: true`, in JSON or as a multipart field. Files can be dropped onto the composer, pasted, or picked with the Attach button; pasted images without a meaningful name are renamed `pasted-<time>-<n>`. The composer checks the size and count limits before sending. While a Comment is being sent, text typed after it stays in the composer. Unsent drafts are kept per Task until the page is reloaded or the User logs out. The Flutter app keeps drafts across restarts and offline (see [Clients](clients.md)).
 
-A User Comment whose body starts with a slash command offered for the Agent (for example `/compact` or a Skill) is a Session command: the composer suggests the available commands while typing, and the command runs between Turns. Its handling belongs to [Agent sessions](agent-sessions.md).
+A User Comment whose body starts with a slash command offered for the Agent (for example `/compact` or a Skill) is a Session command: the composer suggests the available commands while typing, and the command runs between Turns. Its handling belongs to [Agent sessions](agent-sessions.md). `/btw` and `/clear` are commands of the platform itself: the backend answers them before any delivery, they are offered in the composer among the System commands (beside `/schedule`), and neither reaches the Agent as a Message.
+
+### Btw
+
+`/btw <question>` asks the Session a side question while the Agent works. Posting `POST /tasks/:id/comments` with a body that starts with `/btw ` and has a question after it creates a **Btw Comment**; it needs no flag. A Btw takes text only: a body that is only `/btw`, or a request carrying files, is answered with `400`. Anyone who can comment can ask a Btw.
+
+A Btw Comment is a User Comment with its own look and the same relation to the Agent as an Internal Note: it is stored with the internal flag, so every Internal Note rule applies to it, and the Comment's `btw` field (thread, role and whether the fork is still working) tells clients to draw it as a Btw instead of a note. It gets no Delivery and never enters a Message, the first Message of a Session leaves it out, the Task Tools return none, and the Runner downloads none of its files. It differs from an Internal Note in how it is drawn: a solid box in a distinct accent colour, with a "Btw" label, the question below it, and the answer in the same style under it. The answer is a Comment of kind `agent`, posted when the fork finishes; while the fork works, the question shows "Thinking…", and a failed fork turns it into a System Comment in the same style that gives the reason. A Btw Comment shows no Delivery badge and produces no Alert; it counts in the Task's Comment count like any Comment.
+
+**Continuing the discussion.** Each Btw Comment shows a **Reply** action. A Comment posted as a reply (`btwThread` set to the thread's id, no `/btw` prefix needed) continues that Btw Thread, so the answering conversation remembers its earlier exchanges. A new `/btw` starts a new thread from the Session as it is at that moment, with fresh context. A thread sees the Session only as it was when the thread began: what the Agent did afterwards is unknown to it.
+
+**What the fork sees.** The fork reads the Session's transcript. It sees every completed step, but not a tool call still in flight (it reports it as interrupted) nor assistant text still streaming. The fork has no tools and changes nothing.
+
+`/btw` answers `409` when:
+
+- the Task has no Session, or its Session has not started (`pending`), including right after a Clear until the next Turn has begun;
+- the Session is `closed`;
+- another Btw of the same Session is still working;
+- a reply belongs to a thread forked before the latest Clear. The message says to start a new `/btw`.
+
+Editing the question of a Btw Comment changes its text only and starts nothing. Deleting a Btw Comment follows the rules for any Comment; the thread continues to exist for replies to the rest.
+
+How the fork is run is described in [Agent sessions](agent-sessions.md#btw) and [Runner](runner.md#btw-forks).
+
+### Clear
+
+`/clear` posted as the whole body of a Comment (`POST /tasks/:id/comments`) starts a fresh Claude conversation for the Task, as `/clear` does in Claude Code. The request creates the **Chat Cleared line** and no User Comment, and answers with that System Comment when the Clear is already effective. The line reads "*Name* cleared the chat" and is drawn as a full-width divider between the Comments before and after it. Every Comment before it stays in the Timeline, Comments, Internal Notes and Btw Threads included. `/clear` followed by other text is answered with `400`.
+
+`/clear` answers `409` when the Task has no Session, or when its Session is `pending`, `paused` or `closed`, since there is no conversation to clear.
+
+While the Session is `idle` the Clear is effective at once. While a Job of the Session is active, the Clear is *requested*: the composer shows "Clear pending" on the Session chip, the Turn in progress finishes untouched, and the Clear takes effect when the Job ends, where the line appears. Comments posted after the request wait for the new conversation (see [Clear](agent-sessions.md#clear-the-conversation)).
 
 ### Internal Notes
 
@@ -331,7 +362,7 @@ sequenceDiagram
 
 ## Data model
 
-- **Comment**: Task, kind (`user`, `agent`, `system`), author Actor, Markdown body, internal flag, edited at, deleted at, created at. Delivery fields: state (`none`, `queued`, `delivered`, `handled`, `not_delivered`), reason, when the state last changed, the Job it was delivered in, the Queue Entry it waits in. Notify agent notices and Survey results also hold the text the Agent receives; Notify agent notices also hold the Task version they cover. Agent Comments hold the Job that produced them. An answer to a Question holds the Question it answers. Comments are soft-deleted and removed only with their Task (or by Delete Chat on a Wiki). 
+- **Comment**: Task, kind (`user`, `agent`, `system`), author Actor, Markdown body, internal flag, edited at, deleted at, created at. Delivery fields: state (`none`, `queued`, `delivered`, `handled`, `not_delivered`), reason, when the state last changed, the Job it was delivered in, the Queue Entry it waits in. Notify agent notices and Survey results also hold the text the Agent receives; Notify agent notices also hold the Task version they cover. Agent Comments hold the Job that produced them. An answer to a Question holds the Question it answers. A Btw Comment (question, answer or failure notice) holds its Btw Thread and shows its role; a Chat Cleared line is a System Comment marked as a clear marker. Comments are soft-deleted and removed only with their Task (or by Delete Chat on a Wiki). 
 - **Scheduled Message**: Task, kind (`user` or `limit_resume`), author User (none for a Limit Resume), Markdown body, internal flag, due time, state (`pending`, `sent`, `cancelled`), cancellation reason, the Comment it became, created at, updated at. Removed with its Task.
 - **Limit Resume offer**: the structured part of the System Comment that reports a usage limit: reset time, state (`open`, `scheduled`, `declined`, `unneeded`), who decided and when, and the Limit Resume created. Removed with its Comment.
 - **Attachment**: either a Comment, a Scheduled Message or a Task (exactly one), blob id, file name, content type, size in bytes, order within its Comment, created at.
@@ -387,6 +418,11 @@ sequenceDiagram
 - **A User's own Revisions never make a Task unread for them.** Every status move or edit from the Board added an entry after the read position, because the read position only advances while the conversation is on screen; Projects then showed unread Tasks nobody had missed. Counting only other people's and the Agent's activity keeps Revisions visible to everyone else, as before; dropping Revisions from unread altogether was rejected because an Agent or a teammate moving a Task is worth noticing.
 - **The Projects badge counts unread Turn Summaries.** The sidebar answers "where did an Agent finish something I have not read", so it follows the entry that closes every Turn instead of every Comment or Revision. A failed Turn also closes with a Turn Summary and counts, because a failure is what a reader most needs to notice. The Task's own unread state and `unreadComments` keep the wider rule and the same read position. Counting every entry was rejected because routine Comments and edits lit the badge without Agent output; counting only successful Turns was rejected because it hid failures.
 - **Task badges count Comments separately from unread Timeline activity.** The number represents the conversation waiting to be read, while the existing unread state also covers Revisions and Agent Items. Mute controls alerts; Task indicators continue to show unread activity so Users can find it when they return.
+- **Btw and Clear are answered by the platform, not sent to `claude`.** Claude Code 2.1.310 in headless stream-json mode does not run `/btw` (it records `unavailable_headless` after the Turn ends and never asks the model), and a headless `/clear` cannot rotate the Session the platform owns. Handling both in the backend gives them the behaviour Users know from Claude Code and keeps the Timeline coherent.
+- **A Btw is a Comment, styled like an Internal Note.** It shows up where the Users already read, keeps its history, and stays out of every Agent-facing path by reusing the Internal Note rules. A separate look tells a side question from a private note. The alternative, an item projected on the Timeline, hid the thread among the Agent's work and made replies awkward.
+- **A Btw Thread is continued by replying, and a new `/btw` starts fresh.** Users choose between continuing a line of thought and asking again with up-to-date context. One thread per Task would age its context against the running Turn.
+- **The Chat Cleared line is a System Comment, and the old Comments stay.** The history is the team's record; only the Agent's conversation starts over.
+
 
 ## Related specs
 

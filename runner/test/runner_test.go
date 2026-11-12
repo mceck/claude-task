@@ -1,6 +1,7 @@
 package test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -507,5 +508,152 @@ func TestAnswersAProjectSkillsRequestBeforeAJob(t *testing.T) {
 	answer = b.waitFor("outside", func(m msg) bool { return m.str("type") == "project_skills.result" && m.str("requestId") == "r2" })
 	if files, _ := answer["files"].([]any); len(files) != 0 {
 		t.Fatalf("files %v", files)
+	}
+}
+
+func btwStart(job, id, mode, session, question string) msg {
+	return msg{"type": "job.btw", "jobId": job, "btw": msg{"id": id, "question": question, "mode": mode, "sessionId": session, "model": "haiku", "appendSystemPrompt": "side question"}}
+}
+
+func isBtwEvent(btwID string, pred func(e msg) bool) func(msg) bool {
+	return func(m msg) bool {
+		if m.str("type") != "job.btw_event" || m.str("btwId") != btwID {
+			return false
+		}
+		var e msg
+		return json.Unmarshal([]byte(m.str("line")), &e) == nil && pred(e)
+	}
+}
+
+func TestBtwForkRunsNextToTheJobWithoutTools(t *testing.T) {
+	b := newBackend(t)
+	startRunner(t, b)
+	rec := filepath.Join(t.TempDir(), "rec.json")
+	btwRec := filepath.Join(t.TempDir(), "btw.json")
+	env := map[string]string{"FAKE_CLAUDE_RECORD": rec, "FAKE_CLAUDE_BTW_RECORD": btwRec, "FAKE_CLAUDE_TOOL_MS": "3000", "PROJECT_VAR": "x"}
+
+	b.send(jobStart(jobOpts{id: "j1", session: "s-1", text: "long work", env: env}))
+	b.waitEvent("j1", "tool call", isToolUse)
+
+	b.send(btwStart("j1", "b1", "fork", "s-1", "what is 2+2?"))
+	b.waitFor("btw answer", isBtwEvent("b1", func(e msg) bool { return e.str("type") == "result" }))
+	done := b.waitFor("btw_done", func(m msg) bool { return m.str("type") == "job.btw_done" && m.str("btwId") == "b1" })
+	if done["exitCode"].(float64) != 0 || done["signal"] != nil {
+		t.Fatalf("fork did not end cleanly: %v", done)
+	}
+
+	r := readRecord(t, btwRec)
+	for _, want := range []string{"-p", "--resume", "s-1", "--fork-session", "--strict-mcp-config", "--model", "haiku", "--append-system-prompt", "side question"} {
+		if !slices.Contains(r.Args, want) {
+			t.Fatalf("fork args %q miss %q", r.Args, want)
+		}
+	}
+	if i := slices.Index(r.Args, "--tools"); i < 0 || r.Args[i+1] != "" {
+		t.Fatalf("the fork must run with every tool disabled: %q", r.Args)
+	}
+	if slices.Contains(r.Args, "--input-format") || slices.Contains(r.Args, "--session-id") {
+		t.Fatalf("fork args %q", r.Args)
+	}
+	if len(r.Stdin) != 1 || r.Stdin[0] != "what is 2+2?" || r.Env["PROJECT_VAR"] != "x" {
+		t.Fatalf("question or env not passed: %v %v", r.Stdin, r.Env)
+	}
+
+	// The Job's own Turn carries on and ends on its own; the fork added nothing to its stream.
+	b.waitEvent("j1", "result", isResult)
+	for _, m := range b.jobMessages("j1") {
+		if m.str("type") == "job.event" && strings.Contains(m.str("line"), "Btw answer") {
+			t.Fatalf("a fork line reached the Job's own events: %v", m)
+		}
+	}
+	b.send(msg{"type": "job.end", "jobId": "j1"})
+	if exited := b.waitType("j1", "job.exited"); exited.num("exitCode") != 0 {
+		t.Fatalf("exit %v", exited)
+	}
+}
+
+func TestBtwForkResumeContinuesTheThreadAndFailureReportsStderr(t *testing.T) {
+	b := newBackend(t)
+	startRunner(t, b)
+	btwRec := filepath.Join(t.TempDir(), "btw.json")
+	env := map[string]string{"FAKE_CLAUDE_BTW_RECORD": btwRec, "FAKE_CLAUDE_TOOL_MS": "2000"}
+	b.send(jobStart(jobOpts{id: "j1", session: "s-1", text: "work", env: env}))
+	b.waitEvent("j1", "tool call", isToolUse)
+
+	b.send(btwStart("j1", "b1", "resume", "fork-9", "and 3+3?"))
+	b.waitFor("btw_done", func(m msg) bool { return m.str("type") == "job.btw_done" && m.str("btwId") == "b1" })
+	r := readRecord(t, btwRec)
+	if i := slices.Index(r.Args, "--resume"); i < 0 || r.Args[i+1] != "fork-9" || slices.Contains(r.Args, "--fork-session") {
+		t.Fatalf("a reply must resume the thread's session without forking: %q", r.Args)
+	}
+
+	b.send(btwStart("j1", "b2", "fork", "s-1", "FAIL please"))
+	done := b.waitFor("failed btw_done", func(m msg) bool { return m.str("type") == "job.btw_done" && m.str("btwId") == "b2" })
+	if done.num("exitCode") != 3 || !strings.Contains(done.str("stderr"), "boom") {
+		t.Fatalf("a failing fork must report its exit and stderr: %v", done)
+	}
+	if strings.Contains(b.stderr("j1"), "boom") {
+		t.Fatal("the fork's stderr must not mix into the Job's stderr")
+	}
+	b.send(msg{"type": "job.end", "jobId": "j1"})
+	b.waitType("j1", "job.exited")
+}
+
+func TestJobEndWaitsForARunningBtwFork(t *testing.T) {
+	b := newBackend(t)
+	startRunner(t, b)
+	b.send(jobStart(jobOpts{id: "j1", session: "s-1", text: "work"}))
+	b.waitEvent("j1", "result", isResult)
+	b.send(btwStart("j1", "b1", "fork", "s-1", "SLOW one"))
+	b.send(msg{"type": "job.end", "jobId": "j1"})
+	b.waitType("j1", "job.exited")
+	msgs := b.jobMessages("j1")
+	doneAt, exitedAt := -1, -1
+	for i, m := range msgs {
+		switch m.str("type") {
+		case "job.btw_done":
+			doneAt = i
+		case "job.exited":
+			exitedAt = i
+		}
+	}
+	if doneAt < 0 || exitedAt < doneAt {
+		t.Fatalf("job.exited must come after the fork's job.btw_done (done %d, exited %d)", doneAt, exitedAt)
+	}
+}
+
+func TestBtwJobRunsOnlyTheFork(t *testing.T) {
+	b := newBackend(t)
+	startRunner(t, b)
+	btwRec := filepath.Join(t.TempDir(), "btw.json")
+	env := map[string]string{"FAKE_CLAUDE_BTW_RECORD": btwRec}
+
+	// No Worktree yet: the Btw Job fails at the worktree stage.
+	missing := jobStart(jobOpts{id: "jb0", session: "s-1", mode: "btw", worktree: "worktrees/proj/NOPE", env: env})
+	missing["btw"] = msg{"id": "b0", "question": "hi", "mode": "fork", "sessionId": "s-1", "model": nil, "appendSystemPrompt": ""}
+	b.send(missing)
+	if failed := b.waitType("jb0", "job.failed"); failed.str("stage") != "worktree" {
+		t.Fatalf("failed %v", failed)
+	}
+
+	// An earlier Job created the Worktree; the Btw Job reuses it and prepares nothing.
+	b.send(jobStart(jobOpts{id: "j1", session: "s-1", text: "hello", env: env, setup: "echo SETUP > setup-ran.txt"}))
+	b.waitEvent("j1", "result", isResult)
+	b.send(msg{"type": "job.end", "jobId": "j1"})
+	b.waitType("j1", "job.exited")
+
+	start := jobStart(jobOpts{id: "jb1", session: "s-1", mode: "btw", env: env, setup: "echo AGAIN >> setup-ran.txt"})
+	start["btw"] = msg{"id": "b1", "question": "what happened?", "mode": "fork", "sessionId": "s-1", "model": nil, "appendSystemPrompt": ""}
+	b.send(start)
+	b.waitFor("btw answer", isBtwEvent("b1", func(e msg) bool { return e.str("type") == "result" }))
+	if exited := b.waitType("jb1", "job.exited"); exited.num("exitCode") != 0 {
+		t.Fatalf("a Btw Job ends cleanly once its fork has: %v", exited)
+	}
+	if r := readRecord(t, btwRec); len(r.Stdin) != 1 || r.Stdin[0] != "what happened?" {
+		t.Fatalf("stdin %v", r.Stdin)
+	}
+	for _, m := range b.jobMessages("jb1") {
+		if m.str("type") == "job.setup_output" {
+			t.Fatalf("a Btw Job runs no setup step: %v", m)
+		}
 	}
 }

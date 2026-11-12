@@ -235,6 +235,32 @@ A Comment starting with `/name` that runs as a Claude Code command of its own.
 _Translations_: Comando nativo
 _Avoid_: chat command, session command, slash comment
 
+**Btw**:
+A side question a User asks with `/btw` about a Task's conversation. A forked, tool-less copy of the Session answers it from the conversation so far, while the Agent's own work carries on untouched.
+_Translations_: Domanda laterale
+_Avoid_: side chat, aside
+
+**Btw Comment**:
+A Comment that belongs to a Btw Thread: the User's question or the Agent's answer. It looks like an Internal Note with its own colour and, like one, is never delivered to the Agent.
+_Translations_: Commento btw
+
+**Btw Thread**:
+The forked Claude conversation behind a Btw, continued by replying to its Comments. It sees the Session as it was when the Btw was asked and never changes it.
+_Translations_: Filone btw
+
+**Btw Job**:
+A Job that only runs a Btw, queued when no Job of the Session is running.
+_Translations_: Job btw
+
+**Clear**:
+The `/clear` command: it starts a fresh Claude conversation for the Task, keeping the Comments, the Worktree and the Task Branch, and leaves a Chat Cleared line in the conversation.
+_Translations_: Pulizia della chat
+_Avoid_: reset
+
+**Chat Cleared line**:
+The System Comment that marks where a Clear took effect.
+_Translations_: Riga "chat pulita"
+
 **Timeline**:
 The chronological record of a Task: Comments, Revisions and the Agent's work, interleaved.
 _Translations_: Cronologia

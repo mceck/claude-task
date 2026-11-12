@@ -47,6 +47,12 @@ type job struct {
 	exited              chan struct{}
 	remoteBranchMissing bool
 	reqSeq              int
+
+	// Btw forks that run next to claude, as children of this Job.
+	btwMu      sync.Mutex
+	btwClosing bool
+	btwWG      sync.WaitGroup
+	forks      map[int]struct{} // process groups of the running forks
 }
 
 func newJob(r *Runner, m *protocol.Incoming) *job {
@@ -84,6 +90,10 @@ var errCancelled = errors.New("cancelled before start")
 func (j *job) run() {
 	m := j.start
 	j.emit("job.accepted", nil)
+	if m.Mode == "btw" {
+		j.runBtwJob()
+		return
+	}
 	worktree, created, err := j.prepareWorktree()
 	if err != nil {
 		j.fail("worktree", err)
@@ -173,16 +183,24 @@ func (j *job) args(f features) []string {
 	return a
 }
 
+func (j *job) setupProfile() error {
+	if j.start.AgentProfilePath == "" {
+		return nil
+	}
+	dir, err := within(j.r.cfg.Home, j.start.AgentProfilePath)
+	if err != nil {
+		return fmt.Errorf("agent profile: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("agent profile: %w", err)
+	}
+	j.profileDir = dir
+	return nil
+}
+
 func (j *job) spawn(worktree string) error {
-	if j.start.AgentProfilePath != "" {
-		dir, err := within(j.r.cfg.Home, j.start.AgentProfilePath)
-		if err != nil {
-			return fmt.Errorf("agent profile: %w", err)
-		}
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("agent profile: %w", err)
-		}
-		j.profileDir = dir
+	if err := j.setupProfile(); err != nil {
+		return err
 	}
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
@@ -246,6 +264,11 @@ func (j *job) spawn(worktree string) error {
 		stdoutR.Close()
 		stderrR.Close()
 		close(j.exited)
+		// A Btw fork is part of the Job: it ends before the Job does.
+		j.btwMu.Lock()
+		j.btwClosing = true
+		j.btwMu.Unlock()
+		j.btwWG.Wait()
 		j.mu.Lock()
 		j.pgid = 0
 		if j.stdin != nil {
@@ -467,6 +490,11 @@ func (j *job) signal(s syscall.Signal) {
 	if pgid != 0 {
 		syscall.Kill(-pgid, s)
 	}
+	j.btwMu.Lock()
+	for g := range j.forks {
+		syscall.Kill(-g, s)
+	}
+	j.btwMu.Unlock()
 }
 
 func (j *job) escalate() {

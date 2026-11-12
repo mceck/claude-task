@@ -111,9 +111,10 @@ export function SessionChip({ session }: { session: TaskSession }) {
             ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
             : 'border-border bg-muted/40 text-muted-foreground';
   return (
-    <span aria-label={`Session: ${label}`} className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', tone)}>
+    <span aria-label={`Session: ${label}${session.clearPending ? ', clear pending' : ''}`} className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', tone)}>
       <StateDot state={session.state} className="size-1.5 ring-0" />
       {label}
+      {session.clearPending && <span className="border-l border-current/30 pl-1.5">Clear pending</span>}
     </span>
   );
 }

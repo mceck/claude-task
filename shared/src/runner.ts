@@ -91,6 +91,17 @@ export interface UploadManifestEntry {
   error?: string;
 }
 
+/** A Btw fork: a tool-less `claude` that answers one side question (docs/specs/runner.md). */
+export interface BtwSpec {
+  id: string;
+  question: string;
+  /** `fork` resumes `sessionId` into a new session; `resume` continues the thread's own session. */
+  mode: 'fork' | 'resume';
+  sessionId: string;
+  model: string | null;
+  appendSystemPrompt: string;
+}
+
 export type JobFailureStage = 'worktree' | 'setup' | 'spawn';
 
 // Backend → Runner
@@ -101,7 +112,7 @@ export interface JobStartMessage {
   /** Also the Claude Code session id. */
   sessionId: string;
   /** `new` spawns with `--session-id`, `resume` with `--resume`. */
-  mode: 'new' | 'resume';
+  mode: 'new' | 'resume' | 'btw';
   /** Sets `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` (already present in `env` too). */
   resumeInterrupted: boolean;
   /** Relative to the agent user's home, deterministic per (Project, Task): `worktrees/<projectId>/<taskKey>`. */
@@ -120,6 +131,8 @@ export interface JobStartMessage {
   initialMessageId: string | null;
   /** Fetched into the Worktree before the initial message is written. */
   attachmentsToFetch: AttachmentToFetch[];
+  /** Set for mode `btw`: the fork this Job runs; the Job prepares nothing else. */
+  btw?: BtwSpec | null;
 }
 
 export type BackendToRunner =
@@ -128,6 +141,8 @@ export type BackendToRunner =
   | { type: 'job.input'; jobId: string; message: InputBlock[]; attachmentsToFetch: AttachmentToFetch[]; messageId?: string }
   /** Interrupt the current Turn (stream-json `control_request` interrupt); the process keeps running. */
   | { type: 'job.interrupt'; jobId: string }
+  /** Run a Btw fork next to the running `claude`, as a child of this Job. */
+  | { type: 'job.btw'; jobId: string; btw: BtwSpec }
   /** Close stdin: `claude` finishes what was already written, then exits. */
   | { type: 'job.end'; jobId: string }
   /** Interrupt, close stdin, SIGTERM after 10 s, SIGKILL after 20 s. */
@@ -182,6 +197,10 @@ export type RunnerJobMessage =
   /** One raw stdout line of `claude` (stream-json). */
   | { type: 'job.event'; jobId: string; seq: number; line: string }
   | { type: 'job.stderr'; jobId: string; seq: number; chunk: string }
+  /** One raw stdout line of a Btw fork; never part of the Job's own stream. */
+  | { type: 'job.btw_event'; jobId: string; seq: number; btwId: string; line: string }
+  /** The Btw fork ended; `stderr` holds the tail of its error output. */
+  | { type: 'job.btw_done'; jobId: string; seq: number; btwId: string; exitCode: number | null; signal: string | null; stderr: string }
   /** The previous `job.event` was a `result` line. */
   | { type: 'job.result'; jobId: string; seq: number; eventSeq: number }
   | { type: 'job.exited'; jobId: string; seq: number; exitCode: number | null; signal: string | null }

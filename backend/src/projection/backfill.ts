@@ -28,7 +28,8 @@ export async function backfillTurnContexts(db: Executor, log?: BackfillLog): Pro
     const events = await db
       .select({ payload: sessionEvents.payload, receivedAt: sessionEvents.receivedAt })
       .from(sessionEvents)
-      .where(eq(sessionEvents.jobId, jobId))
+      // The lines of a Btw fork are not part of the Job's own stream.
+      .where(and(eq(sessionEvents.jobId, jobId), isNull(sessionEvents.btwThreadId)))
       .orderBy(asc(sessionEvents.seq));
     const contexts = new Map<number, ContextUsage>();
     if (events.length > 0) {

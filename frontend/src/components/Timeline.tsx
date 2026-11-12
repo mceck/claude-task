@@ -1,7 +1,7 @@
 import { PRIORITIES, pullRequestNoun, pullRequestRef } from '@claude-task/shared';
 import type { Agent, AgentItem, Attachment, Comment, GitProviderKind, Tag, Priority, Revision, RevisionChange, Status, TimelineItem, User } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, Bot, ChevronDown, ChevronUp, Download, FileText, Flag, Lock, MoreHorizontal, Pencil, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
+import { ArrowRightLeft, Bot, ChevronDown, ChevronUp, Download, FileText, Flag, Eraser, Loader2, Lock, MessageCircleQuestion, MoreHorizontal, Pencil, Reply, Tag as TagIcon, Trash2, TriangleAlert, Type, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { createContext, lazy, memo, Suspense, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -16,6 +16,7 @@ import { del, errorMessage, patch } from '../api/client';
 import { withProvider } from './Git';
 import { useAgents, useMe, useTimeline } from '../api/queries';
 import { putTimelineItem } from '../lib/cache';
+import { btwPreview, btwReplyStore } from '../lib/drafts';
 import { expandedFromLive } from '../lib/live';
 import { AgentItemView, LiveTurnView } from './AgentTimeline';
 import { AgentAvatar, DeliveryTicks } from './agents';
@@ -162,6 +163,20 @@ const CommentItem = memo(function CommentItem({ comment, taskId, agents, deliver
     }
   };
 
+  if (comment.clearMarker) {
+    // A moment in the conversation, not something a person said: never grouped, always full width.
+    return (
+      <li id={`comment-${comment.id}`} aria-label="Chat cleared" className="relative flex items-center gap-3 py-1 text-xs text-muted-foreground">
+        <span className="h-px flex-1 bg-border" />
+        <span className="z-10 flex shrink-0 items-center gap-1.5 bg-background px-1">
+          <Eraser className="size-3" />
+          <span className="font-medium text-foreground/90">{comment.author.displayName}</span> cleared the chat · <Time iso={comment.createdAt} />
+        </span>
+        <span className="h-px flex-1 bg-border" />
+      </li>
+    );
+  }
+
   if (comment.deletedAt) {
     return (
       <li className="relative flex items-center gap-3 pl-1.5 text-xs text-muted-foreground italic">
@@ -173,11 +188,14 @@ const CommentItem = memo(function CommentItem({ comment, taskId, agents, deliver
     );
   }
 
+  // A Btw is an Internal Note underneath, so the Agent never reads it, but it is drawn as a Btw and checked first.
+  const btw = comment.btw;
+  const internalNote = comment.internal && !btw;
   const agent = comment.kind === 'agent' ? agents.find((a) => a.id === comment.author.id) : undefined;
   return (
     <li
       id={`comment-${comment.id}`}
-      aria-label={comment.internal ? 'Internal chat' : comment.kind === 'agent' ? 'Agent comment' : comment.kind === 'system' ? 'System comment' : 'Comment'}
+      aria-label={btw ? 'Btw' : internalNote ? 'Internal chat' : comment.kind === 'agent' ? 'Agent comment' : comment.kind === 'system' ? 'System comment' : 'Comment'}
       className="relative flex gap-3 [contain-intrinsic-size:auto_160px] [content-visibility:auto]"
     >
       <div className="z-10 shrink-0">
@@ -202,32 +220,49 @@ const CommentItem = memo(function CommentItem({ comment, taskId, agents, deliver
       <div
         className={cn(
           'min-w-0 flex-1 rounded-xl border bg-background/40 px-4 py-3 dark:bg-muted/20',
-          comment.internal && 'border-dashed border-slate-400/50 bg-slate-500/[0.08] dark:bg-slate-500/[0.08]',
-          comment.kind === 'agent' && 'border-violet-500/30 bg-violet-500/[0.05]',
-          comment.kind === 'system' && 'border-amber-500/30 bg-amber-500/[0.05] dark:bg-amber-500/[0.05]',
+          internalNote && 'border-dashed border-slate-400/50 bg-slate-500/[0.08] dark:bg-slate-500/[0.08]',
+          !btw && comment.kind === 'agent' && 'border-violet-500/30 bg-violet-500/[0.05]',
+          !btw && comment.kind === 'system' && 'border-amber-500/30 bg-amber-500/[0.05] dark:bg-amber-500/[0.05]',
+          btw && 'border-btw/50 bg-btw/10 dark:bg-btw/10',
         )}
       >
         <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span className="text-sm font-medium text-foreground">{comment.author.displayName}</span>
           {comment.kind === 'agent' && <Badge className="h-4 bg-violet-500/20 px-1.5 text-[10px] text-violet-400">Agent</Badge>}
           {comment.kind === 'system' && <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">System</Badge>}
-          {comment.internal && (
+          {btw && (
+            <Badge className="h-4 gap-1 bg-btw/20 px-1.5 text-[10px] text-btw">
+              <MessageCircleQuestion /> Btw
+            </Badge>
+          )}
+          {internalNote && (
             <Badge variant="outline" className="h-4 gap-1 border-dashed border-slate-400/50 px-1.5 text-[10px] text-slate-400">
               <Lock /> Internal chat
             </Badge>
           )}
           <Time iso={comment.createdAt} />
           {comment.editedAt && <span>· edited</span>}
-          {comment.delivery && <DeliveryTicks delivery={comment.delivery} agentName={deliveryAgent} />}
+          {!btw && comment.delivery && <DeliveryTicks delivery={comment.delivery} agentName={deliveryAgent} />}
+          {btw && btw.role !== 'failure' && !editing && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="ml-auto text-btw hover:text-btw"
+              aria-label="Reply to btw"
+              onClick={() => btwReplyStore.set(taskId, { threadId: btw.threadId, preview: btwPreview(comment.body) })}
+            >
+              <Reply /> Reply
+            </Button>
+          )}
           {(own || canDelete) && !editing && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-xs" className="ml-auto" aria-label="Comment actions">
+                <Button variant="ghost" size="icon-xs" className={cn(!(btw && btw.role !== 'failure') && 'ml-auto')} aria-label="Comment actions">
                   <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {own && (
+                {own && !btw && (
                   <DropdownMenuItem onSelect={() => (setDraft(comment.body), setEditing(true))}>
                     <Pencil /> Edit
                   </DropdownMenuItem>
@@ -273,6 +308,11 @@ const CommentItem = memo(function CommentItem({ comment, taskId, agents, deliver
           comment.body && (
             <CollapsibleBody expand={expandedFromLive(comment.id)}>{(full) => <Markdown source={full ? comment.body : clampSource(comment.body)} />}</CollapsibleBody>
           )
+        )}
+        {btw?.role === 'question' && btw.working && (
+          <p role="status" className="mt-2 flex items-center gap-1.5 text-xs text-btw">
+            <Loader2 className="size-3 animate-spin" /> Thinking…
+          </p>
         )}
         {comment.attachments.length > 0 && <Attachments files={comment.attachments} />}
         {comment.limitResume && <LimitResumeCard comment={comment} />}

@@ -7,8 +7,20 @@ import { useTestApp } from './helpers/app';
 import { assignAgent, createAgent, createProject, createTask, getSession } from './helpers/fixtures';
 import { FakeRunner } from './helpers/runner';
 
+/** The schema before Btw and Clear: the migration that follows Remote Hosts is replayed on top of it. */
+const BEFORE_BTW = `
+  DROP INDEX queue_entries_btw_task_unique;
+  DROP INDEX queue_entries_task_unique;
+  CREATE UNIQUE INDEX queue_entries_task_unique ON queue_entries (task_id);
+  ALTER TABLE queue_entries DROP COLUMN btw_comment_id;
+  ALTER TABLE comments DROP COLUMN btw_thread_id, DROP COLUMN btw_role, DROP COLUMN clear_marker;
+  ALTER TABLE session_events DROP COLUMN btw_thread_id;
+  ALTER TABLE sessions DROP COLUMN clear_requested_by, DROP COLUMN clear_requested_at;
+  DROP TABLE btw_threads;
+`;
+
 /** The schema before Workers: Agents with their own container, one Session per (Task, Agent), Queues per Agent. */
-const BEFORE_WORKERS = `
+const BEFORE_WORKERS = `${BEFORE_BTW}
   ALTER TABLE workers DROP COLUMN host_id;
   DROP TABLE hosts;
   ALTER TABLE cleanups DROP COLUMN hosts_pending;
@@ -65,6 +77,7 @@ describe('migration upgrades', () => {
     const journal = JSON.parse(await readFile(path.join(migrationsFolder(), 'meta/_journal.json'), 'utf8'));
     const migration = journal.entries.find((entry: { tag: string }) => entry.tag === '0039_remote_hosts');
     expect(migration).toBeDefined();
+    await db.$client.query(BEFORE_BTW);
     await db.$client.query('ALTER TABLE workers DROP COLUMN host_id; DROP TABLE hosts; ALTER TABLE cleanups DROP COLUMN hosts_pending');
     await db.$client.query('DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= $1', [migration.when]);
     await migrateApp();

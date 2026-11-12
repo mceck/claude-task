@@ -192,8 +192,22 @@ export interface Comment {
   survey: Survey | null;
   /** On the User Comment that answers a Question: the Question's Comment id. */
   answersCommentId: string | null;
+  /** Set on every Comment of a Btw Thread (the question, the answer and a failure notice). */
+  btw: BtwInfo | null;
+  /** The System Comment a Clear leaves where the Task's Claude conversation started over. */
+  clearMarker: boolean;
   /** Set on the System Comment that reports a usage limit with a known reset time. */
   limitResume: LimitResumeOffer | null;
+}
+
+export const BTW_ROLES = ['question', 'answer', 'failure'] as const;
+export type BtwRole = (typeof BTW_ROLES)[number];
+
+export interface BtwInfo {
+  threadId: string;
+  role: BtwRole;
+  /** On a question: its fork is still working on the answer. */
+  working: boolean;
 }
 
 export const LIMIT_RESUME_STATES = ['open', 'scheduled', 'declined', 'unneeded'] as const;

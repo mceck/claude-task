@@ -417,6 +417,19 @@ class TimelineEntry {
     content['payload'] as Map? ?? {},
   );
   bool get internal => content['internal'] == true;
+
+  /// A Btw Comment carries its thread, role and whether its fork still works.
+  /// Btw Comments are also `internal`, so check this first.
+  late final Json? btw = content['btw'] is Map
+      ? Json.from(content['btw'] as Map)
+      : null;
+  bool get isBtw => type == 'comment' && btw != null;
+  String? get btwThreadId => btw?['threadId'] as String?;
+  String? get btwRole => btw?['role'] as String?;
+  bool get btwWorking => btw?['working'] == true;
+
+  /// The Chat Cleared line: a System Comment drawn as a divider.
+  bool get isClearMarker => type == 'comment' && content['clearMarker'] == true;
   bool get deleted => content['deletedAt'] != null;
   String get body => content['body'] as String? ?? '';
   String get author =>
@@ -704,6 +717,10 @@ class Draft {
   final bool internal;
   final List<DraftFile> files;
 
+  /// The Btw Thread the next send continues, and the first words of the Btw
+  /// it replies to for the composer's chip. Never set on an Internal Note.
+  final String? btwThread, btwQuote;
+
   /// A request may have committed before connectivity was lost. Never retry it automatically.
   final bool ambiguous;
   const Draft({
@@ -711,27 +728,53 @@ class Draft {
     this.internal = false,
     this.files = const [],
     this.ambiguous = false,
+    this.btwThread,
+    this.btwQuote,
   });
   Draft.fromJson(Json json)
     : text = json['text'] as String? ?? '',
       internal = json['internal'] == true,
       files = objects(json['files']).map(DraftFile.fromJson).toList(),
-      ambiguous = json['ambiguous'] == true;
+      ambiguous = json['ambiguous'] == true,
+      btwThread = json['btwThread'] as String?,
+      btwQuote = json['btwQuote'] as String?;
   Json toJson() => {
     'text': text,
     'internal': internal,
     'files': files.map((f) => f.toJson()).toList(),
     'ambiguous': ambiguous,
+    if (btwThread != null) 'btwThread': btwThread,
+    if (btwQuote != null) 'btwQuote': btwQuote,
   };
+
+  /// [replyTo] and [replyQuote] start a reply to a Btw Thread (which is never
+  /// an Internal Note); [clearReply] drops it.
   Draft copyWith({
     String? text,
     bool? internal,
     List<DraftFile>? files,
     bool? ambiguous,
+    String? replyTo,
+    String? replyQuote,
+    bool clearReply = false,
   }) => Draft(
     text: text ?? this.text,
-    internal: internal ?? this.internal,
+    internal: replyTo != null ? false : internal ?? this.internal,
     files: files ?? this.files,
     ambiguous: ambiguous ?? this.ambiguous,
+    btwThread: clearReply ? null : replyTo ?? btwThread,
+    btwQuote: clearReply ? null : replyQuote ?? btwQuote,
   );
+}
+
+/// Whether a Comment body is a System command the server interprets
+/// (`/btw <question>` or exactly `/clear`): these need a connection.
+bool isSystemCommandBody(String body) =>
+    body.startsWith('/btw ') || body.trim() == '/clear';
+
+/// The first words of a Btw for the "Replying to btw" chip.
+String btwQuote(String body, {int words = 8}) {
+  final parts = body.trim().split(RegExp(r'\s+'));
+  final head = parts.take(words).join(' ');
+  return parts.length > words ? '$head…' : head;
 }

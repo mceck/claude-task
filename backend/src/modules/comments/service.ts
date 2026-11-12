@@ -6,7 +6,7 @@ import type { Actor, Attachment, Comment, LimitResumeOffer, Question, QuestionIt
 import { and, asc, desc, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 import type { AfterCommit } from '../../context';
 import type { Executor } from '../../db/client';
-import { agentItems, attachments, comments, limitResumeOffers, projects, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
+import { agentItems, attachments, btwThreads, comments, limitResumeOffers, projects, queueEntries, questions, surveyResponses, taskRevisions, tasks } from '../../db/schema';
 import { getWorkerRow } from '../workers/service';
 import { loadTimelinePositions } from '../../db/activity';
 import { dropIfEmpty } from '../../sessions/queue';
@@ -77,6 +77,7 @@ function serializeComment(
   author: Actor,
   files: AttachmentRow[],
   structured: { question: Question | null; survey: Survey | null; limitResume: LimitResumeOffer | null } = { question: null, survey: null, limitResume: null },
+  working = false,
 ): Comment {
   const deleted = c.deletedAt !== null;
   return {
@@ -94,6 +95,8 @@ function serializeComment(
     question: deleted ? null : structured.question,
     survey: deleted ? null : structured.survey,
     answersCommentId: c.answersCommentId,
+    btw: c.btwThreadId && c.btwRole ? { threadId: c.btwThreadId, role: c.btwRole, working: c.btwRole === 'question' && working } : null,
+    clearMarker: c.clearMarker,
     limitResume: deleted ? null : structured.limitResume,
   };
 }
@@ -125,6 +128,9 @@ export async function loadCommentsById(db: Executor, ids: string[]): Promise<Map
         .orderBy(asc(surveyResponses.createdAt), asc(surveyResponses.userId))
     : [];
   const offerRows = await db.select().from(limitResumeOffers).where(inArray(limitResumeOffers.commentId, ids));
+  const workingIds = new Set(
+    (await db.select({ id: btwThreads.workingCommentId }).from(btwThreads).where(inArray(btwThreads.workingCommentId, ids))).map((t) => t.id),
+  );
   const userIds = offerRows.map((o) => o.decidedBy).concat(questionRows.flatMap((q) => [q.answeredBy, q.closedBy, ...q.expectedRespondentIds])).concat(responses.map((r) => r.userId));
   const resolve = await actorResolver(db, [
     ...rows.map((r) => ({ type: r.authorType, id: r.authorId })),
@@ -140,7 +146,7 @@ export async function loadCommentsById(db: Executor, ids: string[]): Promise<Map
         survey: q?.kind === 'survey' ? serializeSurvey(q, responses.filter((x) => x.commentId === r.id), user) : null,
         limitResume: offer ? serializeOffer(offer, user) : null,
       };
-      return [r.id, serializeComment(r, resolve({ type: r.authorType, id: r.authorId }), files.filter((f) => f.commentId === r.id), structured)];
+      return [r.id, serializeComment(r, resolve({ type: r.authorType, id: r.authorId }), files.filter((f) => f.commentId === r.id), structured, workingIds.has(r.id))];
     }),
   );
 }
@@ -206,7 +212,7 @@ export async function createUserComment(
   tx: Executor,
   after: AfterCommit,
   task: TaskRow,
-  input: { body: string; internal: boolean; interrupt?: boolean; attachments: NewAttachment[]; answersCommentId?: string },
+  input: { body: string; internal: boolean; interrupt?: boolean; attachments: NewAttachment[]; answersCommentId?: string; btw?: { threadId: string; role: 'question' } },
   author: Actor,
 ): Promise<Comment> {
   if (input.body.trim() === '' && input.attachments.length === 0) {
@@ -223,6 +229,8 @@ export async function createUserComment(
       body: input.body,
       internal: input.internal,
       answersCommentId: input.answersCommentId ?? null,
+      btwThreadId: input.btw?.threadId ?? null,
+      btwRole: input.btw?.role ?? null,
     })
     .returning();
   if (input.attachments.length > 0) {
@@ -230,7 +238,8 @@ export async function createUserComment(
   }
   if (author.type === 'user' && author.id) {
     await autoFollow(tx, after, task.id, [author.id]);
-    await notifyMentions(tx, task.id, row!.id, input.body, author.id);
+    // A side question alerts nobody.
+    if (!input.btw) await notifyMentions(tx, task.id, row!.id, input.body, author.id);
   }
   await deliverComment(tx, after, task, row!, { interrupt: input.interrupt });
   const comment = await loadComment(tx, row!.id);

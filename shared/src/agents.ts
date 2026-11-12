@@ -111,7 +111,8 @@ export interface TaskRef {
 export const SESSION_STATES = ['pending', 'idle', 'running', 'paused', 'closed'] as const;
 export type SessionState = (typeof SESSION_STATES)[number];
 
-export const QUEUE_ENTRY_KINDS = ['start', 'messages', 'resume_interrupted'] as const;
+/** A `btw` entry waits for a Btw Job; the others carry the Messages of a Session's next Job. */
+export const QUEUE_ENTRY_KINDS = ['start', 'messages', 'resume_interrupted', 'btw'] as const;
 export type QueueEntryKind = (typeof QUEUE_ENTRY_KINDS)[number];
 
 export const JOB_STATES = ['dispatched', 'running', 'finishing', 'finished', 'failed', 'interrupted'] as const;
@@ -145,6 +146,10 @@ export interface TaskSession {
    * the Job is still being dispatched, or finishing after its `result`.
    */
   interruptible: boolean;
+  /** A Btw of this Session has a fork working (running or queued). */
+  btwWorking: boolean;
+  /** A Clear is requested and waits for the active Job to end. */
+  clearPending: boolean;
   /** Version of the latest failed Job, so the UI can offer Retry. */
   lastJob: { id: string; state: JobState; failureStage: string | null; error: string | null } | null;
 }

@@ -26,6 +26,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -82,6 +83,11 @@ func main() {
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
 		rec.Env[k] = v
+	}
+	if !slices.Contains(args, "--input-format") {
+		// A Btw fork: the question is the whole stdin, the answer one text and a result.
+		btwFork(args)
+		return
 	}
 	saveRecord()
 
@@ -335,4 +341,32 @@ func saveRecord() {
 	tmp := p + ".tmp"
 	os.WriteFile(tmp, b, 0o644)
 	os.Rename(tmp, p)
+}
+
+// btwFork answers a side question like `claude -p --resume <id> --fork-session`: the question on
+// stdin, a new session id, one answer and a result. FAKE_CLAUDE_BTW_RECORD receives {args, env,
+// cwd, stdin}; a question with "FAIL" exits 3 with "boom" on stderr, one with "SLOW" takes a second.
+func btwFork(args []string) {
+	b, _ := io.ReadAll(os.Stdin)
+	rec.Stdin = []string{string(b)}
+	if p := os.Getenv("FAKE_CLAUDE_BTW_RECORD"); p != "" {
+		data, _ := json.MarshalIndent(rec, "", "  ")
+		os.WriteFile(p, data, 0o644)
+	}
+	question := string(b)
+	if strings.Contains(question, "FAIL") {
+		fmt.Fprint(os.Stderr, "boom")
+		os.Exit(3)
+	}
+	if strings.Contains(question, "SLOW") {
+		time.Sleep(time.Second)
+	}
+	sessionID = fmt.Sprintf("fork-%d", time.Now().UnixNano())
+	if i := slices.Index(args, "--resume"); i >= 0 && !slices.Contains(args, "--fork-session") {
+		sessionID = args[i+1]
+	}
+	emit(map[string]any{"type": "system", "subtype": "init", "session_id": sessionID, "model": "fake-model", "cwd": rec.Cwd, "tools": []string{}})
+	assistant("msg_btw", map[string]any{"type": "text", "text": "Btw answer: " + question})
+	emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": sessionID, "num_turns": 1,
+		"total_cost_usd": 0.0002, "result": "Btw answer: " + question})
 }
