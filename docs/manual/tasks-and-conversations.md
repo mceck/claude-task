@@ -73,6 +73,38 @@ In the native app, use the speech-bubble icon beside Attach to switch to Interna
 
 Comments on a Task that has never had an Agent have no delivery badge. They are included in the opening context after an Agent is assigned and a new Comment starts its work. Internal Notes are always excluded.
 
+## Ask a side question with `/btw`
+
+Type `/btw` followed by a question to ask something about the work while the Agent keeps going. The answer comes from a copy of the Agent's conversation that has no tools, so it can read what has happened so far but changes nothing, and the Agent's own work is not interrupted.
+
+1. Type `/` in the composer and pick **/btw** among the **System** commands, or type `/btw ` and your question, for example `/btw why did you pick that library?`.
+2. Click **Send**. Your question appears as a violet **Btw** box with **Thinking…** while the answer is prepared.
+3. The answer appears under it in the same style, as a Comment from the Agent.
+4. To keep talking about it, click **Reply** on the question or the answer, write your follow-up and send it. A **Replying to btw** label above the composer shows what you are continuing; dismiss it to write a normal Comment.
+
+A new `/btw` starts a fresh side conversation from the Agent's conversation as it is at that moment. A reply continues the earlier one, which only knows what the Agent had done when that Btw began.
+
+Btw Comments are visible to every User and are never sent to the Agent, like Internal Notes, but they are violet and have no lock. They show no delivery badge. The copy sees finished steps, not a tool call still running or text the Agent is still writing.
+
+`/btw` works once the Agent has started on the Task. It tells you why when it cannot run:
+
+- the Task has no Agent, or the Agent has not started yet;
+- the Task is closed (reopen it first);
+- another Btw of the Task is still being answered;
+- you are replying to a Btw from before a `/clear`; start a new `/btw` instead.
+
+If the answer cannot be produced, a violet notice in the conversation says why, and you can reply to try again. A Btw needs a connection and takes text only, no files.
+
+## Start the conversation over with `/clear`
+
+Send `/clear` on its own to make the Agent start a fresh conversation for the Task, as `/clear` does in Claude Code. Every Comment stays in the Task; only the Agent's memory starts over. Pick **/clear** among the **System** commands, then click **Send**.
+
+1. If the Agent is idle, the chat clears at once and a line reading **‹name› cleared the chat** appears in the conversation.
+2. If the Agent is working, the Session indicator adds **Clear pending**. The current Turn finishes untouched and the chat clears when the Agent's work ends; the line appears then.
+3. The next Comment you send starts the new conversation. It begins with the Task and the Comments written after the line, plus anything you posted while the clear was pending.
+
+Btw conversations started before a clear cannot be continued. `/clear` has nothing to clear on a Task with no Agent, one that has not started, or a closed one, and says so.
+
 ## Correct or remove a Comment
 
 Open **Comment actions** on your own Comment, select **Edit**, change the text, then click **Save**. Use **Cancel** to leave it unchanged.

@@ -75,6 +75,8 @@ In the description editor, **Write**, **Markdown** and **Preview** share the sam
 
 Write in the composer and send. On a hardware keyboard, Enter sends, Shift+Enter inserts a newline, and Ctrl+Enter or Cmd+Enter also sends. Use the speech-bubble icon beside **Attach local files** to switch to **Internal chat**. It changes to a lock and keeps your text and attachments in place. Use the lock to switch back to a regular Comment. An Internal Note is visible to Users and hidden from the Agent.
 
+Type `/` to see the **System** commands: **/btw** asks a side question and **/clear** starts the Agent's conversation over, as on the web (see [Ask a side question with `/btw`](tasks-and-conversations.md#ask-a-side-question-with-btw)). A Btw Comment is a violet box with a **Reply** action; a **Replying to btw** label above the composer shows which thread you continue. Both commands need a connection: offline, your text stays in the draft and the app asks you to try again once you are back online.
+
 Answer an Agent's Questions and Surveys directly in the Conversation; this needs a connection. See [Agent questions and files](agent-questions-and-files.md).
 
 While the Agent works, the bar above the composer lists its active Runs: tap one to read the subagent's text and tool calls in a bottom sheet. See [Follow the Agent's Runs](agent-sessions-and-queues.md#follow-the-agents-runs).
