@@ -2573,6 +2573,8 @@ class TaskController extends ChangeNotifier {
   void _retireLive(String type, Json event) {
     if (type.startsWith('comment.')) {
       final comment = event['comment'] as Map;
+      // The answer to a Btw is an Agent Comment too, but it is not what the running Turn is writing.
+      if (comment['btw'] != null) return;
       final id = comment['id'] as String;
       final wasExpanded =
           liveExpanded.remove(id) |

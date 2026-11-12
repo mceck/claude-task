@@ -93,4 +93,40 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets("a Btw answer does not replace the Turn's live text", (tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final h = Harness();
+    addTearDown(h.dispose);
+    h.api.items = [commentData('comment-1', 'Earlier comment', position: '1')];
+    await h.login();
+    await h.openTask();
+    await tester.pumpWidget(TaskApp(controller: h.controller));
+    await tester.pumpAndSettle();
+
+    h.live.eventController.add({
+      'type': 'live.delta',
+      'taskId': 'task-1',
+      'delta': {'kind': 'text', 'commentId': null, 'text': 'Still writing'},
+    });
+    await tester.pump();
+    expect(h.controller.liveText, isNotEmpty);
+
+    final stored = commentData('btw-answer', 'The side answer', position: '2');
+    h.live.eventController.add({
+      'type': 'comment.created',
+      'comment': {
+        ...stored['comment'] as Map<String, dynamic>,
+        'kind': 'agent',
+        'internal': true,
+        'btw': {'threadId': 'thread-1', 'role': 'answer', 'working': false},
+      },
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(h.controller.liveText.values.join(), 'Still writing');
+  });
 }

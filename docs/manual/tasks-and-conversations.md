@@ -78,13 +78,13 @@ Comments on a Task that has never had an Agent have no delivery badge. They are 
 Type `/btw` followed by a question to ask something about the work while the Agent keeps going. The answer comes from a copy of the Agent's conversation that has no tools, so it can read what has happened so far but changes nothing, and the Agent's own work is not interrupted.
 
 1. Type `/` in the composer and pick **/btw** among the **System** commands, or type `/btw ` and your question, for example `/btw why did you pick that library?`.
-2. Click **Send**. Your question appears as a violet **Btw** box with **Thinking…** while the answer is prepared.
+2. Click **Send**. Your question appears as a **Btw** box (pink on the web, violet in the native app) with **Thinking…** while the answer is prepared.
 3. The answer appears under it in the same style, as a Comment from the Agent.
 4. To keep talking about it, click **Reply** on the question or the answer, write your follow-up and send it. A **Replying to btw** label above the composer shows what you are continuing; dismiss it to write a normal Comment.
 
 A new `/btw` starts a fresh side conversation from the Agent's conversation as it is at that moment. A reply continues the earlier one, which only knows what the Agent had done when that Btw began.
 
-Btw Comments are visible to every User and are never sent to the Agent, like Internal Notes, but they are violet and have no lock. They show no delivery badge. The copy sees finished steps, not a tool call still running or text the Agent is still writing.
+Btw Comments are visible to every User and are never sent to the Agent, like Internal Notes, but they have their own colour and no lock. They show no delivery badge. The copy sees finished steps, not a tool call still running or text the Agent is still writing.
 
 `/btw` works once the Agent has started on the Task. It tells you why when it cannot run:
 
@@ -93,7 +93,7 @@ Btw Comments are visible to every User and are never sent to the Agent, like Int
 - another Btw of the Task is still being answered;
 - you are replying to a Btw from before a `/clear`; start a new `/btw` instead.
 
-If the answer cannot be produced, a violet notice in the conversation says why, and you can reply to try again. A Btw needs a connection and takes text only, no files.
+If the answer cannot be produced, a notice in the Btw style says why, and you can reply to try again. A Btw needs a connection and takes text only, no files.
 
 ## Start the conversation over with `/clear`
 

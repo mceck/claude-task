@@ -87,7 +87,8 @@ export function applyLiveEvent(event: RealtimeEvent): void {
     // The persisted version arrived: the live preview has done its job.
     case 'comment.created':
     case 'comment.updated':
-      if (event.comment.kind !== 'agent') return;
+      // The answer to a Btw is an Agent Comment too, but it is not what the running Turn is writing.
+      if (event.comment.kind !== 'agent' || event.comment.btw) return;
       if (state.get(event.comment.taskId)?.expanded) expandedComments.add(event.comment.id);
       update(event.comment.taskId, (t) => ({ ...t, text: '', expanded: false }));
       return;
