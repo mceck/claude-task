@@ -770,7 +770,7 @@ class Draft {
 /// Whether a Comment body is a System command the server interprets
 /// (`/btw <question>` or exactly `/clear`): these need a connection.
 bool isSystemCommandBody(String body) =>
-    RegExp(r'^\s*/btw(\s|$)').hasMatch(body) || body.trim() == '/clear';
+    body.startsWith('/btw ') || body.trim() == '/clear';
 
 /// The first words of a Btw for the "Replying to btw" chip.
 String btwQuote(String body, {int words = 8}) {
