@@ -64,6 +64,10 @@ The chats of one Wiki share a Worktree, so two Chats of the same Wiki never run 
 
 Once the Agent has finished a Turn, a chip beside the Session indicator shows how full the conversation's context is, for example **120.2K (53%)**: the tokens the Task's conversation carries and the percentage of the model's context window. It stays neutral as the context starts to fill, turns amber from 70% and red from 90%; hover it on the web or long-press it in the app for the exact counts. The same value appears on the Task's Board card (left of the tool call count on the web, beside the Agent badge in the app) whenever it is not zero. Before the first Turn there is no chip. When the context fills up the Agent compacts the conversation, and the chip drops after its next Turn.
 
+## Ask a side question or clear the chat
+
+While the Agent works, you can ask a question about the work with `/btw` without interrupting it, and you can start the Agent's conversation over with `/clear`. Both are described in [Work on a Task with your team and Agent](tasks-and-conversations.md#ask-a-side-question-with-btw). A `/clear` sent during a Turn shows **Clear pending** beside the Session indicator and takes effect when the Agent's work ends.
+
 ## Stop or retry
 
 Click **Stop** on a running Task to interrupt the current Turn. Its Session remains available. Post another Comment to continue from it.

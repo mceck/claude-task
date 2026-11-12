@@ -8,6 +8,8 @@ These are the terms you will meet while using Claude Task.
 | --- | --- |
 | User | A team member who can sign in, with the Member or Admin role. |
 | Admin | A User who can manage platform configuration and access. |
+| Btw | A side question asked with `/btw`, answered from a copy of the Agent's conversation without interrupting its work. Its Comments are violet and never reach the Agent. |
+| Clear | The `/clear` command: the Agent starts a fresh conversation, while every Comment stays and a line marks the moment. |
 | Login | Your authenticated access from a browser or native app. |
 | Installation | One deployment of Claude Task at its own URL. |
 | Project | A body of work with its own Board, Statuses and Tags. |

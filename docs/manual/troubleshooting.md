@@ -41,6 +41,15 @@ Start with the message you see. For Agent failures, include the Task Key and rel
 
 If you see **waiting for retry**, open the Agent's **Jobs** tab and **Details** on the failed Job. Read the Setup Script output and diagnostics. Fix the cause, then click **Retry** on the Task or post a new regular Comment.
 
+## Btw and Clear
+
+- **`/btw` says the Agent has not started**: the Agent needs to have begun work on the Task. Send a regular Comment first, wait for the Agent to start, then ask.
+- **`/btw` says another btw is still being answered**: wait for the current answer or its failure notice, then ask again.
+- **`/btw` says the conversation was cleared**: a reply cannot continue a Btw from before a `/clear`. Send a new `/btw`.
+- **A violet notice says the btw could not be answered**: the side conversation ended without an answer, for example because the Agent had just finished or its process stopped. Reply to try again, or send a new `/btw`.
+- **`/clear` says there is nothing to clear**: the Task has no Agent, the Agent has not started, or the Task is closed.
+- **The chat did not clear yet**: while the Agent works, **Clear pending** shows beside the Session indicator and the clear happens when its work ends.
+
 ## Worker and container problems
 
 | Message or symptom | What to do |
