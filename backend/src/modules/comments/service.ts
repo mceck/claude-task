@@ -238,7 +238,8 @@ export async function createUserComment(
   }
   if (author.type === 'user' && author.id) {
     await autoFollow(tx, after, task.id, [author.id]);
-    await notifyMentions(tx, task.id, row!.id, input.body, author.id);
+    // A side question alerts nobody.
+    if (!input.btw) await notifyMentions(tx, task.id, row!.id, input.body, author.id);
   }
   await deliverComment(tx, after, task, row!, { interrupt: input.interrupt });
   const comment = await loadComment(tx, row!.id);

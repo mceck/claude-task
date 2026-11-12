@@ -263,8 +263,11 @@ func (r *Runner) handle(m *protocol.Incoming) {
 			j = nil
 		}
 		r.mu.Unlock()
-		if j == nil || m.Btw == nil || !j.startBtw(m.Btw) {
+		if j == nil || m.Btw == nil {
 			log.Printf("ignoring job.btw for job %s that isn't running", m.JobID)
+		} else if !j.startBtw(m.Btw) {
+			// The Turn ended just as the question arrived: say so, so the backend can tell the User.
+			j.emit("job.btw_done", map[string]any{"btwId": m.Btw.ID, "exitCode": nil, "signal": nil, "stderr": "the agent had just finished its work, so there was no conversation running to ask from"})
 		}
 	case "job.upload":
 		// Outside the Job's stream: off the read loop and independent of stdin work.

@@ -277,7 +277,7 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
     const start: JobStartMessage = {
       type: 'job.start',
       jobId: job!.id,
-      sessionId: session!.claudeSessionId ?? session!.id,
+      sessionId: sessionIdentity(session!),
       mode: fresh ? 'new' : 'resume',
       resumeInterrupted,
       worktreePath: session!.worktreePath,
@@ -403,9 +403,9 @@ async function dispatchBtwJob(
   after.effect((c) => c.scheduler.publishQueue(worker.id, [task.id]));
   const identity = sessionIdentity(session);
   const stale = !thread || thread.originSessionId !== identity || !session.started || session.state === 'closed';
-  if (stale || !question) {
+  if (stale || !question || question.deletedAt) {
     // The conversation it asked about is gone (a Clear), or the Session can no longer answer.
-    if (thread) await failBtw(tx, after, thread, stale ? 'the conversation was cleared or the task closed before the agent could answer' : 'the question was removed');
+    if (thread) await failBtw(tx, after, thread, stale ? 'the conversation was cleared or the task closed before the agent could answer' : 'the question was deleted');
     return 'retry';
   }
   const credential = await credentialEnv(tx, ctx.config.secrets, agent.credentialId);

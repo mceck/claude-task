@@ -214,7 +214,8 @@ A Btw runs as a separate `claude` process next to the Job's own, in the Job's Wo
 
 - **`job.btw`** on a running Job: the Runner starts `claude -p "<question>" --output-format stream-json --verbose --model <model>` with every tool disabled and an empty MCP configuration, an addition to the system prompt telling it this is a side question, and either `--resume <session id> --fork-session` (mode `fork`) or `--resume <thread id>` (mode `resume`). It is in its own process group. Its stdout lines go to the backend as `job.btw_event` and its end as `job.btw_done`, all in the Job's seq stream, so they are resent and acknowledged like the Job's own output and never reach the Job's `result` handling.
 - **A Btw Job**: `job.start` with mode `btw` carries the same fields as `job.btw` and prepares nothing: it checks that the Worktree exists, skips the tool install and the Setup Script, runs the fork the same way and ends the Job with `job.exited` once the fork has. A Worktree that is missing fails the Job at stage `worktree`.
-- **Limits**: one fork per Job at a time (the backend allows one per Session), killed after 5 minutes. A Job's `job.cancel` terminates the fork with the process group.
+- **Limits**: one fork per Job at a time (the backend allows one per Session), killed after 5 minutes. A Job's `job.cancel` terminates the fork with the process group. A `claude` that exits while a fork runs waits for the fork before `job.exited`, so the Job and its Worker Container stay busy until it ends.
+- **A fork that arrives too late**: a `job.btw` for a Job whose `claude` has already exited, or that was cancelled, is answered with a `job.btw_done` carrying no exit code and an explanation in `stderr`.
 - **When `claude` cannot be forked** (a missing transcript, an unknown option in the selected version), stderr plus a non-zero `job.btw_done` reach the backend, which reports the failure in the Btw Thread.
 
 ### Messages, interrupt, end and cancel

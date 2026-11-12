@@ -100,6 +100,17 @@ describe('Btw and Clear', () => {
     expect(fresh.btw.id).not.toBe(first.btw!.threadId);
   });
 
+  it('treats a reply that reads like a command as the reply it is', async () => {
+    const { admin, runner, task, start } = await runningTask();
+    const first = (await ask(admin, task.id, 'one?')).body.comment as Comment;
+    const { btw } = await runner.next('job.btw');
+    await answer(runner, start.jobId, btw, 'One.', 'fork-B');
+    const reply = await admin.post(`/tasks/${task.id}/comments`, { body: '/clear', btwThread: first.btw!.threadId });
+    expect(reply.status).toBe(201);
+    expect(reply.body.comment).toMatchObject({ body: '/clear', btw: { role: 'question' } });
+    expect(await getSession(admin, task.id)).toMatchObject({ state: 'running', clearPending: false });
+  });
+
   it('refuses a Btw while another one works, before the Session started and once it is closed', async () => {
     const admin = await app.admin();
     const { agent, runner } = await createAgent(app, admin);

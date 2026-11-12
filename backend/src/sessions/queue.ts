@@ -37,10 +37,9 @@ async function edgePosition(db: Executor, workerId: string, edge: 'first' | 'las
 export async function enqueue(
   tx: Executor,
   after: AfterCommit,
-  input: { workerId: string; taskId: string; sessionId: string; kind: QueueEntryKind; front?: boolean; held?: boolean },
+  input: { workerId: string; taskId: string; sessionId: string; kind: Exclude<QueueEntryKind, 'btw'>; front?: boolean; held?: boolean },
 ): Promise<EntryRow> {
   const existing = await getEntry(tx, input.taskId, true);
-  if (input.kind === 'btw') throw new Error('Btw entries are added with enqueueBtw');
   after.effect((ctx) => {
     ctx.scheduler.publishQueue(input.workerId, [input.taskId]);
     ctx.scheduler.kick(input.workerId);

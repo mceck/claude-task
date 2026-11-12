@@ -485,7 +485,7 @@ async function requeue(tx: Executor, after: AfterCommit, job: JobRow, session: t
     workerId: await workerOfTask(tx, job.taskId),
     taskId: job.taskId,
     sessionId: session.id,
-    kind: session.started ? job.kind : 'start',
+    kind: session.started ? (job.kind === 'btw' ? 'messages' : job.kind) : 'start',
     front: true,
     held: opts.held,
   });

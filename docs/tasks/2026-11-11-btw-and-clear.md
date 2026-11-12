@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Btw side questions and Clear
@@ -67,17 +67,17 @@ Users want Claude Code's `/btw`: ask a quick question about the ongoing work whi
 
 ## Acceptance Criteria
 
-- [ ] `/btw q` on a running Session returns a Btw Comment and, within seconds, an answer Comment, while the Turn's Job, Queue and Session state are unchanged.
-- [ ] `/btw q` on an idle Session runs as a Btw Job and leaves the Session idle.
-- [ ] A reply continues the thread; a new `/btw` starts a fresh fork.
-- [ ] `409` for pending, closed, no Agent, a concurrent btw, and a reply after a Clear; `400` for `/btw` with no question or with files.
-- [ ] Btw Comments never reach the Agent, appear in no Task Tools answer and no first Message.
-- [ ] Fork output creates no Turn, Agent Item, Delivery change or Alert.
-- [ ] `/clear` is effective at once on an idle Session and waits for the Job end on a running one, with "Clear pending" visible.
-- [ ] After a Clear the Session is `pending`, has a new Claude identity, keeps Worktree and Branch, old Comments remain, and the Chat Cleared line is posted.
-- [ ] The next Comment starts a new conversation whose first Message includes only Comments after the line.
-- [ ] Web and Flutter show Btw Comments, Reply, the Clear divider and the hints.
-- [ ] Specs and glossary match the final behaviour; tests pass (`pnpm typecheck`, `pnpm test`, Go runner tests).
+- [x] `/btw q` on a running Session returns a Btw Comment and, within seconds, an answer Comment, while the Turn's Job, Queue and Session state are unchanged.
+- [x] `/btw q` on an idle Session runs as a Btw Job and leaves the Session idle.
+- [x] A reply continues the thread; a new `/btw` starts a fresh fork.
+- [x] `409` for pending, closed, no Agent, a concurrent btw, and a reply after a Clear; `400` for `/btw` with no question or with files.
+- [x] Btw Comments never reach the Agent, appear in no Task Tools answer and no first Message.
+- [x] Fork output creates no Turn, Agent Item, Delivery change or Alert.
+- [x] `/clear` is effective at once on an idle Session and waits for the Job end on a running one, with "Clear pending" visible.
+- [x] After a Clear the Session is `pending`, has a new Claude identity, keeps Worktree and Branch, old Comments remain, and the Chat Cleared line is posted.
+- [x] The next Comment starts a new conversation whose first Message includes only Comments after the line.
+- [x] Web and Flutter show Btw Comments, Reply, the Clear divider and the hints.
+- [x] Specs and glossary match the final behaviour; tests pass (`pnpm typecheck`, `pnpm test`, Go runner tests).
 
 ## Out of Scope
 

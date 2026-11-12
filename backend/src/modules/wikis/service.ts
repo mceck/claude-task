@@ -10,6 +10,7 @@ import {
   agentItems,
   agents,
   attachments,
+  btwThreads,
   comments,
   jobs,
   projects,
@@ -86,6 +87,7 @@ export async function clearChat(tx: Executor, after: AfterCommit, chatId: string
     .innerJoin(comments, eq(comments.id, attachments.commentId))
     .where(eq(comments.taskId, chatId));
   await tx.delete(comments).where(eq(comments.taskId, chatId));
+  await tx.delete(btwThreads).where(eq(btwThreads.taskId, chatId));
   await tx.delete(agentItems).where(eq(agentItems.taskId, chatId));
   await tx.delete(taskRevisions).where(eq(taskRevisions.taskId, chatId));
   await tx.delete(taskActivity).where(eq(taskActivity.taskId, chatId));
@@ -102,6 +104,8 @@ export async function clearChat(tx: Executor, after: AfterCommit, chatId: string
         state: task!.agentId ? 'pending' : 'paused',
         lastSeenTaskVersion: 0,
         lastJobAt: null,
+        clearRequestedAt: null,
+        clearRequestedBy: null,
         closedAt: null,
         worktreeRemovalPending: false,
       })

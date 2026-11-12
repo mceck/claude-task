@@ -433,7 +433,7 @@ export async function stopTurn(tx: Executor, after: AfterCommit, taskId: string)
   if (!session) throw conflict('No agent is working on this task');
   await lockTaskWorker(tx, taskId);
   const job = await activeJob(tx, session.id, true);
-  if (!job || job.state === 'finishing' || !job.containerId) throw conflict('The agent is not running a turn on this task');
+  if (!job || job.kind === 'btw' || job.state === 'finishing' || !job.containerId) throw conflict('The agent is not running a turn on this task');
   const containerId = job.containerId;
   after.effect((ctx) => ctx.runners.send(containerId, { type: 'job.interrupt', jobId: job.id }));
 }
@@ -488,7 +488,7 @@ export async function retrySession(tx: Executor, after: AfterCommit, taskId: str
   const workerId = await lockTaskWorker(tx, taskId);
   const entry = await getEntry(tx, taskId, true);
   if (!entry?.held) throw conflict('Nothing is waiting for a retry');
-  await enqueue(tx, after, { workerId, taskId, sessionId: entry.sessionId, kind: entry.kind, held: false });
+  await enqueue(tx, after, { workerId, taskId, sessionId: entry.sessionId, kind: entry.kind === 'btw' ? 'messages' : entry.kind, held: false });
   publishSession(after, taskId, null);
 }
 

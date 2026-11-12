@@ -98,6 +98,10 @@ func (j *job) runFork(spec *protocol.BtwSpec) {
 			j.forks = map[int]struct{}{}
 		}
 		j.forks[cmd.Process.Pid] = struct{}{}
+		// A cancel that landed before the fork was registered did not reach it.
+		if j.isCancelled() {
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		}
 	}
 	j.btwMu.Unlock()
 	if err != nil {

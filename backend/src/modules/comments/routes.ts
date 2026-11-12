@@ -31,7 +31,7 @@ export function commentRoutes(app: FastifyInstance, ctx: AppContext): void {
     try {
       const body = parse(createCommentBody, fields);
       // `/btw` and `/clear` are answered by the platform, not delivered to the Agent.
-      const clear = body.internal ? false : parseClearCommand(body.body);
+      const clear = body.internal || body.btwThread ? false : parseClearCommand(body.body);
       if (clear === 'extra') throw badRequest('/clear takes no text: send it on its own');
       const btw = body.internal ? null : body.btwThread ? { question: body.body, threadId: body.btwThread } : parseBtwCommand(body.body);
       if (body.btwThread && body.internal) throw badRequest('A reply to a btw cannot be an internal note');
