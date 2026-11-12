@@ -37,7 +37,7 @@ import {
   ROLES,
   SESSION_STATES,
 } from '@claude-task/shared';
-import type { AgentService, AgentItemPayload, CleanupCounts, CleanupTrigger, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, ProjectClickUp, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
+import type { AgentService, BtwRole, AgentItemPayload, CleanupCounts, CleanupTrigger, RevisionChange, Usage, ProjectRepository, PullRequest, GitProviderKind, ProjectClickUp, QuestionAnswer, QuestionItem, WorktreeStatus } from '@claude-task/shared';
 
 export const roleEnum = pgEnum('role', ROLES);
 export const categoryEnum = pgEnum('category', CATEGORIES);
@@ -278,6 +278,11 @@ export const comments = pgTable(
     jobId: uuid('job_id'),
     /** On the User Comment answering a Question: the Question's Comment. */
     answersCommentId: uuid('answers_comment_id').references((): AnyPgColumn => comments.id, { onDelete: 'set null' }),
+    /** On every Comment of a Btw Thread: the thread, and the Comment's role in it (question, answer or failure). */
+    btwThreadId: uuid('btw_thread_id').references((): AnyPgColumn => btwThreads.id, { onDelete: 'cascade' }),
+    btwRole: text('btw_role').$type<BtwRole>(),
+    /** The System Comment a Clear leaves where the conversation started over. */
+    clearMarker: boolean('clear_marker').notNull().default(false),
     /** On an Agent Comment that started another Agent's Session: the Agent it started. */
     startedAgentId: uuid('started_agent_id').references(() => agents.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
@@ -678,6 +683,9 @@ export const sessions = pgTable(
     projectSkills: jsonb('project_skills').$type<{ name: string; description: string }[]>(),
     /** The Worktree's uncommitted changes, as last read by a Runner. */
     worktreeStatus: jsonb('worktree_status').$type<WorktreeStatus>(),
+    /** A Clear waits for the active Job to end: who asked for it and when. */
+    clearRequestedBy: uuid('clear_requested_by'),
+    clearRequestedAt: timestamp('clear_requested_at', { withTimezone: true }),
     /** The Worktree must be removed once the Runner is connected. */
     worktreeRemovalPending: boolean('worktree_removal_pending').notNull().default(false),
     createdAt: createdAt(),
@@ -703,10 +711,13 @@ export const queueEntries = pgTable(
     position: orderKey('position').notNull(),
     /** After a failed Job: waits for a Retry (or a new Comment) instead of being dispatched. */
     held: boolean('held').notNull().default(false),
+    /** A `btw` entry: the question Comment its Btw Job answers. A Task has one such entry besides its other one. */
+    btwCommentId: uuid('btw_comment_id'),
     enqueuedAt: timestamp('enqueued_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('queue_entries_task_unique').on(t.taskId),
+    uniqueIndex('queue_entries_task_unique').on(t.taskId).where(sql`${t.btwCommentId} is null`),
+    uniqueIndex('queue_entries_btw_task_unique').on(t.taskId).where(sql`${t.btwCommentId} is not null`),
     index('queue_entries_worker_position_idx').on(t.workerId, t.position),
   ],
 );
@@ -808,9 +819,34 @@ export const sessionEvents = pgTable(
     seq: integer('seq').notNull(),
     receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
     payload: jsonb('payload').notNull(),
+    /** Set on the lines of a Btw fork, which are not part of the Job's own stream. */
+    btwThreadId: uuid('btw_thread_id'),
   },
   (t) => [primaryKey({ columns: [t.jobId, t.seq] })],
 );
+
+/** The forked Claude conversation behind a Btw: it answers, and replies continue it (docs/specs/agent-sessions.md). */
+export const btwThreads = pgTable('btw_threads', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  taskId: uuid('task_id')
+    .notNull()
+    .references(() => tasks.id, { onDelete: 'cascade' }),
+  sessionId: uuid('session_id')
+    .notNull()
+    .references(() => sessions.id, { onDelete: 'cascade' }),
+  /** The Session's Claude session identity it forked from; a Clear makes it stale. */
+  originSessionId: uuid('origin_session_id').notNull(),
+  /** The fork's own Claude session identity, once its first stream line reported it. */
+  forkSessionId: text('fork_session_id'),
+  state: text('state').$type<'idle' | 'working'>().notNull().default('working'),
+  /** The question Comment being answered, while the thread works. */
+  workingCommentId: uuid('working_comment_id'),
+  /** The Job whose Runner runs the fork, while the thread works. */
+  workingJobId: uuid('working_job_id'),
+  costUsd: doublePrecision('cost_usd').notNull().default(0),
+  usage: jsonb('usage').$type<Record<string, unknown>>(),
+  createdAt: createdAt(),
+});
 
 /** Thinking, Activity, Turn Summaries and notices; agent text lives in `comments`. */
 export const agentItems = pgTable(

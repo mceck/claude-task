@@ -256,6 +256,16 @@ func (r *Runner) handle(m *protocol.Incoming) {
 			return
 		}
 		j.control(m)
+	case "job.btw":
+		r.mu.Lock()
+		j := r.findLocked(m.JobID)
+		if j != nil && j.finished {
+			j = nil
+		}
+		r.mu.Unlock()
+		if j == nil || m.Btw == nil || !j.startBtw(m.Btw) {
+			log.Printf("ignoring job.btw for job %s that isn't running", m.JobID)
+		}
 	case "job.upload":
 		// Outside the Job's stream: off the read loop and independent of stdin work.
 		r.mu.Lock()

@@ -11,10 +11,11 @@ import { agentRefs, taskRefs } from '../modules/agents/service';
 export type EntryRow = typeof queueEntries.$inferSelect;
 
 /** `resume_interrupted` and `start` outrank `messages` when entries merge. */
-const KIND_RANK: Record<QueueEntryKind, number> = { messages: 0, resume_interrupted: 1, start: 2 };
+const KIND_RANK: Record<QueueEntryKind, number> = { messages: 0, resume_interrupted: 1, start: 2, btw: 3 };
 
+/** The Task's entry for its Session's next Job; its `btw` entry, if any, is separate. */
 export async function getEntry(db: Executor, taskId: string, lock = false): Promise<EntryRow | null> {
-  const query = db.select().from(queueEntries).where(eq(queueEntries.taskId, taskId));
+  const query = db.select().from(queueEntries).where(and(eq(queueEntries.taskId, taskId), isNull(queueEntries.btwCommentId)));
   const [row] = await (lock ? query.for('update') : query);
   return row ?? null;
 }
@@ -39,6 +40,7 @@ export async function enqueue(
   input: { workerId: string; taskId: string; sessionId: string; kind: QueueEntryKind; front?: boolean; held?: boolean },
 ): Promise<EntryRow> {
   const existing = await getEntry(tx, input.taskId, true);
+  if (input.kind === 'btw') throw new Error('Btw entries are added with enqueueBtw');
   after.effect((ctx) => {
     ctx.scheduler.publishQueue(input.workerId, [input.taskId]);
     ctx.scheduler.kick(input.workerId);
@@ -60,6 +62,24 @@ export async function enqueue(
     .insert(queueEntries)
     .values({ workerId: input.workerId, taskId: input.taskId, sessionId: input.sessionId, kind: input.kind, position, held: input.held ?? false })
     .returning();
+  return row!;
+}
+
+/** Adds the `btw` entry of a Btw that no running Job can take, at the front of the Worker's Queue. */
+export async function enqueueBtw(
+  tx: Executor,
+  after: AfterCommit,
+  input: { workerId: string; taskId: string; sessionId: string; commentId: string },
+): Promise<EntryRow> {
+  const position = generateKeyBetween(null, await edgePosition(tx, input.workerId, 'first'));
+  const [row] = await tx
+    .insert(queueEntries)
+    .values({ workerId: input.workerId, taskId: input.taskId, sessionId: input.sessionId, kind: 'btw', position, btwCommentId: input.commentId })
+    .returning();
+  after.effect((ctx) => {
+    ctx.scheduler.publishQueue(input.workerId, [input.taskId]);
+    ctx.scheduler.kick(input.workerId);
+  });
   return row!;
 }
 

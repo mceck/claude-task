@@ -7,7 +7,7 @@ import { and, eq, inArray, lt, ne, sql } from 'drizzle-orm';
 import type { AfterCommit, AppContext } from '../context';
 import { transactWithRetry } from '../context';
 import type { Executor } from '../db/client';
-import { agents, comments, jobs, projects, sessionEvents, sessions, tasks, workerContainers, workers } from '../db/schema';
+import { agents, btwThreads, comments, jobs, projects, sessionEvents, sessions, tasks, workerContainers, workers } from '../db/schema';
 import { publishCleanup, settleVolumeCleanup } from '../modules/workers/cleanup';
 import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import { getWorkerRow, workerOfTask } from '../modules/workers/service';
@@ -21,6 +21,7 @@ import { projectSkills } from '../sessions/project-skills';
 import { captureWorktreeStatus } from '../sessions/worktree-status';
 import { HURRY_MESSAGE } from '../sessions/messages';
 import { attachComments, enqueue } from '../sessions/queue';
+import { answerBtw, applyPendingClear, failBtw, failWorkingBtws } from '../sessions/btw-state';
 
 /** Setup output and stderr are kept up to this size (the tail). */
 const OUTPUT_CAP = 64 * 1024;
@@ -161,6 +162,7 @@ async function handleJobMessage(ctx: AppContext, runner: RunnerIdentity, msg: Ru
       // output, projection, retries or system notices may repopulate the chat.
       if (msg.type === 'job.exited' || msg.type === 'job.failed') {
         await tx.update(jobs).set({ state: 'finished', finishedAt: new Date() }).where(eq(jobs.id, job.id));
+        await failWorkingBtws(tx, after, job.id, 'the agent was reset before it answered');
         after.effect((c) => {
           c.scheduler.publishJob(job.id);
           c.scheduler.jobEnded(job);
@@ -181,7 +183,14 @@ async function processJobMessage(
   session: typeof sessions.$inferSelect,
   msg: RunnerJobMessage,
 ): Promise<void> {
+  if (job.kind === 'btw') return processBtwJobMessage(tx, after, job, msg);
   switch (msg.type) {
+    case 'job.btw_event':
+      return handleBtwEvent(tx, after, job, msg);
+
+    case 'job.btw_done':
+      return handleBtwDone(tx, after, job, msg);
+
     case 'job.worktree_ready':
       // A newly created Worktree starts clean: the changes of a previous one no longer exist.
       if (msg.created) await tx.update(sessions).set({ worktreeStatus: null }).where(eq(sessions.id, session.id));
@@ -279,6 +288,7 @@ async function processJobMessage(
 
     case 'job.exited': {
       await settleProjection(tx, after, job);
+      await failWorkingBtws(tx, after, job.id, 'the agent finished before the answer came');
       const crashed = job.state !== 'finishing' && !job.cancelRequested && msg.exitCode !== 0;
       const missing = /No conversation found/i.test(job.stderr);
       // `claude` created the session before dying without output: resume it from now on.
@@ -351,6 +361,7 @@ async function processJobMessage(
           );
         });
       }
+      await applyPendingClear(tx, after, session.id);
       after.effect((ctx) => {
         ctx.scheduler.publishJob(job.id);
         ctx.scheduler.publishTask(job.taskId);
@@ -363,6 +374,7 @@ async function processJobMessage(
       if (job.cancelRequested) {
         // Cancelled before `claude` started (the Task was closed): nothing to report.
         await tx.update(jobs).set({ state: 'finished', finishedAt: new Date() }).where(eq(jobs.id, job.id));
+        await applyPendingClear(tx, after, session.id);
         after.effect((ctx) => {
           ctx.scheduler.publishJob(job.id);
           ctx.scheduler.jobEnded(job);
@@ -383,6 +395,7 @@ async function failJob(
   message: string,
 ): Promise<void> {
   await tx.update(jobs).set({ state: 'failed', failureStage: stage, error: message, finishedAt: new Date() }).where(eq(jobs.id, job.id));
+  await failWorkingBtws(tx, after, job.id, 'the agent could not start');
   const stillActive = session.state === 'running';
   if (stillActive)
     await tx
@@ -399,6 +412,7 @@ async function failJob(
   // Its Messages go back to the front of the Queue, waiting for a Retry instead of looping.
   if (stillActive) await requeue(tx, after, job, session, { held: true });
   await settleRun(tx, after, job.id);
+  await applyPendingClear(tx, after, session.id);
   if (job.containerId) {
     const containerId = job.containerId;
     after.effect((ctx) => {
@@ -423,6 +437,7 @@ export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow):
   if (!job.discardOutput) await settleProjection(tx, after, job);
   else after.effect((ctx) => ctx.runs.endJob(job.id));
   await tx.update(jobs).set({ state: 'interrupted', finishedAt: new Date() }).where(eq(jobs.id, job.id));
+  await failWorkingBtws(tx, after, job.id, 'the agent was interrupted before it answered');
   const [session] = await tx.select().from(sessions).where(eq(sessions.id, job.sessionId)).for('update');
   if (!job.discardOutput && session?.state === 'running') {
     const workerId = await workerOfTask(tx, job.taskId);
@@ -441,6 +456,7 @@ export async function recoverJob(tx: Executor, after: AfterCommit, job: JobRow):
       await requeue(tx, after, job, session, { held: false });
     }
   }
+  if (job.kind !== 'btw') await applyPendingClear(tx, after, job.sessionId);
   after.effect((ctx) => {
     ctx.scheduler.publishJob(job.id);
     ctx.scheduler.publishTask(job.taskId);
@@ -547,5 +563,81 @@ export async function recoverAbandonedJobs(ctx: AppContext): Promise<void> {
       const [current] = await tx.select().from(jobs).where(eq(jobs.id, job.id)).for('update');
       if (current && (ACTIVE_JOB_STATES as readonly string[]).includes(current.state)) await recoverJob(tx, after, current);
     });
+  }
+}
+
+/** One stdout line of a Btw fork. Stored with the thread; only its answer reaches the Timeline. */
+async function handleBtwEvent(tx: Executor, after: AfterCommit, job: JobRow, msg: Extract<RunnerJobMessage, { type: 'job.btw_event' }>): Promise<void> {
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const value: unknown = JSON.parse(msg.line);
+    parsed = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+  } catch {
+    parsed = null;
+  }
+  const [thread] = UUID.test(String(msg.btwId)) ? await tx.select().from(btwThreads).where(eq(btwThreads.id, msg.btwId)).for('update') : [];
+  if (!thread || thread.taskId !== job.taskId) return;
+  const [stored] = await tx
+    .insert(sessionEvents)
+    .values({ jobId: job.id, seq: msg.seq, payload: parsed ?? { type: 'unparsed', line: String(msg.line).slice(0, 10_000) }, btwThreadId: thread.id })
+    .onConflictDoNothing()
+    .returning({ seq: sessionEvents.seq });
+  if (!stored || thread.state !== 'working' || !parsed) return;
+  const sessionId = typeof parsed.session_id === 'string' && parsed.session_id ? parsed.session_id : null;
+  const forkSessionId = thread.forkSessionId ?? sessionId;
+  if (forkSessionId !== thread.forkSessionId) await tx.update(btwThreads).set({ forkSessionId }).where(eq(btwThreads.id, thread.id));
+  if (parsed.type !== 'result') return;
+  const text = typeof parsed.result === 'string' ? parsed.result.trim() : '';
+  if (parsed.is_error === true || !text) {
+    const errors = Array.isArray(parsed.errors) ? parsed.errors.filter((e): e is string => typeof e === 'string').join('; ') : '';
+    await failBtw(tx, after, { ...thread, forkSessionId }, errors || (text ? text : 'the answer came back empty'));
+    return;
+  }
+  await answerBtw(tx, after, { ...thread, forkSessionId }, {
+    text,
+    agentId: job.agentId,
+    jobId: job.id,
+    costUsd: typeof parsed.total_cost_usd === 'number' ? parsed.total_cost_usd : 0,
+    usage: parsed.usage && typeof parsed.usage === 'object' ? (parsed.usage as Record<string, unknown>) : null,
+    forkSessionId,
+  });
+}
+
+/** The fork ended. Without a result it never answered. */
+async function handleBtwDone(tx: Executor, after: AfterCommit, job: JobRow, msg: Extract<RunnerJobMessage, { type: 'job.btw_done' }>): Promise<void> {
+  const [thread] = UUID.test(String(msg.btwId)) ? await tx.select().from(btwThreads).where(eq(btwThreads.id, msg.btwId)).for('update') : [];
+  if (!thread || thread.taskId !== job.taskId || thread.state !== 'working') return;
+  const how = msg.signal ? `it was stopped by ${msg.signal}` : msg.exitCode !== null && msg.exitCode !== 0 ? `it exited with code ${msg.exitCode}` : 'it ended without an answer';
+  await failBtw(tx, after, thread, `${how}.${tail(String(msg.stderr ?? ''), 5)}`);
+}
+
+/** A Btw Job runs one fork and nothing else: it has no Turns, no Messages and no Session state of its own. */
+async function processBtwJobMessage(tx: Executor, after: AfterCommit, job: JobRow, msg: RunnerJobMessage): Promise<void> {
+  const finish = async (state: 'finished' | 'failed', error: string | null) => {
+    await tx.update(jobs).set({ state, error, finishedAt: new Date() }).where(eq(jobs.id, job.id));
+    await failWorkingBtws(tx, after, job.id, error ?? 'the agent finished before the answer came');
+    after.effect((ctx) => {
+      ctx.scheduler.publishJob(job.id);
+      ctx.scheduler.publishTask(job.taskId);
+      ctx.scheduler.jobEnded(job);
+    });
+  };
+  switch (msg.type) {
+    case 'job.accepted':
+      if (job.state === 'dispatched') {
+        await tx.update(jobs).set({ state: 'running', startedAt: new Date() }).where(eq(jobs.id, job.id));
+        after.effect((ctx) => ctx.scheduler.publishJob(job.id));
+      }
+      return;
+    case 'job.btw_event':
+      return handleBtwEvent(tx, after, job, msg);
+    case 'job.btw_done':
+      return handleBtwDone(tx, after, job, msg);
+    case 'job.exited':
+      return finish(msg.exitCode === 0 ? 'finished' : 'failed', msg.exitCode === 0 ? null : `claude exited with ${msg.signal ? `signal ${msg.signal}` : `code ${msg.exitCode}`}`);
+    case 'job.failed':
+      return finish('failed', String(msg.message));
+    default:
+      return;
   }
 }

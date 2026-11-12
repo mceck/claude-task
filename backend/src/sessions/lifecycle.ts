@@ -16,6 +16,7 @@ import { ACTIVE_JOB_STATES } from '../modules/agents/service';
 import type { JobRow } from '../modules/agents/service';
 import type { TaskRow } from '../modules/tasks/service';
 import { getWorkerRow, workerOfTask } from '../modules/workers/service';
+import { cancelQueuedBtw } from './btw-state';
 import { renderComments } from './messages';
 import type { CommentRow } from './messages';
 import { attachComments, carriesDelivery, enqueue, getEntry, removeEntry } from './queue';
@@ -176,6 +177,7 @@ async function pauseSession(tx: Executor, after: AfterCommit, session: SessionRo
   }
   const entry = await getEntry(tx, session.taskId, true);
   if (entry) await removeEntry(tx, after, entry, reason);
+  await cancelQueuedBtw(tx, after, session.taskId, reason);
   await tx.update(sessions).set({ state: 'paused' }).where(eq(sessions.id, session.id));
 }
 
@@ -195,7 +197,9 @@ async function closeSession(tx: Executor, after: AfterCommit, task: TaskRow): Pr
   }
   const entry = await getEntry(tx, task.id, true);
   if (entry) await removeEntry(tx, after, entry, 'task closed');
-  await tx.update(sessions).set({ state: 'closed', closedAt: new Date(), worktreeRemovalPending: true, worktreeStatus: null }).where(eq(sessions.id, session.id));
+  await cancelQueuedBtw(tx, after, task.id, 'the task was closed');
+  // A Clear that waited for the Job is moot once the conversation is over.
+  await tx.update(sessions).set({ state: 'closed', closedAt: new Date(), worktreeRemovalPending: true, worktreeStatus: null, clearRequestedAt: null, clearRequestedBy: null }).where(eq(sessions.id, session.id));
   after.effect((ctx) => ctx.scheduler.removeWorktree(session.id));
   publishSession(after, task.id, workerId);
 }
@@ -319,12 +323,13 @@ export async function deliverComment(
  * alone: what is written now is for the Task's Agent.
  */
 function acceptsInput(after: AfterCommit, agentId: string | null, session: SessionRow, job: JobRow): boolean {
-  return interruptible(job) && job.agentId === agentId && session.state === 'running' && after.ctx.runners.isReady(job.containerId!);
+  // A Clear that waits for the Job keeps later Comments for the new conversation.
+  return interruptible(job) && job.agentId === agentId && session.state === 'running' && session.clearRequestedAt === null && after.ctx.runners.isReady(job.containerId!);
 }
 
 /** A Turn that is running and still listening: Stop or an Interrupt and send can end it. */
 function interruptible(job: JobRow): boolean {
-  return job.containerId !== null && job.state === 'running' && !job.cancelRequested && !job.discardOutput;
+  return job.kind !== 'btw' && job.containerId !== null && job.state === 'running' && !job.cancelRequested && !job.discardOutput;
 }
 
 function sendInterrupt(after: AfterCommit, job: JobRow): void {

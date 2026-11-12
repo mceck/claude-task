@@ -7,9 +7,9 @@ import { gitOwnerTask } from '../git/owner';
 import { agentProfilePath, commandName, GIT_PROXY_PATH, MCP_PATH, RUNNER_WS_PATH } from '@claude-task/shared';
 import type { JobStartMessage } from '@claude-task/shared';
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
-import type { AppContext } from '../context';
+import type { AfterCommit, AppContext } from '../context';
 import { transactWithRetry } from '../context';
-import { agentProfiles, agents, comments, jobs, projectEnvVars, projects, queueEntries, sessions, tasks, workerContainers, workers } from '../db/schema';
+import { agentProfiles, agents, btwThreads, comments, jobs, projectEnvVars, projects, queueEntries, sessions, tasks, workerContainers, workers } from '../db/schema';
 import type { Executor } from '../db/client';
 import { ACTIVE_JOB_STATES, getAgentRow } from '../modules/agents/service';
 import { desiredContainerSpec, getWorkerRow } from '../modules/workers/service';
@@ -22,6 +22,7 @@ import { systemComment } from '../runner/handlers';
 import { newToken } from '../secrets';
 import { CONTINUE_MESSAGE, RESUME_MESSAGE, agentChangeNotice, inlineBudget, renderComments, renderTaskFiles, startMessage, systemPrompt, taskSnapshot } from './messages';
 import type { CommentRow, MessageParts } from './messages';
+import { BTW_SYSTEM_PROMPT, failBtw, sessionIdentity } from './btw-state';
 import { carriesDelivery } from './queue';
 
 export const runnerWsUrl = (backendUrl: string) => `${backendUrl.replace(/^http/, 'ws')}${RUNNER_WS_PATH}`;
@@ -151,6 +152,7 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
       .innerJoin(sessions, eq(sessions.id, jobs.sessionId))
       .where(and(eq(jobs.workerId, workerId), inArray(jobs.state, [...ACTIVE_JOB_STATES]), eq(sessions.worktreePath, session!.worktreePath)));
     if (worktreeBusy) return 'skip' as const;
+    if (entry.btwCommentId) return dispatchBtwJob(ctx, tx, after, { worker, container: container!, connection, entry, session: session!, task: task!, agent });
     const agentId = agent.id;
     const [project] = await tx.select().from(projects).where(eq(projects.id, task!.projectId));
     const snapshot = await taskSnapshot(tx, task!.id);
@@ -204,7 +206,7 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
     let included: CommentRow[];
     let message: MessageParts;
     if (fresh) {
-      included = (await conversation(tx, task!.id)).filter((c) => !remaining.has(c.id));
+      included = (await conversation(tx, task!.id, entry.id)).filter((c) => !remaining.has(c.id));
       // `claude` runs the last text block as the input and keeps earlier blocks as context, so a
       // first command (/init, a skill) stays native when the Task context comes before it.
       const command = commandIndex === 0 ? batch[0]! : null;
@@ -349,7 +351,7 @@ async function dispatchEntry(ctx: AppContext, workerId: string, containerId: str
 }
 
 /** What a new Session reads first: every non-internal Comment by Users and Agents, oldest first. */
-async function conversation(db: Executor, taskId: string): Promise<CommentRow[]> {
+async function conversation(db: Executor, taskId: string, entryId: string): Promise<CommentRow[]> {
   return db
     .select()
     .from(comments)
@@ -359,6 +361,12 @@ async function conversation(db: Executor, taskId: string): Promise<CommentRow[]>
         eq(comments.internal, false),
         isNull(comments.deletedAt),
         or(eq(comments.kind, 'user'), eq(comments.kind, 'agent'), isNotNull(comments.noticeMessage)),
+        // A Clear starts the Agent's conversation over: it begins after the latest Chat Cleared line,
+        // with what was posted while the Clear waited, which is queued for this very Job.
+        or(
+          eq(comments.queueEntryId, entryId),
+          sql`${comments.createdAt} > coalesce((select max(m.created_at) from comments m where m.task_id = ${taskId} and m.clear_marker and m.deleted_at is null), '-infinity'::timestamptz)`,
+        ),
       ),
     )
     .orderBy(asc(comments.createdAt), asc(comments.id));
@@ -368,4 +376,75 @@ async function conversation(db: Executor, taskId: string): Promise<CommentRow[]>
 export async function projectEnv(ctx: AppContext, db: Executor, projectId: string): Promise<Record<string, string>> {
   const rows = await db.select().from(projectEnvVars).where(eq(projectEnvVars.projectId, projectId));
   return Object.fromEntries(rows.map((r) => [r.name, r.secret ? ctx.config.secrets.decrypt(r.valueCiphertext!) : (r.value ?? '')]));
+}
+
+/**
+ * A `btw` entry becomes a Btw Job: it runs the fork in the Session's Worktree and prepares nothing
+ * else. The Session stays as it is, and so does the Queue Entry of its next Job.
+ */
+async function dispatchBtwJob(
+  ctx: AppContext,
+  tx: Executor,
+  after: AfterCommit,
+  d: {
+    worker: WorkerRow;
+    container: WorkerContainerRow;
+    connection: Awaited<ReturnType<typeof workerConnection>>;
+    entry: typeof queueEntries.$inferSelect;
+    session: typeof sessions.$inferSelect;
+    task: typeof tasks.$inferSelect;
+    agent: Awaited<ReturnType<typeof getAgentRow>>;
+  },
+): Promise<'dispatched' | 'retry'> {
+  const { worker, container, entry, session, task, agent } = d;
+  const [thread] = await tx.select().from(btwThreads).where(eq(btwThreads.workingCommentId, entry.btwCommentId!)).for('update');
+  const [question] = await tx.select({ body: comments.body, deletedAt: comments.deletedAt }).from(comments).where(eq(comments.id, entry.btwCommentId!));
+  await tx.delete(queueEntries).where(eq(queueEntries.id, entry.id));
+  after.effect((c) => c.scheduler.publishQueue(worker.id, [task.id]));
+  const identity = sessionIdentity(session);
+  const stale = !thread || thread.originSessionId !== identity || !session.started || session.state === 'closed';
+  if (stale || !question) {
+    // The conversation it asked about is gone (a Clear), or the Session can no longer answer.
+    if (thread) await failBtw(tx, after, thread, stale ? 'the conversation was cleared or the task closed before the agent could answer' : 'the question was removed');
+    return 'retry';
+  }
+  const credential = await credentialEnv(tx, ctx.config.secrets, agent.credentialId);
+  const env: Record<string, string> = { ...(await projectEnv(ctx, tx, task.projectId)), ...agent.env, ...credential.env };
+  const jobToken = newToken();
+  const [job] = await tx
+    .insert(jobs)
+    .values({ sessionId: session.id, agentId: agent.id, agentName: agent.name, workerId: worker.id, containerId: container.id, slot: container.slot, taskId: task.id, kind: 'btw', tokenHash: jobToken.hash })
+    .returning();
+  await tx.update(btwThreads).set({ workingJobId: job!.id }).where(eq(btwThreads.id, thread.id));
+  const start: JobStartMessage = {
+    type: 'job.start',
+    jobId: job!.id,
+    sessionId: identity,
+    mode: 'btw',
+    resumeInterrupted: false,
+    worktreePath: session.worktreePath,
+    agentProfilePath: agentProfilePath(agent.id),
+    git: null,
+    setupScript: '',
+    env,
+    claudeArgs: { model: agent.model, effort: null, permissionMode: agent.permissionMode, appendSystemPrompt: '', mcpConfig: '', disallowedTools: [], forwardSubagentText: false, replayUserMessages: false },
+    initialMessage: null,
+    initialMessageId: null,
+    attachmentsToFetch: [],
+    btw: {
+      id: thread.id,
+      question: question.body,
+      mode: thread.forkSessionId ? 'resume' : 'fork',
+      sessionId: thread.forkSessionId ?? identity,
+      model: agent.model,
+      appendSystemPrompt: BTW_SYSTEM_PROMPT,
+    },
+  };
+  after.effect((c) => {
+    c.runners.send(container.id, start);
+    c.scheduler.publishJob(job!.id);
+    c.scheduler.publishWorker(worker.id);
+    c.scheduler.publishAgent(agent.id);
+  });
+  return 'dispatched';
 }

@@ -7,10 +7,11 @@ import type { AppContext } from '../../context';
 import { badRequest, HttpError, notFound, parse } from '../../errors';
 import { assertBoardTask } from '../projects/service';
 import { getTaskRow, emitTasksChanged } from '../tasks/service';
-import { createTaskAttachments, createUserComment, loadTaskAttachments, pruneTaskAttachments, deleteComment, getAttachment, updateComment } from './service';
+import { createTaskAttachments, createUserComment, loadTaskAttachments, pruneTaskAttachments, deleteComment, getAttachment, loadComment, updateComment } from './service';
 import { loadTimelinePositions } from '../../db/activity';
 import type { NewAttachment } from './service';
 import { idOrKey } from '../../ids';
+import { askBtw, parseBtwCommand, parseClearCommand, requestClear } from '../../sessions/btw';
 
 const taskParams = z.object({ taskId: idOrKey });
 const params = z.object({ id: z.uuid() });
@@ -29,6 +30,24 @@ export function commentRoutes(app: FastifyInstance, ctx: AppContext): void {
       : { fields: request.body, files: [] as NewAttachment[] };
     try {
       const body = parse(createCommentBody, fields);
+      // `/btw` and `/clear` are answered by the platform, not delivered to the Agent.
+      const clear = body.internal ? false : parseClearCommand(body.body);
+      if (clear === 'extra') throw badRequest('/clear takes no text: send it on its own');
+      const btw = body.internal ? null : body.btwThread ? { question: body.body, threadId: body.btwThread } : parseBtwCommand(body.body);
+      if (body.btwThread && body.internal) throw badRequest('A reply to a btw cannot be an internal note');
+      if ((clear || btw) && files.length > 0) throw badRequest('/btw and /clear take text only');
+      if (clear) {
+        const { markerId } = await transact(ctx, (tx, after) => requestClear(tx, after, task, author));
+        const comment = markerId ? await loadComment(ctx.db, markerId) : null;
+        const readPosition = comment ? (await loadTimelinePositions(ctx.db, task.id, [comment.id])).get(comment.id) : undefined;
+        return reply.status(201).send({ comment, readPosition, clearPending: comment === null });
+      }
+      if (btw === 'empty') throw badRequest('A btw needs a question: /btw <question>');
+      if (btw) {
+        const comment = await transact(ctx, (tx, after) => askBtw(tx, after, task, btw, author));
+        const readPosition = (await loadTimelinePositions(ctx.db, task.id, [comment.id])).get(comment.id);
+        return reply.status(201).send({ comment, readPosition });
+      }
       const comment = await transact(ctx, (tx, after) =>
         createUserComment(tx, after, task, { ...body, attachments: files }, author),
       );
