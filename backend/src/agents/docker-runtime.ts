@@ -375,9 +375,9 @@ export class DockerRuntime implements WorkerRuntime {
           if (failed) reject(new Error(failed));
           else resolve();
         },
-        (event: { stream?: string; status?: string; error?: string }) => {
+        (event: { stream?: string; status?: string; error?: string; progressDetail?: { current?: number } }) => {
           if (event.stream) onLog(event.stream);
-          else if (event.status) onLog(`${event.status}\n`);
+          else if (event.status && event.progressDetail?.current === undefined) onLog(`${event.status}\n`);
           if (event.error) onLog(`${event.error}\n`);
         },
       );
