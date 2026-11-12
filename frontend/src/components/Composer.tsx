@@ -1,9 +1,10 @@
 import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES, chatCommands, matchCommands, skillToken } from '@claude-task/shared';
 import type { ChatCommand, Comment, ScheduledMessage } from '@claude-task/shared';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowUp, FileText, Lock, Paperclip, X, Zap } from 'lucide-react';
-import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
+import { ArrowUp, FileText, Lock, Loader2, MessageCircleQuestion, Paperclip, X, Zap } from 'lucide-react';
+import { lazy, Suspense, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import type { ClipboardEvent, DragEvent } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
@@ -11,13 +12,23 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { errorMessage, post } from '../api/client';
 import { putScheduledMessage, putTimelineItem } from '../lib/cache';
-import { commentDrafts } from '../lib/drafts';
+import { btwReplyStore, commentDrafts } from '../lib/drafts';
 import { useAgent, useMe, useTimeline, useUsers } from '../api/queries';
 import { ErrorText, Kbd } from './common';
 import type { CommandToken, CommentEditorHandle } from './RichMarkdownEditor';
 import { dueError, SchedulePicker, toInstant } from './ScheduledMessages';
 
 const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
+
+/** The System commands the platform answers itself; Skills and Claude commands go to the Agent. */
+const SYSTEM_COMMANDS: { name: string; description: string; kind: 'system' }[] = [
+  { name: 'btw', description: 'Ask the agent a side question without interrupting its work', kind: 'system' },
+  { name: 'clear', description: 'Start the Claude conversation over', kind: 'system' },
+];
+type Suggestion = ChatCommand | (typeof SYSTEM_COMMANDS)[number];
+
+const isBtwBody = (body: string) => /^\s*\/btw(\s|$)/.test(body);
+const isClearBody = (body: string) => /^\s*\/clear\s*$/.test(body);
 
 const CommentEditor = lazy(() => import('./RichMarkdownEditor').then((m) => ({ default: m.CommentEditor })));
 
@@ -42,6 +53,7 @@ export function Composer({
   agentId,
   commands,
   interruptible = false,
+  btwWorking = false,
   draft,
 }: {
   taskId: string;
@@ -49,6 +61,8 @@ export function Composer({
   commands?: ChatCommand[];
   /** The Agent is running a Turn on this Task that Interrupt and send can end. */
   interruptible?: boolean;
+  /** A Btw of the Session has a fork working: another one waits. */
+  btwWorking?: boolean;
   draft: ReturnType<typeof useCommentDraft>;
 }) {
   const { body, setBody, internal, setInternal, files, setFiles, scheduledFor, setScheduledFor, error, setError, busy, setBusy } = draft;
@@ -68,7 +82,13 @@ export function Composer({
   // Escape hides the suggestions for this token only; typing on shows them again.
   const [dismissed, setDismissed] = useState<string | null>(null);
   const tokenKey = mention ? `@${mention.query}|${body}` : token && `${token.query}|${token.atStart}|${body}`;
-  const available = commands ?? (agentId ? chatCommands(null, agent.data?.skillCommands ?? []) : []);
+  const available: Suggestion[] = [...SYSTEM_COMMANDS, ...(commands ?? (agentId ? chatCommands(null, agent.data?.skillCommands ?? []) : []))];
+  const btwReply = useSyncExternalStore(btwReplyStore.subscribe, () => btwReplyStore.get(taskId));
+  // Replying continues a Btw Thread, which is never an Internal Note: choosing Reply leaves Internal chat.
+  useEffect(() => {
+    if (btwReply && internal) setInternal(false);
+  }, [btwReply, internal, setInternal]);
+  const replying = btwReply && !internal ? btwReply : undefined;
   const suggestions =
     token && !mention && !internal && dismissed !== tokenKey
       ? matchCommands(available.filter((s) => token.atStart || s.kind === 'skill'), token.query)
@@ -139,7 +159,11 @@ export function Composer({
     setBusy(true);
     setError(null);
     try {
-      let payload: Record<string, unknown> | FormData = { body, internal };
+      const clear = !internal && isClearBody(body);
+      const btw = !internal && (isBtwBody(body) || !!replying);
+      if (scheduledFor && (clear || btw)) return setError('/btw and /clear can’t be scheduled');
+      let payload: Record<string, unknown> | FormData = { body: clear ? '/clear' : body, internal };
+      if (replying && !clear) payload.btwThread = replying.threadId;
       if (scheduledFor) payload.dueAt = toInstant(scheduledFor);
       else if (interrupt && canInterrupt) payload.interrupt = true;
       if (files.length > 0) {
@@ -153,8 +177,14 @@ export function Composer({
         putScheduledMessage(qc, message);
         setScheduledFor('');
       } else {
-        const { comment, readPosition } = await post<{ comment: Comment; readPosition?: string }>(`/tasks/${taskId}/comments`, payload);
-        putTimelineItem(qc, taskId, { type: 'comment', id: comment.id, createdAt: comment.createdAt, comment, readPosition });
+        const { comment, readPosition, clearPending } = await post<{ comment: Comment | null; readPosition?: string; clearPending?: boolean }>(
+          `/tasks/${taskId}/comments`,
+          payload,
+        );
+        // A Clear that waits for the Agent to finish has no Comment yet: its marker arrives later.
+        if (comment) putTimelineItem(qc, taskId, { type: 'comment', id: comment.id, createdAt: comment.createdAt, comment, readPosition });
+        if (clear) toast(clearPending || !comment ? 'Clear pending: the chat will clear when the Agent finishes' : 'Chat cleared');
+        if (replying) btwReplyStore.set(taskId, null);
       }
       // Only what was sent goes: text typed or files added while sending stay. Text that changed what was
       // sent is kept whole, rather than guessing which part is new.
@@ -166,7 +196,9 @@ export function Composer({
       }
       setFiles((current) => current.filter((f) => !files.includes(f)));
     } catch (err) {
-      setError(errorMessage(err));
+      // The draft stays; a refused /btw or /clear says why in a toast, over the conversation.
+      if (!internal && (isBtwBody(body) || isClearBody(body) || replying)) toast.error(errorMessage(err));
+      else setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -217,6 +249,22 @@ export function Composer({
           {internal && (
             <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-400">
               <Lock className="size-3" /> Internal chat: only people see this, never the agent.
+            </p>
+          )}
+          {replying && (
+            <p className="mb-2 flex items-center gap-1.5 rounded-md border border-btw/40 bg-btw/10 py-1 pr-1 pl-2 text-xs text-btw">
+              <MessageCircleQuestion className="size-3 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">
+                Replying to btw: <span className="text-foreground/80">{replying.preview}</span>
+              </span>
+              <button
+                type="button"
+                aria-label="Stop replying to btw"
+                onClick={() => btwReplyStore.set(taskId, null)}
+                className="rounded p-0.5 hover:bg-btw/20"
+              >
+                <X className="size-3" />
+              </button>
             </p>
           )}
           <Suspense
@@ -291,6 +339,11 @@ export function Composer({
             />
             <div className="ml-auto flex items-center gap-2">
               {/* Hidden in a narrow Dock panel, where it would push the Comment button out of view. */}
+              {btwWorking && (
+                <span className="flex items-center gap-1 text-[11px] text-btw" role="status">
+                  <Loader2 className="size-3 animate-spin" /> Btw working
+                </span>
+              )}
               <span className="mr-1 hidden items-center gap-1 text-[11px] text-muted-foreground @sm:flex">
                 <Kbd>⇧↵</Kbd> new line
               </span>
@@ -328,7 +381,7 @@ export function Composer({
               <Button
                 size="sm"
                 onClick={() => void submit()}
-                disabled={busy || empty}
+                disabled={busy || empty || (btwWorking && !internal && !scheduledFor && (isBtwBody(body) || !!replying))}
                 aria-label={submitLabel}
                 className={cn(internal && 'bg-slate-600 text-white hover:bg-slate-600/85')}
               >
@@ -384,7 +437,7 @@ export function Composer({
               >
                 <span className="font-medium">/{skill.name}</span>
                 <span className="ml-2 text-xs text-muted-foreground">
-                  {skill.kind === 'skill' ? 'Skill' : skill.kind === 'mcp' ? 'MCP' : 'Claude'}
+                  {skill.kind === 'skill' ? 'Skill' : skill.kind === 'mcp' ? 'MCP' : skill.kind === 'system' ? 'System' : 'Claude'}
                 </span>
                 <span className="block truncate text-xs text-muted-foreground">{skill.description}</span>
               </button>
