@@ -66,3 +66,7 @@ The container exposes `GET /health` for orchestration: it needs no Login and ans
 - `docs/specs/` — one living spec per area (board, conversation, agents, workers, agent-sessions, runner, git-integration, wikis, schedules, voice-rooms, users-and-auth, clients).
 - `docs/CONTEXT.md` — the project's domain glossary.
 - `docs/manual/` — user manual.
+
+## Acknowledgements
+This project is not associated with Anthropic.
+If used by multiple people, it must be accessed through an Anthropic API key rather than a subscription based Claude account. Otherwise, it would violate Claude's Terms of Service.
